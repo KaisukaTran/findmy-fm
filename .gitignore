@@ -12,3 +12,10 @@ __pycache__/
 
 # OS
 .DS_Store
+
+# SOT runtime data
+data/sot/*.db
+
+# Runtime databases (SOT)
+*.db
+data/sot/*.db

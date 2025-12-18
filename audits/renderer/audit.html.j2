@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Audit Report – {{ audit.audit_metadata.audit_id }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 32px; }
+    h1, h2, h3 { border-bottom: 1px solid #ccc; padding-bottom: 4px; }
+    table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+    th, td { border: 1px solid #ccc; padding: 6px 8px; }
+    th { background: #f0f0f0; text-align: left; }
+    pre { background: #f8f8f8; padding: 12px; overflow-x: auto; }
+    .PASS { color: green; font-weight: bold; }
+    .FAIL { color: red; font-weight: bold; }
+  </style>
+</head>
+<body>
+
+<h1>Audit Report</h1>
+
+<!-- ====================== -->
+<!-- SECTION: Audit Context -->
+<!-- ====================== -->
+<h2>Audit Context</h2>
+<ul>
+  <li><b>Project:</b> {{ audit.audit_metadata.project }}</li>
+  <li><b>Repo:</b> {{ audit.audit_metadata.repo }}</li>
+  <li><b>Branch:</b> {{ audit.audit_metadata.branch }}</li>
+  <li><b>Commit:</b> {{ audit.audit_metadata.commit }}</li>
+  <li><b>Timestamp:</b> {{ audit.audit_metadata.timestamp }}</li>
+  <li><b>Environment:</b> {{ audit.audit_metadata.environment }}</li>
+  <li><b>Auditor:</b> {{ audit.audit_metadata.auditor }}</li>
+</ul>
+<!-- ================= -->
+<!-- SECTION: Day Contract -->
+<!-- ================= -->
+<h2>Day Contract</h2>
+
+<p><b>Day:</b> {{ audit.day_contract.day }}</p>
+<p><b>Objective:</b> {{ audit.day_contract.objective }}</p>
+
+<h3>Allowed Modules</h3>
+<ul>
+{% for m in audit.day_contract.allowed_modules %}
+  <li>{{ m }}</li>
+{% endfor %}
+</ul>
+
+<h3>Read-only Modules</h3>
+<ul>
+{% for m in audit.day_contract.read_only_modules %}
+  <li>{{ m }}</li>
+{% endfor %}
+</ul>
+
+<h3>Frozen Modules</h3>
+<ul>
+{% for m in audit.day_contract.frozen_modules %}
+  <li>{{ m }}</li>
+{% endfor %}
+</ul>
+
+<h3>Allowed Actions</h3>
+<ul>
+{% for a in audit.day_contract.allowed_actions %}
+  <li>{{ a }}</li>
+{% endfor %}
+</ul>
+
+<h3>Forbidden Actions</h3>
+<ul>
+{% for a in audit.day_contract.forbidden_actions %}
+  <li>{{ a }}</li>
+{% endfor %}
+</ul>
+<!-- ================= -->
+<!-- SECTION: Module Map -->
+<!-- ================= -->
+<h2>Module Map</h2>
+
+<h3>Expected Modules</h3>
+<ul>
+{% for m in audit.architecture_snapshot.modules_expected %}
+  <li>{{ m }}</li>
+{% endfor %}
+</ul>
+
+<h3>Present Modules</h3>
+<ul>
+{% for m in audit.architecture_snapshot.modules_present %}
+  <li>{{ m }}</li>
+{% endfor %}
+</ul>
+<!-- ================= -->
+<!-- SECTION: Architecture Snapshot -->
+<!-- ================= -->
+<h2>Architecture Snapshot</h2>
+
+<h3>Repository Tree</h3>
+<pre>{{ audit.architecture_snapshot.repo_tree }}</pre>
+
+<h3>Data Ownership</h3>
+<pre>{{ audit.architecture_snapshot.data_ownership | tojson(indent=2) }}</pre>
+<!-- ================= -->
+<!-- SECTION: Rule Checks -->
+<!-- ================= -->
+<h2>Rule Checks</h2>
+
+<table>
+  <tr>
+    <th>Rule ID</th>
+    <th>Title</th>
+    <th>Status</th>
+    <th>Severity</th>
+    <th>Expected</th>
+    <th>Actual</th>
+  </tr>
+{% for r in audit.rule_checks %}
+  <tr>
+    <td>{{ r.rule_id }}</td>
+    <td>{{ r.title }}</td>
+    <td class="{{ r.status }}">{{ r.status }}</td>
+    <td>{{ r.severity }}</td>
+    <td>{{ r.expected }}</td>
+    <td>{{ r.actual }}</td>
+  </tr>
+{% endfor %}
+</table>
+<!-- ================= -->
+<!-- SECTION: Change Impact -->
+<!-- ================= -->
+<h2>Change Impact</h2>
+
+<p><b>Impact Level:</b> {{ audit.change_impact.impact_level }}</p>
+
+<h3>Files Changed</h3>
+<ul>
+{% for f in audit.change_impact.files_changed %}
+  <li>{{ f }}</li>
+{% endfor %}
+</ul>
+
+<h3>Modules Touched</h3>
+<ul>
+{% for m in audit.change_impact.modules_touched %}
+  <li>{{ m }}</li>
+{% endfor %}
+</ul>
+
+<h3>Risk Notes</h3>
+<ul>
+{% for r in audit.change_impact.risk_notes %}
+  <li>{{ r }}</li>
+{% endfor %}
+</ul>
+<!-- ================= -->
+<!-- SECTION: Audit Verdict -->
+<!-- ================= -->
+<h2>Audit Verdict</h2>
+
+<p>
+  <b>Overall Status:</b>
+  <span class="{{ audit.audit_verdict.overall_status }}">
+    {{ audit.audit_verdict.overall_status }}
+  </span>
+</p>
+
+<h3>Blocking Issues</h3>
+<ul>
+{% for b in audit.audit_verdict.blocking_issues %}
+  <li>{{ b }}</li>
+{% endfor %}
+</ul>
+
+<h3>Warnings</h3>
+<ul>
+{% for w in audit.audit_verdict.warnings %}
+  <li>{{ w }}</li>
+{% endfor %}
+</ul>
+
+<h3>Recommendations</h3>
+<ul>
+{% for r in audit.audit_verdict.recommendations %}
+  <li>{{ r }}</li>
+{% endfor %}
+</ul>
+
+<h3>Next Allowed Actions</h3>
+<ul>
+{% for a in audit.audit_verdict.next_allowed_actions %}
+  <li>{{ a }}</li>
+{% endfor %}
+</ul>

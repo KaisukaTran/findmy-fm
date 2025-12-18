@@ -171,3 +171,12 @@ git commit -m "docs: add documentation structure and templates"
 ---
 
 > *Documentation is part of the system, not an afterthought.*
+
+## Governance & Audit
+
+FINDMY uses a canonical audit system to control architectural drift.
+
+Latest audits:
+- Day 02 – SOT Design Audit  
+  - JSON: audits/runs/audit-2025-12-17T10-30.json  
+  - HTML: audits/runs/audit-2025-12-17T10-30.html

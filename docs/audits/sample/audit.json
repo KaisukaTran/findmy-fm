@@ -1,0 +1,41 @@
+{
+  "audit_metadata": {
+    "audit_id": "audit-sample",
+    "project": "FINDMY",
+    "repo": "findmy-fm",
+    "branch": "main",
+    "commit": "HEAD",
+    "timestamp": "ISO-8601",
+    "environment": "codespaces",
+    "auditor": "Nova"
+  },
+  "day_contract": {
+    "day": "Day 02",
+    "objective": "Design Order History Service (SOT)",
+    "allowed_modules": ["sot"],
+    "read_only_modules": ["dal"],
+    "frozen_modules": ["kss", "ts", "ai", "report"],
+    "allowed_actions": [],
+    "forbidden_actions": []
+  },
+  "architecture_snapshot": {
+    "modules_expected": [],
+    "modules_present": [],
+    "repo_tree": "",
+    "data_ownership": {}
+  },
+  "rule_checks": [],
+  "change_impact": {
+    "files_changed": [],
+    "modules_touched": [],
+    "impact_level": "",
+    "risk_notes": []
+  },
+  "audit_verdict": {
+    "overall_status": "PASS",
+    "blocking_issues": [],
+    "warnings": [],
+    "recommendations": [],
+    "next_allowed_actions": []
+  }
+}

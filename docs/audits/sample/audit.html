@@ -26,8 +26,8 @@
   <li><b>Project:</b> FINDMY</li>
   <li><b>Repo:</b> findmy-fm</li>
   <li><b>Branch:</b> main</li>
-  <li><b>Commit:</b> HEAD</li>
-  <li><b>Timestamp:</b> ISO-8601</li>
+  <li><b>Commit:</b> 9ea2636c013697b35d14b8b60eefeab46f0d654e</li>
+  <li><b>Timestamp:</b> 2025-12-17T11:45:00Z</li>
   <li><b>Environment:</b> codespaces</li>
   <li><b>Auditor:</b> Nova</li>
 </ul>
@@ -69,10 +69,24 @@
 <h3>Allowed Actions</h3>
 <ul>
 
+  <li>Define DB schema</li>
+
+  <li>Define order lifecycle</li>
+
+  <li>Define execution trace model</li>
+
 </ul>
 
 <h3>Forbidden Actions</h3>
 <ul>
+
+  <li>PnL calculation</li>
+
+  <li>Strategy logic</li>
+
+  <li>Execution optimization</li>
+
+  <li>Direct DB access outside DAL</li>
 
 </ul>
 <!-- ================= -->
@@ -83,10 +97,34 @@
 <h3>Expected Modules</h3>
 <ul>
 
+  <li>kss</li>
+
+  <li>sot</li>
+
+  <li>ts</li>
+
+  <li>dal</li>
+
+  <li>ai</li>
+
+  <li>report</li>
+
 </ul>
 
 <h3>Present Modules</h3>
 <ul>
+
+  <li>kss</li>
+
+  <li>sot</li>
+
+  <li>ts</li>
+
+  <li>dal</li>
+
+  <li>ai</li>
+
+  <li>report</li>
 
 </ul>
 <!-- ================= -->
@@ -95,10 +133,80 @@
 <h2>Architecture Snapshot</h2>
 
 <h3>Repository Tree</h3>
-<pre></pre>
+<pre>.
+├── README.md
+├── audits
+│   ├── renderer
+│   │   ├── __pycache__
+│   │   ├── audit.html.j2
+│   │   ├── audit_contract.py
+│   │   ├── generate_audit.py
+│   │   └── render_audit.py
+│   └── runs
+│       ├── audit_sample.html
+│       └── audit_sample.json
+├── data
+│   ├── sot
+│   │   ├── README.md
+│   │   └── findmy_fm_paper.db
+│   └── uploads
+│       └── orders_v1.xlsx
+├── docs
+│   ├── README.md
+│   ├── api.md
+│   ├── architecture.md
+│   ├── audits
+│   │   └── sample
+│   ├── devlog
+│   │   ├── day-01.md
+│   │   └── day-02.md
+│   ├── diagrams
+│   ├── execution.md
+│   ├── modules.md
+│   ├── roadmap.md
+│   ├── rules.md
+│   └── strategy.md
+├── pyproject.toml
+├── requirements.txt
+├── scripts
+│   └── start_api.sh
+├── services
+│   ├── ai
+│   │   └── README.md
+│   ├── dal
+│   │   └── README.md
+│   ├── kss
+│   │   └── README.md
+│   ├── report
+│   │   └── README.md
+│   ├── sot
+│   │   └── README.md
+│   └── ts
+│       └── README.md
+├── src
+│   ├── findmy
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   ├── api
+│   │   ├── core
+│   │   ├── data
+│   │   ├── execution
+│   │   ├── persistence
+│   │   └── strategies
+│   └── findmy.egg-info
+│       ├── PKG-INFO
+│       ├── SOURCES.txt
+│       ├── dependency_links.txt
+│       └── top_level.txt
+└── tests
+
+32 directories, 34 files</pre>
 
 <h3>Data Ownership</h3>
-<pre>{}</pre>
+<pre>{
+  "sot_db": "data/sot/findmy_fm_paper.db",
+  "uploads": "data/uploads/"
+}</pre>
 <!-- ================= -->
 <!-- SECTION: Rule Checks -->
 <!-- ================= -->
@@ -114,26 +222,65 @@
     <th>Actual</th>
   </tr>
 
+  <tr>
+    <td>ARCH-001</td>
+    <td>SOT owns runtime database</td>
+    <td class="PASS">PASS</td>
+    <td>CRITICAL</td>
+    <td>Database located in data/sot/</td>
+    <td>data/sot/findmy_fm_paper.db</td>
+  </tr>
+
+  <tr>
+    <td>ARCH-002</td>
+    <td>No direct DB access outside DAL</td>
+    <td class="PASS">PASS</td>
+    <td>CRITICAL</td>
+    <td>All DB access via DAL</td>
+    <td>No violations detected</td>
+  </tr>
+
+  <tr>
+    <td>DAY-002</td>
+    <td>No PnL logic introduced</td>
+    <td class="PASS">PASS</td>
+    <td>MAJOR</td>
+    <td>No PnL-related code or schema</td>
+    <td>No PnL detected</td>
+  </tr>
+
 </table>
 <!-- ================= -->
 <!-- SECTION: Change Impact -->
 <!-- ================= -->
 <h2>Change Impact</h2>
 
-<p><b>Impact Level:</b> </p>
+<p><b>Impact Level:</b> LOW</p>
 
 <h3>Files Changed</h3>
 <ul>
+
+  <li>data/sot/README.md</li>
+
+  <li>services/sot/README.md</li>
+
+  <li>audits/renderer/*</li>
 
 </ul>
 
 <h3>Modules Touched</h3>
 <ul>
 
+  <li>sot</li>
+
 </ul>
 
 <h3>Risk Notes</h3>
 <ul>
+
+  <li>SOT ownership clarified</li>
+
+  <li>No execution or strategy logic added</li>
 
 </ul>
 <!-- ================= -->
@@ -143,8 +290,8 @@
 
 <p>
   <b>Overall Status:</b>
-  <span class="PASS">
-    PASS
+  <span class="CONDITIONAL_PASS">
+    CONDITIONAL_PASS
   </span>
 </p>
 
@@ -156,14 +303,22 @@
 <h3>Warnings</h3>
 <ul>
 
+  <li>Audit is a sample and does not represent final Day 02 closure</li>
+
 </ul>
 
 <h3>Recommendations</h3>
 <ul>
 
+  <li>Add more SOT-specific rules before closing Day 02</li>
+
 </ul>
 
 <h3>Next Allowed Actions</h3>
 <ul>
+
+  <li>Continue SOT implementation</li>
+
+  <li>Refine order lifecycle definition</li>
 
 </ul>

@@ -137,7 +137,9 @@ def calculate_and_save_order_pnl(
     avg_price = sum(f.fill_price * f.fill_qty for f in fills) / total_qty
     total_fee = sum(f.fee_amount or 0 for f in fills)
 
-    if order.status.upper() == "BUY":
+    side = order.order_request.side.upper()
+
+    if side == "BUY":
         pnl = (market_price - avg_price) * total_qty - total_fee
     else:
         pnl = (avg_price - market_price) * total_qty - total_fee

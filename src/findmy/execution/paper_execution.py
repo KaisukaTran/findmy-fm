@@ -8,11 +8,18 @@ Features:
 - Immediate full-fill simulation
 - SQLite persistence
 - Callable from FastAPI
+
+Error Handling:
+- Graceful handling of I/O and value errors
+- Type-safe numeric conversions
+- Proper database session management with context managers
 """
 
 from datetime import datetime
 from pathlib import Path
+from typing import Tuple, Dict, Any, List
 import pandas as pd
+import logging
 
 from sqlalchemy import (
     create_engine,
@@ -24,7 +31,10 @@ from sqlalchemy import (
     ForeignKey,
     func,
 )
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker, Session
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # ============================================================
 # CONFIG
@@ -44,6 +54,20 @@ Base = declarative_base()
 # ============================================================
 
 class Order(Base):
+    """
+    Order model for paper trading.
+    
+    Attributes:
+        id: Primary key
+        client_order_id: Unique order identifier from client
+        symbol: Trading pair (e.g., BTC/USD)
+        side: Order side (BUY or SELL)
+        qty: Order quantity (Decimal for precision)
+        price: Order price (Decimal for precision)
+        status: Order status (NEW, FILLED, CANCELLED)
+        created_at: Order creation timestamp
+        updated_at: Order last update timestamp
+    """
     __tablename__ = "orders"
 
     id = Column(Integer, primary_key=True)
@@ -58,6 +82,18 @@ class Order(Base):
 
 
 class Trade(Base):
+    """
+    Trade model for executed trades.
+    
+    Attributes:
+        id: Primary key
+        order_id: Reference to the order that generated this trade
+        symbol: Trading pair (e.g., BTC/USD)
+        side: Trade side (BUY or SELL)
+        qty: Trade quantity
+        price: Execution price
+        ts: Trade execution timestamp
+    """
     __tablename__ = "trades"
 
     id = Column(Integer, primary_key=True)
@@ -70,6 +106,16 @@ class Trade(Base):
 
 
 class Position(Base):
+    """
+    Position model for current holdings.
+    
+    Attributes:
+        id: Primary key
+        symbol: Trading pair (e.g., BTC/USD)
+        size: Current position size (quantity held)
+        avg_price: Average purchase price
+        updated_at: Position last update timestamp
+    """
     __tablename__ = "positions"
 
     id = Column(Integer, primary_key=True)
@@ -83,11 +129,20 @@ class Position(Base):
 # DB SETUP
 # ============================================================
 
-def setup_db():
+def setup_db() -> Tuple[Any, sessionmaker]:
+    """
+    Initialize database and return engine and session factory.
+    
+    Returns:
+        Tuple of (SQLAlchemy engine, sessionmaker factory)
+        
+    Raises:
+        Exception: If database initialization fails
+    """
     engine = create_engine(f"sqlite:///{DB_PATH}", future=True)
     Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
-    return engine, Session
+    SessionFactory = sessionmaker(bind=engine)
+    return engine, SessionFactory
 
 
 # ============================================================
@@ -96,13 +151,28 @@ def setup_db():
 
 def parse_orders_from_excel(path: str, sheet_name: str = SHEET_NAME) -> pd.DataFrame:
     """
+    Parse orders from an Excel file with flexible header support.
+    
     Supports:
     - Excel WITH header (Vietnamese / English)
     - Excel WITHOUT header
     - Fallback to positional A,B,C,D if header mismatch
+    
+    Args:
+        path: File path to Excel file
+        sheet_name: Name of sheet to read (default: "purchase order")
+    
+    Returns:
+        DataFrame with columns: [client_id, qty, price, symbol]
+        
+    Raises:
+        ValueError: If sheet not found or data is invalid
+        IOError: If file cannot be read
     """
-
-    sheets = pd.read_excel(path, sheet_name=None, engine="openpyxl")
+    try:
+        sheets = pd.read_excel(path, sheet_name=None, engine="openpyxl")
+    except Exception as e:
+        raise IOError(f"Failed to read Excel file: {str(e)}")
 
     df = None
     for name, sheet in sheets.items():
@@ -111,7 +181,7 @@ def parse_orders_from_excel(path: str, sheet_name: str = SHEET_NAME) -> pd.DataF
             break
 
     if df is None:
-        raise ValueError(f"Sheet '{sheet_name}' not found")
+        raise ValueError(f"Sheet '{sheet_name}' not found in Excel file")
 
     # ---------- CASE 1: NO HEADER ----------
     if all(isinstance(c, int) for c in df.columns):
@@ -154,7 +224,23 @@ def parse_orders_from_excel(path: str, sheet_name: str = SHEET_NAME) -> pd.DataF
 # EXECUTION LOGIC
 # ============================================================
 
-def upsert_order(session, client_order_id, symbol, qty, price):
+def upsert_order(session: Session, client_order_id: str, symbol: str, qty: float, price: float) -> Tuple[Order, bool]:
+    """
+    Insert or retrieve an order by client_order_id.
+    
+    Args:
+        session: SQLAlchemy session
+        client_order_id: Unique order identifier
+        symbol: Trading pair (e.g., BTC/USD)
+        qty: Order quantity
+        price: Order price
+    
+    Returns:
+        Tuple of (Order object, is_new: bool). is_new is True if order was created.
+        
+    Raises:
+        ValueError: If numeric conversion fails
+    """
     order = session.query(Order).filter_by(
         client_order_id=str(client_order_id)
     ).one_or_none()
@@ -162,9 +248,15 @@ def upsert_order(session, client_order_id, symbol, qty, price):
     if order:
         return order, False
 
+    try:
+        qty = float(qty)
+        price = float(price)
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"Invalid numeric values: qty={qty}, price={price}. Error: {str(e)}")
+
     order = Order(
         client_order_id=str(client_order_id),
-        symbol=symbol,
+        symbol=str(symbol).strip(),
         side="BUY",
         qty=qty,
         price=price,
@@ -176,16 +268,36 @@ def upsert_order(session, client_order_id, symbol, qty, price):
     return order, True
 
 
-def simulate_fill(session, order: Order):
+def simulate_fill(session: Session, order: Order) -> Tuple[bool, Dict[str, Any]]:
+    """
+    Simulate order fill and update positions.
+    
+    Args:
+        session: SQLAlchemy session
+        order: Order object to fill
+    
+    Returns:
+        Tuple of (success: bool, trade_data: dict). trade_data contains trade details.
+        
+    Raises:
+        ValueError: If numeric conversion fails
+    """
     if order.status == "FILLED":
-        return None
+        return False, {}
+
+    try:
+        qty = float(order.qty)
+        price = float(order.price)
+    except (ValueError, TypeError) as e:
+        logger.error(f"Failed to convert numeric values for order {order.id}: {str(e)}")
+        raise ValueError(f"Invalid order numeric values: {str(e)}")
 
     trade = Trade(
         order_id=order.id,
         symbol=order.symbol,
         side=order.side,
-        qty=order.qty,
-        price=order.price,
+        qty=qty,
+        price=price,
         ts=datetime.utcnow(),
     )
     session.add(trade)
@@ -194,9 +306,6 @@ def simulate_fill(session, order: Order):
     order.updated_at = datetime.utcnow()
 
     pos = session.query(Position).filter_by(symbol=order.symbol).one_or_none()
-
-    qty = float(order.qty)
-    price = float(order.price)
 
     if pos is None:
         pos = Position(
@@ -217,37 +326,78 @@ def simulate_fill(session, order: Order):
         pos.updated_at = datetime.utcnow()
 
     session.commit()
-    return trade
+    return True, {
+        "trade_id": trade.id,
+        "symbol": order.symbol,
+        "qty": qty,
+        "price": price,
+    }
 
 
 # ============================================================
 # PUBLIC API (CALLABLE BY FASTAPI)
 # ============================================================
 
-def run_paper_execution(excel_path: str) -> dict:
-    engine, Session = setup_db()
-    session = Session()
+def run_paper_execution(excel_path: str) -> Dict[str, Any]:
+    """
+    Execute paper trading orders from an Excel file.
+    
+    Args:
+        excel_path: Path to Excel file containing orders
+    
+    Returns:
+        Dictionary with execution results:
+        {
+            "orders": int,
+            "trades": int,
+            "positions": List[dict]
+        }
+        
+    Raises:
+        IOError: If Excel file cannot be read
+        ValueError: If order data is invalid
+        Exception: For other processing errors
+    """
+    engine, SessionFactory = setup_db()
 
-    df_orders = parse_orders_from_excel(excel_path)
+    try:
+        df_orders = parse_orders_from_excel(excel_path)
+    except (IOError, ValueError) as e:
+        logger.error(f"Failed to parse Excel file: {str(e)}")
+        raise
 
     trade_count = 0
+    error_rows = []
 
-    for _, r in df_orders.iterrows():
-        order, _ = upsert_order(
-            session=session,
-            client_order_id=r["client_id"],
-            symbol=str(r["symbol"]).strip(),
-            qty=r["qty"],
-            price=r["price"],
-        )
+    with SessionFactory() as session:
+        for idx, r in df_orders.iterrows():
+            try:
+                order, _ = upsert_order(
+                    session=session,
+                    client_order_id=r["client_id"],
+                    symbol=str(r["symbol"]).strip(),
+                    qty=float(r["qty"]),
+                    price=float(r["price"]),
+                )
 
-        if simulate_fill(session, order):
-            trade_count += 1
+                success, trade_data = simulate_fill(session, order)
+                if success:
+                    trade_count += 1
 
-    positions_df = pd.read_sql_table("positions", engine)
+            except (ValueError, TypeError) as e:
+                error_rows.append({"row": idx + 2, "error": str(e)})
+                logger.warning(f"Skipped row {idx + 2}: {str(e)}")
+                continue
+            except Exception as e:
+                logger.error(f"Unexpected error at row {idx + 2}: {str(e)}")
+                raise
+
+        # Use raw SQL to avoid deprecated pd.read_sql_table
+        positions_df = pd.read_sql("SELECT * FROM positions", engine)
 
     return {
         "orders": len(df_orders),
         "trades": trade_count,
         "positions": positions_df.to_dict(orient="records"),
+        "errors": error_rows if error_rows else None,
     }

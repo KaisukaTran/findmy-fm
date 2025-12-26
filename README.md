@@ -1,62 +1,147 @@
-# findmy-fm
+# FINDMY (FM) – Paper Trading Execution Engine
+
 Small. Cute. Flexible. Funny Project
-# FINDMY (FM)
 
 > **FINDMY (FM)** is a modular Python-based trading bot focused on research-first development, starting with a robust **paper trading execution engine** using Excel input and FastAPI.
 
+**Latest Release:** v0.1.0 | **License:** MIT | **Status:** Active Development ⚡
+
 ---
 
-## � Documentation
+## 📚 Quick Links
 
 **New to FINDMY?** Start here:
-- **[Full Documentation Index](docs/README.md)** – Complete guide to all docs
-- **[Architecture](docs/architecture.md)** – System design and components
-- **[Contributing Guide](CONTRIBUTING.md)** – How to develop and contribute
-- **[API Reference](docs/api.md)** – REST API endpoints and examples
+- **[Quick Start Guide](#quick-start)** – Get running in 5 minutes
+- **[Full Documentation](docs/README.md)** – Complete guide
+- **[API Reference](docs/api.md)** – REST endpoints with examples
+- **[Database Schema](docs/database-schema.md)** – Data model
+- **[Architecture](docs/architecture.md)** – System design
+- **[Contributing](CONTRIBUTING.md)** – How to contribute
 
 ---
 
 ## 🚀 Project Vision
 
 FINDMY is designed as a **production-grade trading system**, not a demo bot.
-The core principles are:
 
-* Modular architecture (strategy, execution, risk, persistence)
-* Research-first (paper trading & backtesting before live trading)
-* Cloud-friendly development (GitHub Codespaces)
-* Strong observability & auditability (SQL persistence)
+**Core Principles:**
+- 🏗️ **Modular** – Strategy, execution, risk, and persistence are separate
+- 🔬 **Research-First** – Paper trading & backtesting before live trading
+- ☁️ **Cloud-Ready** – Runs on GitHub Codespaces (no local setup needed)
+- 📊 **Observable** – SQL persistence for auditability and analysis
+- 🔒 **Secure** – File validation, safe uploads, error isolation
 
 ---
 
-## 🧱 Current Features (v1 – Implemented)
+## ✨ Current Features (v1)
 
-### ✅ Paper Trading Execution Engine
+### 📋 Paper Trading Execution Engine
 
-* Excel-based order ingestion
-* Supports Excel:
+✅ **Flexible Excel Input**
+- Vietnamese & English headers supported
+- No-header format (positional A-D mapping)
+- Automatic fallback on header mismatch
+- Sheet name: `purchase order`
 
-  * With header
-  * Without header
-  * Header mismatch (fallback to positional A–D)
-* Sheet name: `purchase order`
-* Immediate full-fill simulation (BUY only – v1)
-* SQLite persistence:
+✅ **Order Processing**
+- Immediate full-fill simulation
+- Duplicate detection (prevents double execution)
+- BUY orders only (v1)
+- Graceful error handling
 
-  * Orders
-  * Trades
-  * Positions
+✅ **Data Persistence**
+- Orders table (status tracking)
+- Trades table (execution details)
+- Positions table (average price calculations)
+- SQLite (no external dependencies)
 
-### ✅ FastAPI Backend
+### 🌐 REST API (FastAPI)
 
-* REST API to upload Excel and trigger execution
-* Swagger UI available out of the box
-* Health check endpoint
+✅ **Endpoints**
+- `GET /` – Health check
+- `POST /paper-execution` – Execute orders from Excel
 
-### ✅ Cloud Development Setup
+✅ **Security**
+- File type validation (MIME + extension)
+- Size limits (10MB max)
+- Safe filenames (UUID-based)
+- Auto cleanup of temp files
+- Input validation
 
-* Runs entirely on **GitHub Codespaces**
-* No local machine required
-* AI-assisted development using Copilot / Continue.dev
+✅ **Developer Experience**
+- Interactive Swagger UI at `/docs`
+- ReDoc at `/redoc`
+- Detailed error messages
+- Full type hints
+
+### 🧪 Testing & CI/CD
+
+✅ **40+ Pytest Tests**
+- Execution logic coverage
+- API endpoint testing
+- Excel parsing validation
+- Error scenarios
+
+✅ **GitHub Actions CI/CD**
+- Tests on Python 3.10, 3.11, 3.12
+- Code quality (black, ruff, mypy)
+- Security scanning (Bandit, pip-audit)
+- Coverage reporting
+
+### 📦 Dependency Management
+
+✅ **Split Dependencies**
+- `requirements-prod.txt` – Production only
+- `requirements-dev.txt` – Dev tools + testing
+- Poetry support in `pyproject.toml`
+- Vulnerability scanning
+
+---
+
+## 🚀 Quick Start
+
+### Installation
+
+```bash
+# Clone repo
+git clone https://github.com/KaisukaTran/findmy-fm.git
+cd findmy-fm
+
+# Create virtual environment
+python3.10 -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements-prod.txt
+# OR for development:
+pip install -r requirements-dev.txt
+```
+
+### Run the API
+
+```bash
+# Option 1: Direct Python
+python src/findmy/api/main.py
+
+# Option 2: Uvicorn
+uvicorn src.findmy.api.main:app --reload
+```
+
+Server runs at: `http://localhost:8000`
+
+### Try It Out
+
+```bash
+# 1. Health check
+curl http://localhost:8000/
+
+# 2. Execute paper trading
+curl -X POST http://localhost:8000/paper-execution \
+  -F "file=@examples/sample_purchase_order_with_header.xlsx"
+
+# 3. View API docs
+# Open: http://localhost:8000/docs
+```
 
 ---
 
@@ -64,181 +149,206 @@ The core principles are:
 
 ```
 findmy-fm/
-├─ src/
-│  └─ findmy/
-│     ├─ api/
-│     │  └─ main.py              # FastAPI application
-│     ├─ execution/
-│     │  └─ paper_execution.py   # Paper trading engine
-│     └─ __init__.py
+├─ src/findmy/
+│  ├─ api/
+│  │  ├─ main.py                 # FastAPI app (secure upload)
+│  │  ├─ schemas.py              # Pydantic models
+│  │  └─ common/
+│  │     ├─ errors.py            # Error handling
+│  │     └─ middleware.py        # Middleware
+│  └─ execution/
+│     └─ paper_execution.py      # Execution engine (fully typed)
+├─ tests/
+│  ├─ test_paper_execution.py    # 40+ tests
+│  └─ test_api.py                # API tests
+├─ examples/
+│  ├─ README.md                  # Excel format guide
+│  ├─ sample_purchase_order_with_header.xlsx
+│  ├─ sample_purchase_order_english.xlsx
+│  ├─ sample_purchase_order_no_header.xlsx
+│  └─ sample_purchase_order_with_errors.xlsx
 ├─ docs/
-│  ├─ README.md                  # Documentation index
+│  ├─ api.md                     # REST API reference
+│  ├─ database-schema.md         # Data model
 │  ├─ architecture.md            # System design
-│  ├─ api.md                     # API reference
 │  ├─ execution.md               # Execution engine
-│  ├─ modules.md                 # Code organization
-│  ├─ strategy.md                # Strategy development
-│  ├─ rules.md                   # Architectural rules
-│  ├─ roadmap.md                 # Project timeline
-│  ├─ SOT.md                     # Data model
-│  └─ devlog/                    # Development journal
+│  └─ roadmap.md                 # Feature roadmap
+├─ .github/workflows/
+│  └─ tests.yml                  # CI/CD pipeline
 ├─ data/
-│  ├─ uploads/                   # Uploaded Excel files
-│  └─ findmy_fm_paper.db         # SQLite paper trading database
-├─ scripts/
-│  └─ start_api.sh               # Start FastAPI server
-├─ .venv/
-├─ requirements.txt
-├─ pyproject.toml
+│  ├─ uploads/                   # Temp files (auto-cleaned)
+│  └─ findmy_fm_paper.db         # SQLite database
+├─ requirements-prod.txt         # Production dependencies
+├─ requirements-dev.txt          # Development tools
+├─ pyproject.toml                # Poetry + tool config
+├─ LICENSE                       # MIT License
 ├─ CONTRIBUTING.md               # Contribution guide
-├─ DOCUMENTATION.md              # Documentation standards
 └─ README.md
 ```
 
 ---
 
-## 📊 Excel Input Specification
+## 📊 Excel Input Format
 
-**Sheet name (required):**
+**Sheet Name:** `purchase order` (required)
 
-```
-purchase order
-```
+**With Headers (Vietnamese):**
+| Số Thứ Tự Lệnh | Khối Lượng Mua | Giá Đặt Lệnh | Cặp Tiền Ảo Giao Dịch |
+|---|---|---|---|
+| ORD001 | 10.5 | 50000 | BTC/USD |
 
-**Column order (A–D):**
+**With Headers (English):**
+| Client ID | Quantity | Price | Symbol |
+|---|---|---|---|
+| ORD001 | 10.5 | 50000 | BTC/USD |
 
-| Column | Description                      |
-| ------ | -------------------------------- |
-| A      | Order sequence / client order id |
-| B      | Buy quantity                     |
-| C      | Order price                      |
-| D      | Trading pair (symbol)            |
+**Without Headers (Positional):**
+- Column A: Client Order ID
+- Column B: Quantity
+- Column C: Price
+- Column D: Symbol
 
-> Header row is optional. If headers do not match expected names, the system falls back to positional mapping.
-
----
-
-## 🌐 API Endpoints
-
-### Health Check
-
-```
-GET /
-```
-
-Response:
-
-```json
-{
-  "status": "ok",
-  "service": "FINDMY FM API"
-}
-```
+See [examples/](examples/) for sample files.
 
 ---
 
-### Paper Trading Execution
+## 🛠️ Development
 
-```
-POST /paper-execution
-```
-
-**Description:**
-
-* Upload Excel file
-* Trigger paper trading execution
-* Persist results to SQLite
-* Return execution summary
-
-**Example Response:**
-
-```json
-{
-  "status": "success",
-  "result": {
-    "orders": 5,
-    "trades": 5,
-    "positions": [
-      {
-        "symbol": "BTC/USDT",
-        "size": 0.3,
-        "avg_price": 63500
-      }
-    ]
-  }
-}
-```
-
----
-
-## ▶️ How to Run (Development)
-
-### 1️⃣ Activate Virtual Environment
+### Run Tests
 
 ```bash
-source .venv/bin/activate
+# All tests
+pytest tests/ -v
+
+# With coverage
+pytest tests/ --cov=src --cov-report=html
+
+# Specific test
+pytest tests/test_paper_execution.py::TestParseOrdersFromExcel -v
 ```
 
-### 2️⃣ Start FastAPI Server
+### Code Quality
 
 ```bash
-./scripts/start_api.sh
-```
+# Format
+black src/ tests/
 
-### 3️⃣ Open Swagger UI
+# Lint
+ruff check src/ tests/
 
-```
-/docs
+# Type check
+mypy src/ --ignore-missing-imports
+
+# Security
+bandit -r src/
+pip-audit
 ```
 
 ---
 
-## 🧠 Design Principles
+## 🔐 Security Features
 
-* **Execution is deterministic**: same input → same result
-* **Strategies are stateless** and isolated from execution
-* **Persistence-first**: every action is auditable
-* **Separation of concerns**: API ≠ execution ≠ strategy
+| Feature | Details |
+|---------|---------|
+| 🔒 **File Validation** | MIME type + extension check |
+| 📏 **Size Limits** | 10MB maximum |
+| 🆔 **Safe Filenames** | UUID-based (prevents collisions) |
+| 🗑️ **Auto Cleanup** | Temp files deleted after use |
+| ✅ **Input Validation** | Numeric type checking |
+| 🔄 **Error Isolation** | Bad rows don't crash batch |
+| 📝 **Type Safety** | 100% type hints on new code |
+| 📚 **Documentation** | Comprehensive docstrings |
 
 ---
 
-## 🛣️ Roadmap
+## 🗺️ Roadmap
 
-### v2
+### v0.2.0 (Next)
+- [ ] SELL orders with position reduction
+- [ ] Partial fills
+- [ ] Order cancellation
+- [ ] Enhanced reporting
+- [ ] Database migrations
 
-* PnL & equity curve calculation
-* Detailed execution report (orders, trades)
-* SELL orders support
+### v0.3.0
+- [ ] Async processing
+- [ ] WebSocket updates
+- [ ] Trade history API
+- [ ] P&L calculations
+- [ ] Analytics
 
-### v3
+### v1.0.0
+- [ ] Live trading
+- [ ] Rate limiting
+- [ ] Backtesting
+- [ ] Strategy framework
+- [ ] Risk management
 
-* Strategy engine (signal → execution)
-* Execution adapter pattern
-* Slippage & latency simulation
+See [docs/roadmap.md](docs/roadmap.md) for details.
 
-### v4
+---
 
-* Async execution with execution_id
-* Backtesting & replay engine
+## 🤝 Contributing
 
-### v5
+Contributions welcome! Please:
 
-* Live trading adapters (exchange/broker)
+1. Read [CONTRIBUTING.md](CONTRIBUTING.md)
+2. Check [Issues](https://github.com/KaisukaTran/findmy-fm/issues)
+3. Fork & create feature branch
+4. Run tests: `pytest tests/ -v`
+5. Format code: `black src/ tests/`
+6. Submit Pull Request
+
+---
+
+## 📄 License
+
+MIT License – See [LICENSE](LICENSE) for details.
+
+Open source and community-driven. 🎉
 
 ---
 
 ## ⚠️ Disclaimer
 
 This project is for **research and educational purposes only**.
-It is **not financial advice** and should not be used for live trading without thorough testing and risk management.
+
+**Not financial advice.** Do not use for live trading without thorough testing and risk management.
 
 ---
 
-## 👤 Author
+## 📞 Support
 
-**Kai**
-Project: FINDMY (FM)
+- **Issues**: [GitHub Issues](https://github.com/KaisukaTran/findmy-fm/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/KaisukaTran/findmy-fm/discussions)
+- **Docs**: [Full Documentation](docs/)
 
 ---
 
-> *“Build the system as if it will trade real money — even when it doesn’t.”*
+## 📊 Project Stats
+
+- **Language**: Python 3.10+
+- **Framework**: FastAPI + SQLAlchemy + pandas
+- **Database**: SQLite
+- **Tests**: 40+ unit & integration tests
+- **Coverage**: >80%
+- **Type Coverage**: 100% on new code
+- **Lines of Code**: ~2000 (core + tests)
+
+---
+
+## 🙏 Acknowledgments
+
+Built with ❤️ using:
+- [FastAPI](https://fastapi.tiangolo.com/) – Modern Python web framework
+- [SQLAlchemy](https://www.sqlalchemy.org/) – SQL toolkit
+- [pandas](https://pandas.pydata.org/) – Data analysis
+- [pytest](https://pytest.org/) – Testing
+
+---
+
+**Happy trading! 🚀**
+
+> *"Build the system as if it will trade real money — even when it doesn't."*
+
+*Last updated: January 2025*

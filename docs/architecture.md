@@ -78,7 +78,57 @@ FINDMY (FM) is a modular, research-first trading system designed to evolve from 
 
 ---
 
-## Data Flow
+### 5. **Trade Service (TS) Module** (`services/ts/`) ✅ – Phase 2
+
+**Purpose**: Aggregate trades from SOT and provide P&L calculations, position tracking, and trade lifecycle management.
+
+**Implementation Status**: ✅ Complete
+
+**Architecture**:
+```
+TS API Layer (10 endpoints)
+    ↓ reads from
+TS Service Layer (business logic)
+    ↓ accesses via
+TS Repository Layer (queries)
+    ↓ reads from
+SOT (Order, OrderFill, OrderCost)
+```
+
+**Key Responsibilities**:
+- Read-only integration with SOT
+- Trade aggregation (entry order → exit order sequences)
+- P&L calculations (gross, net, realized, unrealized, fees)
+- Position inventory tracking with cost basis averaging
+- Trade lifecycle (OPEN, PARTIAL, CLOSED)
+- Performance metrics and analytics
+
+**Database Models**:
+- **Trade**: Entry/exit order pairs with status and strategy tracking
+- **TradePnL**: P&L snapshots with fees and performance metrics
+- **TradePosition**: Inventory state with average price and cumulative data
+- **TradePerformance**: Time-bucketed metrics
+
+**API Endpoints**:
+```
+POST   /api/v1/ts/trades/open           → Create new trade
+POST   /api/v1/ts/trades/{id}/close     → Close/partial close
+GET    /api/v1/ts/trades/{id}           → Get trade details
+GET    /api/v1/ts/trades                → List trades
+GET    /api/v1/ts/trades/{id}/pnl       → Get trade P&L
+GET    /api/v1/ts/pnl/total             → Aggregate P&L
+GET    /api/v1/ts/positions/{symbol}    → Get position inventory
+GET    /api/v1/ts/positions             → List positions
+GET    /api/v1/ts/health                → Health check
+```
+
+**Design Principles**:
+- **Read-only SOT integration**: Never modifies SOT data
+- **Layer separation**: API → Service → Repository → Models
+- **Testable**: 14/14 tests passing with comprehensive coverage
+- **Deterministic**: Same input always produces same P&L
+
+---
 
 ```
 User Upload (Excel)

@@ -28,29 +28,37 @@ FINDMY evolves from a **paper trading simulator** to a **production-grade tradin
 
 ---
 
-## Phase 2: Enhanced Execution (Q1 2026)
+## Phase 2: Enhanced Execution (Q1 2026) – In Progress
 
 **Timeline**: Jan – Mar 2026
 
+**Completed** ✅:
+- [x] **Trade Service (TS)** - Trade aggregation & P&L calculations
+  - Read-only integration with SOT
+  - 4 database models: Trade, TradePnL, TradePosition, TradePerformance
+  - 20+ repository methods
+  - 10 REST API endpoints
+  - Full test coverage (14/14 tests passing)
+
 **Objectives**:
-- [ ] SELL order support
+- [x] Trade aggregation (entry → exit P&L) ✅
+- [x] Cost basis calculation ✅
+- [x] Position averaging (multiple entries) ✅
+- [ ] SELL order support (in progress)
 - [ ] Partial fill simulation
 - [ ] Execution costs (fees, slippage)
-- [ ] Position averaging (multiple entries)
-- [ ] Trade aggregation (entry → exit P&L)
 
-**New Features**:
+**In Progress / Remaining**:
 - [ ] Stop-loss and take-profit orders
 - [ ] Order cancellation support
 - [ ] Position sizing algorithms
-- [ ] Cost basis calculation
-- [ ] Realized vs. unrealized P&L
+- [ ] Performance metrics dashboard
 
 **Technical**:
-- [ ] Execution history API
-- [ ] Position reconciliation
-- [ ] Execution audit trail
-- [ ] Performance metrics dashboard
+- [x] Trade Service API endpoints
+- [x] P&L calculation engine (gross, net, realized, unrealized)
+- [x] Position reconciliation with inventory tracking
+- [x] Comprehensive test suite
 
 ---
 
@@ -243,10 +251,13 @@ FINDMY evolves from a **paper trading simulator** to a **production-grade tradin
 - [x] Documentation complete
 
 ### Phase 2
+- [x] Trade Service (TS) fully implemented ✅
+- [x] Trade aggregation (entry → exit) tested ✅
+- [x] P&L calculations verified (gross, net, fees) ✅
+- [x] Position tracking with cost basis averaging ✅
+- [x] 14/14 tests passing ✅
 - [ ] SELL orders working end-to-end
 - [ ] Partial fills simulated correctly
-- [ ] P&L calculations verified
-- [ ] Trade aggregation tested
 - [ ] API backwards compatible
 
 ### Phase 3

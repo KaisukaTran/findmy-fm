@@ -1,12 +1,16 @@
 from fastapi import FastAPI
-from findmy.api.common.handlers import value_error_handler
-from findmy.api.common.middleware import trace_id_middleware
 
+from findmy.api.sot.routes import router as sot_router
+# (nếu có audit)
+# from findmy.api.audit.routes import router as audit_router
 
-app = FastAPI()
+app = FastAPI(
+    title="FINDMY API",
+    version="0.6.1",
+)
 
+# 🔴 BẮT BUỘC PHẢI CÓ
+app.include_router(sot_router)
 
-app.add_exception_handler(ValueError, value_error_handler)
-
-
-app.middleware("http")(trace_id_middleware)
+# (optional)
+# app.include_router(audit_router)

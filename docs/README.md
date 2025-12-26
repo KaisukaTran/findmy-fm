@@ -1,53 +1,211 @@
-# FINDMY – Documentation Structure
+# FINDMY – Documentation Index
 
-This document defines the **official documentation layout** for the FINDMY (FM) project.
-It is designed to support **long-term development**, clear knowledge retention, and easy onboarding.
+Welcome! This is your guide to FINDMY documentation. Start here to understand the project, then dive into specific topics.
 
 ---
 
-## 📁 Recommended `docs/` Structure
+## 🎯 Start Here
+
+**New to FINDMY?** Begin with:
+
+1. **[Root README](../README.md)** – Project overview, quick start, features
+2. **[Architecture](architecture.md)** – System design and how components interact
+3. **[API Reference](api.md)** – How to use the REST API
+
+**Contributing code?** Read:
+1. **[CONTRIBUTING.md](../CONTRIBUTING.md)** – Development workflow and standards
+2. **[Rules](rules.md)** – Architectural principles you must follow
+3. **[Modules](modules.md)** – Code organization and module guide
+
+---
+
+## 📁 Complete Documentation Map
+
+| Document | Purpose | Audience |
+|----------|---------|----------|
+| **[architecture.md](architecture.md)** | System design, data flow, module responsibilities | Everyone |
+| **[api.md](api.md)** | REST API endpoints, request/response examples | API users, integrators |
+| **[execution.md](execution.md)** | Execution engine design, order lifecycle, limitations | Developers, traders |
+| **[modules.md](modules.md)** | Code organization, class/function reference | Developers |
+| **[strategy.md](strategy.md)** | How to build trading strategies, examples | Strategy developers |
+| **[rules.md](rules.md)** | Architectural constraints and principles | Code reviewers, architects |
+| **[roadmap.md](roadmap.md)** | Project phases, timeline, future features | Everyone |
+| **[SOT.md](SOT.md)** | Data model, source of truth design | Data engineers |
+
+---
+
+## 👥 Reading by Role
+
+### For New Developers
+
+1. Start with [Root README](../README.md)
+2. Read [Architecture](architecture.md)
+3. Understand [Rules](rules.md)
+4. Check [Modules](modules.md) for code organization
+5. See [CONTRIBUTING.md](../CONTRIBUTING.md) before coding
+
+### For API Users / Integrators
+
+1. Check [API Reference](api.md)
+2. Review [Excel Input Specification](../README.md#excel-input-specification)
+3. See examples in [api.md](api.md#examples)
+4. Run [Quick Start](../README.md#how-to-run)
+
+### For Strategy Developers
+
+1. Read [Strategy Guide](strategy.md)
+2. Understand [Architecture](architecture.md) (especially execution flow)
+3. Review [Examples in Strategy Guide](strategy.md#example-strategies)
+4. Test with [devlog/day-02.md](devlog/day-02.md) as reference
+
+### For Data Engineers
+
+1. Read [SOT.md](SOT.md) for data model
+2. Check [Execution.md](execution.md#database-model)
+3. Review [Modules.md](modules.md) for service details
+
+### For Contributors
+
+1. Read [CONTRIBUTING.md](../CONTRIBUTING.md) – Full contribution guide
+2. Understand [Rules.md](rules.md) – Architectural constraints
+3. Follow [DOCUMENTATION.md](../DOCUMENTATION.md) – Doc standards
+4. Check [Code Standards in CONTRIBUTING.md](../CONTRIBUTING.md#code-standards)
+
+---
+
+## 🔄 Documentation Structure
 
 ```
 docs/
-├─ README.md                # Entry point for documentation
-├─ architecture.md          # System architecture & design decisions
-├─ execution.md             # Execution engine details (paper & live)
-├─ strategy.md              # Strategy interface & examples
-├─ api.md                   # FastAPI endpoints & contracts
-├─ devlog/
-│  ├─ day-01.md             # Development log – Day 1
-│  ├─ day-02.md             # Development log – Day 2
-│  └─ day-xx.md             # Future days
-└─ diagrams/
-   ├─ architecture.png
-   └─ execution-flow.png
+├── README.md                   # This file (navigation hub)
+├── architecture.md             # System design
+├── api.md                      # REST API reference
+├── execution.md                # Execution engine details
+├── modules.md                  # Code organization
+├── strategy.md                 # Strategy development guide
+├── rules.md                    # Architectural rules
+├── roadmap.md                  # Project roadmap
+├── SOT.md                      # Data model
+├── devlog/
+│   ├── day-01.md               # Development journal Day 1
+│   └── day-02.md               # Development journal Day 2
+└── diagrams/                   # (Future) Architecture diagrams
+
+/
+├── README.md                   # Project overview
+├── CONTRIBUTING.md             # Contribution guide
+└── DOCUMENTATION.md            # Documentation standards
 ```
 
 ---
 
-## 📘 Purpose of Each Document
+## 🚀 Key Concepts
 
-### `README.md` (inside docs/)
+### Execution Engine
+A **deterministic paper trading simulator** that processes orders and tracks positions. See [execution.md](execution.md).
 
-* High-level documentation index
-* Links to all other documents
-* Entry point for contributors
+### Source of Truth (SOT)
+The **authoritative database** storing all trading facts (orders, fills, positions). See [SOT.md](SOT.md).
 
----
+### Strategy
+A **stateless function** that generates trading signals from market data. See [strategy.md](strategy.md).
 
-### `architecture.md`
-
-* High-level system architecture
-* Module responsibilities
-* Data flow (strategy → execution → persistence)
-* Design decisions & rationale
+### API
+A **FastAPI REST service** accepting Excel uploads and returning execution results. See [api.md](api.md).
 
 ---
 
-### `execution.md`
+## 📋 Development Phases
 
-* Paper trading execution logic
-* Order lifecycle
+| Phase | Status | Docs |
+|-------|--------|------|
+| **Phase 1** – Paper Trading | ✅ Done | [roadmap.md](roadmap.md#phase-1-paper-trading-foundation-) |
+| **Phase 2** – Enhanced Execution | ⏳ Q1 2026 | [roadmap.md](roadmap.md#phase-2-enhanced-execution-q1-2026) |
+| **Phase 3** – Risk Management | ⏳ Q2 2026 | [roadmap.md](roadmap.md#phase-3-risk-management-q2-2026) |
+| **Phase 4** – Backtesting | ⏳ Q3 2026 | [roadmap.md](roadmap.md#phase-4-backtesting-engine-q3-2026) |
+| **Phase 5** – Strategy Engine | ⏳ Q3-Q4 2026 | [roadmap.md](roadmap.md#phase-5-strategy-engine-q3--q4-2026) |
+| **Phase 6** – Live Trading | ⏳ Q4 2026 – Q1 2027 | [roadmap.md](roadmap.md#phase-6-live-trading-q4-2026--q1-2027) |
+
+---
+
+## 🔗 Quick Links
+
+- **Project Home**: [GitHub](https://github.com/KaisukaTran/findmy-fm)
+- **API Playground**: Run `./scripts/start_api.sh`, then visit `http://localhost:8000/docs`
+- **Development Log**: [day-01.md](devlog/day-01.md), [day-02.md](devlog/day-02.md)
+- **Report an Issue**: [GitHub Issues](https://github.com/KaisukaTran/findmy-fm/issues)
+
+---
+
+## ❓ Common Questions
+
+**Q: Where do I start?**
+A: Read [Root README](../README.md) then [Architecture](architecture.md).
+
+**Q: How do I make changes?**
+A: See [CONTRIBUTING.md](../CONTRIBUTING.md) for full workflow.
+
+**Q: What are the rules I must follow?**
+A: See [Rules](rules.md) for architectural constraints.
+
+**Q: Where is the code?**
+A: Core code is in `src/findmy/`. See [Modules](modules.md) for details.
+
+**Q: How do I run the API?**
+A: Run `./scripts/start_api.sh`. See [API Reference](api.md) for endpoints.
+
+**Q: How do I write a strategy?**
+A: See [Strategy Guide](strategy.md) with examples.
+
+---
+
+## 🔍 Searching Docs
+
+Within VS Code:
+- `Ctrl+Shift+F` (Windows/Linux) or `Cmd+Shift+F` (Mac)
+- Search in `docs/` folder
+
+Or use GitHub's search at the top of the repository.
+
+---
+
+## 📚 External Resources
+
+- **Python**: [Python 3.10+ Docs](https://docs.python.org/3/)
+- **FastAPI**: [FastAPI Documentation](https://fastapi.tiangolo.com/)
+- **SQLAlchemy**: [SQLAlchemy Docs](https://docs.sqlalchemy.org/)
+- **Pandas**: [Pandas Docs](https://pandas.pydata.org/docs/)
+
+---
+
+## 🤝 Contributing to Docs
+
+Found an error or want to improve docs?
+
+1. Fork the repository
+2. Edit the `.md` file
+3. Submit a pull request
+
+See [CONTRIBUTING.md](../CONTRIBUTING.md#documentation-requirements) for guidelines.
+
+---
+
+## 📝 Documentation Standards
+
+All documentation follows these standards:
+- **Format**: Markdown
+- **Structure**: Consistent headings and sections
+- **Examples**: Always runnable code
+- **Links**: All cross-references tested
+- **Style**: Clear, technical, helpful tone
+
+See [DOCUMENTATION.md](../DOCUMENTATION.md) for detailed doc standards.
+
+---
+
+> **Last Updated**: December 26, 2025
+> 
+> For changes to this index, see [docs/README.md](https://github.com/KaisukaTran/findmy-fm/blob/main/docs/README.md)
 * Fill simulation
 * Database schema overview
 * Roadmap to live execution

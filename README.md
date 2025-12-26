@@ -6,6 +6,16 @@ Small. Cute. Flexible. Funny Project
 
 ---
 
+## � Documentation
+
+**New to FINDMY?** Start here:
+- **[Full Documentation Index](docs/README.md)** – Complete guide to all docs
+- **[Architecture](docs/architecture.md)** – System design and components
+- **[Contributing Guide](CONTRIBUTING.md)** – How to develop and contribute
+- **[API Reference](docs/api.md)** – REST API endpoints and examples
+
+---
+
 ## 🚀 Project Vision
 
 FINDMY is designed as a **production-grade trading system**, not a demo bot.
@@ -61,6 +71,17 @@ findmy-fm/
 │     ├─ execution/
 │     │  └─ paper_execution.py   # Paper trading engine
 │     └─ __init__.py
+├─ docs/
+│  ├─ README.md                  # Documentation index
+│  ├─ architecture.md            # System design
+│  ├─ api.md                     # API reference
+│  ├─ execution.md               # Execution engine
+│  ├─ modules.md                 # Code organization
+│  ├─ strategy.md                # Strategy development
+│  ├─ rules.md                   # Architectural rules
+│  ├─ roadmap.md                 # Project timeline
+│  ├─ SOT.md                     # Data model
+│  └─ devlog/                    # Development journal
 ├─ data/
 │  ├─ uploads/                   # Uploaded Excel files
 │  └─ findmy_fm_paper.db         # SQLite paper trading database
@@ -69,6 +90,8 @@ findmy-fm/
 ├─ .venv/
 ├─ requirements.txt
 ├─ pyproject.toml
+├─ CONTRIBUTING.md               # Contribution guide
+├─ DOCUMENTATION.md              # Documentation standards
 └─ README.md
 ```
 

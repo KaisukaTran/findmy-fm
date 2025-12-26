@@ -42,7 +42,7 @@ def create_order_request(
         raw_payload=raw_payload,
     )
     db.add(req)
-    db.flush()
+    db.commit()
     db.refresh(req)
     return req
 def create_order(
@@ -61,7 +61,7 @@ def create_order(
         sent_at=datetime.utcnow(),
     )
     db.add(order)
-    db.flush()
+    db.commit()
     db.refresh(order)
     return order
 def append_order_event(
@@ -77,7 +77,7 @@ def append_order_event(
         payload=payload,
     )
     db.add(event)
-    db.flush()
+    db.commit()
     return event
 def insert_order_fill(
     db: Session,
@@ -99,7 +99,7 @@ def insert_order_fill(
         filled_at=datetime.utcnow(),
     )
     db.add(fill)
-    db.flush()
+    db.commit()
     return fill
 def calculate_and_save_order_cost(db: Session, *, order_id: int):
     total_fee = (
@@ -114,7 +114,7 @@ def calculate_and_save_order_cost(db: Session, *, order_id: int):
     )
 
     db.merge(cost)
-    db.flush()
+    db.commit()
     return cost
 def calculate_and_save_order_pnl(
     db: Session,
@@ -151,15 +151,5 @@ def calculate_and_save_order_pnl(
     )
 
     db.merge(pnl_snapshot)
-    db.flush()
+    db.commit()
     return pnl_snapshot
-def update_order_status(
-    db: Session,
-    *,
-    order_id: int,
-    status: str,
-):
-    order = db.query(Order).filter(Order.id == order_id).one()
-    order.status = status
-    db.flush()
-    return order

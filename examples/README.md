@@ -8,9 +8,9 @@ This is a sample Excel file that demonstrates the expected format for the FINDMY
 
 ### With Headers (Recommended)
 
-The system supports Vietnamese and English column names:
+The system supports English column names:
 
-| Số Thứ Tự Lệnh | Khối Lượng Mua | Giá Đặt Lệnh | Cặp Tiền Ảo Giao Dịch |
+| Order ID | Quantity | Price | Trading Pair |
 |---|---|---|---|
 | 001 | 10.5 | 50000 | BTC/USD |
 | 002 | 20.0 | 3000 | ETH/USD |

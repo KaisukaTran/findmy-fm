@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 
 from findmy.api.sot.routes import router as sot_router
-# (nếu có audit)
+# (if audit exists)
 # from findmy.api.audit.routes import router as audit_router
 
 app = FastAPI(
@@ -9,7 +9,7 @@ app = FastAPI(
     version="0.6.1",
 )
 
-# 🔴 BẮT BUỘC PHẢI CÓ
+# 🔴 REQUIRED
 app.include_router(sot_router)
 
 # (optional)

@@ -36,10 +36,10 @@ def sample_excel_with_header(tmp_path):
     """Create sample Excel file with proper header."""
     file_path = tmp_path / "test_with_header.xlsx"
     df = pd.DataFrame({
-        "Số Thứ Tự Lệnh": ["001", "002", "003"],
-        "Khối Lượng Mua": [10.5, 20.0, 15.3],
-        "Giá Đặt Lệnh": [100.0, 200.5, 150.75],
-        "Cặp Tiền Ảo Giao Dịch": ["BTC/USD", "ETH/USD", "BTC/USD"],
+        "Order ID": ["001", "002", "003"],
+        "Quantity": [10.5, 20.0, 15.3],
+        "Price": [100.0, 200.5, 150.75],
+        "Trading Pair": ["BTC/USD", "ETH/USD", "BTC/USD"],
     })
     df.to_excel(file_path, sheet_name="purchase order", index=False)
     return str(file_path)
@@ -86,10 +86,10 @@ def sample_excel_invalid_data(tmp_path):
     """Create Excel file with invalid numeric data."""
     file_path = tmp_path / "test_invalid_data.xlsx"
     df = pd.DataFrame({
-        "Số Thứ Tự Lệnh": ["001", "002"],
-        "Khối Lượng Mua": ["invalid", 20.0],
-        "Giá Đặt Lệnh": [100.0, "invalid"],
-        "Cặp Tiền Ảo Giao Dịch": ["BTC/USD", "ETH/USD"],
+        "Order ID": ["001", "002"],
+        "Quantity": ["invalid", 20.0],
+        "Price": [100.0, "invalid"],
+        "Trading Pair": ["BTC/USD", "ETH/USD"],
     })
     df.to_excel(file_path, sheet_name="purchase order", index=False)
     return str(file_path)
@@ -99,7 +99,7 @@ class TestParseOrdersFromExcel:
     """Test Excel parsing with various formats."""
 
     def test_parse_with_header(self, sample_excel_with_header):
-        """Test parsing Excel with proper Vietnamese header."""
+        """Test parsing Excel with proper headers."""
         df = parse_orders_from_excel(sample_excel_with_header)
         assert len(df) == 3
         assert list(df.columns) == ["client_id", "qty", "price", "symbol"]

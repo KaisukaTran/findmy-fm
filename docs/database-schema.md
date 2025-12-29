@@ -175,10 +175,10 @@ orders (1) ──── (M) trades
 
 **Input Excel:**
 ```
-Số Thứ Tự Lệnh | Khối Lượng Mua | Giá Đặt Lệnh | Cặp Tiền Ảo Giao Dịch
-ORD001         | 0.5           | 50000       | BTC/USD
-ORD002         | 0.5           | 51000       | BTC/USD
-ORD003         | 0.5           | 52000       | BTC/USD
+Order ID | Quantity | Price | Trading Pair
+ORD001   | 0.5      | 50000 | BTC/USD
+ORD002   | 0.5      | 51000 | BTC/USD
+ORD003   | 0.5      | 52000 | BTC/USD
 ```
 
 **Orders Table After Processing:**

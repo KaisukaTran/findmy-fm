@@ -192,12 +192,12 @@ findmy-fm/
 
 **Sheet Name:** `purchase order` (required)
 
-**With Headers (Vietnamese):**
-| Số Thứ Tự Lệnh | Khối Lượng Mua | Giá Đặt Lệnh | Cặp Tiền Ảo Giao Dịch |
+**With Headers (English):**
+| Order ID | Quantity | Price | Trading Pair |
 |---|---|---|---|
 | ORD001 | 10.5 | 50000 | BTC/USD |
 
-**With Headers (English):**
+**Alternative English Headers:**
 | Client ID | Quantity | Price | Symbol |
 |---|---|---|---|
 | ORD001 | 10.5 | 50000 | BTC/USD |

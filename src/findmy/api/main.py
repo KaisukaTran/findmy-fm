@@ -8,7 +8,7 @@ from typing import Optional
 
 from findmy.execution.paper_execution import run_paper_execution
 
-# ✅ 1. KHAI BÁO APP TRƯỚC
+# ✅ 1. DECLARE APP FIRST
 app = FastAPI(
     title="FINDMY FM – Paper Trading API",
     version="1.0",
@@ -28,7 +28,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 def health_check():
     return {"status": "ok", "service": "FINDMY FM API"}
 
-# ✅ 2. SAU ĐÓ MỚI ĐƯỢC DÙNG @app.post
+# ✅ 2. THEN USE @app.post
 @app.post("/paper-execution")
 async def paper_execution(file: UploadFile = File(...)):
     """

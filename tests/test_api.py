@@ -16,10 +16,10 @@ def sample_excel_file(tmp_path):
     """Create a valid sample Excel file."""
     file_path = tmp_path / "test_orders.xlsx"
     df = pd.DataFrame({
-        "Số Thứ Tự Lệnh": ["001", "002"],
-        "Khối Lượng Mua": [10.5, 20.0],
-        "Giá Đặt Lệnh": [100.0, 200.5],
-        "Cặp Tiền Ảo Giao Dịch": ["BTC/USD", "ETH/USD"],
+        "Order ID": ["001", "002"],
+        "Quantity": [10.5, 20.0],
+        "Price": [100.0, 200.5],
+        "Trading Pair": ["BTC/USD", "ETH/USD"],
     })
     df.to_excel(file_path, sheet_name="purchase order", index=False)
     return file_path
@@ -31,10 +31,10 @@ def large_excel_file(tmp_path):
     file_path = tmp_path / "large_file.xlsx"
     # Create a large dataframe that exceeds 10MB
     data = {
-        "Số Thứ Tự Lệnh": list(range(1000000)),
-        "Khối Lượng Mua": [1.0] * 1000000,
-        "Giá Đặt Lệnh": [100.0] * 1000000,
-        "Cặp Tiền Ảo Giao Dịch": ["BTC/USD"] * 1000000,
+        "Order ID": list(range(1000000)),
+        "Quantity": [1.0] * 1000000,
+        "Price": [100.0] * 1000000,
+        "Trading Pair": ["BTC/USD"] * 1000000,
     }
     df = pd.DataFrame(data)
     df.to_excel(file_path, sheet_name="purchase order", index=False)
@@ -142,10 +142,10 @@ class TestErrorHandling:
         """Test that uploaded files are cleaned up after processing."""
         file_path = tmp_path / "test.xlsx"
         df = pd.DataFrame({
-            "Số Thứ Tự Lệnh": ["001"],
-            "Khối Lượng Mua": [10.0],
-            "Giá Đặt Lệnh": [100.0],
-            "Cặp Tiền Ảo Giao Dịch": ["BTC/USD"],
+            "Order ID": ["001"],
+            "Quantity": [10.0],
+            "Price": [100.0],
+            "Trading Pair": ["BTC/USD"],
         })
         df.to_excel(file_path, sheet_name="purchase order", index=False)
         

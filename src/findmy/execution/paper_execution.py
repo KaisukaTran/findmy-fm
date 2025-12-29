@@ -193,10 +193,10 @@ def parse_orders_from_excel(path: str, sheet_name: str = SHEET_NAME) -> pd.DataF
     df.columns = [str(c).lower().strip() for c in df.columns]
 
     col_map = {
-        "client_id": ["số thứ tự lệnh", "stt", "client_id", "order id"],
-        "qty": ["khối lượng mua", "qty", "quantity"],
-        "price": ["giá đặt lệnh", "price", "giá"],
-        "symbol": ["cặp tiền ảo giao dịch", "symbol", "pair"],
+        "client_id": ["order id", "stt", "client_id"],
+        "qty": ["quantity", "qty"],
+        "price": ["price"],
+        "symbol": ["trading pair", "symbol", "pair"],
     }
 
     mapped = {}
@@ -206,7 +206,7 @@ def parse_orders_from_excel(path: str, sheet_name: str = SHEET_NAME) -> pd.DataF
                 mapped[key] = c
                 break
 
-    # ---------- FALLBACK: HEADER KHÔNG KHỚP ----------
+    # ---------- FALLBACK: HEADER MISMATCH ----------
     if len(mapped) < 4:
         df = df.iloc[:, :4]
         df.columns = ["client_id", "qty", "price", "symbol"]

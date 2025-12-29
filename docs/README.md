@@ -11,11 +11,13 @@ Welcome! This is your guide to FINDMY documentation. Start here to understand th
 1. **[Root README](../README.md)** – Project overview, quick start, features
 2. **[Architecture](architecture.md)** – System design and how components interact
 3. **[API Reference](api.md)** – How to use the REST API
+4. **[Configuration & Secrets](configuration.md)** – Environment setup, local development, production deployment
 
 **Contributing code?** Read:
 1. **[CONTRIBUTING.md](../CONTRIBUTING.md)** – Development workflow and standards
 2. **[Rules](rules.md)** – Architectural principles you must follow
 3. **[Modules](modules.md)** – Code organization and module guide
+4. **[Configuration](configuration.md)** – How to handle secrets safely
 
 ---
 
@@ -23,6 +25,7 @@ Welcome! This is your guide to FINDMY documentation. Start here to understand th
 
 | Document | Purpose | Audience |
 |----------|---------|----------|
+| **[configuration.md](configuration.md)** | Environment configuration, secrets management, deployment | DevOps, developers |
 | **[architecture.md](architecture.md)** | System design, data flow, module responsibilities | Everyone |
 | **[api.md](api.md)** | REST API endpoints, request/response examples | API users, integrators |
 | **[execution.md](execution.md)** | Execution engine design, order lifecycle, limitations | Developers, traders |

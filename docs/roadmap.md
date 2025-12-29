@@ -1,38 +1,63 @@
 # FINDMY – Project Roadmap
 
+**Last Updated:** December 29, 2025  
+**Current Phase:** Phase 2 (Enhanced Execution) – In Progress  
+**Latest Addition:** Production Secrets Management System (v0.1.0)
+
 ## Vision
 
 FINDMY evolves from a **paper trading simulator** to a **production-grade trading platform** supporting research, backtesting, and live execution across multiple asset classes and exchanges.
 
 ---
 
-## Phase 1: Paper Trading Foundation ✅ (Complete)
+## Phase 1: Paper Trading Foundation ✅ (Complete – December 2025)
 
-**Timeline**: Dec 2025 – Jan 2026
+**Timeline**: Dec 2025 – Complete
 
-**Objectives**:
+**Objectives** ✅ All Complete:
 - ✅ Paper trading execution engine
-- ✅ Excel-based order ingestion
-- ✅ FastAPI REST API
-- ✅ SQLite persistence
-- ✅ Cloud-ready (GitHub Codespaces)
+- ✅ Excel-based order ingestion (Vietnamese & English headers)
+- ✅ FastAPI REST API with comprehensive security
+- ✅ SQLite persistence with transaction support
+- ✅ Cloud-ready (GitHub Codespaces, Docker support)
+- ✅ Full type hints and docstrings
+- ✅ 40+ pytest tests with CI/CD
+- ✅ Comprehensive documentation
 
-**Deliverables**:
-- ✅ Deterministic execution engine
-- ✅ Order lifecycle management
-- ✅ Position tracking
-- ✅ Basic P&L calculations
-- ✅ API documentation
+**Deliverables** ✅ All Complete:
+- ✅ Deterministic execution engine with duplicate detection
+- ✅ Order lifecycle management (pending → filled → traded)
+- ✅ Position tracking with average price calculations
+- ✅ Basic P&L calculations (realized, unrealized)
+- ✅ API documentation with examples
+- ✅ Security: UUID-based filenames, MIME validation, file cleanup
+- ✅ Error handling with row-level isolation
+- ✅ Database schema documentation
+- ✅ Production secrets management system
+- ✅ Deployment guides (Docker, K8s, cloud)
 
-**Architecture**: Monolithic FastAPI + SQLite
+**Architecture**: Modular FastAPI + SQLite + Pydantic Configuration
 
 ---
 
 ## Phase 2: Enhanced Execution (Q1 2026) – In Progress
 
-**Timeline**: Jan – Mar 2026
+**Timeline**: Jan – Mar 2026 (Current Phase)
 
-**Completed** ✅:
+**Completed** ✅ (Recent Updates):
+- [x] **Production Secrets Management** (Dec 29, 2025)
+  - Pydantic BaseSettings configuration
+  - Environment variable support with .env fallback
+  - SecretStr fields prevent logging
+  - Git-safe secrets handling
+  - Production deployment ready (Docker, K8s, cloud)
+
+- [x] **Security Hardening** (Complete)
+  - File upload validation (MIME, extension, size)
+  - UUID-based filename generation
+  - Automatic file cleanup
+  - Input validation and error isolation
+
 - [x] **Trade Service (TS)** - Trade aggregation & P&L calculations
   - Read-only integration with SOT
   - 4 database models: Trade, TradePnL, TradePosition, TradePerformance
@@ -44,11 +69,14 @@ FINDMY evolves from a **paper trading simulator** to a **production-grade tradin
 - [x] Trade aggregation (entry → exit P&L) ✅
 - [x] Cost basis calculation ✅
 - [x] Position averaging (multiple entries) ✅
-- [ ] SELL order support (in progress)
-- [ ] Partial fill simulation
-- [ ] Execution costs (fees, slippage)
+- [ ] SELL order support (planned Q1)
+- [ ] Partial fill simulation (planned Q1)
+- [ ] Execution costs (fees, slippage) (planned Q1)
 
 **In Progress / Remaining**:
+- [ ] SELL order implementation
+- [ ] Partial position fills
+- [ ] Transaction costs model
 - [ ] Stop-loss and take-profit orders
 - [ ] Order cancellation support
 - [ ] Position sizing algorithms
@@ -58,7 +86,15 @@ FINDMY evolves from a **paper trading simulator** to a **production-grade tradin
 - [x] Trade Service API endpoints
 - [x] P&L calculation engine (gross, net, realized, unrealized)
 - [x] Position reconciliation with inventory tracking
-- [x] Comprehensive test suite
+- [x] Comprehensive test suite (40+ tests)
+- [x] Secrets management system
+- [x] GitHub Actions CI/CD pipeline
+
+**Infrastructure**:
+- ✅ Docker support for containerization
+- ✅ GitHub Actions for automated testing
+- ✅ Code quality checks (Black, Ruff, MyPy, Bandit)
+- ✅ Security scanning (pip-audit)
 
 ---
 

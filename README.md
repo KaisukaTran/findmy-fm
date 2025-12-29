@@ -14,6 +14,7 @@ Small. Cute. Flexible. Funny Project
 - **[Quick Start Guide](#quick-start)** – Get running in 5 minutes
 - **[Full Documentation](docs/README.md)** – Complete guide
 - **[API Reference](docs/api.md)** – REST endpoints with examples
+- **[Configuration & Secrets](docs/configuration.md)** – Environment setup & security
 - **[Database Schema](docs/database-schema.md)** – Data model
 - **[Architecture](docs/architecture.md)** – System design
 - **[Contributing](CONTRIBUTING.md)** – How to contribute

@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Tuple, Dict, Any, List
 import pandas as pd
 import logging
+from decimal import Decimal
 
 from sqlalchemy import (
     create_engine,
@@ -34,6 +35,8 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
+
+from .config import DEFAULT_CONFIG
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -402,7 +405,13 @@ def simulate_fill(session: Session, order: Order) -> Tuple[bool, Dict[str, Any]]
         old_size = float(pos.size)
         old_avg = float(pos.avg_price)
         cost_basis = qty * old_avg
-        realized_pnl = (price - old_avg) * qty
+        # Apply slippage and fees to SELL
+        slipped_price, slippage_amount = DEFAULT_CONFIG.slippage.apply_slippage(price, order.side)
+        notional = qty * slipped_price
+        fees = DEFAULT_CONFIG.fees.calculate_fee(notional, is_maker=False)
+        fee_per_unit = fees / qty if qty > 0 else 0
+        effective_price = slipped_price - fee_per_unit
+        realized_pnl = (effective_price - old_avg) * qty
 
         # Create trade record
         trade = Trade(
@@ -411,6 +420,9 @@ def simulate_fill(session: Session, order: Order) -> Tuple[bool, Dict[str, Any]]
             side="SELL",
             qty=qty,
             price=price,
+            effective_price=Decimal(str(effective_price)),
+            fees=Decimal(str(fees)),
+            slippage_amount=Decimal(str(slippage_amount)),
             ts=datetime.utcnow(),
         )
         session.add(trade)
@@ -421,18 +433,18 @@ def simulate_fill(session: Session, order: Order) -> Tuple[bool, Dict[str, Any]]
 
         # Update position
         new_size = old_size - qty
-        cumulative_realized_pnl = float(pos.realized_pnl) + realized_pnl
+        cumulative_realized_pnl = float(pos.realized_pnl) + float(realized_pnl)
 
         if new_size == 0:
             # Close position completely
-            pos.size = 0
-            pos.avg_price = 0  # No position left
-            pos.realized_pnl = cumulative_realized_pnl
+            pos.size = Decimal("0")
+            pos.avg_price = Decimal("0")  # No position left
+            pos.realized_pnl = Decimal(str(cumulative_realized_pnl))
         else:
             # Partial close: keep the same average price
-            pos.size = new_size
+            pos.size = Decimal(str(new_size))
             # avg_price stays the same for remaining position
-            pos.realized_pnl = cumulative_realized_pnl
+            pos.realized_pnl = Decimal(str(cumulative_realized_pnl))
 
         pos.updated_at = datetime.utcnow()
         session.commit()
@@ -443,20 +455,33 @@ def simulate_fill(session: Session, order: Order) -> Tuple[bool, Dict[str, Any]]
             "side": "SELL",
             "qty": qty,
             "price": price,
+            "effective_price": float(effective_price),
+            "fees": float(fees),
+            "slippage_amount": float(slippage_amount),
             "cost_basis": cost_basis,
-            "realized_pnl": realized_pnl,
+            "realized_pnl": float(realized_pnl),
             "position_remaining": new_size,
         }
 
     # ============================================================
     # BUY ORDER: Position accumulation
     # ============================================================
+    # Apply slippage and fees for BUY
+    slipped_price, slippage_amount = DEFAULT_CONFIG.slippage.apply_slippage(price, order.side)
+    notional = qty * slipped_price
+    fees = DEFAULT_CONFIG.fees.calculate_fee(notional, is_maker=False)
+    fee_per_unit = fees / qty if qty > 0 else 0
+    effective_price = slipped_price + fee_per_unit
+
     trade = Trade(
         order_id=order.id,
         symbol=order.symbol,
         side="BUY",
         qty=qty,
         price=price,
+        effective_price=Decimal(str(effective_price)),
+        fees=Decimal(str(fees)),
+        slippage_amount=Decimal(str(slippage_amount)),
         ts=datetime.utcnow(),
     )
     session.add(trade)
@@ -465,12 +490,12 @@ def simulate_fill(session: Session, order: Order) -> Tuple[bool, Dict[str, Any]]
     order.updated_at = datetime.utcnow()
 
     if pos is None:
-        # New position
+        # New position (use effective price as cost basis)
         pos = Position(
             symbol=order.symbol,
-            size=qty,
-            avg_price=price,
-            realized_pnl=0.0,
+            size=Decimal(str(qty)),
+            avg_price=Decimal(str(effective_price)),
+            realized_pnl=Decimal("0.0"),
             updated_at=datetime.utcnow(),
         )
         session.add(pos)
@@ -479,12 +504,16 @@ def simulate_fill(session: Session, order: Order) -> Tuple[bool, Dict[str, Any]]
         old_size = float(pos.size)
         old_avg = float(pos.avg_price)
         new_size = old_size + qty
-        new_avg = ((old_size * old_avg) + (qty * price)) / new_size
 
-        pos.size = new_size
-        pos.avg_price = new_avg
+        # Cost-weighted average using effective_price
+        total_cost = (old_size * old_avg) + (qty * effective_price)
+        new_avg = total_cost / new_size if new_size > 0 else 0
+
+        pos.size = Decimal(str(new_size))
+        pos.avg_price = Decimal(str(new_avg))
         pos.updated_at = datetime.utcnow()
 
+    session.add(trade)
     session.commit()
 
     return True, {
@@ -493,6 +522,9 @@ def simulate_fill(session: Session, order: Order) -> Tuple[bool, Dict[str, Any]]
         "side": "BUY",
         "qty": qty,
         "price": price,
+        "effective_price": float(effective_price),
+        "fees": float(fees),
+        "slippage_amount": float(slippage_amount),
         "position_size": float(pos.size),
     }
 

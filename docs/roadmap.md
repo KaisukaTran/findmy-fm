@@ -65,18 +65,32 @@ FINDMY evolves from a **paper trading simulator** to a **production-grade tradin
   - 10 REST API endpoints
   - Full test coverage (14/14 tests passing)
 
+- [x] **SELL Order Support (Dec 30, 2025)** ✨ NEW
+  - BUY and SELL order side detection from Excel
+  - Vietnamese (BÁN/MUA) and English support
+  - Position reduction with cost basis preservation
+  - Realized P&L calculation on sells
+  - Oversell prevention with clear error messages
+  - 38 comprehensive tests (including SELL order tests)
+  - Full documentation with examples
+
 **Objectives**:
 - [x] Trade aggregation (entry → exit P&L) ✅
 - [x] Cost basis calculation ✅
 - [x] Position averaging (multiple entries) ✅
-- [ ] SELL order support (planned Q1)
-- [ ] Partial fill simulation (planned Q1)
-- [ ] Execution costs (fees, slippage) (planned Q1)
+- [x] SELL order support ✅ (COMPLETE Dec 30)
+- [ ] Partial fill simulation (v0.3)
+- [ ] Execution costs (fees, slippage) (v0.3)
 
-**In Progress / Remaining**:
-- [ ] SELL order implementation
+**Remaining for v0.2.0 Completion**:
+- [ ] Enhanced reporting (include realized PnL in API responses)
+- [ ] Database migration system (placeholder)
+- [ ] Update README with v0.2.0 features
+
+**v0.3.0 Features (Next)**:
 - [ ] Partial position fills
 - [ ] Transaction costs model
+- [ ] Slippage & latency simulation
 - [ ] Stop-loss and take-profit orders
 - [ ] Order cancellation support
 - [ ] Position sizing algorithms
@@ -89,6 +103,8 @@ FINDMY evolves from a **paper trading simulator** to a **production-grade tradin
 - [x] Comprehensive test suite (40+ tests)
 - [x] Secrets management system
 - [x] GitHub Actions CI/CD pipeline
+- [x] SELL order execution engine
+- [x] Order side detection from Excel
 
 **Infrastructure**:
 - ✅ Docker support for containerization

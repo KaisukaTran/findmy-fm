@@ -1,18 +1,20 @@
 """
-FINDMY (FM) - Paper Trading Execution Engine v1
+FINDMY (FM) - Paper Trading Execution Engine v0.2.0
 
 Features:
 - Read Excel input (with or without header)
 - Sheet name: "purchase order"
-- BUY orders only (v1)
+- BUY and SELL orders with position reduction
 - Immediate full-fill simulation
 - SQLite persistence
 - Callable from FastAPI
+- Realized PnL calculation on SELL orders
 
 Error Handling:
 - Graceful handling of I/O and value errors
 - Type-safe numeric conversions
 - Proper database session management with context managers
+- Oversell prevention with clear error messages
 """
 
 from datetime import datetime
@@ -114,6 +116,7 @@ class Position(Base):
         symbol: Trading pair (e.g., BTC/USD)
         size: Current position size (quantity held)
         avg_price: Average purchase price
+        realized_pnl: Cumulative realized P&L from closed positions
         updated_at: Position last update timestamp
     """
     __tablename__ = "positions"
@@ -122,6 +125,7 @@ class Position(Base):
     symbol = Column(String, unique=True, nullable=False)
     size = Column(Numeric, nullable=False)
     avg_price = Column(Numeric, nullable=False)
+    realized_pnl = Column(Numeric, nullable=False, default=0.0)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
@@ -149,6 +153,33 @@ def setup_db() -> Tuple[Any, sessionmaker]:
 # EXCEL PARSER (ROBUST)
 # ============================================================
 
+def detect_order_side(side_value: Any) -> str:
+    """
+    Detect order side (BUY or SELL) from a cell value.
+    
+    Supports:
+    - English: "BUY", "SELL" (case-insensitive)
+    - Vietnamese: "MUA" (buy), "BÁN" (sell) (case-insensitive)
+    
+    Args:
+        side_value: Raw cell value (str, None, or other type)
+    
+    Returns:
+        "BUY" or "SELL" (defaults to "BUY" if not recognized)
+    """
+    if side_value is None or (isinstance(side_value, float) and pd.isna(side_value)):
+        return "BUY"
+    
+    side_str = str(side_value).strip().upper()
+    
+    # Check for SELL indicators
+    if side_str in ("SELL", "BÁN"):
+        return "SELL"
+    
+    # Default to BUY for anything else
+    return "BUY"
+
+
 def parse_orders_from_excel(path: str, sheet_name: str = SHEET_NAME) -> pd.DataFrame:
     """
     Parse orders from an Excel file with flexible header support.
@@ -156,14 +187,16 @@ def parse_orders_from_excel(path: str, sheet_name: str = SHEET_NAME) -> pd.DataF
     Supports:
     - Excel WITH header (Vietnamese / English)
     - Excel WITHOUT header
-    - Fallback to positional A,B,C,D if header mismatch
+    - Fallback to positional A,B,C,D,E if header mismatch
+    - Optional 5th column for order side (BUY/SELL)
     
     Args:
         path: File path to Excel file
         sheet_name: Name of sheet to read (default: "purchase order")
     
     Returns:
-        DataFrame with columns: [client_id, qty, price, symbol]
+        DataFrame with columns: [client_id, qty, price, symbol, side]
+        where side defaults to "BUY" if not specified
         
     Raises:
         ValueError: If sheet not found or data is invalid
@@ -185,8 +218,15 @@ def parse_orders_from_excel(path: str, sheet_name: str = SHEET_NAME) -> pd.DataF
 
     # ---------- CASE 1: NO HEADER ----------
     if all(isinstance(c, int) for c in df.columns):
-        df = df.iloc[:, :4]
-        df.columns = ["client_id", "qty", "price", "symbol"]
+        # Support 4 or 5 columns (with optional side)
+        if len(df.columns) >= 5:
+            df = df.iloc[:, :5]
+            df.columns = ["client_id", "qty", "price", "symbol", "side"]
+            df["side"] = df["side"].apply(detect_order_side)
+        else:
+            df = df.iloc[:, :4]
+            df.columns = ["client_id", "qty", "price", "symbol"]
+            df["side"] = "BUY"
         return df.dropna(subset=["symbol", "qty"])
 
     # ---------- CASE 2: HAS HEADER ----------
@@ -197,6 +237,7 @@ def parse_orders_from_excel(path: str, sheet_name: str = SHEET_NAME) -> pd.DataF
         "qty": ["quantity", "qty"],
         "price": ["price"],
         "symbol": ["trading pair", "symbol", "pair"],
+        "side": ["side", "order side", "direction"],
     }
 
     mapped = {}
@@ -208,14 +249,31 @@ def parse_orders_from_excel(path: str, sheet_name: str = SHEET_NAME) -> pd.DataF
 
     # ---------- FALLBACK: HEADER MISMATCH ----------
     if len(mapped) < 4:
-        df = df.iloc[:, :4]
-        df.columns = ["client_id", "qty", "price", "symbol"]
+        # If less than 4 required columns, try positional fallback
+        if len(df.columns) >= 5:
+            df = df.iloc[:, :5]
+            df.columns = ["client_id", "qty", "price", "symbol", "side"]
+            df["side"] = df["side"].apply(detect_order_side)
+        else:
+            df = df.iloc[:, :4]
+            df.columns = ["client_id", "qty", "price", "symbol"]
+            df["side"] = "BUY"
         return df.dropna(subset=["symbol", "qty"])
 
     # ---------- NORMAL PATH ----------
     clean = pd.DataFrame()
-    for k, c in mapped.items():
-        clean[k] = df[c]
+    for k in ["client_id", "qty", "price", "symbol"]:
+        if k in mapped:
+            clean[k] = df[mapped[k]]
+    
+    # Convert client_id to string
+    clean["client_id"] = clean["client_id"].astype(str)
+    
+    # Add side column with detection
+    if "side" in mapped:
+        clean["side"] = df[mapped["side"]].apply(detect_order_side)
+    else:
+        clean["side"] = "BUY"
 
     return clean.dropna(subset=["symbol", "qty"])
 
@@ -224,7 +282,14 @@ def parse_orders_from_excel(path: str, sheet_name: str = SHEET_NAME) -> pd.DataF
 # EXECUTION LOGIC
 # ============================================================
 
-def upsert_order(session: Session, client_order_id: str, symbol: str, qty: float, price: float) -> Tuple[Order, bool]:
+def upsert_order(
+    session: Session,
+    client_order_id: str,
+    symbol: str,
+    qty: float,
+    price: float,
+    side: str = "BUY",
+) -> Tuple[Order, bool]:
     """
     Insert or retrieve an order by client_order_id.
     
@@ -234,12 +299,13 @@ def upsert_order(session: Session, client_order_id: str, symbol: str, qty: float
         symbol: Trading pair (e.g., BTC/USD)
         qty: Order quantity
         price: Order price
+        side: Order side ("BUY" or "SELL", defaults to "BUY")
     
     Returns:
         Tuple of (Order object, is_new: bool). is_new is True if order was created.
         
     Raises:
-        ValueError: If numeric conversion fails
+        ValueError: If numeric conversion fails or side is invalid
     """
     order = session.query(Order).filter_by(
         client_order_id=str(client_order_id)
@@ -254,10 +320,15 @@ def upsert_order(session: Session, client_order_id: str, symbol: str, qty: float
     except (ValueError, TypeError) as e:
         raise ValueError(f"Invalid numeric values: qty={qty}, price={price}. Error: {str(e)}")
 
+    # Validate side
+    side = str(side).strip().upper()
+    if side not in ("BUY", "SELL"):
+        raise ValueError(f"Invalid order side: {side}. Must be 'BUY' or 'SELL'")
+
     order = Order(
         client_order_id=str(client_order_id),
         symbol=str(symbol).strip(),
-        side="BUY",
+        side=side,
         qty=qty,
         price=price,
         status="NEW",
@@ -272,15 +343,25 @@ def simulate_fill(session: Session, order: Order) -> Tuple[bool, Dict[str, Any]]
     """
     Simulate order fill and update positions.
     
+    For BUY orders:
+    - Increases position size
+    - Updates average cost basis
+    
+    For SELL orders:
+    - Reduces position size
+    - Calculates realized P&L based on cost basis
+    - Prevents overselling
+    
     Args:
         session: SQLAlchemy session
         order: Order object to fill
     
     Returns:
-        Tuple of (success: bool, trade_data: dict). trade_data contains trade details.
+        Tuple of (success: bool, trade_data: dict). trade_data contains trade details
+        including realized_pnl for SELL orders.
         
     Raises:
-        ValueError: If numeric conversion fails
+        ValueError: If numeric conversion fails or position insufficient for SELL
     """
     if order.status == "FILLED":
         return False, {}
@@ -292,10 +373,77 @@ def simulate_fill(session: Session, order: Order) -> Tuple[bool, Dict[str, Any]]
         logger.error(f"Failed to convert numeric values for order {order.id}: {str(e)}")
         raise ValueError(f"Invalid order numeric values: {str(e)}")
 
+    # Fetch or create position
+    pos = session.query(Position).filter_by(symbol=order.symbol).one_or_none()
+
+    # ============================================================
+    # SELL ORDER: Position reduction and realized PnL
+    # ============================================================
+    if order.side == "SELL":
+        if pos is None or float(pos.size) < qty:
+            current_size = float(pos.size) if pos else 0.0
+            raise ValueError(
+                f"Insufficient position for SELL: requested {qty}, "
+                f"current position {current_size} for {order.symbol}"
+            )
+
+        # Calculate realized PnL
+        old_size = float(pos.size)
+        old_avg = float(pos.avg_price)
+        cost_basis = qty * old_avg
+        realized_pnl = (price - old_avg) * qty
+
+        # Create trade record
+        trade = Trade(
+            order_id=order.id,
+            symbol=order.symbol,
+            side="SELL",
+            qty=qty,
+            price=price,
+            ts=datetime.utcnow(),
+        )
+        session.add(trade)
+
+        # Update order status
+        order.status = "FILLED"
+        order.updated_at = datetime.utcnow()
+
+        # Update position
+        new_size = old_size - qty
+        cumulative_realized_pnl = float(pos.realized_pnl) + realized_pnl
+
+        if new_size == 0:
+            # Close position completely
+            pos.size = 0
+            pos.avg_price = 0  # No position left
+            pos.realized_pnl = cumulative_realized_pnl
+        else:
+            # Partial close: keep the same average price
+            pos.size = new_size
+            # avg_price stays the same for remaining position
+            pos.realized_pnl = cumulative_realized_pnl
+
+        pos.updated_at = datetime.utcnow()
+        session.commit()
+
+        return True, {
+            "trade_id": trade.id,
+            "symbol": order.symbol,
+            "side": "SELL",
+            "qty": qty,
+            "price": price,
+            "cost_basis": cost_basis,
+            "realized_pnl": realized_pnl,
+            "position_remaining": new_size,
+        }
+
+    # ============================================================
+    # BUY ORDER: Position accumulation
+    # ============================================================
     trade = Trade(
         order_id=order.id,
         symbol=order.symbol,
-        side=order.side,
+        side="BUY",
         qty=qty,
         price=price,
         ts=datetime.utcnow(),
@@ -305,17 +453,18 @@ def simulate_fill(session: Session, order: Order) -> Tuple[bool, Dict[str, Any]]
     order.status = "FILLED"
     order.updated_at = datetime.utcnow()
 
-    pos = session.query(Position).filter_by(symbol=order.symbol).one_or_none()
-
     if pos is None:
+        # New position
         pos = Position(
             symbol=order.symbol,
             size=qty,
             avg_price=price,
+            realized_pnl=0.0,
             updated_at=datetime.utcnow(),
         )
         session.add(pos)
     else:
+        # Add to existing position
         old_size = float(pos.size)
         old_avg = float(pos.avg_price)
         new_size = old_size + qty
@@ -326,11 +475,14 @@ def simulate_fill(session: Session, order: Order) -> Tuple[bool, Dict[str, Any]]
         pos.updated_at = datetime.utcnow()
 
     session.commit()
+
     return True, {
         "trade_id": trade.id,
         "symbol": order.symbol,
+        "side": "BUY",
         "qty": qty,
         "price": price,
+        "position_size": float(pos.size),
     }
 
 
@@ -342,15 +494,20 @@ def run_paper_execution(excel_path: str) -> Dict[str, Any]:
     """
     Execute paper trading orders from an Excel file.
     
+    Processes both BUY and SELL orders:
+    - BUY orders: accumulate positions
+    - SELL orders: reduce positions and calculate realized PnL
+    
     Args:
         excel_path: Path to Excel file containing orders
     
     Returns:
         Dictionary with execution results:
         {
-            "orders": int,
-            "trades": int,
-            "positions": List[dict]
+            "orders": int,                    # Total orders processed
+            "trades": int,                    # Total trades executed
+            "positions": List[dict],          # Final positions with realized PnL
+            "errors": List[dict] or None      # Any row-level errors
         }
         
     Raises:
@@ -372,12 +529,15 @@ def run_paper_execution(excel_path: str) -> Dict[str, Any]:
     with SessionFactory() as session:
         for idx, r in df_orders.iterrows():
             try:
+                side = r.get("side", "BUY") if isinstance(r, dict) else getattr(r, "side", "BUY")
+                
                 order, _ = upsert_order(
                     session=session,
                     client_order_id=r["client_id"],
                     symbol=str(r["symbol"]).strip(),
                     qty=float(r["qty"]),
                     price=float(r["price"]),
+                    side=side,
                 )
 
                 success, trade_data = simulate_fill(session, order)

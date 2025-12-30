@@ -59,8 +59,11 @@ FINDMY is designed as a **production-grade trading system**, not a demo bot.
 ### 🌐 REST API (FastAPI)
 
 ✅ **Endpoints**
-- `GET /` – Health check
+- `GET /` – Interactive HTML Dashboard
 - `POST /paper-execution` – Execute orders from Excel
+- `GET /api/positions` – Current positions (JSON)
+- `GET /api/trades` – Trade history (JSON)
+- `GET /api/summary` – Performance summary (JSON)
 
 ✅ **Security**
 - File type validation (MIME + extension)
@@ -70,6 +73,7 @@ FINDMY is designed as a **production-grade trading system**, not a demo bot.
 - Input validation
 
 ✅ **Developer Experience**
+- Beautiful Dashboard at `/` – Real-time TS & SOT monitoring
 - Interactive Swagger UI at `/docs`
 - ReDoc at `/redoc`
 - Detailed error messages
@@ -130,11 +134,23 @@ uvicorn src.findmy.api.main:app --reload
 
 Server runs at: `http://localhost:8000`
 
+### 📊 View the Dashboard
+
+Navigate to `http://localhost:8000/` to see the beautiful, responsive dashboard showing:
+- **System Status** – Database, Trade Service, and SOT health
+- **Current Positions** – Symbols, quantities, average prices, and total cost
+- **Trade History** – Recent trades with P&L metrics
+- **Summary Cards** – Total trades, realized/unrealized P&L, total invested
+
+The dashboard auto-refreshes every 10 seconds and supports mobile/tablet viewing.
+
+[**📖 Full Dashboard Documentation**](docs/dashboard.md)
+
 ### Try It Out
 
 ```bash
-# 1. Health check
-curl http://localhost:8000/
+# 1. View dashboard
+# Open: http://localhost:8000/
 
 # 2. Execute paper trading
 curl -X POST http://localhost:8000/paper-execution \

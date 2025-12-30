@@ -1,8 +1,8 @@
 # FINDMY – Project Roadmap
 
-**Last Updated:** December 29, 2025  
+**Last Updated:** December 30, 2025  
 **Current Phase:** Phase 2 (Enhanced Execution) – In Progress  
-**Latest Addition:** Production Secrets Management System (v0.1.0)
+**Latest Addition:** Interactive HTML Dashboard (v0.2.0)
 
 ## Vision
 
@@ -83,6 +83,15 @@ FINDMY evolves from a **paper trading simulator** to a **production-grade tradin
 - [ ] Execution costs (fees, slippage) (v0.3)
 
 **Remaining for v0.2.0 Completion**:
+- [x] **HTML Dashboard for TS/SOT Monitoring** ✨ NEW (Dec 30, 2025)
+  - Beautiful, responsive dashboard at `/`
+  - Real-time position tracking
+  - Trade history with P&L metrics
+  - System status indicators
+  - Auto-refresh every 10 seconds
+  - Mobile-friendly Bootstrap 5 design
+  - API endpoints: `/api/positions`, `/api/trades`, `/api/summary`
+  - Full documentation at docs/dashboard.md
 - [ ] Enhanced reporting (include realized PnL in API responses)
 - [ ] Database migration system (placeholder)
 - [ ] Update README with v0.2.0 features

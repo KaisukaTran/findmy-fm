@@ -66,7 +66,8 @@ class Order(Base):
         side: Order side (BUY or SELL)
         qty: Order quantity (Decimal for precision)
         price: Order price (Decimal for precision)
-        status: Order status (NEW, FILLED, CANCELLED)
+        remaining_qty: Unfilled quantity (for partial fills)
+        status: Order status (NEW, FILLED, PARTIAL, CANCELLED)
         created_at: Order creation timestamp
         updated_at: Order last update timestamp
     """
@@ -75,9 +76,13 @@ class Order(Base):
     id = Column(Integer, primary_key=True)
     client_order_id = Column(String, unique=True, nullable=False)
     symbol = Column(String, nullable=False)
-    side = Column(String, nullable=False)  # BUY
+    side = Column(String, nullable=False)  # BUY or SELL
     qty = Column(Numeric, nullable=False)
     price = Column(Numeric, nullable=False)
+    remaining_qty = Column(Numeric, nullable=True)  # For partial fills
+    status = Column(String, nullable=False, default="NEW")
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, onupdate=func.now())
     status = Column(String, nullable=False, default="NEW")
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())
@@ -93,7 +98,10 @@ class Trade(Base):
         symbol: Trading pair (e.g., BTC/USD)
         side: Trade side (BUY or SELL)
         qty: Trade quantity
-        price: Execution price
+        price: Execution price (original price before costs)
+        effective_price: Actual execution price after slippage/fees
+        fees: Trading fees charged
+        slippage_amount: Slippage impact on price
         ts: Trade execution timestamp
     """
     __tablename__ = "trades"
@@ -104,6 +112,9 @@ class Trade(Base):
     side = Column(String, nullable=False)
     qty = Column(Numeric, nullable=False)
     price = Column(Numeric, nullable=False)
+    effective_price = Column(Numeric, nullable=True)  # Price after slippage/fees
+    fees = Column(Numeric, nullable=False, default=0.0)
+    slippage_amount = Column(Numeric, nullable=False, default=0.0)
     ts = Column(DateTime, server_default=func.now())
 
 

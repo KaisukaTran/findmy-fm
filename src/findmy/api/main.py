@@ -1,5 +1,7 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request
+from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from pathlib import Path
 import shutil
 import uuid
@@ -14,6 +16,10 @@ app = FastAPI(
     version="1.0",
 )
 
+# ✅ 2. CONFIGURE TEMPLATES AND STATIC FILES
+templates = Jinja2Templates(directory="templates")
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 # Environment configuration
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "data/uploads"))
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
@@ -23,10 +29,20 @@ ALLOWED_MIME_TYPES = {
 }
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# (optional) health check
-@app.get("/")
-def health_check():
-    return {"status": "ok", "service": "FINDMY FM API"}
+# ✅ DASHBOARD ROUTE (root URL)
+@app.get("/", response_class=HTMLResponse)
+async def dashboard(request: Request):
+    """
+    Render the interactive HTML dashboard for Trade Service & SOT monitoring.
+    
+    The dashboard displays:
+    - System status and health checks
+    - Current positions and cost basis
+    - Trade history with P&L metrics
+    - Summary statistics (realized/unrealized PnL, total invested)
+    """
+    return templates.TemplateResponse("dashboard.html", {"request": request})
+
 
 # ✅ 2. THEN USE @app.post
 @app.post("/paper-execution")
@@ -94,3 +110,157 @@ async def paper_execution(file: UploadFile = File(...)):
         except Exception as e:
             # Log cleanup error but don't fail the response
             print(f"Warning: Failed to delete temporary file {saved_path}: {e}")
+
+
+# ========================
+# DASHBOARD ENDPOINTS
+# ========================
+
+from services.ts.db import SessionLocal
+from services.ts.models import Trade, TradePosition, TradePnL
+from services.sot.models import Order
+from sqlalchemy import func
+from datetime import datetime
+from pydantic import BaseModel
+from typing import List
+
+
+class PositionResponse(BaseModel):
+    symbol: str
+    quantity: float
+    avg_price: float
+    total_cost: float
+
+
+class TradeResponse(BaseModel):
+    id: int
+    symbol: str
+    side: str
+    entry_qty: float
+    entry_price: float
+    entry_time: datetime
+    exit_qty: Optional[float]
+    exit_price: Optional[float]
+    exit_time: Optional[datetime]
+    status: str
+    realized_pnl: Optional[float] = None
+
+
+class SummaryResponse(BaseModel):
+    total_trades: int
+    realized_pnl: float
+    unrealized_pnl: float
+    total_invested: float
+    last_trade_time: Optional[datetime] = None
+    status: str
+
+
+@app.get("/api/positions", response_model=List[PositionResponse])
+async def get_positions():
+    """Get current positions from Trade Service."""
+    db = SessionLocal()
+    try:
+        try:
+            positions = db.query(TradePosition).all()
+            return [
+                PositionResponse(
+                    symbol=p.symbol,
+                    quantity=p.quantity,
+                    avg_price=p.avg_entry_price,
+                    total_cost=p.total_cost,
+                )
+                for p in positions
+            ]
+        except Exception:
+            # Table may not exist yet
+            return []
+    finally:
+        db.close()
+
+
+@app.get("/api/trades", response_model=List[TradeResponse])
+async def get_trades():
+    """Get trade history from Trade Service, ordered by timestamp DESC."""
+    db = SessionLocal()
+    try:
+        try:
+            trades = db.query(Trade).order_by(Trade.entry_time.desc()).all()
+            result = []
+            for trade in trades:
+                pnl = trade.pnl
+                realized_pnl = pnl.realized_pnl if pnl else None
+                result.append(
+                    TradeResponse(
+                        id=trade.id,
+                        symbol=trade.symbol,
+                        side=trade.side,
+                        entry_qty=trade.entry_qty,
+                        entry_price=trade.entry_price,
+                        entry_time=trade.entry_time,
+                        exit_qty=trade.exit_qty,
+                        exit_price=trade.exit_price,
+                        exit_time=trade.exit_time,
+                        status=trade.status,
+                        realized_pnl=realized_pnl,
+                    )
+                )
+            return result
+        except Exception:
+            # Table may not exist yet
+            return []
+    finally:
+        db.close()
+
+
+@app.get("/api/summary", response_model=SummaryResponse)
+async def get_summary():
+    """Get PnL summary and trading statistics."""
+    db = SessionLocal()
+    try:
+        try:
+            # Total trades
+            total_trades = db.query(func.count(Trade.id)).scalar() or 0
+
+            # PnL calculations
+            try:
+                pnl_records = db.query(TradePnL).all()
+                realized_pnl = sum(p.realized_pnl for p in pnl_records) if pnl_records else 0.0
+                unrealized_pnl = sum(p.unrealized_pnl for p in pnl_records) if pnl_records else 0.0
+            except Exception:
+                realized_pnl = 0.0
+                unrealized_pnl = 0.0
+
+            # Total invested
+            try:
+                positions = db.query(TradePosition).all()
+                total_invested = sum(p.total_cost for p in positions) if positions else 0.0
+            except Exception:
+                total_invested = 0.0
+
+            # Last trade time
+            try:
+                last_trade = db.query(Trade).order_by(Trade.entry_time.desc()).first()
+                last_trade_time = last_trade.entry_time if last_trade else None
+            except Exception:
+                last_trade_time = None
+
+            return SummaryResponse(
+                total_trades=int(total_trades),
+                realized_pnl=realized_pnl,
+                unrealized_pnl=unrealized_pnl,
+                total_invested=total_invested,
+                last_trade_time=last_trade_time,
+                status="✓ Active",
+            )
+        except Exception:
+            # Return empty summary if database is not initialized
+            return SummaryResponse(
+                total_trades=0,
+                realized_pnl=0.0,
+                unrealized_pnl=0.0,
+                total_invested=0.0,
+                last_trade_time=None,
+                status="✓ Active",
+            )
+    finally:
+        db.close()

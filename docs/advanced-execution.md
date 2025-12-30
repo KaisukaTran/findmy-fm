@@ -313,3 +313,172 @@ All changes are backward compatible:
 - Default values maintain previous behavior (full fills, no fees/slippage)
 - New fields are optional in `upsert_order()`
 - Existing order types default to MARKET
+
+---
+
+## 5. Latency Simulation (Async Execution) - v0.3.1
+
+Realistic order execution with configurable network/exchange latency simulation.
+
+**Configuration:**
+```python
+DEFAULT_LATENCY_MS = 0      # Base latency in milliseconds (0 = no delay)
+RANDOM_LATENCY_MS = 0       # Random variance (0-N ms) added to base latency
+```
+
+**ExecutionMode Enum:**
+```python
+class ExecutionMode(Enum):
+    IMMEDIATE = "immediate"  # Execute immediately (v0.3.0 default)
+    ASYNC = "async"          # Execute asynchronously with latency simulation
+```
+
+### Order Lifecycle with Latency
+
+1. **PENDING State**: Order submitted for async execution with latency
+   - `order.status = "PENDING"`
+   - `order.submitted_at` = timestamp
+   - `order.latency_ms` = milliseconds until execution
+
+2. **Execution Trigger**: When latency period elapses
+   - Order becomes eligible for execution
+   - Status changes to FILLED
+   - `order.executed_at` = actual execution timestamp
+
+3. **Progress Tracking**: Monitor execution progress
+   - `progress_pct`: (elapsed_ms / latency_ms) * 100
+   - `remaining_ms`: max(0, latency_ms - elapsed_ms)
+   - Useful for progress bars and status updates
+
+### API Functions
+
+#### Submit Order Asynchronously
+```python
+result = await submit_order_async(
+    session=session,
+    order=order,
+    latency_ms=100  # 100ms execution delay
+)
+
+# Returns:
+# {
+#     "order_id": int,
+#     "client_order_id": str,
+#     "status": "PENDING",
+#     "latency_ms": int,
+#     "estimated_execution_ms": int
+# }
+```
+
+#### Process Pending Orders
+```python
+executed_orders = await process_pending_orders(session)
+
+# Checks all PENDING orders and executes those past their latency window
+# Returns list of executed trades with details
+```
+
+#### Get Pending Orders Status
+```python
+pending = get_pending_orders(session)
+
+# Returns:
+# [
+#     {
+#         "order_id": 1,
+#         "client_order_id": "001",
+#         "symbol": "BTC/USD",
+#         "side": "BUY",
+#         "qty": 10.0,
+#         "status": "PENDING",
+#         "latency_ms": 100,
+#         "elapsed_ms": 45,
+#         "remaining_ms": 55,
+#         "progress_pct": 45.0
+#     }
+# ]
+```
+
+#### Background Task Processor
+```python
+result = await async_order_processor(
+    session=session,
+    check_interval_ms=100,  # Check every 100ms
+    timeout_sec=60          # Stop after 60 seconds
+)
+
+# Returns:
+# {
+#     "processed_orders": 5,
+#     "elapsed_sec": 2.34
+# }
+```
+
+### Example: Async BUY/SELL Workflow
+
+```python
+import asyncio
+from findmy.execution.paper_execution import (
+    upsert_order,
+    submit_order_async,
+    process_pending_orders,
+    get_pending_orders,
+)
+
+async def simulate_with_latency():
+    engine, SessionFactory = setup_db()
+    
+    with SessionFactory() as session:
+        # Create and submit order with 200ms latency
+        order, _ = upsert_order(
+            session, "001", "BTC/USD", 10.0, 50000.0, side="BUY"
+        )
+        
+        result = await submit_order_async(session, order, latency_ms=200)
+        print(f"Submitted: {result}")  # status: PENDING
+        
+        # Check status immediately
+        pending = get_pending_orders(session)
+        print(f"Progress: {pending[0]['progress_pct']}%")  # ~0%
+        
+        # Wait and check again
+        await asyncio.sleep(0.15)  # 150ms
+        pending = get_pending_orders(session)
+        print(f"Progress: {pending[0]['progress_pct']}%")  # ~75%
+        
+        # Process and execute
+        await asyncio.sleep(0.1)  # Total 250ms (past 200ms latency)
+        executed = await process_pending_orders(session)
+        print(f"Executed: {executed[0]['symbol']}")  # BTC/USD filled
+
+asyncio.run(simulate_with_latency())
+```
+
+### Database Schema
+
+New columns in `orders` table (migration 005):
+- `latency_ms` (INTEGER): Simulated execution delay in milliseconds
+- `submitted_at` (DATETIME): When order was submitted for async execution
+- `executed_at` (DATETIME): When async order was actually executed
+
+### Testing
+
+Comprehensive async tests included in `tests/test_async_execution.py`:
+- Order submission with various latencies
+- Pending order status and progress tracking
+- Execution timing validation
+- Background task processing
+- SELL order PnL calculation with async execution
+
+Run tests:
+```bash
+pytest tests/test_async_execution.py -v
+```
+
+### Use Cases
+
+1. **Realistic Simulation**: Simulate network/exchange latencies
+2. **Strategy Backtesting**: Test impact of execution delays
+3. **Live Trading Simulation**: Match real-world execution patterns
+4. **Risk Analysis**: Evaluate slippage during high-latency periods
+5. **Performance Testing**: Benchmark order queue under load

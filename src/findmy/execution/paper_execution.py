@@ -1,14 +1,18 @@
 """
-FINDMY (FM) - Paper Trading Execution Engine v0.2.0
+FINDMY (FM) - Paper Trading Execution Engine v0.3.1
 
 Features:
 - Read Excel input (with or without header)
 - Sheet name: "purchase order"
 - BUY and SELL orders with position reduction
-- Immediate full-fill simulation
+- Partial fill support with configurable fill percentage
+- Full-fill by default (backward compatible)
+- Slippage and transaction fee simulation
+- Stop-loss order automation with price triggers
+- Asynchronous execution with latency simulation
 - SQLite persistence
 - Callable from FastAPI
-- Realized PnL calculation on SELL orders
+- Realized PnL calculation on SELL orders with execution costs
 
 Error Handling:
 - Graceful handling of I/O and value errors
@@ -38,6 +42,9 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 # Configure logging
 logger = logging.getLogger(__name__)
 import random
+import asyncio
+from enum import Enum
+from time import time
 
 # ============================================================
 # CONFIG
@@ -64,7 +71,22 @@ DEFAULT_SLIPPAGE_PCT = float(0.0)
 DEFAULT_MAKER_FEE = float(0.0)
 DEFAULT_TAKER_FEE = float(0.0)
 
+# Latency configuration (ms)
+# Default to 0 (no latency) for backward compatibility; set > 0 to simulate network/exchange delay
+DEFAULT_LATENCY_MS = 0  # Milliseconds to delay order execution
+RANDOM_LATENCY_MS = 0   # Random variance (0-N ms) to add to base latency
+
 Base = declarative_base()
+
+
+# ============================================================
+# ENUMS
+# ============================================================
+
+class ExecutionMode(Enum):
+    """Order execution mode: synchronous or asynchronous with latency."""
+    IMMEDIATE = "immediate"      # Execute immediately (v0.3.0 default)
+    ASYNC = "async"              # Execute asynchronously with latency simulation
 
 
 # ============================================================
@@ -85,9 +107,12 @@ class Order(Base):
         price: Order price (Decimal for precision)
         order_type: Order type (MARKET, LIMIT, STOP_LOSS; default MARKET)
         stop_price: Stop price for stop-loss orders (optional)
-        status: Order status (NEW, PARTIALLY_FILLED, FILLED, CANCELLED, TRIGGERED)
+        status: Order status (NEW, PARTIALLY_FILLED, FILLED, CANCELLED, TRIGGERED, PENDING)
         maker_fee_rate: Maker fee percentage (default 0.0 = no fees)
         taker_fee_rate: Taker fee percentage (default 0.0 = no fees)
+        latency_ms: Simulated network/exchange latency in milliseconds
+        submitted_at: Timestamp when order was submitted for async execution
+        executed_at: Timestamp when order was actually executed (for async orders)
         created_at: Order creation timestamp
         updated_at: Order last update timestamp
     """
@@ -102,9 +127,12 @@ class Order(Base):
     price = Column(Numeric, nullable=False)
     order_type = Column(String, nullable=False, default="MARKET")  # MARKET, LIMIT, STOP_LOSS
     stop_price = Column(Numeric, nullable=True)  # Stop price for stop-loss orders
-    status = Column(String, nullable=False, default="NEW")  # NEW, PARTIALLY_FILLED, FILLED, CANCELLED, TRIGGERED
+    status = Column(String, nullable=False, default="NEW")  # NEW, PARTIALLY_FILLED, FILLED, CANCELLED, TRIGGERED, PENDING
     maker_fee_rate = Column(Numeric, nullable=False, default=0.0)  # 0% (no fees by default)
     taker_fee_rate = Column(Numeric, nullable=False, default=0.0)  # 0% (no fees by default)
+    latency_ms = Column(Integer, nullable=False, default=0)  # Simulated latency for async execution
+    submitted_at = Column(DateTime, nullable=True)  # When order was submitted for async execution
+    executed_at = Column(DateTime, nullable=True)  # When async order was actually executed
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())
 
@@ -618,6 +646,160 @@ def check_and_trigger_stoploss(
                 triggered_orders.append(trade_data)
     
     return triggered_orders
+
+
+# ============================================================
+# ASYNC EXECUTION (LATENCY SIMULATION)
+# ============================================================
+
+async def submit_order_async(
+    session: Session,
+    order: Order,
+    latency_ms: int = 0,
+) -> Dict[str, Any]:
+    """
+    Submit an order for asynchronous execution with simulated latency.
+    
+    Args:
+        session: SQLAlchemy session
+        order: Order object to submit
+        latency_ms: Latency in milliseconds (0 = immediate)
+    
+    Returns:
+        Dictionary with submission details (order_id, status, estimated_execution_time)
+    """
+    # Add random variance to latency
+    total_latency_ms = latency_ms + random.randint(0, RANDOM_LATENCY_MS)
+    
+    order.latency_ms = total_latency_ms
+    order.status = "PENDING"
+    order.submitted_at = datetime.utcnow()
+    session.commit()
+    
+    return {
+        "order_id": order.id,
+        "client_order_id": order.client_order_id,
+        "status": "PENDING",
+        "latency_ms": total_latency_ms,
+        "estimated_execution_ms": total_latency_ms,
+    }
+
+
+async def process_pending_orders(session: Session) -> List[Dict[str, Any]]:
+    """
+    Process pending orders that have reached their execution time.
+    
+    Args:
+        session: SQLAlchemy session
+    
+    Returns:
+        List of executed orders with trade data
+    """
+    executed_orders = []
+    current_time = time()
+    
+    # Find all pending orders
+    pending_orders = session.query(Order).filter(
+        Order.status == "PENDING"
+    ).all()
+    
+    for order in pending_orders:
+        submitted_time = order.submitted_at.timestamp() if order.submitted_at else current_time
+        elapsed_ms = (current_time - submitted_time) * 1000
+        
+        # Check if latency period has passed
+        if elapsed_ms >= order.latency_ms:
+            # Execute the order
+            success, trade_data = simulate_fill(session, order)
+            if success:
+                order.executed_at = datetime.utcnow()
+                session.commit()
+                trade_data["execution_latency_ms"] = order.latency_ms
+                trade_data["actual_elapsed_ms"] = elapsed_ms
+                executed_orders.append(trade_data)
+    
+    return executed_orders
+
+
+async def async_order_processor(
+    session: Session,
+    check_interval_ms: int = 100,
+    timeout_sec: int = None,
+) -> Dict[str, Any]:
+    """
+    Background task to periodically check and execute pending orders.
+    
+    Args:
+        session: SQLAlchemy session
+        check_interval_ms: How often to check for ready orders (milliseconds)
+        timeout_sec: Max time to run (None = run until no pending orders)
+    
+    Returns:
+        Summary of processed orders
+    """
+    start_time = time()
+    processed_count = 0
+    
+    while True:
+        try:
+            executed = await process_pending_orders(session)
+            processed_count += len(executed)
+            
+            # Check timeout
+            if timeout_sec and (time() - start_time) > timeout_sec:
+                break
+            
+            # Check if still have pending orders
+            pending = session.query(Order).filter(Order.status == "PENDING").count()
+            if pending == 0:
+                break
+            
+            # Sleep before next check
+            await asyncio.sleep(check_interval_ms / 1000.0)
+        except Exception as e:
+            logger.error(f"Error in async order processor: {str(e)}")
+            raise
+    
+    return {
+        "processed_orders": processed_count,
+        "elapsed_sec": time() - start_time,
+    }
+
+
+def get_pending_orders(session: Session) -> List[Dict[str, Any]]:
+    """
+    Get all pending orders with their status and estimated execution time.
+    
+    Args:
+        session: SQLAlchemy session
+    
+    Returns:
+        List of pending orders with execution progress
+    """
+    pending = session.query(Order).filter(Order.status == "PENDING").all()
+    current_time = time()
+    
+    result = []
+    for order in pending:
+        submitted_time = order.submitted_at.timestamp() if order.submitted_at else current_time
+        elapsed_ms = max(0, (current_time - submitted_time) * 1000)
+        remaining_ms = max(0, order.latency_ms - elapsed_ms)
+        progress_pct = min(100, (elapsed_ms / order.latency_ms * 100)) if order.latency_ms > 0 else 100
+        
+        result.append({
+            "order_id": order.id,
+            "client_order_id": order.client_order_id,
+            "symbol": order.symbol,
+            "side": order.side,
+            "qty": float(order.qty),
+            "status": "PENDING",
+            "latency_ms": order.latency_ms,
+            "elapsed_ms": elapsed_ms,
+            "remaining_ms": remaining_ms,
+            "progress_pct": progress_pct,
+        })
+    
+    return result
 
 
 # ============================================================

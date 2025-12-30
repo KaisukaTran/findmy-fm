@@ -31,6 +31,13 @@ ALLOWED_MIME_TYPES = {
 }
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+# ✅ HEALTH CHECK
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return {"status": "ok", "service": "FINDMY FM API"}
+
+
 # ✅ DASHBOARD ROUTE (root URL)
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
@@ -101,8 +108,13 @@ async def paper_execution(file: UploadFile = File(...)):
         }
 
     except ValueError as e:
+        # ValueError from Excel parsing
         raise HTTPException(status_code=400, detail=f"Invalid Excel file: {str(e)}")
     except Exception as e:
+        # Check if it's a zip file error (malformed Excel)
+        error_msg = str(e).lower()
+        if "zip" in error_msg or "excel" in error_msg or "openpyxl" in error_msg:
+            raise HTTPException(status_code=400, detail=f"Invalid Excel file: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
     finally:
         # Clean up uploaded file after processing

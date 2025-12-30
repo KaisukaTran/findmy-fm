@@ -7,10 +7,12 @@ import shutil
 import uuid
 import os
 import asyncio
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 
 from findmy.execution.paper_execution import run_paper_execution
+from findmy.strategies import MovingAverageStrategy
+from findmy.services.strategy_executor import StrategyExecutor
 
 # ✅ 1. DECLARE APP FIRST
 app = FastAPI(
@@ -378,6 +380,83 @@ async def run_backtest_endpoint(request_body: BacktestRequestBody):
         raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Backtest error: {str(e)}")
+
+
+# ========================
+# STRATEGY EXECUTION
+# ========================
+
+class StrategyRequestBody(BaseModel):
+    """Request body for /api/run-strategy endpoint."""
+    strategy_type: str  # "moving_average", etc.
+    symbols: List[str] = ["BTC", "ETH"]
+    start_date: str  # ISO format YYYY-MM-DD
+    end_date: str  # ISO format YYYY-MM-DD
+    timeframe: str = "1h"
+    config: Optional[Dict[str, Any]] = None  # Strategy-specific config
+
+
+@app.post("/api/run-strategy")
+async def run_strategy_endpoint(request_body: StrategyRequestBody):
+    """
+    Run a trading strategy to generate signals and convert them to orders.
+    
+    Strategies available:
+    - moving_average: Moving Average Crossover (fast MA > slow MA = BUY)
+    
+    Args:
+        request_body: Strategy parameters including type, symbols, date range, config
+    
+    Returns:
+        Dictionary with generated signals and orders ready for execution
+        
+    Example:
+        {
+            "strategy": "moving_average",
+            "symbols": ["BTC", "ETH"],
+            "start_date": "2024-01-01",
+            "end_date": "2024-01-31",
+            "config": {"fast_period": 9, "slow_period": 21}
+        }
+    """
+    try:
+        # Parse dates
+        start_date = datetime.fromisoformat(request_body.start_date)
+        end_date = datetime.fromisoformat(request_body.end_date)
+        
+        # Validate date range
+        if start_date >= end_date:
+            raise HTTPException(status_code=400, detail="start_date must be before end_date")
+        
+        if (end_date - start_date).days > 365:
+            raise HTTPException(status_code=400, detail="Strategy period cannot exceed 365 days")
+        
+        # Create strategy based on type
+        if request_body.strategy_type.lower() == "moving_average":
+            strategy = MovingAverageStrategy(
+                symbols=request_body.symbols,
+                config=request_body.config
+            )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown strategy type: {request_body.strategy_type}. Available: moving_average"
+            )
+        
+        # Execute strategy
+        executor = StrategyExecutor(strategy)
+        result = executor.run(
+            start_date=start_date,
+            end_date=end_date,
+            timeframe=request_body.timeframe
+        )
+        
+        return result
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Strategy execution error: {str(e)}")
 
 
 # ========================

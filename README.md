@@ -4,7 +4,7 @@ Small. Cute. Flexible. Funny Project
 
 > **FINDMY (FM)** is a modular Python-based trading bot focused on research-first development, starting with a robust **paper trading execution engine** using Excel input and FastAPI.
 
-**Latest Release:** v0.3.0 | **License:** MIT | **Status:** Active Development ⚡
+**Latest Release:** v0.4.0 | **License:** MIT | **Status:** Active Development ⚡
 
 ---
 
@@ -34,9 +34,46 @@ FINDMY is designed as a **production-grade trading system**, not a demo bot.
 
 ---
 
-## ✨ Current Features (v0.3.0)
+## ✨ Current Features (v0.4.0)
 
-### 📋 Paper Trading Execution Engine
+### 📊 Realtime Market Data Integration
+
+✅ **Binance Public API**
+- Real-time spot prices for all major pairs (BTC, ETH, SOL, etc.)
+- No API key required – public data only
+- 60-second cache TTL to avoid rate limiting
+- Graceful fallback if Binance is unavailable
+- Automatic retry with exponential backoff
+
+✅ **Unrealized PnL Calculation**
+- Live portfolio valuation with current market prices
+- Unrealized gains/losses updated every 30 seconds
+- Mark-to-market calculations
+- Cost basis tracking with execution costs
+
+✅ **WebSocket Live Updates**
+- Real-time dashboard updates every 30 seconds
+- No page reload needed
+- Auto-reconnect on disconnect
+- Fallback to polling if WebSocket unavailable
+
+### 📈 Basic Backtesting
+
+✅ **Backtest Engine**
+- Historical OHLCV data from Binance
+- Multi-symbol simulation support
+- Configurable initial capital and timeframes
+- Equity curve tracking
+- Performance metrics calculation
+
+✅ **Performance Metrics**
+- Total return percentage
+- Maximum drawdown
+- Win rate
+- Sharpe ratio (placeholder for enhancement)
+- Trade-by-trade results
+
+### 📋 Paper Trading Execution (v0.3.0+)
 
 ✅ **Advanced Order Processing**
 - Partial fill support with configurable fill percentages
@@ -66,12 +103,19 @@ FINDMY is designed as a **production-grade trading system**, not a demo bot.
 
 ### 🌐 REST API (FastAPI)
 
-✅ **Endpoints**
+✅ **Core Endpoints**
+- `GET /health` – Health check
 - `GET /` – Interactive HTML Dashboard
 - `POST /paper-execution` – Execute orders from Excel
-- `GET /api/positions` – Current positions (JSON)
+
+✅ **Position & Trade Endpoints**
+- `GET /api/positions` – Current positions with unrealized PnL
 - `GET /api/trades` – Trade history (JSON)
-- `GET /api/summary` – Performance summary (JSON)
+- `GET /api/summary` – Performance summary with market values
+
+✅ **Realtime Updates**
+- `WS /ws/dashboard` – WebSocket live updates (30s interval)
+- `POST /api/backtest` – Run backtest simulation
 
 ✅ **Security**
 - File type validation (MIME + extension)
@@ -89,15 +133,18 @@ FINDMY is designed as a **production-grade trading system**, not a demo bot.
 
 ### 🧪 Testing & CI/CD
 
-✅ **40+ Pytest Tests**
+✅ **112+ Pytest Tests**
 - Execution logic coverage
 - API endpoint testing
 - Excel parsing validation
+- Market data & WebSocket tests
+- Backtesting validation
 - Error scenarios
 
 ✅ **GitHub Actions CI/CD**
 - Tests on Python 3.10, 3.11, 3.12
 - Code quality (black, ruff, mypy)
+
 - Security scanning (Bandit, pip-audit)
 - Coverage reporting
 

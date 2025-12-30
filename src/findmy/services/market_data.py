@@ -1,7 +1,8 @@
-"""Market data service for fetching real-time prices from Binance."""
+"""Market data service for fetching real-time and historical prices from Binance."""
 
 import time
 from typing import Optional
+from datetime import datetime, timedelta
 
 import ccxt
 
@@ -130,3 +131,123 @@ def get_unrealized_pnl(
 def clear_cache() -> None:
     """Clear the price cache (useful for testing)."""
     _price_cache.clear()
+
+
+# ============================================================
+# HISTORICAL DATA FOR BACKTESTING
+# ============================================================
+
+
+def get_historical_ohlcv(
+    symbol: str, timeframe: str = "1h", limit: int = 100
+) -> list[dict[str, any]]:
+    """
+    Fetch historical OHLCV data from Binance for backtesting.
+
+    Args:
+        symbol: Base currency symbol (e.g., "BTC", "ETH")
+        timeframe: OHLCV timeframe (e.g., "1m", "5m", "1h", "4h", "1d")
+        limit: Number of candles to fetch (max ~500-1000 depending on exchange)
+
+    Returns:
+        List of OHLCV candles: [timestamp_ms, open, high, low, close, volume]
+        Each candle is [timestamp, open, high, low, close, volume]
+    """
+    try:
+        exchange = ccxt.binance()
+        pair = f"{symbol}/USDT"
+
+        # Fetch OHLCV data
+        ohlcv = exchange.fetch_ohlcv(pair, timeframe, limit=limit)
+
+        # Transform to list of dicts for easier handling
+        result = []
+        for candle in ohlcv:
+            timestamp_ms, open_price, high, low, close, volume = candle
+            result.append(
+                {
+                    "timestamp": timestamp_ms,
+                    "timestamp_dt": datetime.fromtimestamp(timestamp_ms / 1000),
+                    "open": float(open_price),
+                    "high": float(high),
+                    "low": float(low),
+                    "close": float(close),
+                    "volume": float(volume),
+                }
+            )
+
+        return result
+
+    except Exception as e:
+        # Return empty list if fetch fails
+        return []
+
+
+def get_historical_range(
+    symbol: str,
+    start_datetime: datetime,
+    end_datetime: datetime,
+    timeframe: str = "1h",
+) -> list[dict[str, any]]:
+    """
+    Fetch historical OHLCV data for a specific date range.
+
+    Args:
+        symbol: Base currency symbol (e.g., "BTC", "ETH")
+        start_datetime: Start of date range
+        end_datetime: End of date range
+        timeframe: OHLCV timeframe (e.g., "1m", "5m", "1h", "4h", "1d")
+
+    Returns:
+        List of OHLCV candles within the date range
+    """
+    try:
+        exchange = ccxt.binance()
+        pair = f"{symbol}/USDT"
+
+        # Estimate number of candles needed
+        timeframe_minutes = {
+            "1m": 1,
+            "5m": 5,
+            "15m": 15,
+            "30m": 30,
+            "1h": 60,
+            "4h": 240,
+            "1d": 1440,
+        }
+        minutes = timeframe_minutes.get(timeframe, 60)
+        date_range_minutes = int((end_datetime - start_datetime).total_seconds() / 60)
+        estimated_candles = min(date_range_minutes // minutes + 10, 1000)
+
+        # Fetch data starting from start_datetime
+        ohlcv = exchange.fetch_ohlcv(
+            pair,
+            timeframe,
+            since=int(start_datetime.timestamp() * 1000),
+            limit=estimated_candles,
+        )
+
+        # Filter to date range and transform
+        result = []
+        for candle in ohlcv:
+            timestamp_ms, open_price, high, low, close, volume = candle
+            candle_dt = datetime.fromtimestamp(timestamp_ms / 1000)
+
+            # Only include candles within range
+            if start_datetime <= candle_dt <= end_datetime:
+                result.append(
+                    {
+                        "timestamp": timestamp_ms,
+                        "timestamp_dt": candle_dt,
+                        "open": float(open_price),
+                        "high": float(high),
+                        "low": float(low),
+                        "close": float(close),
+                        "volume": float(volume),
+                    }
+                )
+
+        return result
+
+    except Exception as e:
+        return []

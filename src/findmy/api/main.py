@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -6,7 +6,9 @@ from pathlib import Path
 import shutil
 import uuid
 import os
+import asyncio
 from typing import Optional
+from datetime import datetime, timedelta
 
 from findmy.execution.paper_execution import run_paper_execution
 
@@ -120,6 +122,7 @@ from services.ts.db import SessionLocal
 from services.ts.models import Trade, TradePosition, TradePnL
 from services.sot.models import Order
 from findmy.services.market_data import get_current_prices, get_unrealized_pnl
+from findmy.services.backtesting import run_backtest, BacktestRequest
 from sqlalchemy import func
 from datetime import datetime
 from pydantic import BaseModel
@@ -309,3 +312,175 @@ async def get_summary():
             )
     finally:
         db.close()
+
+
+# ========================
+# BACKTESTING ENDPOINT
+# ========================
+
+class BacktestRequestBody(BaseModel):
+    """Request body for backtesting."""
+    symbols: List[str] = ["BTC", "ETH"]
+    start_date: str  # ISO format YYYY-MM-DD
+    end_date: str  # ISO format YYYY-MM-DD
+    initial_capital: float = 10000.0
+    timeframe: str = "1h"
+
+
+@app.post("/api/backtest")
+async def run_backtest_endpoint(request_body: BacktestRequestBody):
+    """
+    Run a backtest simulation over historical data.
+    
+    Args:
+        request_body: Backtest parameters including symbols, date range, capital, timeframe
+    
+    Returns:
+        BacktestResult with equity curve, trades, and performance metrics
+    """
+    try:
+        # Parse dates
+        start_date = datetime.fromisoformat(request_body.start_date)
+        end_date = datetime.fromisoformat(request_body.end_date)
+        
+        # Validate date range
+        if start_date >= end_date:
+            raise HTTPException(status_code=400, detail="start_date must be before end_date")
+        
+        if (end_date - start_date).days > 365:
+            raise HTTPException(status_code=400, detail="Backtest period cannot exceed 365 days")
+        
+        # Create request and run backtest
+        backtest_request = BacktestRequest(
+            symbols=request_body.symbols,
+            start_date=start_date,
+            end_date=end_date,
+            initial_capital=request_body.initial_capital,
+            timeframe=request_body.timeframe,
+        )
+        
+        result = run_backtest(backtest_request)
+        return result.to_dict()
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Backtest error: {str(e)}")
+
+
+# ========================
+# WEBSOCKET LIVE UPDATES
+# ========================
+
+class ConnectionManager:
+    """WebSocket connection manager for broadcasting updates."""
+    
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+    
+    async def connect(self, websocket: WebSocket):
+        """Accept and add a new WebSocket connection."""
+        await websocket.accept()
+        self.active_connections.append(websocket)
+    
+    def disconnect(self, websocket: WebSocket):
+        """Remove a disconnected WebSocket."""
+        self.active_connections.remove(websocket)
+    
+    async def broadcast(self, message: dict):
+        """Broadcast message to all connected clients."""
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except Exception:
+                # Connection may have closed, will be cleaned up
+                pass
+
+
+manager = ConnectionManager()
+
+
+@app.websocket("/ws/dashboard")
+async def websocket_dashboard(websocket: WebSocket):
+    """
+    WebSocket endpoint for realtime dashboard updates.
+    
+    Sends updates every 30 seconds with current positions, summary, and market data.
+    """
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Wait 30 seconds before sending next update
+            await asyncio.sleep(30)
+            
+            # Fetch fresh data
+            db = SessionLocal()
+            try:
+                # Get positions with current prices
+                positions = db.query(TradePosition).all()
+                positions_data = []
+                symbols = [p.symbol for p in positions]
+                prices = get_current_prices(symbols) if symbols else {}
+                
+                for p in positions:
+                    current_price = prices.get(p.symbol)
+                    market_value = p.quantity * current_price if current_price else None
+                    unrealized_pnl = (
+                        market_value - p.total_cost if market_value else None
+                    )
+                    positions_data.append({
+                        "symbol": p.symbol,
+                        "quantity": float(p.quantity),
+                        "avg_price": float(p.avg_entry_price),
+                        "total_cost": float(p.total_cost),
+                        "current_price": current_price,
+                        "market_value": market_value,
+                        "unrealized_pnl": unrealized_pnl,
+                    })
+                
+                # Get summary
+                total_trades = db.query(func.count(Trade.id)).scalar() or 0
+                
+                try:
+                    pnl_records = db.query(TradePnL).all()
+                    realized_pnl = sum(p.realized_pnl for p in pnl_records) if pnl_records else 0.0
+                    unrealized_pnl = sum(p.unrealized_pnl for p in pnl_records) if pnl_records else 0.0
+                except Exception:
+                    realized_pnl = 0.0
+                    unrealized_pnl = 0.0
+                
+                total_invested = sum(p.total_cost for p in positions) if positions else 0.0
+                total_market_value = sum(
+                    (prices.get(p.symbol, 0) * p.quantity for p in positions)
+                    if positions else []
+                )
+                total_equity = total_invested + unrealized_pnl
+                
+                # Create update message
+                update = {
+                    "type": "dashboard_update",
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "positions": positions_data,
+                    "summary": {
+                        "total_trades": int(total_trades),
+                        "realized_pnl": float(realized_pnl),
+                        "unrealized_pnl": float(unrealized_pnl),
+                        "total_invested": float(total_invested),
+                        "total_market_value": float(total_market_value),
+                        "total_equity": float(total_equity),
+                    }
+                }
+                
+                await manager.broadcast(update)
+                
+            except Exception as e:
+                # Log but continue - connection may be updating
+                pass
+            finally:
+                db.close()
+    
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception:
+        manager.disconnect(websocket)
+

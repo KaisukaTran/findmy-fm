@@ -357,11 +357,99 @@
     loadPositions();
     loadTrades();
 
-    // Reload data every 30 seconds to fetch fresh market prices
+    // WebSocket connection for live updates (every 30 seconds from server)
+    function connectWebSocket() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(`${protocol}//${window.location.host}/ws/dashboard`);
+        
+        ws.onmessage = function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.type === 'dashboard_update') {
+                    console.log('Received dashboard update:', data);
+                    // Update positions from WebSocket
+                    updatePositionsFromWebSocket(data.positions);
+                    // Update summary from WebSocket
+                    updateSummaryFromWebSocket(data.summary);
+                }
+            } catch (error) {
+                console.error('Error parsing WebSocket message:', error);
+            }
+        };
+        
+        ws.onerror = function(error) {
+            console.error('WebSocket error:', error);
+        };
+        
+        ws.onclose = function() {
+            console.log('WebSocket closed, attempting to reconnect in 5 seconds...');
+            setTimeout(connectWebSocket, 5000);
+        };
+    }
+    
+    // Update positions from WebSocket data
+    function updatePositionsFromWebSocket(positions) {
+        const tbody = document.getElementById('positions-tbody');
+        const noPos = document.getElementById('no-positions');
+        
+        if (!positions || positions.length === 0) {
+            tbody.innerHTML = '';
+            noPos.style.display = 'block';
+        } else {
+            noPos.style.display = 'none';
+            tbody.innerHTML = positions.map(pos => {
+                const unrealizedColor = pos.unrealized_pnl !== null && pos.unrealized_pnl >= 0 ? '#28a745' : '#dc3545';
+                const unrealizedText = pos.unrealized_pnl !== null ? formatCurrency(pos.unrealized_pnl) : '—';
+                const marketValueText = pos.market_value !== null ? formatCurrency(pos.market_value) : '—';
+                const priceText = pos.current_price ? formatCurrency(pos.current_price) : '—';
+                return `
+                    <tr>
+                        <td><strong>${pos.symbol}</strong></td>
+                        <td class="text-end">${pos.quantity.toFixed(8)}</td>
+                        <td class="text-end">${formatCurrency(pos.avg_price)}</td>
+                        <td class="text-end">${formatCurrency(pos.total_cost)}</td>
+                        <td class="text-end text-info"><strong>${priceText}</strong></td>
+                        <td class="text-end text-info"><strong>${marketValueText}</strong></td>
+                        <td class="text-end" style="color: ${unrealizedColor};"><strong>${unrealizedText}</strong></td>
+                    </tr>
+                `;
+            }).join('');
+        }
+    }
+    
+    // Update summary from WebSocket data
+    function updateSummaryFromWebSocket(summary) {
+        const totalTradesEl = document.getElementById('total-trades');
+        const realizedPnLEl = document.getElementById('realized-pnl');
+        const unrealizedPnLEl = document.getElementById('unrealized-pnl');
+        const totalInvestedEl = document.getElementById('total-invested');
+        const totalMarketValueEl = document.getElementById('total-market-value');
+        const totalEquityEl = document.getElementById('total-equity');
+        
+        if (totalTradesEl) totalTradesEl.textContent = summary.total_trades;
+        if (realizedPnLEl) {
+            realizedPnLEl.textContent = formatCurrency(summary.realized_pnl);
+            realizedPnLEl.style.color = summary.realized_pnl >= 0 ? '#28a745' : '#dc3545';
+        }
+        if (unrealizedPnLEl) {
+            unrealizedPnLEl.textContent = formatCurrency(summary.unrealized_pnl);
+            unrealizedPnLEl.style.color = summary.unrealized_pnl >= 0 ? '#28a745' : '#dc3545';
+        }
+        if (totalInvestedEl) totalInvestedEl.textContent = formatCurrency(summary.total_invested);
+        if (totalMarketValueEl) totalMarketValueEl.textContent = formatCurrency(summary.total_market_value);
+        if (totalEquityEl) {
+            totalEquityEl.textContent = formatCurrency(summary.total_equity);
+            totalEquityEl.style.color = summary.total_equity >= 10000 ? '#28a745' : '#dc3545';
+        }
+    }
+
+    // Connect WebSocket for live updates
+    connectWebSocket();
+
+    // Also keep polling every 60 seconds as fallback
     setInterval(() => {
         loadSummary();
-        loadPositions();
         loadTrades();
-    }, 30000);
+    }, 60000);
 </script>
 {% endblock %}

@@ -134,22 +134,23 @@ uvicorn src.findmy.api.main:app --reload
 
 Server runs at: `http://localhost:8000`
 
-### 📊 View the Dashboard
+### 📊 View the Dashboard (with Live Market Data)
 
-Navigate to `http://localhost:8000/` to see the beautiful, responsive dashboard showing:
+Navigate to `http://localhost:8000/` to see the beautiful, responsive dashboard with **live Binance prices and mark-to-market valuation**:
 - **System Status** – Database, Trade Service, and SOT health
-- **Current Positions** – Symbols, quantities, average prices, and total cost
+- **Current Positions** – Symbols, quantities, average prices, total cost, **live market prices, market value, and unrealized P&L** *(NEW)*
 - **Trade History** – Recent trades with P&L metrics
-- **Summary Cards** – Total trades, realized/unrealized P&L, total invested
+- **Summary Cards** – Total trades, realized/unrealized P&L, **total equity, total market value**, total invested *(NEW)*
+- **Live Prices** – Real-time data from Binance (60-second cache, no API key needed)
 
-The dashboard auto-refreshes every 10 seconds and supports mobile/tablet viewing.
+The dashboard auto-refreshes every 30 seconds (prices) and supports mobile/tablet viewing.
 
-[**📖 Full Dashboard Documentation**](docs/dashboard.md)
+[**📖 Full Dashboard Documentation**](docs/dashboard.md) | [**📖 Market Data Integration**](docs/market-data.md)
 
 ### Try It Out
 
 ```bash
-# 1. View dashboard
+# 1. View dashboard with live prices
 # Open: http://localhost:8000/
 
 # 2. Execute paper trading

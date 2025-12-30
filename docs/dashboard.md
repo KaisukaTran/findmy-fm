@@ -2,7 +2,7 @@
 
 ## Overview
 
-The **FINDMY FM Dashboard** is a beautiful, responsive HTML interface that provides real-time monitoring of the Trade Service (TS) and Statement of Truth (SOT) systems. It replaces manual Swagger UI interaction with an intuitive visual experience.
+The **FINDMY FM Dashboard** is a beautiful, responsive HTML interface that provides real-time monitoring of the Trade Service (TS) and Statement of Truth (SOT) systems with live market data. It features mark-to-market valuation using real-time Binance prices and replaces manual Swagger UI interaction with an intuitive visual experience.
 
 ## Features
 
@@ -12,12 +12,15 @@ The **FINDMY FM Dashboard** is a beautiful, responsive HTML interface that provi
 - **SOT Audit Ready**: Verification that the Statement of Truth is audit-ready
 - **Last Update Time**: Timestamp of the most recent trade execution
 
-### 💼 Current Positions
-A responsive table displaying all open positions:
-- **Symbol**: Trading pair (e.g., BTC/USDT)
+### 💼 Current Positions (with Live Prices)
+A responsive table displaying all open positions with real-time market valuation:
+- **Symbol**: Trading pair (e.g., BTC)
 - **Quantity**: Current position size
 - **Average Price**: Entry price or weighted average
-- **Total Cost**: Total capital invested in the position
+- **Total Cost**: Total capital invested (qty × avg_price)
+- **Current Price**: Live market price from Binance *(NEW)*
+- **Market Value**: Current position value at market price (qty × current_price) *(NEW)*
+- **Unrealized P&L**: Mark-to-market profit/loss, color-coded green (profit) / red (loss) *(NEW)*
 
 ### 📈 Trade History
 Complete record of all trades with real-time sorting:
@@ -29,12 +32,37 @@ Complete record of all trades with real-time sorting:
 - **Status**: OPEN, CLOSED, or PARTIAL (color-coded)
 - **Realized P&L**: Profit/loss for closed trades (green/red)
 
-### 💰 Summary Cards
+### 💰 Summary Cards (Enhanced)
 Key performance metrics at a glance:
 - **Total Trades**: Cumulative trade count
 - **Realized P&L**: Profits from closed positions (green if positive, red if negative)
-- **Unrealized P&L**: Current open position P&L (green if positive, red if negative)
-- **Total Invested**: Total capital deployed across positions
+- **Unrealized P&L**: Current open position P&L from mark-to-market valuation (green if positive, red if negative) *(NEW)*
+- **Total Equity**: Cost basis + unrealized PnL (total portfolio value) *(NEW)*
+- **Total Invested**: Total capital deployed across positions *(NEW)*
+- **Market Value**: Sum of all position market values at current prices *(NEW)*
+- **Price Source**: Binance public API (live, refreshed every 60 seconds) *(NEW)*
+
+## Real-Time Market Data
+
+### Live Price Integration
+
+The dashboard uses **Binance public API** (via CCXT) to fetch real-time spot prices:
+
+- **No API key required** – Public data only
+- **Symbols**: Assumes base currency symbols (BTC, ETH, SOL) and creates USDT pairs automatically
+- **Refresh rate**: 60-second cache TTL prevents rate limiting while keeping prices fresh
+- **Fallback**: Shows last known prices if Binance is temporarily unavailable
+- **Auto-update**: Dashboard data refreshes every 30 seconds
+
+### Mark-to-Market Valuation
+
+Each position's unrealized P&L is calculated in real-time:
+
+```
+Market Value = Quantity × Current Price
+Unrealized P&L = Market Value - Total Cost
+Total Equity = Total Cost + Unrealized P&L
+```
 
 ## Accessing the Dashboard
 
@@ -48,6 +76,7 @@ http://localhost:8000/
 ```
 
 ### Docker
+
 ```bash
 docker run -p 8000:8000 findmy-fm
 # Navigate to http://localhost:8000/

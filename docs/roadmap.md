@@ -97,6 +97,16 @@ FINDMY evolves from a **paper trading simulator** to a **production-grade tradin
 - [ ] Update README with v0.2.0 features
 
 **v0.3.0 Features (Next)**:
+- [x] **Binance Real-Time Market Data & Unrealized PnL** ✨ COMPLETE (Dec 30, 2025)
+  - Live Binance spot prices via CCXT (public API, no key required)
+  - Mark-to-market valuation for all open positions
+  - Unrealized P&L calculation with real-time updates
+  - 60-second cache to prevent rate limiting
+  - Enhanced dashboard with current price and market value columns
+  - Auto-refresh every 30 seconds
+  - Error handling and fallback to last known prices
+  - Comprehensive market data service with tests
+  - Full documentation at docs/market-data.md
 - [ ] Partial position fills
 - [ ] Transaction costs model
 - [ ] Slippage & latency simulation
@@ -114,12 +124,15 @@ FINDMY evolves from a **paper trading simulator** to a **production-grade tradin
 - [x] GitHub Actions CI/CD pipeline
 - [x] SELL order execution engine
 - [x] Order side detection from Excel
+- [x] Market data service with CCXT integration
+- [x] Real-time price caching with TTL
 
 **Infrastructure**:
 - ✅ Docker support for containerization
 - ✅ GitHub Actions for automated testing
 - ✅ Code quality checks (Black, Ruff, MyPy, Bandit)
 - ✅ Security scanning (pip-audit)
+- ✅ Binance public API integration (no authentication)
 
 ---
 

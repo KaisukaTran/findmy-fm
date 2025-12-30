@@ -437,8 +437,72 @@ ws.onerror = function(error) {
 ```
 
 
-# 8. TROUBLESHOOTING
+# 8. DATABASE INITIALIZATION
 ===============================================================
+
+Before running the dashboard, initialize the database with test data:
+
+## Initialize Database Tables
+
+```python
+import sys
+sys.path.insert(0, '/workspaces/findmy-fm')
+from services.ts.db import engine
+from services.ts.models import Base
+
+# Create all tables
+Base.metadata.create_all(bind=engine)
+print('✅ Database tables created')
+```
+
+## Add Test Positions (Optional)
+
+```python
+from services.ts.db import SessionLocal
+from services.ts.models import TradePosition
+
+db = SessionLocal()
+
+# Add test positions
+positions = [
+    TradePosition(symbol='BTC', quantity=0.5, avg_entry_price=45000, total_cost=22500),
+    TradePosition(symbol='ETH', quantity=5.0, avg_entry_price=2000, total_cost=10000),
+]
+
+for pos in positions:
+    db.add(pos)
+
+db.commit()
+db.close()
+print('✅ Test positions added')
+```
+
+## Start the API Server
+
+```bash
+cd /workspaces/findmy-fm
+python -m uvicorn src.findmy.api.main:app --host 0.0.0.0 --port 8000
+```
+
+Then open: http://localhost:8000/
+
+The dashboard will show:
+- Live Binance prices for your positions
+- Unrealized PnL calculated in real-time
+- WebSocket updates every 30 seconds
+
+
+# 9. TROUBLESHOOTING
+===============================================================
+
+## Issue: Database table not found
+
+**Cause**: Database hasn't been initialized
+
+**Solutions**:
+1. Run `Base.metadata.create_all(bind=engine)` to initialize tables
+2. Restart the API server after initialization
+3. Check database file exists: `data/findmy.db`
 
 ## Issue: current_price shows null
 

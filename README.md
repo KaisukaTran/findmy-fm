@@ -177,14 +177,42 @@ pip install -r requirements-prod.txt
 pip install -r requirements-dev.txt
 ```
 
+### Initialize Database
+
+```bash
+# Create tables and add test positions
+python << 'EOF'
+import sys
+sys.path.insert(0, '/workspaces/findmy-fm')
+from services.ts.db import engine, SessionLocal
+from services.ts.models import Base, TradePosition
+
+# Create tables
+Base.metadata.create_all(bind=engine)
+
+# Add test positions (optional)
+db = SessionLocal()
+positions = [
+    TradePosition(symbol='BTC', quantity=0.5, avg_entry_price=45000, total_cost=22500),
+    TradePosition(symbol='ETH', quantity=5.0, avg_entry_price=2000, total_cost=10000),
+]
+for pos in positions:
+    db.add(pos)
+db.commit()
+db.close()
+
+print('✅ Database initialized with test positions')
+EOF
+```
+
 ### Run the API
 
 ```bash
-# Option 1: Direct Python
-python src/findmy/api/main.py
+# Option 1: Uvicorn (recommended)
+uvicorn src.findmy.api.main:app --host 0.0.0.0 --port 8000
 
-# Option 2: Uvicorn
-uvicorn src.findmy.api.main:app --reload
+# Option 2: Direct Python
+python src/findmy/api/main.py
 ```
 
 Server runs at: `http://localhost:8000`

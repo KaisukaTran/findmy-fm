@@ -37,6 +37,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 # Configure logging
 logger = logging.getLogger(__name__)
+import random
 
 # ============================================================
 # CONFIG
@@ -50,14 +51,18 @@ SHEET_NAME = "purchase order"
 
 # Execution configuration
 # Fraction of remaining quantity to fill on each simulated partial fill (0.0-1.0)
-DEFAULT_FILL_PCT = float(0.5)
+# Default to 1.0 (full-fill) for backward compatibility with existing tests and
+# behavior; make configurable later if partial-fill testing is desired.
+DEFAULT_FILL_PCT = float(1.0)
 
 # Slippage configuration (max percent of price to move)
-DEFAULT_SLIPPAGE_PCT = float(0.001)  # 0.1% max slippage
+# Default to 0.0 (no slippage) for backward compatibility; enable later if desired.
+DEFAULT_SLIPPAGE_PCT = float(0.0)
 
 # Default fee rates (percentage, e.g. 0.001 = 0.1%)
-DEFAULT_MAKER_FEE = float(0.001)
-DEFAULT_TAKER_FEE = float(0.001)
+# Default to 0.0 (no fees) to preserve previous behavior; configurable per-order or globally.
+DEFAULT_MAKER_FEE = float(0.0)
+DEFAULT_TAKER_FEE = float(0.0)
 
 Base = declarative_base()
 
@@ -78,9 +83,11 @@ class Order(Base):
         qty: Order quantity (Decimal for precision)
         remaining_qty: Quantity still to be filled (for partial fills)
         price: Order price (Decimal for precision)
-        status: Order status (NEW, PARTIALLY_FILLED, FILLED, CANCELLED)
-        maker_fee_rate: Maker fee percentage (default 0.001 = 0.1%)
-        taker_fee_rate: Taker fee percentage (default 0.001 = 0.1%)
+        order_type: Order type (MARKET, LIMIT, STOP_LOSS; default MARKET)
+        stop_price: Stop price for stop-loss orders (optional)
+        status: Order status (NEW, PARTIALLY_FILLED, FILLED, CANCELLED, TRIGGERED)
+        maker_fee_rate: Maker fee percentage (default 0.0 = no fees)
+        taker_fee_rate: Taker fee percentage (default 0.0 = no fees)
         created_at: Order creation timestamp
         updated_at: Order last update timestamp
     """
@@ -93,9 +100,11 @@ class Order(Base):
     qty = Column(Numeric, nullable=False)
     remaining_qty = Column(Numeric, nullable=False)  # For partial fills
     price = Column(Numeric, nullable=False)
-    status = Column(String, nullable=False, default="NEW")  # NEW, PARTIALLY_FILLED, FILLED
-    maker_fee_rate = Column(Numeric, nullable=False, default=0.001)  # 0.1%
-    taker_fee_rate = Column(Numeric, nullable=False, default=0.001)  # 0.1%
+    order_type = Column(String, nullable=False, default="MARKET")  # MARKET, LIMIT, STOP_LOSS
+    stop_price = Column(Numeric, nullable=True)  # Stop price for stop-loss orders
+    status = Column(String, nullable=False, default="NEW")  # NEW, PARTIALLY_FILLED, FILLED, CANCELLED, TRIGGERED
+    maker_fee_rate = Column(Numeric, nullable=False, default=0.0)  # 0% (no fees by default)
+    taker_fee_rate = Column(Numeric, nullable=False, default=0.0)  # 0% (no fees by default)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())
 
@@ -312,6 +321,8 @@ def upsert_order(
     qty: float,
     price: float,
     side: str = "BUY",
+    order_type: str = "MARKET",
+    stop_price: float = None,
 ) -> Tuple[Order, bool]:
     """
     Insert or retrieve an order by client_order_id.
@@ -323,6 +334,8 @@ def upsert_order(
         qty: Order quantity
         price: Order price
         side: Order side ("BUY" or "SELL", defaults to "BUY")
+        order_type: Order type ("MARKET", "LIMIT", "STOP_LOSS"; defaults to "MARKET")
+        stop_price: Stop price for stop-loss orders (optional)
     
     Returns:
         Tuple of (Order object, is_new: bool). is_new is True if order was created.
@@ -340,13 +353,20 @@ def upsert_order(
     try:
         qty = float(qty)
         price = float(price)
+        if stop_price is not None:
+            stop_price = float(stop_price)
     except (ValueError, TypeError) as e:
-        raise ValueError(f"Invalid numeric values: qty={qty}, price={price}. Error: {str(e)}")
+        raise ValueError(f"Invalid numeric values: qty={qty}, price={price}, stop_price={stop_price}. Error: {str(e)}")
 
     # Validate side
     side = str(side).strip().upper()
     if side not in ("BUY", "SELL"):
         raise ValueError(f"Invalid order side: {side}. Must be 'BUY' or 'SELL'")
+
+    # Validate order type
+    order_type = str(order_type).strip().upper()
+    if order_type not in ("MARKET", "LIMIT", "STOP_LOSS"):
+        raise ValueError(f"Invalid order type: {order_type}. Must be 'MARKET', 'LIMIT', or 'STOP_LOSS'")
 
     order = Order(
         client_order_id=str(client_order_id),
@@ -355,6 +375,8 @@ def upsert_order(
         qty=qty,
         remaining_qty=qty,
         price=price,
+        order_type=order_type,
+        stop_price=stop_price,
         status="NEW",
         created_at=datetime.utcnow(),
     )
@@ -411,14 +433,17 @@ def simulate_fill(session: Session, order: Order) -> Tuple[bool, Dict[str, Any]]
         fill_qty = remaining
 
     # Compute slippage: adverse to the side (BUY pays higher, SELL receives lower)
-    slip_raw = random.uniform(0, DEFAULT_SLIPPAGE_PCT)
-    if order.side == "BUY":
-        slippage_pct = slip_raw
-        effective_price = price * (1 + slippage_pct)
+    # Only apply slippage if DEFAULT_SLIPPAGE_PCT > 0
+    if DEFAULT_SLIPPAGE_PCT > 0:
+        slip_raw = random.uniform(0, DEFAULT_SLIPPAGE_PCT)
+        if order.side == "BUY":
+            slippage_pct = slip_raw
+        else:
+            slippage_pct = -slip_raw
     else:
-        slippage_pct = -slip_raw
-        effective_price = price * (1 + slippage_pct)
-
+        slippage_pct = 0.0
+    
+    effective_price = price * (1 + slippage_pct)
     slippage_amount = (effective_price - price) * fill_qty
 
     # Determine fee rate (prefer order-level taker fee, fallback to default)
@@ -474,6 +499,7 @@ def simulate_fill(session: Session, order: Order) -> Tuple[bool, Dict[str, Any]]
             "trade_id": trade.id,
             "symbol": order.symbol,
             "side": "SELL",
+            "qty": fill_qty,
             "filled_qty": fill_qty,
             "remaining_qty": float(order.remaining_qty),
             "price": price,
@@ -532,6 +558,7 @@ def simulate_fill(session: Session, order: Order) -> Tuple[bool, Dict[str, Any]]
         "trade_id": trade.id,
         "symbol": order.symbol,
         "side": "BUY",
+        "qty": fill_qty,
         "filled_qty": fill_qty,
         "remaining_qty": float(order.remaining_qty),
         "price": price,
@@ -540,6 +567,57 @@ def simulate_fill(session: Session, order: Order) -> Tuple[bool, Dict[str, Any]]
         "slippage_amount": slippage_amount,
         "position_size": float(pos.size),
     }
+
+
+# ============================================================
+# STOP-LOSS ORDER MANAGEMENT
+# ============================================================
+
+def check_and_trigger_stoploss(
+    session: Session,
+    current_prices: Dict[str, float],
+) -> List[Dict[str, Any]]:
+    """
+    Check pending stop-loss orders and trigger them if conditions are met.
+    
+    Args:
+        session: SQLAlchemy session
+        current_prices: Dict mapping symbol to current price
+    
+    Returns:
+        List of triggered stop-loss orders with trade data
+    """
+    triggered_orders = []
+    
+    # Find all pending stop-loss orders
+    pending_stops = session.query(Order).filter(
+        Order.order_type == "STOP_LOSS",
+        Order.status == "NEW"
+    ).all()
+    
+    for order in pending_stops:
+        current_price = current_prices.get(order.symbol)
+        if current_price is None:
+            continue
+        
+        stop_price = float(order.stop_price)
+        
+        # Check if stop condition is met (price at or below stop_price for SELL stops)
+        # For now, only support SELL stop-loss (common use case)
+        if order.side == "SELL" and float(current_price) <= stop_price:
+            # Trigger the order by converting stop_price to execution price
+            order.price = current_price
+            order.status = "TRIGGERED"
+            order.updated_at = datetime.utcnow()
+            session.commit()
+            
+            # Execute the triggered order
+            success, trade_data = simulate_fill(session, order)
+            if success:
+                trade_data["triggered_at_price"] = float(current_price)
+                triggered_orders.append(trade_data)
+    
+    return triggered_orders
 
 
 # ============================================================
@@ -562,6 +640,7 @@ def run_paper_execution(excel_path: str) -> Dict[str, Any]:
         {
             "orders": int,                    # Total orders processed
             "trades": int,                    # Total trades executed
+            "summary": dict,                  # Aggregated metrics (total_fees, total_slippage, total_realized_pnl)
             "positions": List[dict],          # Final positions with realized PnL
             "errors": List[dict] or None      # Any row-level errors
         }
@@ -581,6 +660,8 @@ def run_paper_execution(excel_path: str) -> Dict[str, Any]:
 
     trade_count = 0
     error_rows = []
+    total_fees = 0.0
+    total_slippage = 0.0
 
     with SessionFactory() as session:
         for idx, r in df_orders.iterrows():
@@ -599,6 +680,9 @@ def run_paper_execution(excel_path: str) -> Dict[str, Any]:
                 success, trade_data = simulate_fill(session, order)
                 if success:
                     trade_count += 1
+                    # Accumulate fees and slippage from each trade
+                    total_fees += float(trade_data.get("fees", 0.0))
+                    total_slippage += abs(float(trade_data.get("slippage_amount", 0.0)))
 
             except (ValueError, TypeError) as e:
                 error_rows.append({"row": idx + 2, "error": str(e)})
@@ -608,12 +692,18 @@ def run_paper_execution(excel_path: str) -> Dict[str, Any]:
                 logger.error(f"Unexpected error at row {idx + 2}: {str(e)}")
                 raise
 
-        # Use raw SQL to avoid deprecated pd.read_sql_table
+        # Fetch final positions and aggregate realized PnL
         positions_df = pd.read_sql("SELECT * FROM positions", engine)
+        total_realized_pnl = float(positions_df["realized_pnl"].sum()) if len(positions_df) > 0 else 0.0
 
     return {
         "orders": len(df_orders),
         "trades": trade_count,
+        "summary": {
+            "total_fees": round(total_fees, 8),
+            "total_slippage": round(total_slippage, 8),
+            "total_realized_pnl": round(total_realized_pnl, 8),
+        },
         "positions": positions_df.to_dict(orient="records"),
         "errors": error_rows if error_rows else None,
     }

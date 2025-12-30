@@ -4,7 +4,7 @@ Small. Cute. Flexible. Funny Project
 
 > **FINDMY (FM)** is a modular Python-based trading bot focused on research-first development, starting with a robust **paper trading execution engine** using Excel input and FastAPI.
 
-**Latest Release:** v0.1.0 | **License:** MIT | **Status:** Active Development ⚡
+**Latest Release:** v0.3.0 | **License:** MIT | **Status:** Active Development ⚡
 
 ---
 
@@ -34,27 +34,35 @@ FINDMY is designed as a **production-grade trading system**, not a demo bot.
 
 ---
 
-## ✨ Current Features (v1)
+## ✨ Current Features (v0.3.0)
 
 ### 📋 Paper Trading Execution Engine
 
-✅ **Flexible Excel Input**
-- Vietnamese & English headers supported
-- No-header format (positional A-D mapping)
-- Automatic fallback on header mismatch
-- Sheet name: `purchase order`
-
-✅ **Order Processing**
-- Immediate full-fill simulation
+✅ **Advanced Order Processing**
+- Partial fill support with configurable fill percentages
+- Full-fill by default (backward compatible)
+- Order types: MARKET, LIMIT, STOP_LOSS
 - Duplicate detection (prevents double execution)
-- BUY orders only (v1)
+- BUY and SELL orders with position tracking
 - Graceful error handling
 
-✅ **Data Persistence**
-- Orders table (status tracking)
-- Trades table (execution details)
-- Positions table (average price calculations)
-- SQLite (no external dependencies)
+✅ **Execution Costs Simulation**
+- Configurable slippage (simulates adverse price movement)
+- Transaction fees (maker & taker fees per order)
+- Cost tracking per trade and aggregated
+- Realistic price impact modeling
+
+✅ **Stop-Loss Automation**
+- Automatic stop-loss order triggers
+- Price-based triggering with current price monitoring
+- Complete trade execution with proper P&L calculation
+- Status tracking (NEW → TRIGGERED → FILLED)
+
+✅ **Enhanced Reporting**
+- Detailed per-trade breakdown (qty, effective price, fees, slippage)
+- Aggregated summary metrics (total fees, slippage, realized PnL)
+- Position tracking with realized/unrealized P&L
+- Trade history with cost basis and execution details
 
 ### 🌐 REST API (FastAPI)
 

@@ -1,14 +1,18 @@
--- Migration 003: Add Partial Fill Support
--- Date: 2025-12-30
--- Description: Add columns to support partial order fills
+-- Migration: Add columns for partial fills and execution costs
+-- Adds remaining_qty to orders and effective_price, fees, slippage_amount to trades
 
--- Add remaining_qty to orders table to track unfilled quantity
-ALTER TABLE orders ADD COLUMN remaining_qty NUMERIC DEFAULT NULL;
+PRAGMA foreign_keys=OFF;
+BEGIN TRANSACTION;
 
--- Add fill_price and fees to trades table to track actual execution details
-ALTER TABLE trades ADD COLUMN effective_price NUMERIC DEFAULT NULL;
+-- Orders: add remaining_qty, maker_fee_rate, taker_fee_rate
+ALTER TABLE orders ADD COLUMN remaining_qty NUMERIC DEFAULT 0.0;
+ALTER TABLE orders ADD COLUMN maker_fee_rate NUMERIC DEFAULT 0.001;
+ALTER TABLE orders ADD COLUMN taker_fee_rate NUMERIC DEFAULT 0.001;
+
+-- Trades: add effective_price, fees, slippage_amount
+ALTER TABLE trades ADD COLUMN effective_price NUMERIC;
 ALTER TABLE trades ADD COLUMN fees NUMERIC DEFAULT 0.0;
 ALTER TABLE trades ADD COLUMN slippage_amount NUMERIC DEFAULT 0.0;
 
--- Update existing trades to have effective_price = price if NULL
-UPDATE trades SET effective_price = price WHERE effective_price IS NULL;
+COMMIT;
+PRAGMA foreign_keys=ON;

@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Tuple, Dict, Any, List
 import pandas as pd
 import logging
-from decimal import Decimal
 
 from sqlalchemy import (
     create_engine,
@@ -36,8 +35,6 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
-from .config import DEFAULT_CONFIG
-
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -50,6 +47,17 @@ DATA_DIR.mkdir(exist_ok=True)
 
 DB_PATH = DATA_DIR / "findmy_fm_paper.db"
 SHEET_NAME = "purchase order"
+
+# Execution configuration
+# Fraction of remaining quantity to fill on each simulated partial fill (0.0-1.0)
+DEFAULT_FILL_PCT = float(0.5)
+
+# Slippage configuration (max percent of price to move)
+DEFAULT_SLIPPAGE_PCT = float(0.001)  # 0.1% max slippage
+
+# Default fee rates (percentage, e.g. 0.001 = 0.1%)
+DEFAULT_MAKER_FEE = float(0.001)
+DEFAULT_TAKER_FEE = float(0.001)
 
 Base = declarative_base()
 
@@ -68,9 +76,11 @@ class Order(Base):
         symbol: Trading pair (e.g., BTC/USD)
         side: Order side (BUY or SELL)
         qty: Order quantity (Decimal for precision)
+        remaining_qty: Quantity still to be filled (for partial fills)
         price: Order price (Decimal for precision)
-        remaining_qty: Unfilled quantity (for partial fills)
-        status: Order status (NEW, FILLED, PARTIAL, CANCELLED)
+        status: Order status (NEW, PARTIALLY_FILLED, FILLED, CANCELLED)
+        maker_fee_rate: Maker fee percentage (default 0.001 = 0.1%)
+        taker_fee_rate: Taker fee percentage (default 0.001 = 0.1%)
         created_at: Order creation timestamp
         updated_at: Order last update timestamp
     """
@@ -81,12 +91,11 @@ class Order(Base):
     symbol = Column(String, nullable=False)
     side = Column(String, nullable=False)  # BUY or SELL
     qty = Column(Numeric, nullable=False)
+    remaining_qty = Column(Numeric, nullable=False)  # For partial fills
     price = Column(Numeric, nullable=False)
-    remaining_qty = Column(Numeric, nullable=True)  # For partial fills
-    status = Column(String, nullable=False, default="NEW")
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, onupdate=func.now())
-    status = Column(String, nullable=False, default="NEW")
+    status = Column(String, nullable=False, default="NEW")  # NEW, PARTIALLY_FILLED, FILLED
+    maker_fee_rate = Column(Numeric, nullable=False, default=0.001)  # 0.1%
+    taker_fee_rate = Column(Numeric, nullable=False, default=0.001)  # 0.1%
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())
 
@@ -101,10 +110,10 @@ class Trade(Base):
         symbol: Trading pair (e.g., BTC/USD)
         side: Trade side (BUY or SELL)
         qty: Trade quantity
-        price: Execution price (original price before costs)
-        effective_price: Actual execution price after slippage/fees
-        fees: Trading fees charged
-        slippage_amount: Slippage impact on price
+        price: Original execution price
+        effective_price: Price after slippage (actual fill price)
+        fees: Trading fees charged on this trade
+        slippage_amount: Slippage cost applied to this trade
         ts: Trade execution timestamp
     """
     __tablename__ = "trades"
@@ -115,9 +124,9 @@ class Trade(Base):
     side = Column(String, nullable=False)
     qty = Column(Numeric, nullable=False)
     price = Column(Numeric, nullable=False)
-    effective_price = Column(Numeric, nullable=True)  # Price after slippage/fees
-    fees = Column(Numeric, nullable=False, default=0.0)
-    slippage_amount = Column(Numeric, nullable=False, default=0.0)
+    effective_price = Column(Numeric, nullable=True)  # Price after slippage
+    fees = Column(Numeric, nullable=True, default=0.0)  # Trading fees
+    slippage_amount = Column(Numeric, nullable=True, default=0.0)  # Slippage cost
     ts = Column(DateTime, server_default=func.now())
 
 
@@ -344,6 +353,7 @@ def upsert_order(
         symbol=str(symbol).strip(),
         side=side,
         qty=qty,
+        remaining_qty=qty,
         price=price,
         status="NEW",
         created_at=datetime.utcnow(),
@@ -390,141 +400,144 @@ def simulate_fill(session: Session, order: Order) -> Tuple[bool, Dict[str, Any]]
     # Fetch or create position
     pos = session.query(Position).filter_by(symbol=order.symbol).one_or_none()
 
+    # Determine remaining quantity on order (supports older rows)
+    remaining = float(getattr(order, "remaining_qty", None) or qty)
+
+    # Determine fill quantity for this simulation (partial fill)
+    fill_qty = round(remaining * DEFAULT_FILL_PCT, 8)
+    if fill_qty <= 0:
+        fill_qty = remaining
+    if fill_qty > remaining:
+        fill_qty = remaining
+
+    # Compute slippage: adverse to the side (BUY pays higher, SELL receives lower)
+    slip_raw = random.uniform(0, DEFAULT_SLIPPAGE_PCT)
+    if order.side == "BUY":
+        slippage_pct = slip_raw
+        effective_price = price * (1 + slippage_pct)
+    else:
+        slippage_pct = -slip_raw
+        effective_price = price * (1 + slippage_pct)
+
+    slippage_amount = (effective_price - price) * fill_qty
+
+    # Determine fee rate (prefer order-level taker fee, fallback to default)
+    fee_rate = float(getattr(order, "taker_fee_rate", DEFAULT_TAKER_FEE) or DEFAULT_TAKER_FEE)
+    fees = effective_price * fill_qty * fee_rate
+
     # ============================================================
-    # SELL ORDER: Position reduction and realized PnL
+    # SELL: ensure position sufficiency for this partial fill
     # ============================================================
     if order.side == "SELL":
-        if pos is None or float(pos.size) < qty:
+        if pos is None or float(pos.size) < fill_qty:
             current_size = float(pos.size) if pos else 0.0
             raise ValueError(
-                f"Insufficient position for SELL: requested {qty}, "
-                f"current position {current_size} for {order.symbol}"
+                f"Insufficient position for SELL: requested {fill_qty}, current position {current_size} for {order.symbol}"
             )
 
-        # Calculate realized PnL
         old_size = float(pos.size)
         old_avg = float(pos.avg_price)
-        cost_basis = qty * old_avg
-        # Apply slippage and fees to SELL
-        slipped_price, slippage_amount = DEFAULT_CONFIG.slippage.apply_slippage(price, order.side)
-        notional = qty * slipped_price
-        fees = DEFAULT_CONFIG.fees.calculate_fee(notional, is_maker=False)
-        fee_per_unit = fees / qty if qty > 0 else 0
-        effective_price = slipped_price - fee_per_unit
-        realized_pnl = (effective_price - old_avg) * qty
 
-        # Create trade record
+        # Realized PnL uses effective_price and deducts fees
+        realized_pnl = (effective_price - old_avg) * fill_qty - fees
+        cost_basis = old_avg * fill_qty
+
         trade = Trade(
             order_id=order.id,
             symbol=order.symbol,
             side="SELL",
-            qty=qty,
+            qty=fill_qty,
             price=price,
-            effective_price=Decimal(str(effective_price)),
-            fees=Decimal(str(fees)),
-            slippage_amount=Decimal(str(slippage_amount)),
+            effective_price=effective_price,
+            fees=fees,
+            slippage_amount=slippage_amount,
             ts=datetime.utcnow(),
         )
         session.add(trade)
 
-        # Update order status
-        order.status = "FILLED"
-        order.updated_at = datetime.utcnow()
-
         # Update position
-        new_size = old_size - qty
-        cumulative_realized_pnl = float(pos.realized_pnl) + float(realized_pnl)
-
+        new_size = old_size - fill_qty
+        pos.size = new_size
+        pos.realized_pnl = float(pos.realized_pnl) + realized_pnl
         if new_size == 0:
-            # Close position completely
-            pos.size = Decimal("0")
-            pos.avg_price = Decimal("0")  # No position left
-            pos.realized_pnl = Decimal(str(cumulative_realized_pnl))
-        else:
-            # Partial close: keep the same average price
-            pos.size = Decimal(str(new_size))
-            # avg_price stays the same for remaining position
-            pos.realized_pnl = Decimal(str(cumulative_realized_pnl))
-
+            pos.avg_price = 0
         pos.updated_at = datetime.utcnow()
+
+        # Update order remaining qty and status
+        order.remaining_qty = remaining - fill_qty
+        order.updated_at = datetime.utcnow()
+        order.status = "PARTIALLY_FILLED" if order.remaining_qty > 0 else "FILLED"
+
         session.commit()
 
         return True, {
             "trade_id": trade.id,
             "symbol": order.symbol,
             "side": "SELL",
-            "qty": qty,
+            "filled_qty": fill_qty,
+            "remaining_qty": float(order.remaining_qty),
             "price": price,
-            "effective_price": float(effective_price),
-            "fees": float(fees),
-            "slippage_amount": float(slippage_amount),
+            "effective_price": effective_price,
+            "fees": fees,
+            "slippage_amount": slippage_amount,
             "cost_basis": cost_basis,
-            "realized_pnl": float(realized_pnl),
+            "realized_pnl": realized_pnl,
             "position_remaining": new_size,
         }
 
     # ============================================================
-    # BUY ORDER: Position accumulation
+    # BUY: apply partial fill and update position incrementally
     # ============================================================
-    # Apply slippage and fees for BUY
-    slipped_price, slippage_amount = DEFAULT_CONFIG.slippage.apply_slippage(price, order.side)
-    notional = qty * slipped_price
-    fees = DEFAULT_CONFIG.fees.calculate_fee(notional, is_maker=False)
-    fee_per_unit = fees / qty if qty > 0 else 0
-    effective_price = slipped_price + fee_per_unit
-
+    # Compute new position values using effective_price
     trade = Trade(
         order_id=order.id,
         symbol=order.symbol,
         side="BUY",
-        qty=qty,
+        qty=fill_qty,
         price=price,
-        effective_price=Decimal(str(effective_price)),
-        fees=Decimal(str(fees)),
-        slippage_amount=Decimal(str(slippage_amount)),
+        effective_price=effective_price,
+        fees=fees,
+        slippage_amount=slippage_amount,
         ts=datetime.utcnow(),
     )
     session.add(trade)
 
-    order.status = "FILLED"
-    order.updated_at = datetime.utcnow()
-
+    # Update or create position
     if pos is None:
-        # New position (use effective price as cost basis)
         pos = Position(
             symbol=order.symbol,
-            size=Decimal(str(qty)),
-            avg_price=Decimal(str(effective_price)),
-            realized_pnl=Decimal("0.0"),
+            size=fill_qty,
+            avg_price=effective_price,
+            realized_pnl=0.0,
             updated_at=datetime.utcnow(),
         )
         session.add(pos)
     else:
-        # Add to existing position
         old_size = float(pos.size)
         old_avg = float(pos.avg_price)
-        new_size = old_size + qty
-
-        # Cost-weighted average using effective_price
-        total_cost = (old_size * old_avg) + (qty * effective_price)
-        new_avg = total_cost / new_size if new_size > 0 else 0
-
-        pos.size = Decimal(str(new_size))
-        pos.avg_price = Decimal(str(new_avg))
+        new_size = old_size + fill_qty
+        new_avg = ((old_size * old_avg) + (fill_qty * effective_price)) / new_size
+        pos.size = new_size
+        pos.avg_price = new_avg
         pos.updated_at = datetime.utcnow()
 
-    session.add(trade)
+    # Update order remaining qty and status
+    order.remaining_qty = remaining - fill_qty
+    order.updated_at = datetime.utcnow()
+    order.status = "PARTIALLY_FILLED" if order.remaining_qty > 0 else "FILLED"
+
     session.commit()
 
     return True, {
         "trade_id": trade.id,
         "symbol": order.symbol,
         "side": "BUY",
-        "qty": qty,
+        "filled_qty": fill_qty,
+        "remaining_qty": float(order.remaining_qty),
         "price": price,
-        "effective_price": float(effective_price),
-        "fees": float(fees),
-        "slippage_amount": float(slippage_amount),
+        "effective_price": effective_price,
+        "fees": fees,
+        "slippage_amount": slippage_amount,
         "position_size": float(pos.size),
     }
 

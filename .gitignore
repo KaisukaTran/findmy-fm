@@ -19,3 +19,4 @@ data/sot/*.db
 # Runtime databases (SOT)
 *.db
 data/sot/*.db
+.coverage

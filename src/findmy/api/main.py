@@ -119,6 +119,7 @@ async def paper_execution(file: UploadFile = File(...)):
 from services.ts.db import SessionLocal
 from services.ts.models import Trade, TradePosition, TradePnL
 from services.sot.models import Order
+from findmy.services.market_data import get_current_prices, get_unrealized_pnl
 from sqlalchemy import func
 from datetime import datetime
 from pydantic import BaseModel
@@ -130,6 +131,9 @@ class PositionResponse(BaseModel):
     quantity: float
     avg_price: float
     total_cost: float
+    current_price: Optional[float] = None
+    market_value: Optional[float] = None
+    unrealized_pnl: Optional[float] = None
 
 
 class TradeResponse(BaseModel):
@@ -151,26 +155,48 @@ class SummaryResponse(BaseModel):
     realized_pnl: float
     unrealized_pnl: float
     total_invested: float
+    total_market_value: float = 0.0
+    total_equity: float = 0.0
     last_trade_time: Optional[datetime] = None
     status: str
 
 
 @app.get("/api/positions", response_model=List[PositionResponse])
 async def get_positions():
-    """Get current positions from Trade Service."""
+    """Get current positions from Trade Service with live market prices and unrealized PnL."""
     db = SessionLocal()
     try:
         try:
             positions = db.query(TradePosition).all()
-            return [
-                PositionResponse(
-                    symbol=p.symbol,
-                    quantity=p.quantity,
-                    avg_price=p.avg_entry_price,
-                    total_cost=p.total_cost,
+            if not positions:
+                return []
+            
+            # Fetch current prices for all symbols
+            symbols = [p.symbol for p in positions]
+            prices = get_current_prices(symbols)
+            
+            result = []
+            for p in positions:
+                current_price = prices.get(p.symbol)
+                if current_price is not None:
+                    market_value = p.quantity * current_price
+                    unrealized_pnl = market_value - p.total_cost
+                else:
+                    market_value = None
+                    unrealized_pnl = None
+                
+                result.append(
+                    PositionResponse(
+                        symbol=p.symbol,
+                        quantity=p.quantity,
+                        avg_price=p.avg_entry_price,
+                        total_cost=p.total_cost,
+                        current_price=current_price,
+                        market_value=market_value,
+                        unrealized_pnl=unrealized_pnl,
+                    )
                 )
-                for p in positions
-            ]
+            return result
         except Exception:
             # Table may not exist yet
             return []
@@ -214,7 +240,7 @@ async def get_trades():
 
 @app.get("/api/summary", response_model=SummaryResponse)
 async def get_summary():
-    """Get PnL summary and trading statistics."""
+    """Get PnL summary and trading statistics with market values."""
     db = SessionLocal()
     try:
         try:
@@ -230,12 +256,24 @@ async def get_summary():
                 realized_pnl = 0.0
                 unrealized_pnl = 0.0
 
-            # Total invested
+            # Total invested and market value
+            total_invested = 0.0
+            total_market_value = 0.0
             try:
                 positions = db.query(TradePosition).all()
                 total_invested = sum(p.total_cost for p in positions) if positions else 0.0
+                
+                # Fetch current prices for market value calculation
+                if positions:
+                    symbols = [p.symbol for p in positions]
+                    prices = get_current_prices(symbols)
+                    for p in positions:
+                        current_price = prices.get(p.symbol)
+                        if current_price is not None:
+                            total_market_value += p.quantity * current_price
             except Exception:
                 total_invested = 0.0
+                total_market_value = 0.0
 
             # Last trade time
             try:
@@ -244,11 +282,16 @@ async def get_summary():
             except Exception:
                 last_trade_time = None
 
+            # Calculate total equity
+            total_equity = total_invested + unrealized_pnl
+
             return SummaryResponse(
                 total_trades=int(total_trades),
                 realized_pnl=realized_pnl,
                 unrealized_pnl=unrealized_pnl,
                 total_invested=total_invested,
+                total_market_value=total_market_value,
+                total_equity=total_equity,
                 last_trade_time=last_trade_time,
                 status="✓ Active",
             )
@@ -259,6 +302,8 @@ async def get_summary():
                 realized_pnl=0.0,
                 unrealized_pnl=0.0,
                 total_invested=0.0,
+                total_market_value=0.0,
+                total_equity=0.0,
                 last_trade_time=None,
                 status="✓ Active",
             )

@@ -339,6 +339,8 @@ class BacktestRequestBody(BaseModel):
     end_date: str  # ISO format YYYY-MM-DD
     initial_capital: float = 10000.0
     timeframe: str = "1h"
+    strategy_type: Optional[str] = None  # "moving_average" or None for basic backtest
+    strategy_config: Optional[Dict[str, Any]] = None  # Strategy-specific config
 
 
 @app.post("/api/backtest")
@@ -346,11 +348,17 @@ async def run_backtest_endpoint(request_body: BacktestRequestBody):
     """
     Run a backtest simulation over historical data.
     
+    Supports two modes:
+    1. Basic backtest: Simple equity curve without strategy (traditional backtesting)
+    2. Strategy backtest: Run trading strategy over historical data with signal tracking
+    
     Args:
         request_body: Backtest parameters including symbols, date range, capital, timeframe
+                     Optional: strategy_type and strategy_config for strategy backtesting
     
     Returns:
-        BacktestResult with equity curve, trades, and performance metrics
+        BacktestResult with equity curve, trades, performance metrics
+        If strategy provided, also includes signals and strategy-specific metrics
     """
     try:
         # Parse dates
@@ -364,17 +372,43 @@ async def run_backtest_endpoint(request_body: BacktestRequestBody):
         if (end_date - start_date).days > 365:
             raise HTTPException(status_code=400, detail="Backtest period cannot exceed 365 days")
         
-        # Create request and run backtest
-        backtest_request = BacktestRequest(
-            symbols=request_body.symbols,
-            start_date=start_date,
-            end_date=end_date,
-            initial_capital=request_body.initial_capital,
-            timeframe=request_body.timeframe,
-        )
-        
-        result = run_backtest(backtest_request)
-        return result.to_dict()
+        # Check if strategy backtest is requested
+        if request_body.strategy_type:
+            from findmy.services.strategy_backtest import StrategyBacktester
+            
+            # Create strategy instance
+            if request_body.strategy_type.lower() == "moving_average":
+                strategy = MovingAverageStrategy(
+                    symbols=request_body.symbols,
+                    config=request_body.strategy_config
+                )
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown strategy type: {request_body.strategy_type}. Available: moving_average"
+                )
+            
+            # Run strategy backtest
+            backtester = StrategyBacktester(strategy)
+            result = backtester.run(
+                start_date=start_date,
+                end_date=end_date,
+                initial_capital=request_body.initial_capital,
+                timeframe=request_body.timeframe
+            )
+            return result.to_dict()
+        else:
+            # Run basic backtest (original behavior)
+            backtest_request = BacktestRequest(
+                symbols=request_body.symbols,
+                start_date=start_date,
+                end_date=end_date,
+                initial_capital=request_body.initial_capital,
+                timeframe=request_body.timeframe,
+            )
+            
+            result = run_backtest(backtest_request)
+            return result.to_dict()
         
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")

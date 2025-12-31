@@ -6,6 +6,7 @@ import logging
 
 from services.sot.db import SessionLocal
 from services.sot.pending_orders import PendingOrder, PendingOrderStatus
+from services.risk import calculate_order_qty, check_all_risks
 
 logger = logging.getLogger(__name__)
 
@@ -13,15 +14,16 @@ logger = logging.getLogger(__name__)
 def queue_order(
     symbol: str,
     side: str,
-    quantity: float,
-    price: float,
-    source: str,
+    quantity: Optional[float] = None,
+    price: float = 0.0,
+    source: str = "manual",
     order_type: str = "MARKET",
     source_ref: Optional[str] = None,
     strategy_name: Optional[str] = None,
     confidence: Optional[float] = None,
     note: Optional[str] = None,
-) -> PendingOrder:
+    pips: Optional[float] = None,
+) -> tuple[PendingOrder, Optional[str]]:
     """
     Queue an order for manual approval.
     
@@ -30,7 +32,7 @@ def queue_order(
     Args:
         symbol: Asset symbol (e.g., "BTC", "ETH")
         side: Order side ("BUY" or "SELL")
-        quantity: Order quantity
+        quantity: Order quantity (auto-calculated from pips if not provided)
         price: Order price
         source: Source of order ("excel", "strategy", "backtest")
         order_type: Order type ("MARKET", "LIMIT", "STOP_LOSS")
@@ -38,23 +40,43 @@ def queue_order(
         strategy_name: Optional strategy name if from strategy
         confidence: Optional signal confidence if from strategy
         note: Optional notes
+        pips: Optional number of pips (will calculate quantity)
     
     Returns:
-        PendingOrder object
+        Tuple of (PendingOrder, risk_violation_note)
+        - PendingOrder: The queued order
+        - risk_violation_note: None if passed all checks, string with violation reason if failed
     """
     db = SessionLocal()
     try:
+        # Calculate quantity from pips if provided
+        final_quantity = quantity
+        if pips is not None:
+            final_quantity = calculate_order_qty(symbol, pips=pips)
+        
+        if final_quantity is None or final_quantity <= 0:
+            raise ValueError(f"Invalid quantity: {final_quantity}")
+        
+        # Run risk checks
+        all_passed, violations = check_all_risks(symbol, final_quantity, db)
+        risk_note = None
+        if not all_passed:
+            risk_note = "; ".join(violations)
+            logger.warning(f"Order {symbol} failed risk checks: {risk_note}")
+        
+        # Create pending order
         pending_order = PendingOrder(
             symbol=symbol,
             side=side,
-            quantity=quantity,
+            quantity=final_quantity,
             price=price,
             order_type=order_type,
+            pips=pips,  # Store original pips value
             source=source,
             source_ref=source_ref,
             strategy_name=strategy_name,
             confidence=confidence,
-            note=note,
+            note=note or risk_note,  # Add risk violation to notes if present
             status=PendingOrderStatus.PENDING,
         )
         
@@ -62,8 +84,11 @@ def queue_order(
         db.commit()
         db.refresh(pending_order)
         
-        logger.info(f"Queued order: {side} {quantity} {symbol} @ {price} from {source}")
-        return pending_order
+        logger.info(
+            f"Queued order: {side} {final_quantity} {symbol} @ {price} "
+            f"from {source} (pips={pips})"
+        )
+        return pending_order, risk_note
     finally:
         db.close()
 

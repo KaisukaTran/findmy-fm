@@ -134,6 +134,70 @@ def clear_cache() -> None:
 
 
 # ============================================================
+# EXCHANGE INFO (LOT SIZE, FILTERS)
+# ============================================================
+
+
+_exchange_info_cache: dict[str, dict] = {}
+
+
+def get_exchange_info(symbol: str) -> dict[str, any]:
+    """
+    Fetch exchange info for a symbol from Binance (lot size, step size, etc).
+
+    Args:
+        symbol: Base currency symbol (e.g., "BTC", "ETH")
+
+    Returns:
+        Dictionary with exchange info:
+        {
+            "symbol": "BTC",
+            "minQty": 0.00001,        # Minimum order quantity
+            "stepSize": 0.00001,      # Order quantity step size
+            "minNotional": 10.0,      # Minimum order value in USDT
+            "maxQty": 10000.0,        # Maximum order quantity
+        }
+    """
+    # Check cache first
+    if symbol in _exchange_info_cache:
+        return _exchange_info_cache[symbol]
+
+    try:
+        exchange = ccxt.binance()
+        pair = f"{symbol}/USDT"
+
+        # Fetch market info
+        market = exchange.market(pair)
+
+        # Extract lot size info from limits
+        limits = market.get("limits", {})
+        amount_limits = limits.get("amount", {})
+        cost_limits = limits.get("cost", {})
+
+        info = {
+            "symbol": symbol,
+            "minQty": amount_limits.get("min", 0.00001),
+            "maxQty": amount_limits.get("max", 10000.0),
+            "stepSize": market.get("precision", {}).get("amount", 0.00001),
+            "minNotional": cost_limits.get("min", 10.0),
+        }
+
+        # Cache the result
+        _exchange_info_cache[symbol] = info
+        return info
+
+    except Exception as e:
+        # Return safe defaults if fetch fails
+        return {
+            "symbol": symbol,
+            "minQty": 0.00001,
+            "maxQty": 10000.0,
+            "stepSize": 0.00001,
+            "minNotional": 10.0,
+        }
+
+
+# ============================================================
 # HISTORICAL DATA FOR BACKTESTING
 # ============================================================
 

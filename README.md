@@ -4,7 +4,7 @@ Small. Cute. Flexible. Funny Project
 
 > **FINDMY (FM)** is a modular Python-based trading bot focused on research-first development, starting with a robust **paper trading execution engine** using Excel input and FastAPI.
 
-**Latest Release:** v0.5.0 | **License:** MIT | **Status:** Active Development ⚡
+**Latest Release:** v0.6.0 | **License:** MIT | **Status:** Active Development ⚡
 
 ---
 
@@ -35,7 +35,110 @@ FINDMY is designed as a **production-grade trading system**, not a demo bot.
 
 ---
 
-## ✨ Latest Features (v0.5.0)
+## ✨ Latest Features (v0.6.0)
+
+### 🎯 Pip-Based Order Sizing
+
+✅ **Pip Multiplier System**
+- Configure `pip_multiplier` (default 2.0) – 1 pip = multiplier × minQty
+- Exchange-aware sizing using Binance LOT_SIZE (minQty, stepSize, maxQty)
+- Automatic rounding to exchange step size
+- `calculate_order_qty(symbol, pips=1)` function for conversion
+- Example: `5 pips × 2.0 × 0.00001 = 0.0001 BTC`
+
+✅ **Order Creation with Pips**
+- Queue orders with `pips` field instead of fixed quantity
+- Automatic conversion to proper qty with exchange validation
+- Direct qty still supported (backward compatible)
+- Both stored in pending order for audit trail
+
+✅ **Exchange LOT_SIZE Integration**
+- `get_exchange_info(symbol)` fetches Binance limits
+- Automatic caching to avoid repeated API calls
+- Graceful fallback with safe defaults
+- Validates all calculated quantities against exchange limits
+
+### 🛡️ Pre-Pending Risk Checks
+
+✅ **Position Size Limits**
+- Configurable max position as % of account equity
+- Default: 10% max per position
+- Prevents over-concentration risk
+- Tracks current exposure and checks new orders against limit
+
+✅ **Daily Loss Limits**
+- Configurable max daily loss as % of equity
+- Default: 5% max daily loss
+- Tracks realized losses within trading day
+- Prevents cascading losses
+
+✅ **Risk Check Behavior**
+- Risk checks run automatically before order queueing
+- Violations DO NOT block orders (don't prevent approval queue)
+- Violation details added as notes to pending order
+- User can still approve risk-violating orders (with warning)
+- Enables user judgment while tracking all violations
+
+✅ **Risk API**
+- `check_position_size(symbol, qty)` → passed/failed status
+- `check_daily_loss()` → passed/failed status
+- `check_all_risks(symbol, qty)` → (passed, [violations])
+- All with optional db_session for testing
+
+### 📊 Dashboard Risk Metrics Card
+
+✅ **Real-Time Risk Display**
+- Portfolio Exposure percentage vs 10% limit
+- Daily Loss amount and percentage vs 5% limit
+- Color-coded progress bars (green/yellow/red)
+- Updates every 60 seconds via WebSocket
+- Mobile-responsive design
+
+✅ **Risk Visualization**
+- Current exposure % with visual progress bar
+- Daily loss tracking with dollar amount
+- Threshold indicators (50%, 80%, 100%)
+- Visual warnings as thresholds approached
+- Clear status (safe/warning/critical)
+
+### ⚙️ Pytest Timeout Control
+
+✅ **Global Timeout Configuration**
+- Default 30-second timeout for all tests
+- Thread-based timeout method (prevents hangs)
+- Configurable per-test with `@pytest.mark.timeout(N)`
+- pytest-timeout v2.2.0 integration
+
+✅ **Test Marking**
+- Unit tests: 10-second timeout default
+- Integration tests: 15-second timeout
+- Slow/backtesting tests: 300-second timeout
+- Custom timeouts supported per test
+
+✅ **Timeout Safety**
+- Tests hanging > 30s automatically fail
+- Prevents CI/CD pipeline stalls
+- Consistent timeout behavior across environments
+- Clear timeout error messages
+
+### 📚 Documentation
+
+✅ **Risk Management Guide**
+- Complete pip sizing examples and formulas
+- Risk check workflows and API reference
+- Configuration guide (env vars, config class)
+- Dashboard metrics explanation
+- Best practices and guidelines
+
+✅ **Roadmap Updates**
+- v0.6.0 completion status
+- Features checklist (all ✓)
+- Test results (19/19 ✓)
+- Breaking changes: None
+
+---
+
+## ✨ Previous Features (v0.5.0)
 
 ### 🛡️ Manual Order Approval System (Safety Enhancement)
 
@@ -94,6 +197,7 @@ FINDMY is designed as a **production-grade trading system**, not a demo bot.
 ---
 
 ## ✨ Current Features (v0.4.0)
+
 
 ### 📊 Realtime Market Data Integration
 

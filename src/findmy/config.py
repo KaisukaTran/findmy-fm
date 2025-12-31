@@ -53,6 +53,20 @@ class Settings(BaseSettings):
         description="Database connection URL. Defaults to SQLite in data/ directory if not set."
     )
 
+    # Risk Management & Pip Sizing (v0.6.0)
+    pip_multiplier: float = Field(
+        default=2.0,
+        description="Pip multiplier: 1 pip = pip_multiplier × minQty. Default: 2.0"
+    )
+    max_position_size_pct: float = Field(
+        default=10.0,
+        description="Maximum position size as % of account equity. Default: 10%"
+    )
+    max_daily_loss_pct: float = Field(
+        default=5.0,
+        description="Maximum daily loss as % of account equity. Default: 5%"
+    )
+
     class Config:
         """Pydantic settings configuration."""
         env_file = ".env"

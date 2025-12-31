@@ -136,6 +136,77 @@ FINDMY evolves from a **paper trading simulator** to a **production-grade tradin
 
 ---
 
+## v0.6.0: Risk Management & Pip Sizing (COMPLETE – Dec 31, 2025)
+
+**Timeline**: Dec 31, 2025
+
+**Completed Features** ✅:
+- [x] **Pip-Based Order Sizing**
+  - Calculate order quantities from pips: `qty = pips × pip_multiplier × minQty`
+  - Configurable pip_multiplier (default: 2.0)
+  - Automatic rounding to exchange stepSize
+  - Exchange info fetching (minQty, stepSize, maxQty)
+  - Validation against min/max limits
+  - API: `calculate_order_qty(symbol, pips=1.0)`
+
+- [x] **Pre-Trade Risk Checks**
+  - Position size limits: `max % of account equity`
+  - Daily loss limits: `max % daily realized losses`
+  - Risk violation detection and reporting
+  - Configurable: `MAX_POSITION_SIZE_PCT` (default 10%), `MAX_DAILY_LOSS_PCT` (default 5%)
+  - Violations don't block orders, just add warning to notes
+
+- [x] **Pending Orders Integration**
+  - Support "pips" field in order creation
+  - Auto-convert pips to quantity
+  - Risk checks run pre-pending
+  - Risk violations stored in order notes
+  - Return: `(PendingOrder, risk_violation_note)`
+
+- [x] **Dashboard Risk Metrics** (v0.6.0)
+  - Portfolio Exposure card: current % vs max limit
+  - Daily Loss card: current $ and % vs limit
+  - Color-coded progress bars (green/yellow/red)
+  - Pip multiplier and limit information
+  - Real-time updates via polling
+
+- [x] **Pytest Timeout Control**
+  - Added pytest-timeout to dev-requirements.txt
+  - Global timeout: 30s (configurable)
+  - Mark slow tests: `@pytest.mark.timeout(300)` for backtesting
+  - Configuration in pytest.ini and conftest.py
+  - Timeout method: thread-based
+
+- [x] **Comprehensive Tests**
+  - 19 new tests in test_risk_management.py
+  - TestPipSizing: 4 tests (qty calculation, rounding, validation)
+  - TestRiskManagement: 9 tests (position size, daily loss, checks)
+  - TestPendingOrdersWithPips: 3 tests (pip orders, risk integration)
+  - TestPytestTimeout: 3 tests (timeout markers, fast/slow tests)
+  - All tests passing with timeout marks
+
+- [x] **Complete Documentation**
+  - New docs/risk-management.md (200+ lines)
+  - Pip sizing explanation with examples
+  - Risk management workflow documentation
+  - Configuration guide and best practices
+  - Pytest timeout configuration guide
+  - Test examples and debugging tips
+
+- [x] **Configuration**
+  - New config fields in config.py:
+    - `pip_multiplier` (default: 2.0)
+    - `max_position_size_pct` (default: 10.0)
+    - `max_daily_loss_pct` (default: 5.0)
+  - Environment variable support
+  - .env file support
+
+**Test Results**: 19/19 passing ✅
+
+**Breaking Changes**: None
+
+---
+
 ## Phase 3: Risk Management (Q2 2026)
 
 **Timeline**: Apr – Jun 2026

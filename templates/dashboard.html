@@ -131,6 +131,45 @@
     </div>
 </div>
 
+<!-- Risk Metrics Card (v0.6.0) -->
+<div class="row mb-4">
+    <div class="col-lg-12">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-danger text-white" style="opacity: 0.9;">
+                <h5 class="mb-0"><i class="fas fa-exclamation-triangle"></i> Risk Metrics</h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <span class="text-muted">Portfolio Exposure</span>
+                            <span id="portfolio-exposure" class="fw-bold">0.0%</span>
+                        </div>
+                        <div class="progress">
+                            <div id="exposure-bar" class="progress-bar bg-info" style="width: 0%"></div>
+                        </div>
+                        <small class="text-muted d-block mt-1">Max: 10.0% | Current: <span id="exposure-value">0.0%</span></small>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <span class="text-muted">Today's Loss</span>
+                            <span id="daily-loss" class="fw-bold text-danger">$0.00</span>
+                        </div>
+                        <div class="progress">
+                            <div id="loss-bar" class="progress-bar bg-danger" style="width: 0%"></div>
+                        </div>
+                        <small class="text-muted d-block mt-1">Max Loss: 5.0% | Daily: <span id="daily-loss-pct">0.0%</span></small>
+                    </div>
+                </div>
+                <div class="mt-3 pt-3 border-top">
+                    <p class="mb-1"><small><i class="fas fa-info-circle text-info"></i> <strong>Pip Multiplier:</strong> 2.0 (1 pip = 2 × min qty)</small></p>
+                    <p class="mb-0"><small><i class="fas fa-info-circle text-info"></i> <strong>Position Limit:</strong> 10% equity | <strong>Daily Loss Limit:</strong> 5% equity</small></p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Positions Section -->
 <div class="row mb-4">
     <div class="col-lg-12">
@@ -502,11 +541,59 @@
         }
     }
 
+    // Load risk metrics (v0.6.0)
+    async function loadRiskMetrics() {
+        try {
+            // For now, use mock data (in production, fetch from /api/risk endpoint)
+            // Portfolio exposure: 5% of equity
+            const portfolioExposure = 5.0;
+            const maxExposure = 10.0;
+            
+            // Daily loss: $250 (2.5% of $10k)
+            const dailyLoss = 250.0;
+            const dailyLossPct = 2.5;
+            const maxDailyLoss = 5.0;
+
+            // Update exposure display
+            document.getElementById('portfolio-exposure').textContent = portfolioExposure.toFixed(1) + '%';
+            document.getElementById('exposure-value').textContent = portfolioExposure.toFixed(1) + '%';
+            document.getElementById('exposure-bar').style.width = (portfolioExposure / maxExposure * 100) + '%';
+            
+            // Color exposure bar based on percentage
+            const exposureBar = document.getElementById('exposure-bar');
+            if (portfolioExposure > maxExposure * 0.8) {
+                exposureBar.className = 'progress-bar bg-danger';
+            } else if (portfolioExposure > maxExposure * 0.5) {
+                exposureBar.className = 'progress-bar bg-warning';
+            } else {
+                exposureBar.className = 'progress-bar bg-info';
+            }
+
+            // Update daily loss display
+            document.getElementById('daily-loss').textContent = formatCurrency(dailyLoss);
+            document.getElementById('daily-loss-pct').textContent = dailyLossPct.toFixed(1) + '%';
+            document.getElementById('loss-bar').style.width = (dailyLossPct / maxDailyLoss * 100) + '%';
+            
+            // Color loss bar based on percentage
+            const lossBar = document.getElementById('loss-bar');
+            if (dailyLossPct > maxDailyLoss * 0.8) {
+                lossBar.className = 'progress-bar bg-danger';
+            } else if (dailyLossPct > maxDailyLoss * 0.5) {
+                lossBar.className = 'progress-bar bg-warning';
+            } else {
+                lossBar.className = 'progress-bar bg-success';
+            }
+        } catch (error) {
+            console.error('Error loading risk metrics:', error);
+        }
+    }
+
     // Initial load
     loadSummary();
     loadPositions();
     loadPendingOrders();
     loadTrades();
+    loadRiskMetrics();
 
     // WebSocket connection for live updates (every 30 seconds from server)
     function connectWebSocket() {
@@ -602,6 +689,7 @@
         loadSummary();
         loadTrades();
         loadPendingOrders();
+        loadRiskMetrics();
     }, 60000);
 </script>
 {% endblock %}

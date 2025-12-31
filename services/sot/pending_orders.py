@@ -32,6 +32,9 @@ class PendingOrder(Base):
     price = Column(Float, nullable=False)
     order_type = Column(String, nullable=False, default="MARKET")  # MARKET, LIMIT, STOP_LOSS
     
+    # Pip sizing support (v0.6.0)
+    pips = Column(Float, nullable=True)  # Number of pips (alternative to quantity)
+    
     # Source tracking
     source = Column(String, nullable=False)  # "excel", "strategy", "backtest"
     source_ref = Column(String, nullable=True)  # Reference to source (e.g., file ID, strategy name)
@@ -56,6 +59,7 @@ class PendingOrder(Base):
             "quantity": self.quantity,
             "price": self.price,
             "order_type": self.order_type,
+            "pips": self.pips,
             "source": self.source,
             "source_ref": self.source_ref,
             "status": self.status.value if isinstance(self.status, PyEnum) else self.status,

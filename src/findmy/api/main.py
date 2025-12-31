@@ -1,7 +1,9 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pathlib import Path
 import shutil
 import uuid
@@ -17,11 +19,51 @@ from services.sot.pending_orders_service import (
     queue_order, get_pending_orders, approve_order, reject_order, count_pending
 )
 
+# v0.7.0: Import security middleware
+from findmy.api.security import (
+    limiter,
+    CORS_CONFIG,
+    SECURITY_HEADERS,
+    get_current_user,
+    RateLimitConfig,
+)
+from findmy.api.auth_routes import router as auth_router
+
 # ✅ 1. DECLARE APP FIRST
 app = FastAPI(
     title="FINDMY FM – Paper Trading API",
     version="1.0",
 )
+
+# v0.7.0: Add security middleware
+app.state.limiter = limiter
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_CONFIG["allow_origins"],
+    allow_credentials=CORS_CONFIG["allow_credentials"],
+    allow_methods=CORS_CONFIG["allow_methods"],
+    allow_headers=CORS_CONFIG["allow_headers"],
+)
+
+# Add trusted host middleware for security
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=["localhost", "127.0.0.1", "testserver", "yourdomain.com"]  # testserver for tests
+)
+
+# v0.7.0: Add security headers to all responses
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Add security headers to all responses."""
+    response = await call_next(request)
+    for header, value in SECURITY_HEADERS.items():
+        response.headers[header] = value
+    return response
+
+# Include authentication routes
+app.include_router(auth_router)
 
 # ✅ 2. CONFIGURE TEMPLATES AND STATIC FILES
 templates = Jinja2Templates(directory="templates")
@@ -60,12 +102,18 @@ async def dashboard(request: Request):
 
 # ✅ 2. THEN USE @app.post
 @app.post("/paper-execution")
-async def paper_execution(file: UploadFile = File(...)):
+@limiter.limit(RateLimitConfig.ENDPOINTS["trading"])
+async def paper_execution(
+    request: Request,
+    file: UploadFile = File(...),
+):
     """
     Execute paper trading orders from an Excel file.
     
     Args:
         file: Excel file containing purchase orders (MIME type must be Excel).
+    
+    v0.7.0: Rate limited to prevent abuse
     
     Returns:
         JSON response with execution results including orders, trades, and positions.
@@ -159,12 +207,19 @@ async def list_pending_orders(status: Optional[str] = None, symbol: Optional[str
 
 
 @app.post("/api/pending/approve/{order_id}")
-async def approve_pending_order(order_id: int, note: Optional[str] = None):
+@limiter.limit(RateLimitConfig.ENDPOINTS["trading"])
+async def approve_pending_order(
+    request: Request,
+    order_id: int,
+    note: Optional[str] = None
+):
     """
     Approve a pending order for execution.
     
     Path parameters:
     - order_id: ID of pending order to approve
+    
+    v0.7.0: Rate limited to prevent abuse
     
     Query parameters:
     - note: Optional approval notes
@@ -186,7 +241,12 @@ async def approve_pending_order(order_id: int, note: Optional[str] = None):
 
 
 @app.post("/api/pending/reject/{order_id}")
-async def reject_pending_order(order_id: int, note: str = "User rejected"):
+@limiter.limit(RateLimitConfig.ENDPOINTS["trading"])
+async def reject_pending_order(
+    request: Request,
+    order_id: int,
+    note: str = "User rejected"
+):
     """
     Reject a pending order.
     
@@ -195,6 +255,8 @@ async def reject_pending_order(order_id: int, note: str = "User rejected"):
     
     Query parameters:
     - note: Reason for rejection
+    
+    v0.7.0: Rate limited to prevent abuse
     
     Returns:
         Updated pending order

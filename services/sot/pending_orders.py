@@ -1,6 +1,6 @@
 """Pending Orders Model for manual approval workflow."""
 
-from sqlalchemy import Column, Integer, String, Float, DateTime, Enum, Text
+from sqlalchemy import Column, Integer, String, Float, DateTime, Enum, Text, Index
 from datetime import datetime
 from enum import Enum as PyEnum
 
@@ -20,8 +20,17 @@ class PendingOrder(Base):
     
     All orders (from Excel upload, strategy signals, backtest) are saved here first.
     User must approve/reject before order is sent to execution engine.
+    
+    v0.7.0: Added indexes on symbol, status, created_at for faster queries.
     """
     __tablename__ = "pending_orders"
+    
+    # v0.7.0: Indexes for performance
+    __table_args__ = (
+        Index('ix_pending_orders_symbol_status', 'symbol', 'status'),
+        Index('ix_pending_orders_created_at', 'created_at'),
+        Index('ix_pending_orders_status', 'status'),
+    )
 
     id = Column(Integer, primary_key=True)
 

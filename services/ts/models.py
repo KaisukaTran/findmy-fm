@@ -13,7 +13,7 @@ TS is read-primarily and derives data from SOT.
 """
 
 from sqlalchemy import (
-    Column, Integer, String, Float, DateTime, ForeignKey, Text, Boolean
+    Column, Integer, String, Float, DateTime, ForeignKey, Text, Boolean, Index
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -25,8 +25,18 @@ class Trade(Base):
     """
     Represents a completed or open trade (entry → exit).
     A trade is an aggregation of related orders (entry + exit).
+    
+    v0.7.0: Added indexes on symbol, status, entry_time for faster queries.
     """
     __tablename__ = "trades"
+    
+    # v0.7.0: Indexes for performance
+    __table_args__ = (
+        Index('ix_trades_symbol_status', 'symbol', 'status'),
+        Index('ix_trades_entry_time', 'entry_time'),
+        Index('ix_trades_status', 'status'),
+        Index('ix_trades_symbol', 'symbol'),
+    )
 
     id = Column(Integer, primary_key=True)
 
@@ -119,8 +129,16 @@ class TradePosition(Base):
     """
     Current position state after each trade execution.
     Used for position reconciliation and tracking.
+    
+    v0.7.0: Added indexes on symbol and updated_at for faster queries.
     """
     __tablename__ = "trade_positions"
+    
+    # v0.7.0: Indexes for performance
+    __table_args__ = (
+        Index('ix_trade_positions_symbol', 'symbol'),
+        Index('ix_trade_positions_updated', 'updated_at'),
+    )
 
     id = Column(Integer, primary_key=True)
 

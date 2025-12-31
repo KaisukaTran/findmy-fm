@@ -57,7 +57,7 @@ class TestPaperExecution:
     """Test paper execution endpoint."""
 
     def test_paper_execution_success(self, sample_excel_file):
-        """Test successful paper execution."""
+        """Test successful paper execution queues orders for approval."""
         with open(sample_excel_file, "rb") as f:
             files = {"file": ("test.xlsx", f, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
             response = client.post("/paper-execution", files=files)
@@ -66,9 +66,9 @@ class TestPaperExecution:
         data = response.json()
         assert data["status"] == "success"
         assert "result" in data
-        assert "orders" in data["result"]
-        assert "trades" in data["result"]
-        assert "positions" in data["result"]
+        assert "orders_queued" in data["result"]
+        assert "pending_order_ids" in data["result"]
+        assert data["result"]["orders_queued"] > 0
 
     def test_paper_execution_invalid_mime_type(self, tmp_path):
         """Test rejection of invalid MIME type."""

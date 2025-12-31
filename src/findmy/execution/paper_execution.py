@@ -808,23 +808,25 @@ def get_pending_orders(session: Session) -> List[Dict[str, Any]]:
 
 def run_paper_execution(excel_path: str) -> Dict[str, Any]:
     """
-    Execute paper trading orders from an Excel file.
+    Queue paper trading orders from an Excel file for manual approval.
     
-    Processes both BUY and SELL orders:
-    - BUY orders: accumulate positions
-    - SELL orders: reduce positions and calculate realized PnL
+    ⚠️ IMPORTANT: Orders are queued for manual approval, NOT executed directly.
+    User must approve each order via the dashboard before execution.
+    
+    Process:
+    - Parse Excel file
+    - Queue each order to pending_orders table
+    - Return queued order IDs for user review
     
     Args:
         excel_path: Path to Excel file containing orders
     
     Returns:
-        Dictionary with execution results:
+        Dictionary with queued orders:
         {
-            "orders": int,                    # Total orders processed
-            "trades": int,                    # Total trades executed
-            "summary": dict,                  # Aggregated metrics (total_fees, total_slippage, total_realized_pnl)
-            "positions": List[dict],          # Final positions with realized PnL
-            "errors": List[dict] or None      # Any row-level errors
+            "orders_queued": int,           # Total orders queued for approval
+            "pending_order_ids": List[int], # IDs of queued orders
+            "errors": List[dict] or None    # Any row-level errors
         }
         
     Raises:
@@ -832,60 +834,40 @@ def run_paper_execution(excel_path: str) -> Dict[str, Any]:
         ValueError: If order data is invalid
         Exception: For other processing errors
     """
-    engine, SessionFactory = setup_db()
-
+    from services.sot.pending_orders_service import queue_order
+    
     try:
         df_orders = parse_orders_from_excel(excel_path)
     except (IOError, ValueError) as e:
         logger.error(f"Failed to parse Excel file: {str(e)}")
         raise
-
-    trade_count = 0
+    
     error_rows = []
-    total_fees = 0.0
-    total_slippage = 0.0
+    queued_order_ids = []
+    
+    for idx, r in df_orders.iterrows():
+        try:
+            side = r.get("side", "BUY") if isinstance(r, dict) else getattr(r, "side", "BUY")
+            
+            pending_order = queue_order(
+                symbol=str(r["symbol"]).strip(),
+                side=side,
+                quantity=float(r["qty"]),
+                price=float(r["price"]),
+                source="excel",
+                source_ref=f"excel_row_{idx+2}",
+            )
+            queued_order_ids.append(pending_order.id)
 
-    with SessionFactory() as session:
-        for idx, r in df_orders.iterrows():
-            try:
-                side = r.get("side", "BUY") if isinstance(r, dict) else getattr(r, "side", "BUY")
-                
-                order, _ = upsert_order(
-                    session=session,
-                    client_order_id=r["client_id"],
-                    symbol=str(r["symbol"]).strip(),
-                    qty=float(r["qty"]),
-                    price=float(r["price"]),
-                    side=side,
-                )
-
-                success, trade_data = simulate_fill(session, order)
-                if success:
-                    trade_count += 1
-                    # Accumulate fees and slippage from each trade
-                    total_fees += float(trade_data.get("fees", 0.0))
-                    total_slippage += abs(float(trade_data.get("slippage_amount", 0.0)))
-
-            except (ValueError, TypeError) as e:
-                error_rows.append({"row": idx + 2, "error": str(e)})
-                logger.warning(f"Skipped row {idx + 2}: {str(e)}")
-                continue
-            except Exception as e:
-                logger.error(f"Unexpected error at row {idx + 2}: {str(e)}")
-                raise
-
-        # Fetch final positions and aggregate realized PnL
-        positions_df = pd.read_sql("SELECT * FROM positions", engine)
-        total_realized_pnl = float(positions_df["realized_pnl"].sum()) if len(positions_df) > 0 else 0.0
+        except (ValueError, TypeError) as e:
+            error_rows.append({"row": idx + 2, "error": str(e)})
+            logger.warning(f"Skipped row {idx + 2}: {str(e)}")
+            continue
+        except Exception as e:
+            logger.error(f"Unexpected error at row {idx + 2}: {str(e)}")
+            raise
 
     return {
-        "orders": len(df_orders),
-        "trades": trade_count,
-        "summary": {
-            "total_fees": round(total_fees, 8),
-            "total_slippage": round(total_slippage, 8),
-            "total_realized_pnl": round(total_realized_pnl, 8),
-        },
-        "positions": positions_df.to_dict(orient="records"),
-        "errors": error_rows if error_rows else None,
+        "orders_queued": len(queued_order_ids),
+        "pending_order_ids": queued_order_ids,        "errors": error_rows if error_rows else None,
     }

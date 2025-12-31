@@ -4,7 +4,7 @@ Small. Cute. Flexible. Funny Project
 
 > **FINDMY (FM)** is a modular Python-based trading bot focused on research-first development, starting with a robust **paper trading execution engine** using Excel input and FastAPI.
 
-**Latest Release:** v0.4.0 | **License:** MIT | **Status:** Active Development ⚡
+**Latest Release:** v0.5.0 | **License:** MIT | **Status:** Active Development ⚡
 
 ---
 
@@ -17,6 +17,7 @@ Small. Cute. Flexible. Funny Project
 - **[Configuration & Secrets](docs/configuration.md)** – Environment setup & security
 - **[Database Schema](docs/database-schema.md)** – Data model
 - **[Architecture](docs/architecture.md)** – System design
+- **[Manual Order Approval (v0.5.0)](docs/manual-approval.md)** – Safety framework
 - **[Contributing](CONTRIBUTING.md)** – How to contribute
 
 ---
@@ -31,6 +32,64 @@ FINDMY is designed as a **production-grade trading system**, not a demo bot.
 - ☁️ **Cloud-Ready** – Runs on GitHub Codespaces (no local setup needed)
 - 📊 **Observable** – SQL persistence for auditability and analysis
 - 🔒 **Secure** – File validation, safe uploads, error isolation
+
+---
+
+## ✨ Latest Features (v0.5.0)
+
+### 🛡️ Manual Order Approval System (Safety Enhancement)
+
+✅ **Mandatory Approval Queue**
+- ALL orders (Excel, strategy, backtest) require user approval before execution
+- No order bypasses the pending queue
+- Prevents accidental execution and market manipulation
+- Complete audit trail with timestamps and reviewers
+
+✅ **Dashboard Integration**
+- Visual "Pending Orders Queue" section on dashboard
+- Real-time pending order count badge
+- One-click approve/reject buttons
+- Batch approval ready (future enhancement)
+- WebSocket live updates
+
+✅ **REST API Endpoints**
+- `GET /api/pending` – List pending orders (with filters)
+- `POST /api/pending/approve/{id}` – Approve order for execution
+- `POST /api/pending/reject/{id}` – Reject order with reason
+- Full programmatic control of approval workflow
+
+✅ **Audit & Compliance**
+- Source attribution (excel, strategy, backtest)
+- Reviewer tracking (who approved/rejected)
+- Timestamp tracking for all decisions
+- Optional notes for reasoning
+- Rejection reason capture
+
+### 📊 Strategy Framework & Signal-to-Orders
+
+✅ **Abstract Strategy Base**
+- Simple interface for building custom strategies
+- Market data and backtesting support
+- Signal generation (buy/sell/hold)
+- Confidence scoring (0-1 scale)
+
+✅ **MovingAverageStrategy Implementation**
+- 10/20/50-period EMA cross-over
+- Example of full strategy lifecycle
+- Automatic order generation
+- Ready-to-extend template
+
+✅ **Strategy Signal Processing**
+- Signals converted to pending orders
+- Strategy name and confidence tracked
+- Signal evaluation with market context
+- Confidence-based filtering
+
+✅ **Strategy Backtesting**
+- Run strategies on historical data
+- Multi-symbol support
+- Equity curve tracking
+- Performance metrics (win rate, Sharpe ratio, max drawdown)
 
 ---
 

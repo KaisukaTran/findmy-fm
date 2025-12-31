@@ -13,6 +13,9 @@ from datetime import datetime, timedelta
 from findmy.execution.paper_execution import run_paper_execution
 from findmy.strategies import MovingAverageStrategy
 from findmy.services.strategy_executor import StrategyExecutor
+from services.sot.pending_orders_service import (
+    queue_order, get_pending_orders, approve_order, reject_order, count_pending
+)
 
 # ✅ 1. DECLARE APP FIRST
 app = FastAPI(
@@ -126,6 +129,87 @@ async def paper_execution(file: UploadFile = File(...)):
         except Exception as e:
             # Log cleanup error but don't fail the response
             print(f"Warning: Failed to delete temporary file {saved_path}: {e}")
+
+
+# ========================
+# PENDING ORDERS ENDPOINTS
+# ========================
+
+@app.get("/api/pending")
+async def list_pending_orders(status: Optional[str] = None, symbol: Optional[str] = None):
+    """
+    List all pending orders awaiting user approval.
+    
+    Query parameters:
+    - status: Filter by status ("pending", "approved", "rejected")
+    - symbol: Filter by symbol (e.g., "BTC", "ETH")
+    
+    Returns:
+        List of pending orders with all details
+    """
+    try:
+        # If no status filter, default to "pending" only
+        if not status:
+            status = "pending"
+        
+        pending = get_pending_orders(status=status, symbol=symbol)
+        return [order.to_dict() for order in pending]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch pending orders: {str(e)}")
+
+
+@app.post("/api/pending/approve/{order_id}")
+async def approve_pending_order(order_id: int, note: Optional[str] = None):
+    """
+    Approve a pending order for execution.
+    
+    Path parameters:
+    - order_id: ID of pending order to approve
+    
+    Query parameters:
+    - note: Optional approval notes
+    
+    Returns:
+        Updated pending order
+    """
+    try:
+        order = approve_order(order_id, reviewed_by="user", note=note)
+        return {
+            "status": "approved",
+            "order": order.to_dict(),
+            "message": f"Order {order_id} approved for execution"
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to approve order: {str(e)}")
+
+
+@app.post("/api/pending/reject/{order_id}")
+async def reject_pending_order(order_id: int, note: str = "User rejected"):
+    """
+    Reject a pending order.
+    
+    Path parameters:
+    - order_id: ID of pending order to reject
+    
+    Query parameters:
+    - note: Reason for rejection
+    
+    Returns:
+        Updated pending order
+    """
+    try:
+        order = reject_order(order_id, reviewed_by="user", note=note)
+        return {
+            "status": "rejected",
+            "order": order.to_dict(),
+            "message": f"Order {order_id} rejected"
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to reject order: {str(e)}")
 
 
 # ========================

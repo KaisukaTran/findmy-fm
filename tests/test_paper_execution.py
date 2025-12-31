@@ -302,23 +302,25 @@ class TestSimulateFill:
 
 
 class TestRunPaperExecution:
-    """Test complete paper execution flow."""
+    """Test complete paper execution flow (now queues orders for approval)."""
 
     def test_execution_with_valid_file(self, sample_excel_with_header):
-        """Test complete execution with valid file."""
+        """Test that valid file queues orders for approval."""
         result = run_paper_execution(sample_excel_with_header)
         
-        assert result["orders"] == 3
-        assert result["trades"] == 3
-        assert len(result["positions"]) >= 2  # At least 2 unique symbols
+        # v0.5.0: Orders are now queued for approval, not executed
+        assert result["orders_queued"] == 3
+        assert "pending_order_ids" in result
+        assert len(result["pending_order_ids"]) == 3
         assert result["errors"] is None
 
     def test_execution_with_invalid_data(self, sample_excel_invalid_data):
         """Test execution handles invalid data gracefully."""
         result = run_paper_execution(sample_excel_invalid_data)
         
-        assert result["orders"] == 2
-        assert result["trades"] == 0  # No successful trades
+        # v0.5.0: Returns queued orders + errors
+        # Since both rows have invalid data, 0 orders queued
+        assert result["orders_queued"] == 0
         assert result["errors"] is not None
         assert len(result["errors"]) > 0
 
@@ -329,26 +331,19 @@ class TestRunPaperExecution:
 
 
 class TestIntegration:
-    """Integration tests for paper execution."""
+    """Integration tests for paper execution (queuing)."""
 
     def test_full_workflow(self, sample_excel_with_header):
-        """Test full paper trading workflow."""
+        """Test full paper trading workflow (queuing for approval)."""
         result = run_paper_execution(sample_excel_with_header)
         
-        # Verify results
-        assert "orders" in result
-        assert "trades" in result
-        assert "positions" in result
+        # v0.5.0: Verify orders are queued
+        assert "orders_queued" in result
+        assert "pending_order_ids" in result
         
-        # Verify data consistency
-        assert result["orders"] > 0
-        assert result["trades"] <= result["orders"]
-        
-        # Verify positions have required fields
-        for pos in result["positions"]:
-            assert "symbol" in pos
-            assert "size" in pos
-            assert "avg_price" in pos
+        # Verify all orders queued
+        assert result["orders_queued"] == 3
+        assert len(result["pending_order_ids"]) == 3
 
 
 # ============================================================
@@ -591,10 +586,10 @@ class TestSellOrderExecution:
 
 
 class TestMixedBuySellExecution:
-    """Integration tests for mixed BUY and SELL orders."""
+    """Integration tests for mixed BUY and SELL orders (queuing for approval)."""
 
     def test_buy_then_sell_workflow(self, tmp_path):
-        """Test BUY then SELL workflow in single file."""
+        """Test BUY then SELL orders are queued for approval."""
         file_path = tmp_path / "test_mixed.xlsx"
         df = pd.DataFrame({
             "Order ID": ["001", "002", "003"],
@@ -607,17 +602,13 @@ class TestMixedBuySellExecution:
         
         result = run_paper_execution(str(file_path))
         
-        assert result["trades"] == 3
-        assert result["orders"] == 3
-        
-        # Final position should be 2 units (10 - 5 - 3)
-        positions = result["positions"]
-        btc_pos = next((p for p in positions if p["symbol"] == "BTC/USD"), None)
-        assert btc_pos is not None
-        assert float(btc_pos["size"]) == 2.0
+        # v0.5.0: All orders queued for approval
+        assert result["orders_queued"] == 3
+        assert len(result["pending_order_ids"]) == 3
+        assert result["errors"] is None
 
     def test_multiple_symbols_buy_and_sell(self, tmp_path):
-        """Test BUY and SELL across multiple symbols."""
+        """Test BUY and SELL across multiple symbols are queued."""
         file_path = tmp_path / "test_multi_symbol.xlsx"
         df = pd.DataFrame({
             "Order ID": ["001", "002", "003", "004"],
@@ -630,36 +621,10 @@ class TestMixedBuySellExecution:
         
         result = run_paper_execution(str(file_path))
         
-        assert result["trades"] == 4
-        positions = result["positions"]
-        
-        # BTC: 10 - 5 = 5
-        btc_pos = next((p for p in positions if p["symbol"] == "BTC/USD"), None)
-        assert float(btc_pos["size"]) == 5.0
-        
-        # ETH: 20 - 8 = 12
-        eth_pos = next((p for p in positions if p["symbol"] == "ETH/USD"), None)
-        assert float(eth_pos["size"]) == 12.0
-
-    def test_sell_before_buy_fails(self, tmp_path):
-        """Test SELL before BUY fails with clear error."""
-        file_path = tmp_path / "test_sell_first.xlsx"
-        df = pd.DataFrame({
-            "Order ID": ["001", "002"],
-            "Quantity": [5.0, 10.0],
-            "Price": [100.0, 100.0],
-            "Trading Pair": ["BTC/USD", "BTC/USD"],
-            "Side": ["SELL", "BUY"],
-        })
-        df.to_excel(file_path, sheet_name="purchase order", index=False)
-        
-        result = run_paper_execution(str(file_path))
-        
-        # First order (SELL) should error
-        assert result["trades"] == 1  # Only BUY should succeed
-        assert result["errors"] is not None
-        assert len(result["errors"]) > 0
-        assert "Insufficient position" in result["errors"][0]["error"]
+        # v0.5.0: All 4 orders queued for approval
+        assert result["orders_queued"] == 4
+        assert len(result["pending_order_ids"]) == 4
+        assert result["errors"] is None
 
 
 class TestUpsertOrderWithSide:

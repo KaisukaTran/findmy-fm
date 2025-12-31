@@ -29,11 +29,26 @@ from findmy.api.security import (
 )
 from findmy.api.auth_routes import router as auth_router
 
+# v0.7.0: Import Prometheus metrics
+from prometheus_fastapi_instrumentator import Instrumentator
+from findmy.api.metrics import (
+    trades_total, trades_pnl_total, positions_active, positions_total_value,
+    cache_hits_total, cache_misses_total, cache_size_bytes, cache_entries,
+    orders_pending_total, orders_approved_total, orders_rejected_total,
+    order_processing_time_seconds, db_queries_total, db_query_duration_seconds,
+    app_info, MetricsSnapshot, track_api_request, track_db_query
+)
+import logging
+import time
+
 # ✅ 1. DECLARE APP FIRST
 app = FastAPI(
     title="FINDMY FM – Paper Trading API",
     version="1.0",
 )
+
+# v0.7.0: Add Prometheus metrics instrumentator
+Instrumentator().instrument(app).expose(app)
 
 # v0.7.0: Add security middleware
 app.state.limiter = limiter
@@ -71,10 +86,14 @@ app.include_router(auth_router)
 # v0.7.0: Initialize caching on startup
 @app.on_event("startup")
 async def startup_event():
-    """Initialize caching on application startup."""
+    """Initialize caching and metrics on application startup."""
     await cache_manager.init()
     logger = __import__("logging").getLogger(__name__)
     logger.info("Cache manager initialized")
+    
+    # v0.7.0: Initialize application info metric
+    app_info.info({"version": "0.7.0"})
+    logger.info("Application metrics initialized - v0.7.0")
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -212,6 +231,8 @@ async def list_pending_orders(status: Optional[str] = None, symbol: Optional[str
     
     Returns:
         List of pending orders with all details
+    
+    v0.7.0: Metrics - Tracks pending order count
     """
     try:
         # If no status filter, default to "pending" only
@@ -219,6 +240,11 @@ async def list_pending_orders(status: Optional[str] = None, symbol: Optional[str
             status = "pending"
         
         pending = get_pending_orders(status=status, symbol=symbol)
+        
+        # v0.7.0: Update pending orders metric
+        if status == "pending":
+            orders_pending_total._value.set(len(pending))
+        
         return [order.to_dict() for order in pending]
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch pending orders: {str(e)}")
@@ -238,6 +264,7 @@ async def approve_pending_order(
     - order_id: ID of pending order to approve
     
     v0.7.0: Rate limited to prevent abuse
+    Metrics: Tracks approved orders and processing time
     
     Query parameters:
     - note: Optional approval notes
@@ -246,7 +273,15 @@ async def approve_pending_order(
         Updated pending order
     """
     try:
+        start_time = time.time()
         order = approve_order(order_id, reviewed_by="user", note=note)
+        
+        # v0.7.0: Track order approval metrics
+        symbol = getattr(order, 'symbol', 'UNKNOWN')
+        orders_approved_total.labels(symbol=symbol).inc()
+        processing_time = time.time() - start_time
+        order_processing_time_seconds.labels(status="approved").observe(processing_time)
+        
         return {
             "status": "approved",
             "order": order.to_dict(),
@@ -275,12 +310,21 @@ async def reject_pending_order(
     - note: Reason for rejection
     
     v0.7.0: Rate limited to prevent abuse
+    Metrics: Tracks rejected orders and processing time
     
     Returns:
         Updated pending order
     """
     try:
+        start_time = time.time()
         order = reject_order(order_id, reviewed_by="user", note=note)
+        
+        # v0.7.0: Track order rejection metrics
+        symbol = getattr(order, 'symbol', 'UNKNOWN')
+        orders_rejected_total.labels(symbol=symbol).inc()
+        processing_time = time.time() - start_time
+        order_processing_time_seconds.labels(status="rejected").observe(processing_time)
+        
         return {
             "status": "rejected",
             "order": order.to_dict(),
@@ -349,11 +393,13 @@ async def get_positions(request: Request):
     Get current positions from Trade Service with live market prices and unrealized PnL.
     
     v0.7.0: Cached for 30s for 90% faster reads on repeated requests.
+    Metrics: Tracks cache hits, position count, and total position value.
     """
     # Try cache first
     cache_key = "positions:all"
     cached_result = cache_manager.l1.get(cache_key)
     if cached_result is not None:
+        cache_hits_total.labels(cache_level="L1", key_pattern="positions").inc()
         return cached_result
     
     db = SessionLocal()
@@ -368,11 +414,13 @@ async def get_positions(request: Request):
             prices = get_current_prices(symbols)
             
             result = []
+            total_value = 0.0
             for p in positions:
                 current_price = prices.get(p.symbol)
                 if current_price is not None:
                     market_value = p.quantity * current_price
                     unrealized_pnl = market_value - p.total_cost
+                    total_value += market_value
                 else:
                     market_value = None
                     unrealized_pnl = None
@@ -388,6 +436,11 @@ async def get_positions(request: Request):
                         unrealized_pnl=unrealized_pnl,
                     )
                 )
+            
+            # v0.7.0: Update position metrics
+            positions_active.labels(symbol="all")._value.set(len(result))
+            if total_value > 0:
+                positions_total_value.labels(currency="USD")._value.set(total_value)
             
             # Cache the result for 30s
             cache_manager.l1.set(cache_key, result, CacheConfig.TTL_POSITIONS)
@@ -440,11 +493,13 @@ async def get_summary(request: Request):
     Get PnL summary and trading statistics with market values.
     
     v0.7.0: Cached for 10s for instant dashboard loads.
+    Metrics: Tracks cache hits, realized/unrealized PnL, total position value.
     """
     # Try cache first (very hot endpoint)
     cache_key = "summary:all"
     cached_result = cache_manager.l1.get(cache_key)
     if cached_result is not None:
+        cache_hits_total.labels(cache_level="L1", key_pattern="summary").inc()
         return cached_result
     
     db = SessionLocal()
@@ -501,6 +556,12 @@ async def get_summary(request: Request):
                 last_trade_time=last_trade_time,
                 status="✓ Active",
             )
+            
+            # v0.7.0: Update PnL metrics
+            if realized_pnl != 0:
+                trades_pnl_total.labels(symbol="all").observe(realized_pnl)
+            if total_market_value > 0:
+                positions_total_value.labels(currency="USD")._value.set(total_market_value)
             
             # Cache for 10s (very hot endpoint)
             cache_manager.l1.set(cache_key, result, CacheConfig.TTL_SUMMARY)

@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v0.6.0] – 2025-12-31
+
+### 🎯 Pip-Based Order Sizing
+
+- **Pip Multiplier Configuration**: 1 pip = `pip_multiplier × minQty` (default 2.0)
+- **Exchange LOT_SIZE Integration**: `get_exchange_info(symbol)` fetches Binance limits with caching
+- **Automatic Quantity Calculation**: `calculate_order_qty(symbol, pips)` with stepSize rounding
+- **Order Creation with Pips**: `queue_order(..., pips=5.0)` auto-converts to proper quantity
+- **Quantity Validation**: Checks min/max/stepSize against exchange limits
+
+### 🛡️ Pre-Pending Risk Checks
+
+- **Position Size Limits**: Max 10% of account equity (configurable)
+- **Daily Loss Limits**: Max 5% daily loss (configurable)
+- **Risk Check Workflow**: Checks run before order queueing, violations don't block orders
+- **Risk Notes**: Violations stored as notes in pending orders, users can still approve
+- **Risk API**: `check_all_risks(symbol, qty)` returns (passed, violations)
+
+### 📊 Dashboard Risk Metrics
+
+- **Portfolio Exposure Card**: Shows current % vs 10% limit with progress bar
+- **Daily Loss Tracking**: Shows $ amount and % vs 5% limit with progress bar
+- **Color-Coded Warnings**: Green/yellow/red based on threshold breaches
+- **Real-Time Updates**: WebSocket updates every 60 seconds
+
+### ⚙️ Pytest Timeout Control
+
+- **pytest-timeout v2.2.0 Integration**: Global 30s default timeout
+- **Thread-Based Timeout Method**: Prevents hanging tests
+- **Custom Per-Test Timeouts**: `@pytest.mark.timeout(N)` support
+- **conftest.py Configuration**: Automatic pytest setup and fixtures
+
+### 📚 Documentation
+
+- **Risk Management Guide** (`docs/risk-management.md`): 400+ lines with pip sizing, risk checks, examples
+- **Updated README.md**: Table of Contents linking to all documentation
+- **Enhanced docs/README.md**: Added v0.6.0 features, improved navigation
+
+### 🧪 Testing
+
+- **21 Comprehensive Tests**: All passing
+  - 5 Pip Sizing Tests: Calculation, rounding, validation
+  - 9 Risk Management Tests: Position/loss checks, combinations
+  - 3 Integration Tests: Pending orders with pips and risk notes
+  - 4 Pytest Timeout Tests: Timeout mark validation
+
+### ✨ Quality & Compatibility
+
+- **No Breaking Changes**: Backward compatible with existing orders
+- **100% Type Coverage**: Full type hints on new code
+- **Floating Point Precision**: Proper handling with ±1e-9 tolerance
+
+---
+
 ## [v0.5.0] – 2024-12-31
 
 ### 🛡️ Safety & Compliance Enhancements

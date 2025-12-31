@@ -29,11 +29,16 @@ Welcome! This is your guide to FINDMY documentation. Start here to understand th
 | **[architecture.md](architecture.md)** | System design, data flow, module responsibilities | Everyone |
 | **[api.md](api.md)** | REST API endpoints, request/response examples | API users, integrators |
 | **[execution.md](execution.md)** | Execution engine design, order lifecycle, limitations | Developers, traders |
+| **[manual-approval.md](manual-approval.md)** | Manual order approval workflow (v0.5.0+) | Traders, developers |
+| **[risk-management.md](risk-management.md)** | Pip sizing & risk checks (v0.6.0+) | Risk managers, developers |
 | **[modules.md](modules.md)** | Code organization, class/function reference | Developers |
 | **[strategy.md](strategy.md)** | How to build trading strategies, examples | Strategy developers |
 | **[rules.md](rules.md)** | Architectural constraints and principles | Code reviewers, architects |
 | **[roadmap.md](roadmap.md)** | Project phases, timeline, future features | Everyone |
+| **[database-schema.md](database-schema.md)** | Database models and schema reference | Data engineers |
 | **[SOT.md](SOT.md)** | Data model, source of truth design | Data engineers |
+| **[market-integration.md](market-integration.md)** | Market data & backtesting (v0.4.0+) | Integrators, strategy devs |
+| **[dashboard.md](dashboard.md)** | Dashboard UI and metrics | Traders, frontend devs |
 
 ---
 
@@ -58,14 +63,24 @@ Welcome! This is your guide to FINDMY documentation. Start here to understand th
 
 1. Read [Strategy Guide](strategy.md)
 2. Understand [Architecture](architecture.md) (especially execution flow)
-3. Review [Examples in Strategy Guide](strategy.md#example-strategies)
-4. Test with [devlog/day-02.md](devlog/day-02.md) as reference
+3. Review [Risk Management](risk-management.md) – Pip sizing & risk checks
+4. Study [Market Integration](market-integration.md) – Market data & backtesting
+5. Review [Examples in Strategy Guide](strategy.md#example-strategies)
+6. Test with [devlog/day-02.md](devlog/day-02.md) as reference
+
+### For Risk Managers
+
+1. Read [Risk Management Guide](risk-management.md) – Position limits, daily loss caps
+2. Understand [Architecture](architecture.md) – How orders flow through system
+3. Check [Manual Approval](manual-approval.md) – Approval workflow
+4. Review [Database Schema](database-schema.md) – Risk tracking tables
 
 ### For Data Engineers
 
 1. Read [SOT.md](SOT.md) for data model
-2. Check [Execution.md](execution.md#database-model)
-3. Review [Modules.md](modules.md) for service details
+2. Check [Database Schema](database-schema.md) for full schema
+3. Review [Execution.md](execution.md#database-model)
+4. Study [Modules.md](modules.md) for service details
 
 ### For Contributors
 
@@ -81,23 +96,36 @@ Welcome! This is your guide to FINDMY documentation. Start here to understand th
 ```
 docs/
 ├── README.md                   # This file (navigation hub)
-├── architecture.md             # System design
-├── api.md                      # REST API reference
-├── execution.md                # Execution engine details
-├── modules.md                  # Code organization
+├── architecture.md             # System design & data flow
+├── api.md                      # REST API reference & examples
+├── execution.md                # Execution engine design
+├── manual-approval.md          # Order approval workflow (v0.5.0+)
+├── risk-management.md          # Risk checks & pip sizing (v0.6.0+)
 ├── strategy.md                 # Strategy development guide
-├── rules.md                    # Architectural rules
-├── roadmap.md                  # Project roadmap
-├── SOT.md                      # Data model
-├── devlog/
-│   ├── day-01.md               # Development journal Day 1
-│   └── day-02.md               # Development journal Day 2
-└── diagrams/                   # (Future) Architecture diagrams
+├── modules.md                  # Code organization & reference
+├── configuration.md            # Environment & secrets config
+├── database-schema.md          # Database schema reference
+├── dashboard.md                # Dashboard UI & metrics
+├── rules.md                    # Architectural constraints
+├── roadmap.md                  # Project roadmap & phases
+├── SOT.md                      # Data model reference
+├── market-integration.md        # Market data & backtesting
+├── advanced-execution.md       # Advanced execution features
+├── devlog/                     # Development journal
+│   ├── day-01.md
+│   ├── day-01-EN.md
+│   ├── day-02.md
+│   └── day-02-EN.md
+├── archive/                    # Archived documentation
+├── diagrams/                   # Architecture diagrams (future)
+└── plan/                       # Planning documents
 
 /
-├── README.md                   # Project overview
-├── CONTRIBUTING.md             # Contribution guide
-└── DOCUMENTATION.md            # Documentation standards
+├── README.md                   # Project overview & quick start
+├── CHANGELOG.md                # Release history & changes
+├── CONTRIBUTING.md             # Contribution guide & standards
+├── DOCUMENTATION.md            # Documentation standards guide
+└── LICENSE                     # MIT License
 ```
 
 ---

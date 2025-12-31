@@ -1,8 +1,8 @@
 # FINDMY – Project Roadmap
 
-**Last Updated:** December 30, 2025  
-**Current Phase:** Phase 2 (Enhanced Execution) – In Progress  
-**Latest Addition:** Interactive HTML Dashboard (v0.2.0)
+**Last Updated:** December 31, 2025  
+**Current Phase:** Phase 2 (Enhanced Execution) – v0.6.0 Complete  
+**Latest Release:** v0.6.0 (Risk Management & Pip Sizing)
 
 ## Vision
 

@@ -8,17 +8,42 @@ Small. Cute. Flexible. Funny Project
 
 ---
 
-## 📚 Quick Links
+## � Table of Contents
 
-**New to FINDMY?** Start here:
-- **[Quick Start Guide](#quick-start)** – Get running in 5 minutes
-- **[Full Documentation](docs/README.md)** – Complete guide
-- **[API Reference](docs/api.md)** – REST endpoints with examples
-- **[Configuration & Secrets](docs/configuration.md)** – Environment setup & security
-- **[Database Schema](docs/database-schema.md)** – Data model
-- **[Architecture](docs/architecture.md)** – System design
-- **[Manual Order Approval (v0.5.0)](docs/manual-approval.md)** – Safety framework
-- **[Contributing](CONTRIBUTING.md)** – How to contribute
+- [Quick Start](#quick-start)
+- [Project Vision](#project-vision)
+- [Latest Features (v0.6.0)](#latest-features-v060)
+- [Previous Features (v0.5.0)](#previous-features-v050)
+- [Current Features (v0.4.0)](#current-features-v040)
+- [Quick Start (Installation & Setup)](#quick-start)
+- [REST API Overview](#rest-api-fastapi)
+- [Excel Input Format](#excel-input-format)
+- [Repository Structure](#repository-structure)
+- [Development](#development)
+- [Security Features](#security-features)
+- [Contributing](#contributing)
+- [License & Disclaimer](#license)
+
+---
+
+## 📚 Full Documentation
+
+**Need detailed information?** Check the full docs:
+
+| Document | Purpose |
+|----------|---------|
+| **[docs/README.md](docs/README.md)** | 📍 **START HERE** – Documentation navigation hub |
+| **[docs/api.md](docs/api.md)** | REST API endpoints with examples |
+| **[docs/architecture.md](docs/architecture.md)** | System design and data flow |
+| **[docs/configuration.md](docs/configuration.md)** | Environment setup & secrets |
+| **[docs/execution.md](docs/execution.md)** | Execution engine details |
+| **[docs/market-integration.md](docs/market-integration.md)** | Real-time market data |
+| **[docs/risk-management.md](docs/risk-management.md)** | Risk management & pip sizing (v0.6.0) |
+| **[docs/manual-approval.md](docs/manual-approval.md)** | Order approval workflow (v0.5.0) |
+| **[docs/strategy.md](docs/strategy.md)** | Strategy development guide |
+| **[docs/roadmap.md](docs/roadmap.md)** | Project roadmap & timeline |
+| **[CONTRIBUTING.md](CONTRIBUTING.md)** | How to contribute |
+| **[DOCUMENTATION.md](DOCUMENTATION.md)** | Documentation standards |
 
 ---
 
@@ -391,7 +416,7 @@ Navigate to `http://localhost:8000/` to see the beautiful, responsive dashboard 
 
 The dashboard auto-refreshes every 30 seconds (prices) and supports mobile/tablet viewing.
 
-[**📖 Full Dashboard Documentation**](docs/dashboard.md) | [**📖 Market Data Integration**](docs/market-data.md)
+[**📖 Dashboard Documentation**](docs/dashboard.md) | [**📖 Market Integration**](docs/market-integration.md)
 
 ### Try It Out
 
@@ -415,39 +440,93 @@ curl -X POST http://localhost:8000/paper-execution \
 findmy-fm/
 ├─ src/findmy/
 │  ├─ api/
-│  │  ├─ main.py                 # FastAPI app (secure upload)
-│  │  ├─ schemas.py              # Pydantic models
+│  │  ├─ main.py                 # FastAPI app (endpoints, file upload)
+│  │  ├─ schemas.py              # Pydantic request/response models
+│  │  ├─ sot/
+│  │  │  ├─ routes.py            # SOT API endpoints
+│  │  │  └─ schemas.py           # SOT schemas
 │  │  └─ common/
 │  │     ├─ errors.py            # Error handling
-│  │     └─ middleware.py        # Middleware
+│  │     └─ middleware.py        # CORS, logging
+│  ├─ services/
+│  │  └─ market_data.py          # Binance price integration
+│  ├─ strategies/
+│  │  ├─ base.py                 # Strategy interface
+│  │  └─ moving_average.py       # Example: EMA crossover strategy
 │  └─ execution/
 │     └─ paper_execution.py      # Execution engine (fully typed)
+├─ services/
+│  ├─ ts/                        # Trade Service (aggregates trades)
+│  │  ├─ models.py               # Trade, Position models
+│  │  ├─ db.py                   # SQLAlchemy session
+│  │  └─ routes.py               # Trade API endpoints
+│  ├─ sot/                       # Source of Truth (order/fill records)
+│  │  ├─ pending_orders.py       # Pending order model (approval queue)
+│  │  ├─ pending_orders_service.py # Pending order management
+│  │  ├─ models.py               # Order, Fill models
+│  │  ├─ db.py                   # SQLAlchemy session
+│  │  └─ routes.py               # SOT API endpoints
+│  ├─ risk/                      # Risk Management (v0.6.0)
+│  │  ├─ pip_sizing.py           # Pip-based order sizing
+│  │  ├─ risk_management.py      # Position/loss checks
+│  │  └─ __init__.py             # Module exports
+│  ├─ executor/                  # Order execution service
+│  ├─ backtesting/               # Backtesting engine
+│  ├─ report/                    # Performance reporting
+│  └─ ai/                        # AI/signal generation
 ├─ tests/
-│  ├─ test_paper_execution.py    # 40+ tests
-│  └─ test_api.py                # API tests
+│  ├─ test_api.py                # API endpoint tests
+│  ├─ test_paper_execution.py    # Execution engine tests
+│  ├─ test_risk_management.py    # Risk checks & pip sizing tests
+│  ├─ test_market_data.py        # Market data tests
+│  ├─ test_pending_orders.py     # Approval workflow tests
+│  └─ test_*.py                  # Feature-specific tests
 ├─ examples/
 │  ├─ README.md                  # Excel format guide
-│  ├─ sample_purchase_order_with_header.xlsx
-│  ├─ sample_purchase_order_english.xlsx
-│  ├─ sample_purchase_order_no_header.xlsx
-│  └─ sample_purchase_order_with_errors.xlsx
+│  └─ sample_purchase_order_*.xlsx
 ├─ docs/
+│  ├─ README.md                  # Documentation navigation hub ⭐
 │  ├─ api.md                     # REST API reference
-│  ├─ database-schema.md         # Data model
 │  ├─ architecture.md            # System design
-│  ├─ execution.md               # Execution engine
-│  └─ roadmap.md                 # Feature roadmap
+│  ├─ execution.md               # Execution engine details
+│  ├─ market-integration.md      # Real-time market data
+│  ├─ risk-management.md         # Risk management & pip sizing
+│  ├─ manual-approval.md         # Order approval workflow
+│  ├─ strategy.md                # Strategy development guide
+│  ├─ roadmap.md                 # Project roadmap
+│  ├─ configuration.md           # Environment setup
+│  ├─ modules.md                 # Code organization
+│  ├─ rules.md                   # Architectural rules
+│  ├─ SOT.md                     # Data model
+│  ├─ devlog/                    # Development journal
+│  ├─ diagrams/                  # (Future) Architecture diagrams
+│  └─ archive/                   # Historical docs (v0.2.0, v0.3.0)
+├─ db/
+│  ├─ migrations/                # (Future) Database migrations
+│  └─ *.db                       # SQLite databases (generated)
+├─ data/
+│  ├─ uploads/                   # Temp uploaded files (auto-cleaned)
+│  └─ sot/                       # SOT data exports
 ├─ .github/workflows/
 │  └─ tests.yml                  # CI/CD pipeline
-├─ data/
-│  ├─ uploads/                   # Temp files (auto-cleaned)
-│  └─ findmy_fm_paper.db         # SQLite database
+├─ scripts/
+│  ├─ start_api.sh               # Run API server
+│  └─ test_sot_dal.py            # Test utilities
+├─ static/
+│  └─ css/                       # Dashboard styles
+├─ templates/
+│  ├─ base.html                  # Dashboard base template
+│  └─ dashboard.html             # Main dashboard UI
+├─ conftest.py                   # Pytest configuration & fixtures
+├─ pytest.ini                    # Pytest settings (timeout, markers)
+├─ pyproject.toml                # Poetry, tools configuration
 ├─ requirements-prod.txt         # Production dependencies
-├─ requirements-dev.txt          # Development tools
-├─ pyproject.toml                # Poetry + tool config
+├─ requirements-dev.txt          # Development tools & testing
 ├─ LICENSE                       # MIT License
+├─ README.md                     # This file (project overview)
 ├─ CONTRIBUTING.md               # Contribution guide
-└─ README.md
+├─ CHANGELOG.md                  # Release notes
+└─ DOCUMENTATION.md              # Documentation standards
 ```
 
 ---

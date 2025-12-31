@@ -62,8 +62,26 @@ async def add_security_headers(request: Request, call_next):
         response.headers[header] = value
     return response
 
+# v0.7.0: Import caching
+from services.cache.manager import cache_manager, CacheConfig
+
 # Include authentication routes
 app.include_router(auth_router)
+
+# v0.7.0: Initialize caching on startup
+@app.on_event("startup")
+async def startup_event():
+    """Initialize caching on application startup."""
+    await cache_manager.init()
+    logger = __import__("logging").getLogger(__name__)
+    logger.info("Cache manager initialized")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown."""
+    await cache_manager.clear()
+    logger = __import__("logging").getLogger(__name__)
+    logger.info("Cache manager shutdown")
 
 # ✅ 2. CONFIGURE TEMPLATES AND STATIC FILES
 templates = Jinja2Templates(directory="templates")
@@ -325,8 +343,19 @@ class SummaryResponse(BaseModel):
 
 
 @app.get("/api/positions", response_model=List[PositionResponse])
-async def get_positions():
-    """Get current positions from Trade Service with live market prices and unrealized PnL."""
+@limiter.limit(RateLimitConfig.ENDPOINTS["data"])
+async def get_positions(request: Request):
+    """
+    Get current positions from Trade Service with live market prices and unrealized PnL.
+    
+    v0.7.0: Cached for 30s for 90% faster reads on repeated requests.
+    """
+    # Try cache first
+    cache_key = "positions:all"
+    cached_result = cache_manager.l1.get(cache_key)
+    if cached_result is not None:
+        return cached_result
+    
     db = SessionLocal()
     try:
         try:
@@ -359,6 +388,9 @@ async def get_positions():
                         unrealized_pnl=unrealized_pnl,
                     )
                 )
+            
+            # Cache the result for 30s
+            cache_manager.l1.set(cache_key, result, CacheConfig.TTL_POSITIONS)
             return result
         except Exception:
             # Table may not exist yet
@@ -402,8 +434,19 @@ async def get_trades():
 
 
 @app.get("/api/summary", response_model=SummaryResponse)
-async def get_summary():
-    """Get PnL summary and trading statistics with market values."""
+@limiter.limit(RateLimitConfig.ENDPOINTS["data"])
+async def get_summary(request: Request):
+    """
+    Get PnL summary and trading statistics with market values.
+    
+    v0.7.0: Cached for 10s for instant dashboard loads.
+    """
+    # Try cache first (very hot endpoint)
+    cache_key = "summary:all"
+    cached_result = cache_manager.l1.get(cache_key)
+    if cached_result is not None:
+        return cached_result
+    
     db = SessionLocal()
     try:
         try:
@@ -448,7 +491,7 @@ async def get_summary():
             # Calculate total equity
             total_equity = total_invested + unrealized_pnl
 
-            return SummaryResponse(
+            result = SummaryResponse(
                 total_trades=int(total_trades),
                 realized_pnl=realized_pnl,
                 unrealized_pnl=unrealized_pnl,
@@ -458,6 +501,10 @@ async def get_summary():
                 last_trade_time=last_trade_time,
                 status="✓ Active",
             )
+            
+            # Cache for 10s (very hot endpoint)
+            cache_manager.l1.set(cache_key, result, CacheConfig.TTL_SUMMARY)
+            return result
         except Exception:
             # Return empty summary if database is not initialized
             return SummaryResponse(

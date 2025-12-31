@@ -7,6 +7,151 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v0.5.0] – 2024-12-31
+
+### 🛡️ Safety & Compliance Enhancements
+
+#### Manual Order Approval System
+- **Mandatory Approval Queue**: ALL orders (Excel, strategy, backtest) queue to pending_orders
+  - No order bypasses user approval
+  - Prevents accidental execution and market manipulation
+  - Complete audit trail with timestamps
+
+- **PendingOrder Model**: New database model with fields:
+  - `symbol`, `side`, `quantity`, `price`, `order_type`
+  - `source` (excel/strategy/backtest), `status` (pending/approved/rejected)
+  - `reviewed_by`, `reviewed_at` for audit trail
+  - `strategy_name`, `confidence` for strategy orders
+
+- **PendingOrdersService**: New service layer with functions:
+  - `queue_order()` – Create pending order
+  - `get_pending_orders()` – List with status/symbol/source filters
+  - `approve_order()` – Mark for execution with timestamp
+  - `reject_order()` – Prevent execution with reason
+  - `count_pending()` – Get pending count
+
+- **REST API Endpoints**:
+  - `GET /api/pending` – List pending orders (querystring filters)
+  - `POST /api/pending/approve/{id}` – Approve order
+  - `POST /api/pending/reject/{id}` – Reject order with reason
+
+- **Dashboard Integration**:
+  - New "Pending Orders Queue" section with real-time updates
+  - Badge showing pending count
+  - One-click approve/reject buttons per order
+  - Order details: symbol, side, qty, price, source, status, created time
+  - WebSocket live refresh (60s fallback polling)
+
+### 📊 Strategy Framework & Backtesting
+
+#### Abstract Strategy Architecture
+- **Strategy Base Class** (`src/findmy/strategies/base.py`):
+  - Abstract interface for custom strategies
+  - `evaluate()` method for signal generation
+  - Market data access for analysis
+  - Backtest support
+
+- **MovingAverageStrategy** (`src/findmy/strategies/moving_average.py`):
+  - Example 10/20/50-period EMA implementation
+  - Buy/sell/hold signal generation
+  - Confidence scoring (0-1)
+  - Multi-symbol support
+
+#### Strategy Signal Processing
+- **Signal-to-Orders Conversion**:
+  - Strategy signals converted to pending orders
+  - Strategy name and confidence tracked
+  - Source set to "strategy"
+  - Orders queued for user approval
+
+#### Strategy Backtesting Service
+- **StrategyBacktestingService** (`src/findmy/services/backtesting.py`):
+  - Run strategies on historical data
+  - Multi-symbol, multi-timeframe support
+  - Equity curve tracking
+  - Performance metrics calculation
+
+- **BacktestRequest/Response Models**:
+  - `strategy_type` and `strategy_config` parameters
+  - Historical data fetching from Binance
+  - Complete trade simulation
+  - Metrics: total_return, win_rate, sharpe_ratio, max_drawdown
+
+### 🔄 Paper Execution Workflow Changes
+
+- **Modified `run_paper_execution()`**:
+  - Now queues orders instead of executing
+  - Returns: `orders_queued`, `pending_order_ids`, `errors`
+  - Backward compatible with Excel uploads
+  - All orders require approval before execution
+
+- **Removed Direct Execution**:
+  - No longer creates trades directly
+  - Prevents unauthorized trading
+  - Maintains separation of concerns
+
+### 🧪 Testing & Quality
+
+- **New Test Suite** (`tests/test_pending_orders.py`):
+  - 12 comprehensive tests for pending orders
+  - TestPendingOrdersService (5 tests)
+  - TestPendingOrdersAPI (5 tests)
+  - TestPaperExecutionQueues (2 tests)
+  - 100% pass rate
+
+- **Updated Test Suite** (`tests/test_paper_execution.py`):
+  - Updated 37 tests for queuing behavior
+  - Validation that orders queue instead of execute
+  - Mixed buy/sell workflow testing
+  - All tests passing
+
+- **Test Coverage**: 123 total tests passing
+  - 37 paper execution tests
+  - 12 pending orders tests
+  - 74 other integration tests
+
+### 📚 Documentation
+
+- **New Manual Approval Guide** (`docs/manual-approval.md`):
+  - Architecture and database model
+  - Service layer functions
+  - REST API endpoint reference
+  - Dashboard usage guide
+  - Workflow examples
+  - Safety features overview
+  - cURL examples
+  - Best practices
+  - Troubleshooting
+
+- **Updated README.md**:
+  - v0.5.0 features section
+  - Manual approval link
+  - Strategy framework overview
+  - Backtesting highlights
+
+### 🔐 Security Improvements
+
+- **Order Validation**:
+  - Positive quantity/price validation
+  - Side validation (BUY/SELL)
+  - Status enum constraints
+  - Order type validation
+
+- **Audit Trail**:
+  - Every approval/rejection logged
+  - Reviewer identity tracked
+  - Timestamps for all decisions
+  - Optional notes/reasoning
+
+### ⚠️ Breaking Changes
+
+- **Paper Execution Behavior**: Orders no longer execute immediately
+  - Requires approval step
+  - Test expectations updated
+  - API response structure changed
+
+---
+
 ## [v0.4.0] – 2024-12-30
 
 ### 🚀 Major Features

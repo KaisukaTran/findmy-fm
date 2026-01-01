@@ -343,12 +343,13 @@ async def reject_pending_order(
 # DASHBOARD ENDPOINTS
 # ========================
 
-from services.ts.db import SessionLocal
+from services.ts.db import get_db
 from services.ts.models import Trade, TradePosition, TradePnL
 from services.sot.models import Order
 from findmy.services.market_data import get_current_prices, get_unrealized_pnl
 from findmy.services.backtesting import run_backtest, BacktestRequest
 from sqlalchemy import func
+from sqlalchemy.orm import Session
 from datetime import datetime
 from pydantic import BaseModel
 from typing import List
@@ -391,7 +392,12 @@ class SummaryResponse(BaseModel):
 
 @app.get("/api/positions", response_model=List[PositionResponse])
 @limiter.limit(RateLimitConfig.ENDPOINTS["data"])
-async def get_positions(request: Request):
+async def get_positions(
+    request: Request,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
     """
     Get current positions from Trade Service with live market prices and unrealized PnL.
     
@@ -399,16 +405,8 @@ async def get_positions(request: Request):
     Metrics: Tracks cache hits, position count, and total position value.
     """
     # Try cache first
-    cache_key = "positions:all"
-    cached_result = cache_manager.l1.get(cache_key)
-    if cached_result is not None:
-        cache_hits_total.labels(cache_level="L1", key_pattern="positions").inc()
-        return cached_result
-    
-    db = SessionLocal()
-    try:
-        try:
-            positions = db.query(TradePosition).all()
+    cache_key = f"positions:skip{skip}:limit{limit}"
+    cached_result = cache_manager.l1.get(cache
             if not positions:
                 return []
             
@@ -455,8 +453,7 @@ async def get_positions(request: Request):
         db.close()
 
 
-@app.get("/api/trades", response_model=List[TradeResponse])
-async def get_trades():
+@app.get("/api/trades",
     """Get trade history from Trade Service, ordered by timestamp DESC."""
     db = SessionLocal()
     try:

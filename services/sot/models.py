@@ -1,12 +1,19 @@
 from sqlalchemy import (
-    Column, Integer, String, Float, DateTime, ForeignKey, Text
+    Column, Integer, String, Float, DateTime, ForeignKey, Text, Index
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
 from .db import Base
 class OrderRequest(Base):
+    """Order request - v0.7.0: Added indexes for faster queries."""
     __tablename__ = "order_requests"
+    
+    # v0.7.0: Indexes for performance
+    __table_args__ = (
+        Index('ix_order_requests_symbol', 'symbol'),
+        Index('ix_order_requests_requested_at', 'requested_at'),
+    )
 
     id = Column(Integer, primary_key=True)
 
@@ -28,7 +35,15 @@ class OrderRequest(Base):
 
     orders = relationship("Order", back_populates="order_request")
 class Order(Base):
+    """Order - v0.7.0: Added indexes on status, created_at, symbol."""
     __tablename__ = "orders"
+    
+    # v0.7.0: Indexes for performance
+    __table_args__ = (
+        Index('ix_orders_status', 'status'),
+        Index('ix_orders_created_at', 'created_at'),
+        Index('ix_orders_order_request_id', 'order_request_id'),
+    )
 
     id = Column(Integer, primary_key=True)
 

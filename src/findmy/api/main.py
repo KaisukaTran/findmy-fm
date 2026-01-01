@@ -144,7 +144,6 @@ async def paper_execution(
     request: Request,
     current_user: dict = Depends(get_current_user),
     file: UploadFile = File(...),
-):
     """
     Execute paper trading orders from an Excel file.
     
@@ -255,8 +254,8 @@ async def list_pending_orders(status: Optional[str] = None, symbol: Optional[str
 @limiter.limit(RateLimitConfig.ENDPOINTS["trading"])
 async def approve_pending_order(
     request: Request,
-    current_user: dict = Depends(get_current_user),
     order_id: int,
+    current_user: dict = Depends(get_current_user),
     note: Optional[str] = None
 ):
     """
@@ -299,10 +298,7 @@ async def approve_pending_order(
 @limiter.limit(RateLimitConfig.ENDPOINTS["trading"])
 async def reject_pending_order(
     request: Request,
-    current_user: dict = Depends(get_current_user),
     order_id: int,
-    note: str = "User rejected"
-):
     """
     Reject a pending order.
     

@@ -142,6 +142,7 @@ async def dashboard(request: Request):
 @limiter.limit(RateLimitConfig.ENDPOINTS["trading"])
 async def paper_execution(
     request: Request,
+    current_user: dict = Depends(get_current_user),
     file: UploadFile = File(...),
 ):
     """
@@ -254,6 +255,7 @@ async def list_pending_orders(status: Optional[str] = None, symbol: Optional[str
 @limiter.limit(RateLimitConfig.ENDPOINTS["trading"])
 async def approve_pending_order(
     request: Request,
+    current_user: dict = Depends(get_current_user),
     order_id: int,
     note: Optional[str] = None
 ):
@@ -297,6 +299,7 @@ async def approve_pending_order(
 @limiter.limit(RateLimitConfig.ENDPOINTS["trading"])
 async def reject_pending_order(
     request: Request,
+    current_user: dict = Depends(get_current_user),
     order_id: int,
     note: str = "User rejected"
 ):
@@ -598,7 +601,11 @@ class BacktestRequestBody(BaseModel):
 
 
 @app.post("/api/backtest")
-async def run_backtest_endpoint(request_body: BacktestRequestBody):
+@limiter.limit(RateLimitConfig.ENDPOINTS["trading"])
+async def run_backtest_endpoint(
+    current_user: dict = Depends(get_current_user),
+    request_body: BacktestRequestBody
+):
     """
     Run a backtest simulation over historical data.
     
@@ -685,7 +692,11 @@ class StrategyRequestBody(BaseModel):
 
 
 @app.post("/api/run-strategy")
-async def run_strategy_endpoint(request_body: StrategyRequestBody):
+@limiter.limit(RateLimitConfig.ENDPOINTS["trading"])
+async def run_strategy_endpoint(
+    current_user: dict = Depends(get_current_user),
+    request_body: StrategyRequestBody
+):
     """
     Run a trading strategy to generate signals and convert them to orders.
     
@@ -862,4 +873,3 @@ async def websocket_dashboard(websocket: WebSocket):
         manager.disconnect(websocket)
     except Exception:
         manager.disconnect(websocket)
-

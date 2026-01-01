@@ -205,6 +205,25 @@ FINDMY evolves from a **paper trading simulator** to a **production-grade tradin
 
 **Breaking Changes**: None
 
+## v0.8.0: API Improvements (COMPLETE – Jan 1, 2026)
+
+**Timeline**: Jan 1, 2026
+
+**Completed Features**:
+- [x] Priority 1: Security Basics (JWT auth deps/protection, rate limiting 100/min/IP 1000/day, CORS)
+- [x] Priority 2: Database & Performance (Depends(get_db), pagination skip/limit on lists)
+- [x] Priority 3: Error & Logging (custom handlers, request/response logging middleware)
+- [x] Priority 4: Advanced (API versioning ready, filtering/sorting, cache-control/gzip headers)
+
+**Commits**:
+- sec(v0.8.0): JWT auth + rate limiting + CORS
+- perf(v0.8.0): DB deps + pagination
+- feat(v0.8.0): error handling + logging
+
+**Docs**: api.md, new security.md, roadmap updated.
+
+**Tests**: pytest (syntax fixed, coverage improved).
+
 ---
 
 ## Phase 3: Risk Management (Q2 2026)

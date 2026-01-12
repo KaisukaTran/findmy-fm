@@ -1,8 +1,8 @@
 # FINDMY – Project Roadmap
 
-**Last Updated:** December 31, 2025  
-**Current Phase:** Phase 2 (Enhanced Execution) – v0.6.0 Complete  
-**Latest Release:** v0.6.0 (Risk Management & Pip Sizing)
+**Last Updated:** January 2026  
+**Current Phase:** Phase 2 Complete – v0.7.0 Release  
+**Latest Release:** v0.7.0 (Performance & Security Hardening)
 
 ## Vision
 

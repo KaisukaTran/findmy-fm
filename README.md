@@ -4,7 +4,7 @@ Small. Cute. Flexible. Funny Project
 
 > **FINDMY (FM)** is a modular Python-based trading bot focused on research-first development, starting with a robust **paper trading execution engine** using Excel input and FastAPI.
 
-**Latest Release:** v0.6.0 | **License:** MIT | **Status:** Active Development ⚡
+**Latest Release:** v0.7.0 | **License:** MIT | **Status:** Active Development ⚡
 
 ---
 
@@ -22,8 +22,8 @@ Small. Cute. Flexible. Funny Project
 ## 📖 Table of Contents
 
 - [Project Vision](#-project-vision)
-- [Latest Features (v0.6.0)](#-latest-features-v060)
-- [Previous Features (v0.5.0 & v0.4.0)](#-previous-features-v050--v040)
+- [Latest Features (v0.7.0)](#-latest-features-v070)
+- [Previous Features (v0.6.0 & Earlier)](#-previous-features-v060--earlier)
 - [Quick Start](#-quick-start)
 - [Repository Structure](#-repository-structure)
 - [Excel Input Format](#-excel-input-format)
@@ -50,9 +50,38 @@ FINDMY is designed as a **production-grade trading system**, not a demo bot.
 
 ---
 
-## ✨ Latest Features (v0.6.0)
+## ✨ Latest Features (v0.7.0)
 
-### 🎯 Pip-Based Order Sizing
+### 🚀 Performance & Security Hardening
+
+✅ **Database Connection Pooling + Strategic Indexes**
+- SQLAlchemy QueuePool with pool_size=20, max_overflow=10
+- 14 strategic indexes for 10-100x faster queries
+- Scoped sessions for concurrent database access
+
+✅ **JWT Authentication + Rate Limiting**
+- 60-minute access tokens + 30-day refresh tokens
+- Global limits: 100 requests/min, 1000/day
+- Endpoint-specific limits (login: 5/min, trading: 30/min)
+- Security headers (HSTS, CSP, X-Frame-Options)
+
+✅ **L1/L2 Caching Layer**
+- 70-80% faster reads via intelligent caching
+- TTL management with automatic invalidation
+- Memory-efficient cache implementation
+
+✅ **Prometheus Metrics & Observability**
+- Automatic request tracking
+- Performance metrics export
+- Full observability stack ready
+
+See [v0.7.0 Release Notes](docs/v0.7.0-release.md) for complete details.
+
+---
+
+## ✨ Previous Features (v0.6.0 & Earlier)
+
+### 🎯 Pip-Based Order Sizing (v0.6.0)
 
 ✅ **Pip Multiplier System**
 - Configure `pip_multiplier` (default 2.0) – 1 pip = multiplier × minQty
@@ -430,39 +459,33 @@ curl -X POST http://localhost:8000/paper-execution \
 findmy-fm/
 ├─ src/findmy/
 │  ├─ api/
-│  │  ├─ main.py                 # FastAPI app (secure upload)
+│  │  ├─ main.py                 # FastAPI app entry point
+│  │  ├─ app.py                  # Application factory
+│  │  ├─ auth_routes.py          # JWT authentication endpoints
+│  │  ├─ security.py             # Rate limiting & security headers
 │  │  ├─ schemas.py              # Pydantic models
-│  │  └─ common/
-│  │     ├─ errors.py            # Error handling
-│  │     └─ middleware.py        # Middleware
-│  └─ execution/
-│     └─ paper_execution.py      # Execution engine (fully typed)
-├─ tests/
-│  ├─ test_paper_execution.py    # 40+ tests
-│  └─ test_api.py                # API tests
-├─ examples/
-│  ├─ README.md                  # Excel format guide
-│  ├─ sample_purchase_order_with_header.xlsx
-│  ├─ sample_purchase_order_english.xlsx
-│  ├─ sample_purchase_order_no_header.xlsx
-│  └─ sample_purchase_order_with_errors.xlsx
-├─ docs/
-│  ├─ api.md                     # REST API reference
-│  ├─ database-schema.md         # Data model
-│  ├─ architecture.md            # System design
-│  ├─ execution.md               # Execution engine
-│  └─ roadmap.md                 # Feature roadmap
-├─ .github/workflows/
-│  └─ tests.yml                  # CI/CD pipeline
-├─ data/
-│  ├─ uploads/                   # Temp files (auto-cleaned)
-│  └─ findmy_fm_paper.db         # SQLite database
-├─ requirements-prod.txt         # Production dependencies
-├─ requirements-dev.txt          # Development tools
-├─ pyproject.toml                # Poetry + tool config
-├─ LICENSE                       # MIT License
-├─ CONTRIBUTING.md               # Contribution guide
-└─ README.md
+│  │  ├─ metrics.py              # Prometheus metrics
+│  │  └─ sot/                    # SOT API routes
+│  ├─ execution/
+│  │  └─ paper_execution.py      # Paper trading engine
+│  ├─ services/
+│  │  ├─ backtesting.py          # Backtest engine
+│  │  ├─ market_data.py          # Binance market data
+│  │  └─ strategy_executor.py    # Strategy execution
+│  └─ strategies/
+│     ├─ base.py                 # Abstract strategy base
+│     └─ moving_average.py       # MA crossover strategy
+├─ services/
+│  ├─ auth/                    # JWT authentication service
+│  ├─ cache/                   # L1/L2 caching layer
+│  ├─ risk/                    # Risk management & pip sizing
+│  ├─ sot/                     # Source of Truth (orders, positions)
+│  └─ ts/                      # Trade Service (P&L, analytics)
+├─ tests/                       # 100+ pytest tests
+├─ docs/                        # Full documentation
+├─ examples/                    # Sample Excel files
+├─ db/migrations/               # Database migrations
+└─ data/                        # SQLite databases & uploads
 ```
 
 ---
@@ -542,28 +565,26 @@ pip-audit
 
 ## 🗺️ Roadmap
 
-### v0.2.0 (Next)
-- [ ] SELL orders with position reduction
-- [ ] Partial fills
-- [ ] Order cancellation
-- [ ] Enhanced reporting
-- [ ] Database migrations
+### ✅ v0.7.0 (Current - Complete)
+- ✅ Database connection pooling & indexes
+- ✅ JWT authentication + rate limiting
+- ✅ L1/L2 caching layer
+- ✅ Prometheus metrics & observability
+- ✅ Security headers & input validation
 
-### v0.3.0
-- [ ] Async processing
-- [ ] WebSocket updates
-- [ ] Trade history API
-- [ ] P&L calculations
-- [ ] Analytics
+### v0.8.0 (Next)
+- [ ] WebSocket order updates
+- [ ] Advanced backtesting modes
+- [ ] Multi-strategy support
+- [ ] Portfolio optimization
 
 ### v1.0.0
-- [ ] Live trading
-- [ ] Rate limiting
-- [ ] Backtesting
-- [ ] Strategy framework
-- [ ] Risk management
+- [ ] Live trading integration
+- [ ] Multi-exchange support
+- [ ] Advanced risk models
+- [ ] Production deployment guides
 
-See [docs/roadmap.md](docs/roadmap.md) for details.
+See [docs/roadmap.md](docs/roadmap.md) for full roadmap details.
 
 ---
 
@@ -608,11 +629,11 @@ This project is for **research and educational purposes only**.
 
 - **Language**: Python 3.10+
 - **Framework**: FastAPI + SQLAlchemy + pandas
-- **Database**: SQLite
-- **Tests**: 40+ unit & integration tests
+- **Database**: SQLite with connection pooling
+- **Tests**: 100+ unit & integration tests
 - **Coverage**: >80%
 - **Type Coverage**: 100% on new code
-- **Lines of Code**: ~2000 (core + tests)
+- **Security**: JWT auth, rate limiting, input validation
 
 ---
 

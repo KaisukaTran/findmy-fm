@@ -151,11 +151,9 @@ A **FastAPI REST service** accepting Excel uploads and returning execution resul
 | Phase | Status | Docs |
 |-------|--------|------|
 | **Phase 1** – Paper Trading | ✅ Done | [roadmap.md](roadmap.md#phase-1-paper-trading-foundation-) |
-| **Phase 2** – Enhanced Execution | ⏳ Q1 2026 | [roadmap.md](roadmap.md#phase-2-enhanced-execution-q1-2026) |
-| **Phase 3** – Risk Management | ⏳ Q2 2026 | [roadmap.md](roadmap.md#phase-3-risk-management-q2-2026) |
-| **Phase 4** – Backtesting | ⏳ Q3 2026 | [roadmap.md](roadmap.md#phase-4-backtesting-engine-q3-2026) |
-| **Phase 5** – Strategy Engine | ⏳ Q3-Q4 2026 | [roadmap.md](roadmap.md#phase-5-strategy-engine-q3--q4-2026) |
-| **Phase 6** – Live Trading | ⏳ Q4 2026 – Q1 2027 | [roadmap.md](roadmap.md#phase-6-live-trading-q4-2026--q1-2027) |
+| **Phase 2** – Enhanced Execution | ✅ Done | [roadmap.md](roadmap.md#phase-2-enhanced-execution-q1-2026) |
+| **v0.7.0** – Performance & Security | ✅ Done | [v0.7.0-release.md](v0.7.0-release.md) |
+| **Phase 3** – Advanced Features | ⏳ Q2 2026 | [roadmap.md](roadmap.md) |
 
 ---
 

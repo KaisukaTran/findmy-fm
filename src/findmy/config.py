@@ -67,6 +67,11 @@ class Settings(BaseSettings):
         description="Maximum daily loss as % of account equity. Default: 5%"
     )
 
+    live_trading: bool = Field(
+        default=False,
+        description="Enable live trading on real exchange (default: paper trading)"
+    )
+
     class Config:
         """Pydantic settings configuration."""
         env_file = ".env"

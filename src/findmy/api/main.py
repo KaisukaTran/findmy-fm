@@ -98,8 +98,11 @@ async def startup_event():
     logger.info("Cache manager initialized")
     
     # v0.7.0: Initialize application info metric
-    app_info.info({"version": "0.7.0"})
-    logger.info("Application metrics initialized - v0.7.0")
+    try:
+        app_info.info({"version": "1.0.0"})
+    except Exception:
+        pass  # Ignore metric errors on startup
+    logger.info("Application metrics initialized - v1.0.0")
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -306,6 +309,8 @@ async def approve_pending_order(
 async def reject_pending_order(
     request: Request,
     order_id: int,
+    note: str = "",
+):
     """
     Reject a pending order.
     
@@ -409,89 +414,90 @@ async def get_positions(
     """
     # Try cache first
     cache_key = f"positions:skip{skip}:limit{limit}"
-    cached_result = cache_manager.l1.get(cache
-            if not positions:
-                return []
-            
-            # Fetch current prices for all symbols
-            symbols = [p.symbol for p in positions]
-            prices = get_current_prices(symbols)
-            
-            result = []
-            total_value = 0.0
-            for p in positions:
-                current_price = prices.get(p.symbol)
-                if current_price is not None:
-                    market_value = p.quantity * current_price
-                    unrealized_pnl = market_value - p.total_cost
-                    total_value += market_value
-                else:
-                    market_value = None
-                    unrealized_pnl = None
-                
-                result.append(
-                    PositionResponse(
-                        symbol=p.symbol,
-                        quantity=p.quantity,
-                        avg_price=p.avg_entry_price,
-                        total_cost=p.total_cost,
-                        current_price=current_price,
-                        market_value=market_value,
-                        unrealized_pnl=unrealized_pnl,
-                    )
-                )
-            
-            # v0.7.0: Update position metrics
-            positions_active.labels(symbol="all")._value.set(len(result))
-            if total_value > 0:
-                positions_total_value.labels(currency="USD")._value.set(total_value)
-            
-            # Cache the result for 30s
-            cache_manager.l1.set(cache_key, result, CacheConfig.TTL_POSITIONS)
-            return result
-        except Exception:
-            # Table may not exist yet
-            return []
-    finally:
-        db.close()
-
-
-@app.get("/api/trades",
-    """Get trade history from Trade Service, ordered by timestamp DESC."""
-    db = SessionLocal()
+    cached_result = cache_manager.l1.get(cache_key)
+    if cached_result is not None:
+        cache_hits_total.labels(cache_level="L1", key_pattern="positions").inc()
+        return cached_result
+    
     try:
-        try:
-            trades = db.query(Trade).order_by(Trade.entry_time.desc()).all()
-            result = []
-            for trade in trades:
-                pnl = trade.pnl
-                realized_pnl = pnl.realized_pnl if pnl else None
-                result.append(
-                    TradeResponse(
-                        id=trade.id,
-                        symbol=trade.symbol,
-                        side=trade.side,
-                        entry_qty=trade.entry_qty,
-                        entry_price=trade.entry_price,
-                        entry_time=trade.entry_time,
-                        exit_qty=trade.exit_qty,
-                        exit_price=trade.exit_price,
-                        exit_time=trade.exit_time,
-                        status=trade.status,
-                        realized_pnl=realized_pnl,
-                    )
-                )
-            return result
-        except Exception:
-            # Table may not exist yet
+        positions = db.query(Position).offset(skip).limit(limit).all()
+        if not positions:
             return []
-    finally:
-        db.close()
+        
+        # Fetch current prices for all symbols
+        symbols = [p.symbol for p in positions]
+        prices = get_current_prices(symbols)
+        
+        result = []
+        total_value = 0.0
+        for p in positions:
+            current_price = prices.get(p.symbol)
+            if current_price is not None:
+                market_value = p.quantity * current_price
+                unrealized_pnl = market_value - p.total_cost
+                total_value += market_value
+            else:
+                market_value = None
+                unrealized_pnl = None
+            
+            result.append(
+                PositionResponse(
+                    symbol=p.symbol,
+                    quantity=p.quantity,
+                    avg_price=p.avg_entry_price,
+                    total_cost=p.total_cost,
+                    current_price=current_price,
+                    market_value=market_value,
+                    unrealized_pnl=unrealized_pnl,
+                )
+            )
+        
+        # v0.7.0: Update position metrics
+        positions_active.labels(symbol="all")._value.set(len(result))
+        if total_value > 0:
+            positions_total_value.labels(currency="USD")._value.set(total_value)
+        
+        # Cache the result for 30s
+        cache_manager.l1.set(cache_key, result, CacheConfig.TTL_POSITIONS)
+        return result
+    except Exception:
+        # Table may not exist yet
+        return []
+
+
+@app.get("/api/trades")
+async def get_trades(db: Session = Depends(get_db)):
+    """Get trade history from Trade Service, ordered by timestamp DESC."""
+    try:
+        trades = db.query(Trade).order_by(Trade.entry_time.desc()).all()
+        result = []
+        for trade in trades:
+            pnl = trade.pnl
+            realized_pnl = pnl.realized_pnl if pnl else None
+            result.append(
+                TradeResponse(
+                    id=trade.id,
+                    symbol=trade.symbol,
+                    side=trade.side,
+                    entry_qty=trade.entry_qty,
+                    entry_price=trade.entry_price,
+                    entry_time=trade.entry_time,
+                    exit_qty=trade.exit_qty,
+                    exit_price=trade.exit_price,
+                    exit_time=trade.exit_time,
+                    status=trade.status,
+                    realized_pnl=realized_pnl,
+                )
+            )
+        return result
+    except Exception:
+        # Table may not exist yet
+        return []
 
 
 @app.get("/api/summary", response_model=SummaryResponse)
 @limiter.limit(RateLimitConfig.ENDPOINTS["data"])
-async def get_summary(request: Request):
+async def get_summary(request: Request, db: Session = Depends(get_db)):
     """
     Get PnL summary and trading statistics with market values.
     
@@ -505,84 +511,80 @@ async def get_summary(request: Request):
         cache_hits_total.labels(cache_level="L1", key_pattern="summary").inc()
         return cached_result
     
-    db = SessionLocal()
     try:
+        # Total trades
+        total_trades = db.query(func.count(Trade.id)).scalar() or 0
+
+        # PnL calculations
         try:
-            # Total trades
-            total_trades = db.query(func.count(Trade.id)).scalar() or 0
+            pnl_records = db.query(TradePnL).all()
+            realized_pnl = sum(p.realized_pnl for p in pnl_records) if pnl_records else 0.0
+            unrealized_pnl = sum(p.unrealized_pnl for p in pnl_records) if pnl_records else 0.0
+        except Exception:
+            realized_pnl = 0.0
+            unrealized_pnl = 0.0
 
-            # PnL calculations
-            try:
-                pnl_records = db.query(TradePnL).all()
-                realized_pnl = sum(p.realized_pnl for p in pnl_records) if pnl_records else 0.0
-                unrealized_pnl = sum(p.unrealized_pnl for p in pnl_records) if pnl_records else 0.0
-            except Exception:
-                realized_pnl = 0.0
-                unrealized_pnl = 0.0
-
-            # Total invested and market value
+        # Total invested and market value
+        total_invested = 0.0
+        total_market_value = 0.0
+        try:
+            positions = db.query(TradePosition).all()
+            total_invested = sum(p.total_cost for p in positions) if positions else 0.0
+            
+            # Fetch current prices for market value calculation
+            if positions:
+                symbols = [p.symbol for p in positions]
+                prices = get_current_prices(symbols)
+                for p in positions:
+                    current_price = prices.get(p.symbol)
+                    if current_price is not None:
+                        total_market_value += p.quantity * current_price
+        except Exception:
             total_invested = 0.0
             total_market_value = 0.0
-            try:
-                positions = db.query(TradePosition).all()
-                total_invested = sum(p.total_cost for p in positions) if positions else 0.0
-                
-                # Fetch current prices for market value calculation
-                if positions:
-                    symbols = [p.symbol for p in positions]
-                    prices = get_current_prices(symbols)
-                    for p in positions:
-                        current_price = prices.get(p.symbol)
-                        if current_price is not None:
-                            total_market_value += p.quantity * current_price
-            except Exception:
-                total_invested = 0.0
-                total_market_value = 0.0
 
-            # Last trade time
-            try:
-                last_trade = db.query(Trade).order_by(Trade.entry_time.desc()).first()
-                last_trade_time = last_trade.entry_time if last_trade else None
-            except Exception:
-                last_trade_time = None
-
-            # Calculate total equity
-            total_equity = total_invested + unrealized_pnl
-
-            result = SummaryResponse(
-                total_trades=int(total_trades),
-                realized_pnl=realized_pnl,
-                unrealized_pnl=unrealized_pnl,
-                total_invested=total_invested,
-                total_market_value=total_market_value,
-                total_equity=total_equity,
-                last_trade_time=last_trade_time,
-                status="✓ Active",
-            )
-            
-            # v0.7.0: Update PnL metrics
-            if realized_pnl != 0:
-                trades_pnl_total.labels(symbol="all").observe(realized_pnl)
-            if total_market_value > 0:
-                positions_total_value.labels(currency="USD")._value.set(total_market_value)
-            
-            # Cache for 10s (very hot endpoint)
-            cache_manager.l1.set(cache_key, result, CacheConfig.TTL_SUMMARY)
-            return result
+        # Last trade time
+        try:
+            last_trade = db.query(Trade).order_by(Trade.entry_time.desc()).first()
+            last_trade_time = last_trade.entry_time if last_trade else None
         except Exception:
-            # Return empty summary if database is not initialized
-            return SummaryResponse(
-                total_trades=0,
-                realized_pnl=0.0,
-                unrealized_pnl=0.0,
-                total_invested=0.0,
-                total_market_value=0.0,
-                total_equity=0.0,
-                last_trade_time=None,
-                status="✓ Active",
-            )
-    finally:
-        db.close()
+            last_trade_time = None
+
+        # Calculate total equity
+        total_equity = total_invested + unrealized_pnl
+
+        result = SummaryResponse(
+            total_trades=int(total_trades),
+            realized_pnl=realized_pnl,
+            unrealized_pnl=unrealized_pnl,
+            total_invested=total_invested,
+            total_market_value=total_market_value,
+            total_equity=total_equity,
+            last_trade_time=last_trade_time,
+            status="✓ Active",
+        )
+        
+        # v0.7.0: Update PnL metrics
+        if realized_pnl != 0:
+            trades_pnl_total.labels(symbol="all").observe(realized_pnl)
+        if total_market_value > 0:
+            positions_total_value.labels(currency="USD")._value.set(total_market_value)
+        
+        # Cache for 10s (very hot endpoint)
+        cache_manager.l1.set(cache_key, result, CacheConfig.TTL_SUMMARY)
+        return result
+    except Exception:
+        # Return empty summary if database is not initialized
+        return SummaryResponse(
+            total_trades=0,
+            realized_pnl=0.0,
+            unrealized_pnl=0.0,
+            total_invested=0.0,
+            total_market_value=0.0,
+            total_equity=0.0,
+            last_trade_time=None,
+            status="✓ Active",
+        )
 
 
 # ========================
@@ -603,8 +605,9 @@ class BacktestRequestBody(BaseModel):
 @app.post("/api/backtest")
 @limiter.limit(RateLimitConfig.ENDPOINTS["trading"])
 async def run_backtest_endpoint(
+    request: Request,
+    request_body: BacktestRequestBody,
     current_user: dict = Depends(get_current_user),
-    request_body: BacktestRequestBody
 ):
     """
     Run a backtest simulation over historical data.
@@ -694,8 +697,9 @@ class StrategyRequestBody(BaseModel):
 @app.post("/api/run-strategy")
 @limiter.limit(RateLimitConfig.ENDPOINTS["trading"])
 async def run_strategy_endpoint(
+    request: Request,
+    request_body: StrategyRequestBody,
     current_user: dict = Depends(get_current_user),
-    request_body: StrategyRequestBody
 ):
     """
     Run a trading strategy to generate signals and convert them to orders.

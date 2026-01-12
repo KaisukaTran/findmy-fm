@@ -543,3 +543,173 @@ class TestWaveInfo:
         assert d["filled_price"] == 47950.0
         assert d["pending_order_id"] == 42
         assert "2026-01-12" in d["filled_time"]
+
+
+class TestKSSPreviewAPI:
+    """Tests for KSS Preview API endpoint (Phase 7)."""
+    
+    @pytest.fixture
+    def client(self):
+        """Create test client with KSS routes."""
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from src.findmy.kss.routes import router
+        
+        app = FastAPI()
+        app.include_router(router)
+        return TestClient(app)
+    
+    def test_preview_basic(self, client):
+        """Test basic preview endpoint returns correct wave structure."""
+        data = {
+            "symbol": "BTC",
+            "entry_price": 50000.0,
+            "distance_pct": 2.0,
+            "max_waves": 5,
+            "isolated_fund": 1000.0,
+            "tp_pct": 3.0,
+        }
+        
+        response = client.post("/api/kss/preview", json=data)
+        
+        assert response.status_code == 200
+        result = response.json()
+        
+        assert result["symbol"] == "BTC"
+        assert result["entry_price"] == 50000.0
+        assert result["max_waves"] == 5
+        assert len(result["waves"]) == 5
+        
+        # Check first wave
+        assert result["waves"][0]["wave_num"] == 0
+        assert result["waves"][0]["target_price"] == 50000.0
+        
+        # Check last wave price (entry * (1 - distance% * (waves-1)))
+        last_wave_expected = 50000.0 * (1 - 0.02 * 4)  # 46000
+        assert abs(result["waves"][4]["target_price"] - last_wave_expected) < 0.01
+    
+    def test_preview_qty_calculation(self, client):
+        """Test quantity per wave calculation."""
+        data = {
+            "symbol": "ETH",
+            "entry_price": 2000.0,
+            "distance_pct": 5.0,
+            "max_waves": 4,
+            "isolated_fund": 800.0,
+            "tp_pct": 2.0,
+        }
+        
+        response = client.post("/api/kss/preview", json=data)
+        result = response.json()
+        
+        # qty_per_wave = isolated_fund / max_waves / entry_price = 800/4/2000 = 0.1
+        assert abs(result["qty_per_wave"] - 0.1) < 0.0001
+        assert abs(result["total_qty"] - 0.4) < 0.0001
+    
+    def test_preview_running_averages(self, client):
+        """Test cumulative averages are calculated correctly."""
+        data = {
+            "symbol": "BTC",
+            "entry_price": 100.0,
+            "distance_pct": 10.0,  # Each wave drops 10%
+            "max_waves": 3,
+            "isolated_fund": 300.0,
+            "tp_pct": 5.0,
+        }
+        
+        response = client.post("/api/kss/preview", json=data)
+        result = response.json()
+        
+        # Wave 0: price=100, qty=1, cost=100, avg=100
+        # Wave 1: price=90, qty=1, cost=90, total_cost=190, total_qty=2, avg=95
+        # Wave 2: price=80, qty=1, cost=80, total_cost=270, total_qty=3, avg=90
+        
+        assert result["waves"][0]["avg_price_after"] == 100.0
+        assert abs(result["waves"][1]["avg_price_after"] - 95.0) < 0.01
+        assert abs(result["waves"][2]["avg_price_after"] - 90.0) < 0.01
+    
+    def test_preview_tp_prices(self, client):
+        """Test TP prices are calculated correctly."""
+        data = {
+            "symbol": "BTC",
+            "entry_price": 100.0,
+            "distance_pct": 10.0,
+            "max_waves": 2,
+            "isolated_fund": 200.0,
+            "tp_pct": 10.0,  # 10% profit target
+        }
+        
+        response = client.post("/api/kss/preview", json=data)
+        result = response.json()
+        
+        # After wave 0: avg=100, tp = 100 * 1.10 = 110
+        assert abs(result["waves"][0]["tp_price_after"] - 110.0) < 0.01
+        
+        # After wave 1: avg=95, tp = 95 * 1.10 = 104.5
+        assert abs(result["waves"][1]["tp_price_after"] - 104.5) < 0.01
+    
+    def test_preview_price_range(self, client):
+        """Test price range percentage calculation."""
+        data = {
+            "symbol": "BTC",
+            "entry_price": 100.0,
+            "distance_pct": 5.0,
+            "max_waves": 5,
+            "isolated_fund": 500.0,
+            "tp_pct": 3.0,
+        }
+        
+        response = client.post("/api/kss/preview", json=data)
+        result = response.json()
+        
+        # Price range: entry=100, last wave = 100 * (1 - 0.05*4) = 80
+        # Range = (100 - 80) / 100 * 100 = 20%
+        assert abs(result["price_range_pct"] - 20.0) < 0.01
+    
+    def test_preview_invalid_entry_price(self, client):
+        """Test preview with invalid entry price returns 422."""
+        data = {
+            "symbol": "BTC",
+            "entry_price": -100.0,  # Invalid
+            "distance_pct": 2.0,
+            "max_waves": 5,
+            "isolated_fund": 1000.0,
+            "tp_pct": 3.0,
+        }
+        
+        response = client.post("/api/kss/preview", json=data)
+        assert response.status_code == 422
+    
+    def test_preview_invalid_max_waves(self, client):
+        """Test preview with invalid max_waves returns 422."""
+        data = {
+            "symbol": "BTC",
+            "entry_price": 50000.0,
+            "distance_pct": 2.0,
+            "max_waves": 0,  # Invalid - must be >= 1
+            "isolated_fund": 1000.0,
+            "tp_pct": 3.0,
+        }
+        
+        response = client.post("/api/kss/preview", json=data)
+        assert response.status_code == 422
+    
+    def test_preview_single_wave(self, client):
+        """Test preview with single wave."""
+        data = {
+            "symbol": "ETH",
+            "entry_price": 3000.0,
+            "distance_pct": 1.0,
+            "max_waves": 1,
+            "isolated_fund": 100.0,
+            "tp_pct": 5.0,
+        }
+        
+        response = client.post("/api/kss/preview", json=data)
+        result = response.json()
+        
+        assert len(result["waves"]) == 1
+        assert result["waves"][0]["wave_num"] == 0
+        assert result["waves"][0]["target_price"] == 3000.0
+        assert result["price_range_pct"] == 0.0
+

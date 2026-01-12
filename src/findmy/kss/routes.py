@@ -103,9 +103,109 @@ class SummaryResponse(BaseModel):
     total_unrealized_pnl: float
 
 
+class PreviewRequest(BaseModel):
+    """Request schema for previewing a pyramid session (no creation)."""
+    symbol: str = Field(..., description="Trading pair symbol (e.g., 'BTC')")
+    entry_price: float = Field(..., gt=0, description="Starting price for wave 0")
+    distance_pct: float = Field(..., gt=0, lt=100, description="Price decrease % per wave")
+    max_waves: int = Field(..., ge=1, le=100, description="Maximum number of waves")
+    isolated_fund: float = Field(..., gt=0, description="Fund allocated for this session")
+    tp_pct: float = Field(..., gt=0, description="Take profit % above avg price")
+
+
+class WavePreview(BaseModel):
+    """Preview of a single wave."""
+    wave_num: int
+    target_price: float
+    quantity: float
+    cumulative_qty: float
+    cumulative_cost: float
+    avg_price_after: float  # Average price after this wave fills
+    tp_price_after: float  # TP price if all waves up to this fill
+
+
+class PreviewResponse(BaseModel):
+    """Response schema for pyramid preview."""
+    symbol: str
+    entry_price: float
+    distance_pct: float
+    max_waves: int
+    isolated_fund: float
+    tp_pct: float
+    qty_per_wave: float
+    waves: List[WavePreview]
+    total_qty: float
+    total_cost: float
+    final_avg_price: float
+    final_tp_price: float
+    price_range_pct: float  # Total price range from entry to last wave
+
+
 # ============================================================
 # API Endpoints
 # ============================================================
+
+@router.post("/preview", response_model=PreviewResponse)
+async def preview_session(request: PreviewRequest):
+    """
+    Preview a pyramid DCA session without creating it.
+    
+    Returns projected waves with target prices, quantities, and running averages.
+    Useful for visualizing the pyramid structure before committing.
+    """
+    try:
+        # Calculate qty per wave
+        qty_per_wave = request.isolated_fund / request.max_waves / request.entry_price
+        
+        waves = []
+        cumulative_qty = 0.0
+        cumulative_cost = 0.0
+        
+        for wave_num in range(request.max_waves):
+            # Calculate target price for this wave
+            target_price = request.entry_price * (1 - request.distance_pct / 100 * wave_num)
+            wave_cost = qty_per_wave * target_price
+            
+            # Update running totals
+            cumulative_qty += qty_per_wave
+            cumulative_cost += wave_cost
+            avg_price_after = cumulative_cost / cumulative_qty if cumulative_qty > 0 else 0
+            tp_price_after = avg_price_after * (1 + request.tp_pct / 100) if avg_price_after > 0 else 0
+            
+            waves.append(WavePreview(
+                wave_num=wave_num,
+                target_price=round(target_price, 8),
+                quantity=round(qty_per_wave, 8),
+                cumulative_qty=round(cumulative_qty, 8),
+                cumulative_cost=round(cumulative_cost, 4),
+                avg_price_after=round(avg_price_after, 8),
+                tp_price_after=round(tp_price_after, 8),
+            ))
+        
+        # Final values
+        final_wave_price = request.entry_price * (1 - request.distance_pct / 100 * (request.max_waves - 1))
+        price_range_pct = (request.entry_price - final_wave_price) / request.entry_price * 100
+        
+        return PreviewResponse(
+            symbol=request.symbol,
+            entry_price=request.entry_price,
+            distance_pct=request.distance_pct,
+            max_waves=request.max_waves,
+            isolated_fund=request.isolated_fund,
+            tp_pct=request.tp_pct,
+            qty_per_wave=round(qty_per_wave, 8),
+            waves=waves,
+            total_qty=round(cumulative_qty, 8),
+            total_cost=round(cumulative_cost, 4),
+            final_avg_price=round(cumulative_cost / cumulative_qty, 8) if cumulative_qty > 0 else 0,
+            final_tp_price=waves[-1].tp_price_after if waves else 0,
+            price_range_pct=round(price_range_pct, 2),
+        )
+        
+    except Exception as e:
+        logger.error(f"Preview calculation failed: {e}")
+        raise HTTPException(status_code=400, detail=f"Preview failed: {e}")
+
 
 @router.post("/sessions", response_model=SessionResponse)
 async def create_session(request: CreatePyramidRequest):

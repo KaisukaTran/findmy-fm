@@ -265,6 +265,79 @@ The KSS section appears on the dashboard with:
 3. **Create Modal** - Form to configure new sessions
 4. **Actions** - Start, Stop, Delete, Check TP buttons
 
+### Phase 7: Preview & Visualization (v0.10.0)
+
+#### Preview Mode
+
+Before creating a session, click **"Preview Pyramid"** to see:
+
+- Projected waves with target prices
+- Quantity per wave and cumulative totals
+- Running average price after each wave fills
+- TP price target at each stage
+- Total price range coverage
+
+This allows you to fine-tune parameters without committing.
+
+#### Session Detail Modal
+
+Click the **eye icon** on any session to open the detail view:
+
+1. **Session Summary** - Symbol, status, entry, avg price, TP target, current price, PnL
+2. **Waves Table** - Color-coded wave status:
+   - 🟢 **Green rows** = Filled waves
+   - 🔴 **Red rows** = Pending waves
+3. **Price Chart** (Chart.js) - Horizontal lines showing:
+   - **Red** = Wave target prices (descending staircase)
+   - **Yellow dashed** = Running average price
+   - **Green dashed** = Take profit target
+   - **Blue solid** = Current market price
+
+#### API: Preview Endpoint
+
+```http
+POST /api/kss/preview
+
+{
+  "symbol": "BTC",
+  "entry_price": 50000.0,
+  "distance_pct": 2.0,
+  "max_waves": 5,
+  "isolated_fund": 1000.0,
+  "tp_pct": 3.0
+}
+```
+
+Response:
+```json
+{
+  "symbol": "BTC",
+  "entry_price": 50000.0,
+  "distance_pct": 2.0,
+  "max_waves": 5,
+  "isolated_fund": 1000.0,
+  "tp_pct": 3.0,
+  "qty_per_wave": 0.004,
+  "waves": [
+    {
+      "wave_num": 0,
+      "target_price": 50000.0,
+      "quantity": 0.004,
+      "cumulative_qty": 0.004,
+      "cumulative_cost": 200.0,
+      "avg_price_after": 50000.0,
+      "tp_price_after": 51500.0
+    },
+    ...
+  ],
+  "total_qty": 0.02,
+  "total_cost": 920.0,
+  "final_avg_price": 46000.0,
+  "final_tp_price": 47380.0,
+  "price_range_pct": 8.0
+}
+```
+
 ## Integration with Pending Orders
 
 KSS integrates with the existing pending orders system:

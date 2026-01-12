@@ -267,15 +267,17 @@ FINDMY evolves from a **paper trading simulator** to a **production-grade tradin
   - Parameter adjustment mid-session
   - Timeout handling for stale sessions
 
-- [x] **API Endpoints** (8 endpoints)
+- [x] **API Endpoints** (9 endpoints)
   - POST `/kss/sessions` - Create session
   - POST `/kss/sessions/{id}/start` - Start session
   - POST `/kss/sessions/{id}/stop` - Stop session
   - PATCH `/kss/sessions/{id}` - Adjust parameters
   - GET `/kss/sessions` - List sessions
+  - GET `/kss/sessions/{id}` - Get session details
   - DELETE `/kss/sessions/{id}` - Delete session
   - POST `/kss/sessions/{id}/check-tp` - Check TP
   - GET `/kss/summary` - Session summary
+  - POST `/kss/preview` - Preview pyramid (Phase 7) ✨
 
 - [x] **Database Integration**
   - kss_sessions table with full state tracking
@@ -289,6 +291,19 @@ FINDMY evolves from a **paper trading simulator** to a **production-grade tradin
   - Create session modal form
   - Start/Stop/Delete/Check-TP actions
 
+- [x] **Phase 7: Preview & Visualization** ✨ NEW
+  - `/api/kss/preview` endpoint for pre-creation analysis
+  - Preview modal showing projected waves, qty, costs, TP targets
+  - Session detail modal with color-coded waves table
+    - Green rows = Filled waves
+    - Red rows = Pending waves
+  - Chart.js price visualization:
+    - Red line = Wave target prices
+    - Yellow dashed = Running average price
+    - Green dashed = Take profit target
+    - Blue solid = Current market price
+  - Comprehensive test coverage (8 preview tests)
+
 - [x] **Pending Orders Integration**
   - Hooks for order approval events
   - Fill event propagation to session
@@ -298,6 +313,7 @@ FINDMY evolves from a **paper trading simulator** to a **production-grade tradin
   - Comprehensive docs/kss.md
   - API examples and best practices
   - Configuration guide
+  - Phase 7 visualization guide
 
 **Files Added**:
 - `src/findmy/kss/__init__.py`

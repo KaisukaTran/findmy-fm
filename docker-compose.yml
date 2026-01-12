@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - UPLOAD_DIR=/app/data/uploads
+      - SOT_DATABASE_URL=sqlite:////app/data/findmy_fm_paper.db
+    restart: unless-stopped

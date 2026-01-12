@@ -150,6 +150,7 @@ async def paper_execution(
     request: Request,
     current_user: dict = Depends(get_current_user),
     file: UploadFile = File(...),
+):
     """
     Execute paper trading orders from an Excel file.
     

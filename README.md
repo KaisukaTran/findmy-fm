@@ -1,20 +1,39 @@
-# FINDMY (FM) – Paper Trading Execution Engine
+# FINDMY (FM) – v1.0 Stable Paper Trading Simulator
 
 Small. Cute. Flexible. Funny Project
 
-> **FINDMY (FM)** is a modular Python-based trading bot focused on research-first development, starting with a robust **paper trading execution engine** using Excel input and FastAPI.
+> **FINDMY (FM)** is a modular Python-based trading bot focused on research-first development, featuring a robust **paper trading execution engine** with KSS pyramid strategy, real-time dashboard, and comprehensive REST API.
 
-**Latest Release:** v0.10.0 | **License:** MIT | **Status:** Active Development ⚡
+**Latest Release:** v1.0 (Stable) | **License:** MIT | **Status:** Production Ready ✅
+
+---
+
+## 🎉 Try the Demo
+
+**Quick Demo with 10,000 USD Fund:**
+```bash
+# Clone and start
+git clone https://github.com/KaisukaTran/findmy-fm.git
+cd findmy-fm
+docker-compose up
+
+# Open dashboard at http://localhost:8000
+# Create a KSS pyramid session with $10,000 isolated fund
+# Watch real-time updates as positions build
+```
+
+**Demo Fund:** 10,000 USD (configurable via `DEMO_ISOLATED_FUND` in `.env`)
 
 ---
 
 ## 📚 Quick Links
 
 **New to FINDMY?** Start here:
-- **[Quick Start Guide](#quick-start)** – Get running in 5 minutes
+- **[Quick Start Guide](#quick-start)** – Get running in 5 minutes (10k demo)
 - **[Full Documentation](docs/README.md)** – Complete guide (feature index)
 - **[API Reference](docs/api.md)** – REST endpoints with examples
 - **[Architecture](docs/architecture.md)** – System design & data flow
+- **[KSS Strategy](docs/kss.md)** – Pyramid DCA implementation
 - **[Contributing](CONTRIBUTING.md)** – How to contribute
 
 ---
@@ -50,7 +69,7 @@ FINDMY is designed as a **production-grade trading system**, not a demo bot.
 
 ---
 
-## ✨ Latest Features (v0.10.0)
+## ✨ Latest Features (v1.0 Stable)
 
 ### 🎯 KSS (Kai Strategy Service) – Pyramid DCA Strategy
 
@@ -94,7 +113,7 @@ See [KSS Documentation](docs/kss.md) for complete details.
 
 ---
 
-## ✨ Previous Features (v0.9.0 & Earlier)
+## ✨ Previous Features (v0.10.0 & Earlier)
 
 ### 🚀 Performance & Security Hardening (v0.7.0)
 

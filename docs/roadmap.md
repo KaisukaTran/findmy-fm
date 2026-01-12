@@ -1,8 +1,8 @@
 # FINDMY – Project Roadmap
 
 **Last Updated:** January 2026  
-**Current Phase:** Phase 2 Complete – v0.10.0 Release  
-**Latest Release:** v0.10.0 (KSS Pyramid DCA Strategy)
+**Current Phase:** v1.0 Stable Released  
+**Latest Release:** v1.0 Stable (KSS Pyramid DCA + Full Test Coverage)
 
 ## Vision
 

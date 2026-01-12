@@ -7,6 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v1.0] – 2026-01-12 – STABLE RELEASE 🎉
+
+### 🎯 Complete KSS Pyramid Strategy Implementation
+
+**Session Management & Wave Generation**
+- ✅ PyramidSession class with full lifecycle (PENDING → ACTIVE → TP_TRIGGERED → COMPLETED)
+- ✅ Automated wave generation: `qty(n) = (n+1) × pip_size`, `price(n) = entry × (1 - distance%)^n`
+- ✅ Progressive order placement at decreasing price levels
+- ✅ Quantity increases with each wave (pyramid pattern)
+- ✅ Isolated fund management per session
+- ✅ Parameter adjustment mid-session (max_waves, tp_pct, timeout)
+
+**Take Profit & Risk Management**
+- ✅ Auto-trigger when `price > avg_price × (1 + tp_pct%)`
+- ✅ Automatic SELL order for full position at TP
+- ✅ Pre-pending risk checks (max_position_size_pct)
+- ✅ Fund sufficiency validation per wave
+- ✅ Timeout handling for stale sessions
+
+**Dashboard Integration**
+- ✅ KSS Pyramid Sessions section with real-time updates
+- ✅ Summary cards (Total/Active/Pending sessions)
+- ✅ Session detail with projected waves status
+- ✅ Color-coded wave visualization (filled=green, projected=gray)
+- ✅ Running average line + Take Profit line (Chart.js)
+- ✅ Create/Start/Stop/Delete/Check-TP controls
+- ✅ WebSocket push for live updates
+
+**REST API Endpoints**
+- ✅ POST `/api/kss/preview` – Preview projected waves & costs
+- ✅ GET `/api/kss/sessions` – List all sessions
+- ✅ POST `/api/kss/sessions` – Create new session
+- ✅ POST `/api/kss/sessions/{id}/start` – Start session
+- ✅ POST `/api/kss/sessions/{id}/stop` – Stop session
+- ✅ POST `/api/kss/sessions/{id}/adjust` – Adjust parameters
+- ✅ POST `/api/kss/sessions/{id}/check-tp` – Manual TP check
+- ✅ DELETE `/api/kss/sessions/{id}` – Delete session
+
+### 🧪 Comprehensive Test Coverage
+
+- ✅ 136 new tests for KSS module
+- ✅ Test categories:
+  - Preview mode (wave generation, cost estimation)
+  - Isolated fund tracking (rejection, remaining fund)
+  - Risk integration (order validation, pre-checks)
+  - WebSocket push (dashboard updates)
+  - Binance precision (qty rounding, stepSize)
+  - TP bypass logic (after max_waves)
+  - Concurrent sessions (5+ sessions, isolation)
+  - Restart recovery (state serialization, restoration)
+  - API endpoints (preview, session CRUD)
+  - Visualization data (Chart.js format)
+- ✅ All tests pass: `pytest tests/kss/ -v` → 136/136 ✅
+
+### 📊 Visualization Features
+
+- ✅ Chart.js integration for wave price visualization
+- ✅ Dual-line chart: Running Average + Take Profit
+- ✅ Color coding: FILLED (green), PROJECTED (gray), PENDING (yellow)
+- ✅ Quantity breakdown by wave status
+- ✅ Cost breakdown (filled vs projected)
+- ✅ Real-time progress percentage
+- ✅ Responsive mobile/tablet/desktop layouts
+
+### ⚙️ Demo Environment
+
+- ✅ 10,000 USD demo fund (configurable via `DEMO_ISOLATED_FUND`)
+- ✅ Production-ready Docker deployment
+- ✅ Quick start guide (5 minutes from git clone to live trading)
+- ✅ Example trading scenario with full documentation
+
+### 📝 Documentation
+
+- ✅ KSS Strategy Guide (`docs/kss.md`) – 600+ lines
+- ✅ API Reference with endpoint examples
+- ✅ Architecture documentation
+- ✅ Quick start guide with demo
+- ✅ Roadmap updated to mark v1.0 stable
+
+### 🚀 Stability & Quality
+
+- ✅ All core features tested and verified
+- ✅ Zero breaking changes from v0.10.0
+- ✅ Production-ready code quality
+- ✅ Full backward compatibility
+- ✅ MIT License – open source
+
+---
+
 ## [v0.6.0] – 2025-12-31
 
 ### 🎯 Pip-Based Order Sizing

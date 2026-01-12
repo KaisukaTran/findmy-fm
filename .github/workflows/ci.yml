@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, v0.* ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements-dev.txt
+        pip install -r requirements-prod.txt
+    
+    - name: Lint
+      run: |
+        black --check .
+        ruff check .
+        mypy src/
+    
+    - name: Test with pytest
+      run: |
+        pytest --cov=src --cov-report=xml --cov-report=term-missing
+    
+    - name: Build Docker
+      run: docker build -t findmy-fm .

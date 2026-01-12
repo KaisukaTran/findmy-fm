@@ -4,7 +4,7 @@ Small. Cute. Flexible. Funny Project
 
 > **FINDMY (FM)** is a modular Python-based trading bot focused on research-first development, starting with a robust **paper trading execution engine** using Excel input and FastAPI.
 
-**Latest Release:** v0.7.0 | **License:** MIT | **Status:** Active Development ⚡
+**Latest Release:** v0.10.0 | **License:** MIT | **Status:** Active Development ⚡
 
 ---
 
@@ -22,8 +22,8 @@ Small. Cute. Flexible. Funny Project
 ## 📖 Table of Contents
 
 - [Project Vision](#-project-vision)
-- [Latest Features (v0.7.0)](#-latest-features-v070)
-- [Previous Features (v0.6.0 & Earlier)](#-previous-features-v060--earlier)
+- [Latest Features (v0.10.0)](#-latest-features-v0100)
+- [Previous Features (v0.9.0 & Earlier)](#-previous-features-v090--earlier)
 - [Quick Start](#-quick-start)
 - [Repository Structure](#-repository-structure)
 - [Excel Input Format](#-excel-input-format)
@@ -50,9 +50,53 @@ FINDMY is designed as a **production-grade trading system**, not a demo bot.
 
 ---
 
-## ✨ Latest Features (v0.7.0)
+## ✨ Latest Features (v0.10.0)
 
-### 🚀 Performance & Security Hardening
+### 🎯 KSS (Kai Strategy Service) – Pyramid DCA Strategy
+
+✅ **Automated Position Building**
+- Progressive order placement at decreasing price levels
+- Wave-based DCA (Dollar Cost Averaging) strategy
+- Quantity increases with each wave (pyramid pattern)
+- Isolated fund management per session
+
+✅ **Smart Wave Generation**
+- Formula: `qty(n) = (n + 1) × pip_size`
+- Formula: `price(n) = entry_price × (1 - distance_pct/100)^n`
+- Configurable max waves, distance percentage
+- Cost estimation before session start
+
+✅ **Take Profit Automation**
+- Auto-trigger when `price > avg_price × (1 + tp_pct%)`
+- Automatic SELL order for full position
+- Manual TP check via API endpoint
+
+✅ **Session Management**
+- Lifecycle: PENDING → ACTIVE → TP_TRIGGERED → COMPLETED
+- Stop/restart capabilities
+- Parameter adjustment mid-session
+- Timeout handling for stale sessions
+
+✅ **Dashboard Integration**
+- KSS Pyramid Sessions section
+- Summary cards (Total/Active/Pending)
+- Create/Start/Stop/Delete/Check-TP controls
+- Real-time session status updates
+
+✅ **8 REST API Endpoints**
+- Session CRUD operations
+- Start/stop session control
+- Parameter adjustment
+- Take profit checking
+- Session summary statistics
+
+See [KSS Documentation](docs/kss.md) for complete details.
+
+---
+
+## ✨ Previous Features (v0.9.0 & Earlier)
+
+### 🚀 Performance & Security Hardening (v0.7.0)
 
 ✅ **Database Connection Pooling + Strategic Indexes**
 - SQLAlchemy QueuePool with pool_size=20, max_overflow=10
@@ -76,10 +120,6 @@ FINDMY is designed as a **production-grade trading system**, not a demo bot.
 - Full observability stack ready
 
 See [v0.7.0 Release Notes](docs/v0.7.0-release.md) for complete details.
-
----
-
-## ✨ Previous Features (v0.6.0 & Earlier)
 
 ### 🎯 Pip-Based Order Sizing (v0.6.0)
 
@@ -565,14 +605,25 @@ pip-audit
 
 ## 🗺️ Roadmap
 
-### ✅ v0.7.0 (Current - Complete)
+### ✅ v0.10.0 (Current - Complete)
+- ✅ KSS (Kai Strategy Service) – Pyramid DCA
+- ✅ Wave-based automated position building
+- ✅ Take profit automation
+- ✅ Dashboard integration with 8 API endpoints
+
+### ✅ v0.9.0 (Complete)
+- ✅ Repository audit and cleanup
+- ✅ Documentation consolidation
+- ✅ Production readiness improvements
+
+### ✅ v0.7.0 (Complete)
 - ✅ Database connection pooling & indexes
 - ✅ JWT authentication + rate limiting
 - ✅ L1/L2 caching layer
 - ✅ Prometheus metrics & observability
 - ✅ Security headers & input validation
 
-### v0.8.0 (Next)
+### v0.11.0 (Next)
 - [ ] WebSocket order updates
 - [ ] Advanced backtesting modes
 - [ ] Multi-strategy support

@@ -31,6 +31,7 @@ Welcome! This is your guide to FINDMY documentation. Start here to understand th
 | **[execution.md](execution.md)** | Execution engine design, order lifecycle, limitations | Developers, traders |
 | **[manual-approval.md](manual-approval.md)** | Manual order approval workflow (v0.5.0+) | Traders, developers |
 | **[risk-management.md](risk-management.md)** | Pip sizing & risk checks (v0.6.0+) | Risk managers, developers |
+| **[kss.md](kss.md)** | KSS Pyramid DCA strategy (v0.10.0+) | Traders, strategy developers |
 | **[modules.md](modules.md)** | Code organization, class/function reference | Developers |
 | **[strategy.md](strategy.md)** | How to build trading strategies, examples | Strategy developers |
 | **[rules.md](rules.md)** | Architectural constraints and principles | Code reviewers, architects |
@@ -98,6 +99,9 @@ docs/
 ├── README.md                   # This file (navigation hub)
 ├── architecture.md             # System design & data flow
 ├── api.md                      # REST API reference & examples
+├── kss.md                      # KSS Pyramid DCA strategy (v0.10.0+)
+├── manual-approval.md          # Order approval workflow (v0.5.0+)
+├── risk-management.md          # Risk checks & pip sizing (v0.6.0+)
 ├── execution.md                # Execution engine design
 ├── manual-approval.md          # Order approval workflow (v0.5.0+)
 ├── risk-management.md          # Risk checks & pip sizing (v0.6.0+)
@@ -152,6 +156,8 @@ A **FastAPI REST service** accepting Excel uploads and returning execution resul
 |-------|--------|------|
 | **Phase 1** – Paper Trading | ✅ Done | [roadmap.md](roadmap.md#phase-1-paper-trading-foundation-) |
 | **Phase 2** – Enhanced Execution | ✅ Done | [roadmap.md](roadmap.md#phase-2-enhanced-execution-q1-2026) |
+| **v0.10.0** – KSS Pyramid DCA | ✅ Done | [kss.md](kss.md) |
+| **v0.9.0** – Production Readiness | ✅ Done | [roadmap.md](roadmap.md) |
 | **v0.7.0** – Performance & Security | ✅ Done | [v0.7.0-release.md](v0.7.0-release.md) |
 | **Phase 3** – Advanced Features | ⏳ Q2 2026 | [roadmap.md](roadmap.md) |
 

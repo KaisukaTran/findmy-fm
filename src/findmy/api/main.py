@@ -38,14 +38,28 @@ from findmy.api.metrics import (
     order_processing_time_seconds, db_queries_total, db_query_duration_seconds,
     app_info, MetricsSnapshot, track_api_request, track_db_query
 )
-import logging
 import time
+
+# v1.0.1: Import observability components
+from findmy.api.logging_config import configure_logging, get_logger, get_trace_id
+from findmy.api.middleware import RequestLoggingMiddleware
+from findmy.api.exception_handlers import register_exception_handlers
+
+# v1.0.1: Configure structured logging FIRST (before any other imports use logging)
+configure_logging()
+logger = get_logger(__name__)
 
 # ✅ 1. DECLARE APP FIRST
 app = FastAPI(
     title="FINDMY FM – Paper Trading API",
     version="1.0",
 )
+
+# v1.0.1: Register centralized exception handlers
+register_exception_handlers(app)
+
+# v1.0.1: Add request logging middleware (adds trace_id)
+app.add_middleware(RequestLoggingMiddleware)
 
 # v0.7.0: Add Prometheus metrics instrumentator
 Instrumentator().instrument(app).expose(app)
@@ -94,7 +108,6 @@ app.include_router(kss_router)
 async def startup_event():
     """Initialize caching and metrics on application startup."""
     await cache_manager.init()
-    logger = __import__("logging").getLogger(__name__)
     logger.info("Cache manager initialized")
     
     # v0.7.0: Initialize application info metric
@@ -102,13 +115,12 @@ async def startup_event():
         app_info.info({"version": "1.0.0"})
     except Exception:
         pass  # Ignore metric errors on startup
-    logger.info("Application metrics initialized - v1.0.0")
+    logger.info("Application startup complete - v1.0.1 with observability")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown."""
     await cache_manager.clear()
-    logger = __import__("logging").getLogger(__name__)
     logger.info("Cache manager shutdown")
 
 # ✅ 2. CONFIGURE TEMPLATES AND STATIC FILES
@@ -124,11 +136,84 @@ ALLOWED_MIME_TYPES = {
 }
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# ✅ HEALTH CHECK
+# ✅ HEALTH CHECK (Enhanced v1.0.1)
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
-    return {"status": "ok", "service": "FINDMY FM API"}
+    """
+    Enhanced health check endpoint with component status.
+    
+    Checks:
+    - API status
+    - Database connectivity
+    - Cache status
+    - Binance API connectivity (optional)
+    
+    Returns:
+        JSON with overall status and component details.
+    """
+    import time
+    import httpx
+    
+    health_status = {
+        "status": "ok",
+        "service": "FINDMY FM API",
+        "version": "1.0.1",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "components": {}
+    }
+    
+    # Check database
+    try:
+        from services.ts.db import get_db, engine
+        from sqlalchemy import text
+        start = time.perf_counter()
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        db_latency = (time.perf_counter() - start) * 1000
+        health_status["components"]["database"] = {
+            "status": "ok",
+            "latency_ms": round(db_latency, 2)
+        }
+    except Exception as e:
+        health_status["status"] = "degraded"
+        health_status["components"]["database"] = {
+            "status": "error",
+            "error": str(e)
+        }
+    
+    # Check cache
+    try:
+        cache_ok = cache_manager.l1 is not None
+        health_status["components"]["cache"] = {
+            "status": "ok" if cache_ok else "unavailable"
+        }
+    except Exception as e:
+        health_status["components"]["cache"] = {
+            "status": "error",
+            "error": str(e)
+        }
+    
+    # Check Binance API (non-blocking, with timeout)
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            start = time.perf_counter()
+            resp = await client.get("https://api.binance.com/api/v3/ping")
+            binance_latency = (time.perf_counter() - start) * 1000
+            health_status["components"]["binance"] = {
+                "status": "ok" if resp.status_code == 200 else "degraded",
+                "latency_ms": round(binance_latency, 2)
+            }
+    except Exception as e:
+        health_status["components"]["binance"] = {
+            "status": "unavailable",
+            "error": "Binance API unreachable"
+        }
+    
+    # Set overall status based on critical components
+    if health_status["components"].get("database", {}).get("status") == "error":
+        health_status["status"] = "unhealthy"
+    
+    return health_status
 
 
 # ✅ DASHBOARD ROUTE (root URL)

@@ -63,20 +63,15 @@
     <!-- Chart.js CDN (v0.10.0 KSS visualization) -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     
-    <!-- Auto-refresh script -->
+    <!-- Base script - no auto-refresh (selective updates handled by dashboard JS) -->
     <script>
-        // Update footer time
+        // Update footer time only
         function updateTime() {
             const now = new Date();
             document.getElementById('footer-time').textContent = now.toLocaleString();
         }
         updateTime();
         setInterval(updateTime, 1000);
-        
-        // Auto-refresh every 30 seconds
-        setInterval(() => {
-            location.reload();
-        }, 30000);
     </script>
     
     {% block extra_js %}{% endblock %}

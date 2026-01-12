@@ -4,217 +4,408 @@
 
 {% block content %}
 <!-- Header Section -->
-<div class="row mb-4">
+<div class="row mb-3">
     <div class="col-md-8">
-        <h1 class="display-5 fw-bold mb-2">
+        <h1 class="display-6 fw-bold mb-1">
             <i class="fas fa-chart-line text-primary"></i> FINDMY FM Dashboard
         </h1>
-        <p class="text-muted">Trade Service & Statement of Truth Monitor</p>
+        <p class="text-muted small mb-0">Trade Service & Statement of Truth Monitor</p>
     </div>
     <div class="col-md-4 text-end">
-        <div class="card bg-light border-0">
-            <div class="card-body">
+        <div class="d-flex align-items-center justify-content-end gap-2">
+            <div class="text-end">
                 <p class="mb-0 text-muted small">Current Time</p>
                 <p class="mb-0 fw-bold" id="current-time">—</p>
             </div>
+            <div id="loading-spinner" class="spinner-border spinner-border-sm text-primary d-none" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
         </div>
-        <button class="btn btn-outline-primary mt-2" onclick="location.reload()">
-            <i class="fas fa-sync-alt"></i> Refresh
-        </button>
     </div>
 </div>
 
-<!-- System Status Section -->
-<div class="row mb-4">
-    <div class="col-lg-12">
-        <div class="card border-0 shadow-sm">
-            <div class="card-header bg-primary text-white">
-                <h5 class="mb-0"><i class="fas fa-heartbeat"></i> System Status</h5>
+<!-- Nav Tabs -->
+<ul class="nav nav-tabs mb-3" id="dashboardTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="overview-tab" data-bs-toggle="tab" data-bs-target="#overview" type="button" role="tab">
+            <i class="fas fa-tachometer-alt"></i> Overview
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="positions-tab" data-bs-toggle="tab" data-bs-target="#positions" type="button" role="tab">
+            <i class="fas fa-list"></i> Positions/Trades
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="pending-tab" data-bs-toggle="tab" data-bs-target="#pending" type="button" role="tab">
+            <i class="fas fa-hourglass-half"></i> Pending Orders <span class="badge bg-warning text-dark" id="pending-badge">0</span>
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="kss-tab" data-bs-toggle="tab" data-bs-target="#kss" type="button" role="tab">
+            <i class="fas fa-layer-group"></i> KSS Pyramid
+        </button>
+    </li>
+</ul>
+
+<!-- Tab Content -->
+<div class="tab-content" id="dashboardTabContent">
+
+    <!-- ==================== OVERVIEW TAB ==================== -->
+    <div class="tab-pane fade show active" id="overview" role="tabpanel">
+        <!-- System Status -->
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-header bg-primary text-white py-2">
+                <h6 class="mb-0"><i class="fas fa-heartbeat"></i> System Status</h6>
             </div>
-            <div class="card-body">
-                <div class="row g-3">
-                    <div class="col-md-3 text-center">
-                        <div class="status-item">
-                            <i class="fas fa-database fa-2x text-success mb-2"></i>
-                            <p class="mb-0 text-muted">Database</p>
-                            <p class="fw-bold mb-0">✓ Connected</p>
-                        </div>
+            <div class="card-body py-2">
+                <div class="row g-2 text-center">
+                    <div class="col-md-3">
+                        <i class="fas fa-database text-success"></i>
+                        <small class="d-block text-muted">Database</small>
+                        <small class="fw-bold">✓ Connected</small>
                     </div>
-                    <div class="col-md-3 text-center">
-                        <div class="status-item">
-                            <i class="fas fa-exchange-alt fa-2x text-success mb-2"></i>
-                            <p class="mb-0 text-muted">Trade Service</p>
-                            <p class="fw-bold mb-0">✓ Active</p>
-                        </div>
+                    <div class="col-md-3">
+                        <i class="fas fa-exchange-alt text-success"></i>
+                        <small class="d-block text-muted">Trade Service</small>
+                        <small class="fw-bold">✓ Active</small>
                     </div>
-                    <div class="col-md-3 text-center">
-                        <div class="status-item">
-                            <i class="fas fa-shield-alt fa-2x text-success mb-2"></i>
-                            <p class="mb-0 text-muted">SOT Audit</p>
-                            <p class="fw-bold mb-0">✓ Ready</p>
-                        </div>
+                    <div class="col-md-3">
+                        <i class="fas fa-shield-alt text-success"></i>
+                        <small class="d-block text-muted">SOT Audit</small>
+                        <small class="fw-bold">✓ Ready</small>
                     </div>
-                    <div class="col-md-3 text-center">
-                        <div class="status-item">
-                            <i class="fas fa-clock fa-2x text-info mb-2"></i>
-                            <p class="mb-0 text-muted">Last Update</p>
-                            <p class="fw-bold mb-0" id="last-update">—</p>
-                        </div>
+                    <div class="col-md-3">
+                        <i class="fas fa-clock text-info"></i>
+                        <small class="d-block text-muted">Last Update</small>
+                        <small class="fw-bold" id="last-update">—</small>
                     </div>
                 </div>
             </div>
         </div>
-    </div>
-</div>
 
-<!-- Summary Cards Section -->
-<div class="row mb-4" id="summary-cards">
-    <div class="col-md-3">
-        <div class="card border-0 shadow-sm">
-            <div class="card-body text-center">
-                <p class="mb-2 text-muted small">Total Trades</p>
-                <p class="display-6 fw-bold text-primary mb-0" id="total-trades">0</p>
+        <!-- Summary Cards -->
+        <div class="row g-2 mb-3" id="summary-cards">
+            <div class="col-md-3">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-body text-center py-2">
+                        <p class="mb-1 text-muted small">Total Trades</p>
+                        <p class="h4 fw-bold text-primary mb-0" id="total-trades">0</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-body text-center py-2">
+                        <p class="mb-1 text-muted small">Realized P&L</p>
+                        <p class="h4 fw-bold mb-0" id="realized-pnl">$0.00</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-body text-center py-2">
+                        <p class="mb-1 text-muted small">Unrealized P&L</p>
+                        <p class="h4 fw-bold mb-0" id="unrealized-pnl">$0.00</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-body text-center py-2">
+                        <p class="mb-1 text-muted small">Total Equity</p>
+                        <p class="h4 fw-bold text-success mb-0" id="total-equity">$0.00</p>
+                    </div>
+                </div>
             </div>
         </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card border-0 shadow-sm">
-            <div class="card-body text-center">
-                <p class="mb-2 text-muted small">Realized P&L</p>
-                <p class="display-6 fw-bold mb-0" id="realized-pnl" style="color: inherit;">$0.00</p>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card border-0 shadow-sm">
-            <div class="card-body text-center">
-                <p class="mb-2 text-muted small">Unrealized P&L</p>
-                <p class="display-6 fw-bold mb-0" id="unrealized-pnl" style="color: inherit;">$0.00</p>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card border-0 shadow-sm">
-            <div class="card-body text-center">
-                <p class="mb-2 text-muted small">Total Equity</p>
-                <p class="display-6 fw-bold text-success mb-0" id="total-equity">$0.00</p>
-            </div>
-        </div>
-    </div>
-</div>
 
-<!-- Secondary Summary Cards -->
-<div class="row mb-4">
-    <div class="col-md-4">
-        <div class="card border-0 shadow-sm bg-light">
-            <div class="card-body text-center">
-                <p class="mb-2 text-muted small">Total Invested</p>
-                <p class="display-6 fw-bold text-info mb-0" id="total-invested">$0.00</p>
+        <!-- Secondary Summary -->
+        <div class="row g-2 mb-3">
+            <div class="col-md-4">
+                <div class="card border-0 shadow-sm bg-light h-100">
+                    <div class="card-body text-center py-2">
+                        <p class="mb-1 text-muted small">Total Invested</p>
+                        <p class="h5 fw-bold text-info mb-0" id="total-invested">$0.00</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card border-0 shadow-sm bg-light h-100">
+                    <div class="card-body text-center py-2">
+                        <p class="mb-1 text-muted small">Market Value</p>
+                        <p class="h5 fw-bold text-primary mb-0" id="total-market-value">$0.00</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card border-0 shadow-sm bg-light h-100">
+                    <div class="card-body text-center py-2">
+                        <p class="mb-1 text-muted small"><i class="fas fa-coins"></i> Price Source</p>
+                        <p class="fw-bold mb-0 small" id="price-source">Binance (live)</p>
+                    </div>
+                </div>
             </div>
         </div>
-    </div>
-    <div class="col-md-4">
-        <div class="card border-0 shadow-sm bg-light">
-            <div class="card-body text-center">
-                <p class="mb-2 text-muted small">Market Value</p>
-                <p class="display-6 fw-bold text-primary mb-0" id="total-market-value">$0.00</p>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-4">
-        <div class="card border-0 shadow-sm bg-light">
-            <div class="card-body text-center">
-                <p class="mb-2 text-muted small"><i class="fas fa-coins"></i> Price Source</p>
-                <p class="fw-bold mb-0 small" id="price-source">Binance (live)</p>
-            </div>
-        </div>
-    </div>
-</div>
 
-<!-- Risk Metrics Card (v0.6.0) -->
-<div class="row mb-4">
-    <div class="col-lg-12">
-        <div class="card border-0 shadow-sm">
-            <div class="card-header bg-danger text-white" style="opacity: 0.9;">
-                <h5 class="mb-0"><i class="fas fa-exclamation-triangle"></i> Risk Metrics</h5>
+        <!-- Risk Metrics -->
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-header bg-danger text-white py-2" style="opacity: 0.9;">
+                <h6 class="mb-0"><i class="fas fa-exclamation-triangle"></i> Risk Metrics</h6>
             </div>
-            <div class="card-body">
+            <div class="card-body py-2">
                 <div class="row g-3">
                     <div class="col-md-6">
-                        <div class="d-flex justify-content-between align-items-center mb-3">
-                            <span class="text-muted">Portfolio Exposure</span>
-                            <span id="portfolio-exposure" class="fw-bold">0.0%</span>
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="text-muted small">Portfolio Exposure</span>
+                            <span id="portfolio-exposure" class="fw-bold small">0.0%</span>
                         </div>
-                        <div class="progress">
+                        <div class="progress" style="height: 8px;">
                             <div id="exposure-bar" class="progress-bar bg-info" style="width: 0%"></div>
                         </div>
-                        <small class="text-muted d-block mt-1">Max: 10.0% | Current: <span id="exposure-value">0.0%</span></small>
+                        <small class="text-muted">Max: 10.0% | Current: <span id="exposure-value">0.0%</span></small>
                     </div>
                     <div class="col-md-6">
-                        <div class="d-flex justify-content-between align-items-center mb-3">
-                            <span class="text-muted">Today's Loss</span>
-                            <span id="daily-loss" class="fw-bold text-danger">$0.00</span>
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="text-muted small">Today's Loss</span>
+                            <span id="daily-loss" class="fw-bold small text-danger">$0.00</span>
                         </div>
-                        <div class="progress">
+                        <div class="progress" style="height: 8px;">
                             <div id="loss-bar" class="progress-bar bg-danger" style="width: 0%"></div>
                         </div>
-                        <small class="text-muted d-block mt-1">Max Loss: 5.0% | Daily: <span id="daily-loss-pct">0.0%</span></small>
+                        <small class="text-muted">Max Loss: 5.0% | Daily: <span id="daily-loss-pct">0.0%</span></small>
                     </div>
-                </div>
-                <div class="mt-3 pt-3 border-top">
-                    <p class="mb-1"><small><i class="fas fa-info-circle text-info"></i> <strong>Pip Multiplier:</strong> 2.0 (1 pip = 2 × min qty)</small></p>
-                    <p class="mb-0"><small><i class="fas fa-info-circle text-info"></i> <strong>Position Limit:</strong> 10% equity | <strong>Daily Loss Limit:</strong> 5% equity</small></p>
                 </div>
             </div>
         </div>
     </div>
-</div>
+    <!-- END OVERVIEW TAB -->
 
-<!-- KSS Pyramid Sessions (v0.10.0) -->
-<div class="row mb-4">
-    <div class="col-lg-12">
+    <!-- ==================== POSITIONS/TRADES TAB ==================== -->
+    <div class="tab-pane fade" id="positions" role="tabpanel">
+        <!-- Current Positions -->
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-header bg-success text-white py-2">
+                <h6 class="mb-0"><i class="fas fa-wallet"></i> Current Positions</h6>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                    <table class="table table-hover table-sm mb-0">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th>Symbol</th>
+                                <th class="text-end">Quantity</th>
+                                <th class="text-end">Avg Price</th>
+                                <th class="text-end">Total Cost</th>
+                                <th class="text-end">Current Price</th>
+                                <th class="text-end">Market Value</th>
+                                <th class="text-end">Unrealized P&L</th>
+                            </tr>
+                        </thead>
+                        <tbody id="positions-tbody">
+                            <tr><td colspan="7" class="text-center text-muted py-3"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div id="no-positions" class="alert alert-info m-2 mb-0 small" style="display: none;">
+                    <i class="fas fa-info-circle"></i> No open positions yet.
+                </div>
+            </div>
+        </div>
+
+        <!-- Trade History -->
         <div class="card border-0 shadow-sm">
-            <div class="card-header bg-purple text-white" style="background-color: #6f42c1 !important;">
+            <div class="card-header bg-info text-white py-2">
+                <h6 class="mb-0"><i class="fas fa-history"></i> Trade History (Recent 50)</h6>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive" style="max-height: 350px; overflow-y: auto;">
+                    <table class="table table-hover table-sm mb-0">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th>Timestamp</th>
+                                <th>Symbol</th>
+                                <th>Side</th>
+                                <th class="text-end">Quantity</th>
+                                <th class="text-end">Price</th>
+                                <th>Status</th>
+                                <th class="text-end">Realized P&L</th>
+                            </tr>
+                        </thead>
+                        <tbody id="trades-tbody">
+                            <tr><td colspan="7" class="text-center text-muted py-3"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div id="no-trades" class="alert alert-info m-2 mb-0 small" style="display: none;">
+                    <i class="fas fa-info-circle"></i> No trades yet.
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- END POSITIONS/TRADES TAB -->
+
+    <!-- ==================== PENDING ORDERS TAB ==================== -->
+    <div class="tab-pane fade" id="pending" role="tabpanel">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-warning text-dark py-2">
                 <div class="d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0"><i class="fas fa-layer-group"></i> KSS Pyramid Sessions</h5>
-                    <button class="btn btn-light btn-sm" data-bs-toggle="modal" data-bs-target="#kssCreateModal">
-                        <i class="fas fa-plus"></i> New Session
+                    <h6 class="mb-0"><i class="fas fa-hourglass-half"></i> Pending Orders Queue</h6>
+                    <span class="badge bg-warning text-dark" id="pending-count">0</span>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                    <table class="table table-hover table-sm mb-0">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Side</th>
+                                <th class="text-end">Quantity</th>
+                                <th class="text-end">Price</th>
+                                <th>Type</th>
+                                <th>Source</th>
+                                <th>Status</th>
+                                <th>Created</th>
+                                <th class="text-center" style="width: 120px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pending-tbody">
+                            <tr><td colspan="9" class="text-center text-muted py-3"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div id="no-pending" class="alert alert-success m-2 mb-0 small" style="display: none;">
+                    <i class="fas fa-check-circle"></i> No pending orders. All orders have been reviewed!
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- END PENDING ORDERS TAB -->
+
+    <!-- ==================== KSS PYRAMID TAB ==================== -->
+    <div class="tab-pane fade" id="kss" role="tabpanel">
+        <!-- KSS Summary Row -->
+        <div class="row g-2 mb-3">
+            <div class="col-md-3">
+                <div class="card border-0 shadow-sm bg-light h-100">
+                    <div class="card-body text-center py-2">
+                        <p class="mb-0 text-muted small">Active Sessions</p>
+                        <p class="h5 fw-bold text-primary mb-0" id="kss-active-sessions">0</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card border-0 shadow-sm bg-light h-100">
+                    <div class="card-body text-center py-2">
+                        <p class="mb-0 text-muted small">Total Isolated Fund</p>
+                        <p class="h5 fw-bold text-info mb-0" id="kss-total-fund">$0.00</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card border-0 shadow-sm bg-light h-100">
+                    <div class="card-body text-center py-2">
+                        <p class="mb-0 text-muted small">Used Fund</p>
+                        <p class="h5 fw-bold mb-0" id="kss-used-fund">$0.00</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card border-0 shadow-sm bg-light h-100">
+                    <div class="card-body text-center py-2">
+                        <p class="mb-0 text-muted small">Unrealized PnL</p>
+                        <p class="h5 fw-bold mb-0" id="kss-unrealized-pnl">$0.00</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- KSS Create Form (inline, not modal) -->
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-header py-2" style="background-color: #6f42c1; color: white;">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="fas fa-plus-circle"></i> Create New Session</h6>
+                    <button class="btn btn-sm btn-light" type="button" data-bs-toggle="collapse" data-bs-target="#kssFormCollapse">
+                        <i class="fas fa-chevron-down"></i>
                     </button>
                 </div>
             </div>
-            <div class="card-body">
-                <!-- KSS Summary -->
-                <div class="row g-3 mb-3">
-                    <div class="col-md-3 text-center">
-                        <div class="border rounded p-2">
-                            <p class="mb-0 text-muted small">Active Sessions</p>
-                            <p class="fw-bold mb-0 text-primary" id="kss-active-sessions">0</p>
+            <div class="collapse show" id="kssFormCollapse">
+                <div class="card-body">
+                    <div class="row">
+                        <!-- Left: Form -->
+                        <div class="col-md-5">
+                            <form id="kss-create-form">
+                                <div class="row g-2">
+                                    <div class="col-6">
+                                        <label class="form-label small">Symbol</label>
+                                        <input type="text" class="form-control form-control-sm" id="kss-symbol" value="BTC" required>
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label small">Entry Price</label>
+                                        <input type="number" class="form-control form-control-sm" id="kss-entry-price" step="0.01" required>
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label small">Distance %</label>
+                                        <input type="number" class="form-control form-control-sm" id="kss-distance-pct" value="2.0" step="0.1" required>
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label small">Max Waves</label>
+                                        <input type="number" class="form-control form-control-sm" id="kss-max-waves" value="10" min="1" max="100" required>
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label small">Isolated Fund ($)</label>
+                                        <input type="number" class="form-control form-control-sm" id="kss-isolated-fund" value="1000" step="0.01" required>
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label small">Take Profit %</label>
+                                        <input type="number" class="form-control form-control-sm" id="kss-tp-pct" value="3.0" step="0.1" required>
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label small">Timeout (min)</label>
+                                        <input type="number" class="form-control form-control-sm" id="kss-timeout" value="30" min="1" required>
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label small">Gap Min (min)</label>
+                                        <input type="number" class="form-control form-control-sm" id="kss-gap" value="5" min="0" required>
+                                    </div>
+                                    <div class="col-12 mt-2">
+                                        <button type="button" class="btn btn-outline-secondary btn-sm w-100" onclick="previewKSSSession()">
+                                            <i class="fas fa-eye"></i> Preview
+                                        </button>
+                                    </div>
+                                    <div class="col-12">
+                                        <button type="button" class="btn btn-sm text-white w-100" style="background-color: #6f42c1;" onclick="createKSSSession()">
+                                            <i class="fas fa-plus"></i> Create Session
+                                        </button>
+                                    </div>
+                                </div>
+                            </form>
                         </div>
-                    </div>
-                    <div class="col-md-3 text-center">
-                        <div class="border rounded p-2">
-                            <p class="mb-0 text-muted small">Total Isolated Fund</p>
-                            <p class="fw-bold mb-0 text-info" id="kss-total-fund">$0.00</p>
-                        </div>
-                    </div>
-                    <div class="col-md-3 text-center">
-                        <div class="border rounded p-2">
-                            <p class="mb-0 text-muted small">Used Fund</p>
-                            <p class="fw-bold mb-0" id="kss-used-fund">$0.00</p>
-                        </div>
-                    </div>
-                    <div class="col-md-3 text-center">
-                        <div class="border rounded p-2">
-                            <p class="mb-0 text-muted small">Unrealized PnL</p>
-                            <p class="fw-bold mb-0" id="kss-unrealized-pnl">$0.00</p>
+                        <!-- Right: Preview -->
+                        <div class="col-md-7">
+                            <div id="kss-preview-area" class="border rounded p-2 bg-light h-100" style="min-height: 250px; max-height: 300px; overflow-y: auto;">
+                                <div class="text-center text-muted py-4">
+                                    <i class="fas fa-eye fa-2x mb-2 opacity-25"></i>
+                                    <p class="small">Click "Preview" to see projected waves</p>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
-                
-                <!-- Sessions Table -->
-                <div class="table-responsive">
-                    <table class="table table-sm table-hover mb-0">
-                        <thead class="table-light">
+            </div>
+        </div>
+
+        <!-- KSS Sessions Table -->
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-header py-2" style="background-color: #6f42c1; color: white;">
+                <h6 class="mb-0"><i class="fas fa-layer-group"></i> Active Sessions</h6>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                    <table class="table table-hover table-sm mb-0">
+                        <thead class="table-light sticky-top">
                             <tr>
                                 <th>ID</th>
                                 <th>Symbol</th>
@@ -229,116 +420,63 @@
                             </tr>
                         </thead>
                         <tbody id="kss-sessions-tbody">
-                            <tr>
-                                <td colspan="10" class="text-center text-muted py-3">
-                                    <i class="fas fa-spinner fa-spin"></i> Loading sessions...
-                                </td>
-                            </tr>
+                            <tr><td colspan="10" class="text-center text-muted py-3"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>
                         </tbody>
                     </table>
                 </div>
-                <div id="no-kss-sessions" class="alert alert-secondary mt-3 mb-0" style="display: none;">
-                    <i class="fas fa-info-circle"></i> No KSS sessions. Create one to start pyramid DCA trading!
+                <div id="no-kss-sessions" class="alert alert-secondary m-2 mb-0 small" style="display: none;">
+                    <i class="fas fa-info-circle"></i> No KSS sessions. Create one above!
+                </div>
+            </div>
+        </div>
+
+        <!-- KSS Realtime Waves Table -->
+        <div class="card border-0 shadow-sm">
+            <div class="card-header py-2 bg-secondary text-white">
+                <h6 class="mb-0"><i class="fas fa-wave-square"></i> Realtime Waves (Active Session)</h6>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive" style="max-height: 250px; overflow-y: auto;">
+                    <table class="table table-sm table-bordered mb-0">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th>#</th>
+                                <th class="text-end">Target</th>
+                                <th class="text-end">Qty</th>
+                                <th>Status</th>
+                                <th class="text-end">Filled At</th>
+                                <th class="text-end">Avg After</th>
+                                <th class="text-end">TP After</th>
+                            </tr>
+                        </thead>
+                        <tbody id="kss-waves-tbody">
+                            <tr><td colspan="7" class="text-center text-muted py-3">Select a session to view waves</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
     </div>
-</div>
+    <!-- END KSS PYRAMID TAB -->
 
-<!-- KSS Create Session Modal -->
-<div class="modal fade" id="kssCreateModal" tabindex="-1">
-    <div class="modal-dialog modal-xl">
-        <div class="modal-content">
-            <div class="modal-header bg-purple text-white" style="background-color: #6f42c1 !important;">
-                <h5 class="modal-title"><i class="fas fa-layer-group"></i> Create Pyramid Session</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <div class="row">
-                    <!-- Left: Form -->
-                    <div class="col-md-5">
-                        <form id="kss-create-form">
-                            <div class="row g-3">
-                                <div class="col-md-6">
-                                    <label class="form-label">Symbol</label>
-                                    <input type="text" class="form-control" id="kss-symbol" value="BTC" required>
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label">Entry Price</label>
-                                    <input type="number" class="form-control" id="kss-entry-price" step="0.01" required>
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label">Distance %</label>
-                                    <input type="number" class="form-control" id="kss-distance-pct" value="2.0" step="0.1" required>
-                                    <small class="text-muted">Price drop per wave</small>
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label">Max Waves</label>
-                                    <input type="number" class="form-control" id="kss-max-waves" value="10" min="1" max="100" required>
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label">Isolated Fund ($)</label>
-                                    <input type="number" class="form-control" id="kss-isolated-fund" value="1000" step="0.01" required>
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label">Take Profit %</label>
-                                    <input type="number" class="form-control" id="kss-tp-pct" value="3.0" step="0.1" required>
-                                    <small class="text-muted">TP above avg price</small>
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label">Timeout (min)</label>
-                                    <input type="number" class="form-control" id="kss-timeout" value="30" min="1" required>
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label">Gap Min (min)</label>
-                                    <input type="number" class="form-control" id="kss-gap" value="5" min="0" required>
-                                </div>
-                                <div class="col-12 mt-3">
-                                    <button type="button" class="btn btn-outline-secondary w-100" onclick="previewKSSSession()">
-                                        <i class="fas fa-eye"></i> Preview Pyramid
-                                    </button>
-                                </div>
-                            </div>
-                        </form>
-                    </div>
-                    
-                    <!-- Right: Preview -->
-                    <div class="col-md-7">
-                        <div id="kss-preview-area" class="border rounded p-3 bg-light" style="min-height: 300px;">
-                            <div class="text-center text-muted py-5">
-                                <i class="fas fa-eye fa-3x mb-3 opacity-25"></i>
-                                <p>Click "Preview Pyramid" to see projected waves</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn text-white" style="background-color: #6f42c1;" onclick="createKSSSession()">
-                    <i class="fas fa-plus"></i> Create Session
-                </button>
-            </div>
-        </div>
-    </div>
 </div>
+<!-- END Tab Content -->
 
-<!-- KSS Session Detail Modal (v0.10.0 Phase 7) -->
+<!-- KSS Session Detail Modal -->
 <div class="modal fade" id="kssDetailModal" tabindex="-1">
     <div class="modal-dialog modal-xl">
         <div class="modal-content">
-            <div class="modal-header bg-purple text-white" style="background-color: #6f42c1 !important;">
-                <h5 class="modal-title"><i class="fas fa-layer-group"></i> Session Detail <span id="kss-detail-title"></span></h5>
+            <div class="modal-header py-2" style="background-color: #6f42c1; color: white;">
+                <h6 class="modal-title"><i class="fas fa-layer-group"></i> Session Detail <span id="kss-detail-title"></span></h6>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
                 <div class="row">
                     <!-- Left: Info + Waves Table -->
                     <div class="col-md-6">
-                        <!-- Session Summary -->
-                        <div class="card mb-3">
-                            <div class="card-body">
-                                <div class="row g-2 small">
+                        <div class="card mb-2">
+                            <div class="card-body py-2">
+                                <div class="row g-1 small">
                                     <div class="col-6"><strong>Symbol:</strong> <span id="kss-detail-symbol"></span></div>
                                     <div class="col-6"><strong>Status:</strong> <span id="kss-detail-status"></span></div>
                                     <div class="col-6"><strong>Entry:</strong> <span id="kss-detail-entry"></span></div>
@@ -350,9 +488,7 @@
                                 </div>
                             </div>
                         </div>
-                        
-                        <!-- Waves Table (color-coded) -->
-                        <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                        <div class="table-responsive" style="max-height: 280px; overflow-y: auto;">
                             <table class="table table-sm table-bordered mb-0">
                                 <thead class="table-light sticky-top">
                                     <tr>
@@ -363,146 +499,25 @@
                                         <th class="text-end">Filled At</th>
                                     </tr>
                                 </thead>
-                                <tbody id="kss-detail-waves-tbody">
-                                </tbody>
+                                <tbody id="kss-detail-waves-tbody"></tbody>
                             </table>
                         </div>
                     </div>
-                    
                     <!-- Right: Chart -->
                     <div class="col-md-6">
                         <div class="card h-100">
-                            <div class="card-header">
+                            <div class="card-header py-1">
                                 <small><i class="fas fa-chart-line"></i> Price Levels</small>
                             </div>
-                            <div class="card-body">
-                                <canvas id="kss-detail-chart" style="max-height: 350px;"></canvas>
+                            <div class="card-body p-2">
+                                <canvas id="kss-detail-chart" style="max-height: 320px;"></canvas>
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Positions Section -->
-<div class="row mb-4">
-    <div class="col-lg-12">
-        <div class="card border-0 shadow-sm">
-            <div class="card-header bg-success text-white">
-                <h5 class="mb-0"><i class="fas fa-list"></i> Current Positions</h5>
-            </div>
-            <div class="card-body p-0">
-                <div class="table-responsive">
-                    <table class="table table-hover mb-0">
-                        <thead class="table-light">
-                            <tr>
-                                <th>Symbol</th>
-                                <th class="text-end">Quantity</th>
-                                <th class="text-end">Avg Price</th>
-                                <th class="text-end">Total Cost</th>
-                                <th class="text-end">Current Price</th>
-                                <th class="text-end">Market Value</th>
-                                <th class="text-end">Unrealized P&L</th>
-                            </tr>
-                        </thead>
-                        <tbody id="positions-tbody">
-                            <tr>
-                                <td colspan="7" class="text-center text-muted py-4">
-                                    <i class="fas fa-spinner fa-spin"></i> Loading positions...
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-                <div id="no-positions" class="alert alert-info m-3 mb-0" style="display: none;">
-                    <i class="fas fa-info-circle"></i> No open positions yet.
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Pending Orders Section (v0.5.0) -->
-<div class="row mb-4">
-    <div class="col-lg-12">
-        <div class="card border-0 shadow-sm">
-            <div class="card-header bg-warning text-dark">
-                <div class="d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0"><i class="fas fa-hourglass-half"></i> Pending Orders Queue</h5>
-                    <span class="badge bg-warning text-dark" id="pending-count">0</span>
-                </div>
-            </div>
-            <div class="card-body p-0">
-                <div class="table-responsive">
-                    <table class="table table-hover mb-0">
-                        <thead class="table-light">
-                            <tr>
-                                <th>Symbol</th>
-                                <th>Side</th>
-                                <th class="text-end">Quantity</th>
-                                <th class="text-end">Price</th>
-                                <th>Order Type</th>
-                                <th>Source</th>
-                                <th>Status</th>
-                                <th>Created</th>
-                                <th class="text-center" style="width: 150px;">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="pending-tbody">
-                            <tr>
-                                <td colspan="9" class="text-center text-muted py-4">
-                                    <i class="fas fa-spinner fa-spin"></i> Loading pending orders...
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-                <div id="no-pending" class="alert alert-success m-3 mb-0" style="display: none;">
-                    <i class="fas fa-check-circle"></i> No pending orders. All orders have been reviewed!
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Trade History Section -->
-<div class="row mb-4">
-    <div class="col-lg-12">
-        <div class="card border-0 shadow-sm">
-            <div class="card-header bg-info text-white">
-                <h5 class="mb-0"><i class="fas fa-history"></i> Trade History (Recent 50)</h5>
-            </div>
-            <div class="card-body p-0">
-                <div class="table-responsive">
-                    <table class="table table-hover mb-0">
-                        <thead class="table-light">
-                            <tr>
-                                <th>Timestamp</th>
-                                <th>Symbol</th>
-                                <th>Side</th>
-                                <th class="text-end">Quantity</th>
-                                <th class="text-end">Price</th>
-                                <th>Status</th>
-                                <th class="text-end">Realized P&L</th>
-                            </tr>
-                        </thead>
-                        <tbody id="trades-tbody">
-                            <tr>
-                                <td colspan="7" class="text-center text-muted py-4">
-                                    <i class="fas fa-spinner fa-spin"></i> Loading trade history...
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-                <div id="no-trades" class="alert alert-info m-3 mb-0" style="display: none;">
-                    <i class="fas fa-info-circle"></i> No trades yet. Upload an Excel file to execute orders.
-                </div>
+            <div class="modal-footer py-1">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
             </div>
         </div>
     </div>
@@ -512,7 +527,9 @@
 
 {% block extra_js %}
 <script>
-    // Update current time
+    // ==========================================
+    // UTILITIES
+    // ==========================================
     function updateCurrentTime() {
         const now = new Date();
         document.getElementById('current-time').textContent = now.toLocaleString();
@@ -520,332 +537,68 @@
     updateCurrentTime();
     setInterval(updateCurrentTime, 1000);
 
-    // Format currency
     function formatCurrency(value) {
-        return new Intl.NumberFormat('en-US', {
-            style: 'currency',
-            currency: 'USD'
-        }).format(value);
+        return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value || 0);
     }
 
-    // Format date/time
     function formatDateTime(dateString) {
-        const date = new Date(dateString);
-        return date.toLocaleString();
+        if (!dateString) return '—';
+        return new Date(dateString).toLocaleString();
     }
 
-    // Load summary data
+    function showSpinner() {
+        document.getElementById('loading-spinner').classList.remove('d-none');
+    }
+    function hideSpinner() {
+        document.getElementById('loading-spinner').classList.add('d-none');
+    }
+
+    // ==========================================
+    // LOAD FUNCTIONS (API fetch + DOM update)
+    // ==========================================
     async function loadSummary() {
         try {
             const response = await fetch('/api/summary');
             const data = await response.json();
-            
-            document.getElementById('total-trades').textContent = data.total_trades;
-            
-            const realizedColor = data.realized_pnl >= 0 ? '#28a745' : '#dc3545';
-            const realizedElement = document.getElementById('realized-pnl');
-            realizedElement.textContent = formatCurrency(data.realized_pnl);
-            realizedElement.style.color = realizedColor;
-            
-            const unrealizedColor = data.unrealized_pnl >= 0 ? '#28a745' : '#dc3545';
-            const unrealizedElement = document.getElementById('unrealized-pnl');
-            unrealizedElement.textContent = formatCurrency(data.unrealized_pnl);
-            unrealizedElement.style.color = unrealizedColor;
-            
-            document.getElementById('total-invested').textContent = formatCurrency(data.total_invested);
-            document.getElementById('total-market-value').textContent = formatCurrency(data.total_market_value);
-            
-            const equityColor = data.total_equity >= data.total_invested ? '#28a745' : '#dc3545';
-            const equityElement = document.getElementById('total-equity');
-            equityElement.textContent = formatCurrency(data.total_equity);
-            equityElement.style.color = equityColor;
-            
-            if (data.last_trade_time) {
-                document.getElementById('last-update').textContent = formatDateTime(data.last_trade_time);
-            } else {
-                document.getElementById('last-update').textContent = '—';
-            }
+            updateSummaryDOM(data);
         } catch (error) {
             console.error('Error loading summary:', error);
         }
     }
 
-    // Load positions data
+    function updateSummaryDOM(data) {
+        const el = (id) => document.getElementById(id);
+        el('total-trades').textContent = data.total_trades || 0;
+        
+        const realizedEl = el('realized-pnl');
+        realizedEl.textContent = formatCurrency(data.realized_pnl);
+        realizedEl.style.color = (data.realized_pnl || 0) >= 0 ? '#28a745' : '#dc3545';
+        
+        const unrealizedEl = el('unrealized-pnl');
+        unrealizedEl.textContent = formatCurrency(data.unrealized_pnl);
+        unrealizedEl.style.color = (data.unrealized_pnl || 0) >= 0 ? '#28a745' : '#dc3545';
+        
+        el('total-invested').textContent = formatCurrency(data.total_invested);
+        el('total-market-value').textContent = formatCurrency(data.total_market_value);
+        
+        const equityEl = el('total-equity');
+        equityEl.textContent = formatCurrency(data.total_equity);
+        equityEl.style.color = (data.total_equity || 0) >= (data.total_invested || 0) ? '#28a745' : '#dc3545';
+        
+        el('last-update').textContent = data.last_trade_time ? formatDateTime(data.last_trade_time) : '—';
+    }
+
     async function loadPositions() {
         try {
             const response = await fetch('/api/positions');
             const positions = await response.json();
-            
-            const tbody = document.getElementById('positions-tbody');
-            const noPositions = document.getElementById('no-positions');
-            
-            if (positions.length === 0) {
-                tbody.innerHTML = '';
-                noPositions.style.display = 'block';
-            } else {
-                noPositions.style.display = 'none';
-                tbody.innerHTML = positions.map(pos => {
-                    const pnlColor = pos.unrealized_pnl !== null && pos.unrealized_pnl >= 0 ? '#28a745' : '#dc3545';
-                    const pnlText = pos.unrealized_pnl !== null ? formatCurrency(pos.unrealized_pnl) : '—';
-                    const marketValueText = pos.market_value !== null ? formatCurrency(pos.market_value) : '—';
-                    const currentPriceText = pos.current_price !== null ? formatCurrency(pos.current_price) : '—';
-                    
-                    return `
-                        <tr>
-                            <td><strong>${pos.symbol}</strong></td>
-                            <td class="text-end">${pos.quantity.toFixed(8)}</td>
-                            <td class="text-end">${formatCurrency(pos.avg_price)}</td>
-                            <td class="text-end"><strong>${formatCurrency(pos.total_cost)}</strong></td>
-                            <td class="text-end">${currentPriceText}</td>
-                            <td class="text-end">${marketValueText}</td>
-                            <td class="text-end" style="color: ${pnlColor};"><strong>${pnlText}</strong></td>
-                        </tr>
-                    `;
-                }).join('');
-            }
+            updatePositionsDOM(positions);
         } catch (error) {
             console.error('Error loading positions:', error);
         }
     }
 
-    // Load trades data
-    async function loadTrades() {
-        try {
-            const response = await fetch('/api/trades');
-            const trades = await response.json();
-            
-            const tbody = document.getElementById('trades-tbody');
-            const noTrades = document.getElementById('no-trades');
-            
-            if (trades.length === 0) {
-                tbody.innerHTML = '';
-                noTrades.style.display = 'block';
-            } else {
-                noTrades.style.display = 'none';
-                tbody.innerHTML = trades.slice(0, 50).map(trade => {
-                    const pnlColor = trade.realized_pnl !== null && trade.realized_pnl >= 0 ? '#28a745' : '#dc3545';
-                    const pnlText = trade.realized_pnl !== null ? formatCurrency(trade.realized_pnl) : '—';
-                    return `
-                        <tr>
-                            <td><small>${formatDateTime(trade.entry_time)}</small></td>
-                            <td><strong>${trade.symbol}</strong></td>
-                            <td>
-                                <span class="badge ${trade.side === 'BUY' ? 'bg-success' : 'bg-danger'}">
-                                    ${trade.side}
-                                </span>
-                            </td>
-                            <td class="text-end">${trade.entry_qty.toFixed(8)}</td>
-                            <td class="text-end">${formatCurrency(trade.entry_price)}</td>
-                            <td>
-                                <span class="badge ${trade.status === 'OPEN' ? 'bg-warning' : (trade.status === 'CLOSED' ? 'bg-success' : 'bg-secondary')}">
-                                    ${trade.status}
-                                </span>
-                            </td>
-                            <td class="text-end" style="color: ${pnlColor};">
-                                <strong>${pnlText}</strong>
-                            </td>
-                        </tr>
-                    `;
-                }).join('');
-            }
-        } catch (error) {
-            console.error('Error loading trades:', error);
-        }
-    }
-
-    // Load pending orders data (v0.5.0)
-    async function loadPendingOrders() {
-        try {
-            const response = await fetch('/api/pending');
-            const orders = await response.json();
-            
-            const tbody = document.getElementById('pending-tbody');
-            const noPending = document.getElementById('no-pending');
-            const countBadge = document.getElementById('pending-count');
-            
-            // Count pending (not approved or rejected)
-            const pendingOrders = orders.filter(o => o.status === 'pending');
-            countBadge.textContent = pendingOrders.length;
-            
-            if (pendingOrders.length === 0) {
-                tbody.innerHTML = '';
-                noPending.style.display = 'block';
-            } else {
-                noPending.style.display = 'none';
-                tbody.innerHTML = pendingOrders.map(order => {
-                    const sideBadgeClass = order.side === 'BUY' ? 'bg-success' : 'bg-danger';
-                    const statusBadgeClass = order.status === 'pending' ? 'bg-warning text-dark' : (order.status === 'approved' ? 'bg-success' : 'bg-danger');
-                    return `
-                        <tr>
-                            <td><strong>${order.symbol}</strong></td>
-                            <td>
-                                <span class="badge ${sideBadgeClass}">
-                                    ${order.side}
-                                </span>
-                            </td>
-                            <td class="text-end">${order.quantity}</td>
-                            <td class="text-end">${formatCurrency(order.price)}</td>
-                            <td><small>${order.order_type || 'LIMIT'}</small></td>
-                            <td><small>${order.source || 'manual'}</small></td>
-                            <td>
-                                <span class="badge ${statusBadgeClass}">
-                                    ${order.status}
-                                </span>
-                            </td>
-                            <td><small>${formatDateTime(order.created_at)}</small></td>
-                            <td class="text-center">
-                                <button class="btn btn-sm btn-success" onclick="approvePendingOrder(${order.id}, '${order.symbol}')" title="Approve order">
-                                    <i class="fas fa-check"></i>
-                                </button>
-                                <button class="btn btn-sm btn-danger" onclick="rejectPendingOrder(${order.id}, '${order.symbol}')" title="Reject order">
-                                    <i class="fas fa-times"></i>
-                                </button>
-                            </td>
-                        </tr>
-                    `;
-                }).join('');
-            }
-        } catch (error) {
-            console.error('Error loading pending orders:', error);
-        }
-    }
-
-    // Approve pending order (v0.5.0)
-    async function approvePendingOrder(orderId, symbol) {
-        if (!confirm(`Approve order for ${symbol}?`)) return;
-        
-        try {
-            const response = await fetch(`/api/pending/approve/${orderId}`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'}
-            });
-            
-            if (response.ok) {
-                console.log(`Order ${orderId} approved`);
-                loadPendingOrders();
-                // Refresh positions and trades after approval
-                loadPositions();
-                loadTrades();
-                loadSummary();
-            } else {
-                alert('Failed to approve order');
-            }
-        } catch (error) {
-            console.error('Error approving order:', error);
-            alert('Error approving order');
-        }
-    }
-
-    // Reject pending order (v0.5.0)
-    async function rejectPendingOrder(orderId, symbol) {
-        const reason = prompt(`Reject order for ${symbol}? (Enter reason):`, 'Market conditions changed');
-        if (reason === null) return;
-        
-        try {
-            const response = await fetch(`/api/pending/reject/${orderId}`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({reason: reason || 'User rejected'})
-            });
-            
-            if (response.ok) {
-                console.log(`Order ${orderId} rejected`);
-                loadPendingOrders();
-            } else {
-                alert('Failed to reject order');
-            }
-        } catch (error) {
-            console.error('Error rejecting order:', error);
-            alert('Error rejecting order');
-        }
-    }
-
-    // Load risk metrics (v0.6.0)
-    async function loadRiskMetrics() {
-        try {
-            // For now, use mock data (in production, fetch from /api/risk endpoint)
-            // Portfolio exposure: 5% of equity
-            const portfolioExposure = 5.0;
-            const maxExposure = 10.0;
-            
-            // Daily loss: $250 (2.5% of $10k)
-            const dailyLoss = 250.0;
-            const dailyLossPct = 2.5;
-            const maxDailyLoss = 5.0;
-
-            // Update exposure display
-            document.getElementById('portfolio-exposure').textContent = portfolioExposure.toFixed(1) + '%';
-            document.getElementById('exposure-value').textContent = portfolioExposure.toFixed(1) + '%';
-            document.getElementById('exposure-bar').style.width = (portfolioExposure / maxExposure * 100) + '%';
-            
-            // Color exposure bar based on percentage
-            const exposureBar = document.getElementById('exposure-bar');
-            if (portfolioExposure > maxExposure * 0.8) {
-                exposureBar.className = 'progress-bar bg-danger';
-            } else if (portfolioExposure > maxExposure * 0.5) {
-                exposureBar.className = 'progress-bar bg-warning';
-            } else {
-                exposureBar.className = 'progress-bar bg-info';
-            }
-
-            // Update daily loss display
-            document.getElementById('daily-loss').textContent = formatCurrency(dailyLoss);
-            document.getElementById('daily-loss-pct').textContent = dailyLossPct.toFixed(1) + '%';
-            document.getElementById('loss-bar').style.width = (dailyLossPct / maxDailyLoss * 100) + '%';
-            
-            // Color loss bar based on percentage
-            const lossBar = document.getElementById('loss-bar');
-            if (dailyLossPct > maxDailyLoss * 0.8) {
-                lossBar.className = 'progress-bar bg-danger';
-            } else if (dailyLossPct > maxDailyLoss * 0.5) {
-                lossBar.className = 'progress-bar bg-warning';
-            } else {
-                lossBar.className = 'progress-bar bg-success';
-            }
-        } catch (error) {
-            console.error('Error loading risk metrics:', error);
-        }
-    }
-
-    // Initial load
-    loadSummary();
-    loadPositions();
-    loadPendingOrders();
-    loadTrades();
-    loadRiskMetrics();
-
-    // WebSocket connection for live updates (every 30 seconds from server)
-    function connectWebSocket() {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const ws = new WebSocket(`${protocol}//${window.location.host}/ws/dashboard`);
-        
-        ws.onmessage = function(event) {
-            try {
-                const data = JSON.parse(event.data);
-                if (data.type === 'dashboard_update') {
-                    console.log('Received dashboard update:', data);
-                    // Update positions from WebSocket
-                    updatePositionsFromWebSocket(data.positions);
-                    // Update summary from WebSocket
-                    updateSummaryFromWebSocket(data.summary);
-                }
-            } catch (error) {
-                console.error('Error parsing WebSocket message:', error);
-            }
-        };
-        
-        ws.onerror = function(error) {
-            console.error('WebSocket error:', error);
-        };
-        
-        ws.onclose = function() {
-            console.log('WebSocket closed, attempting to reconnect in 5 seconds...');
-            setTimeout(connectWebSocket, 5000);
-        };
-    }
-    
-    // Update positions from WebSocket data
-    function updatePositionsFromWebSocket(positions) {
+    function updatePositionsDOM(positions) {
         const tbody = document.getElementById('positions-tbody');
         const noPos = document.getElementById('no-positions');
         
@@ -855,117 +608,273 @@
         } else {
             noPos.style.display = 'none';
             tbody.innerHTML = positions.map(pos => {
-                const unrealizedColor = pos.unrealized_pnl !== null && pos.unrealized_pnl >= 0 ? '#28a745' : '#dc3545';
-                const unrealizedText = pos.unrealized_pnl !== null ? formatCurrency(pos.unrealized_pnl) : '—';
-                const marketValueText = pos.market_value !== null ? formatCurrency(pos.market_value) : '—';
-                const priceText = pos.current_price ? formatCurrency(pos.current_price) : '—';
-                return `
-                    <tr>
-                        <td><strong>${pos.symbol}</strong></td>
-                        <td class="text-end">${pos.quantity.toFixed(8)}</td>
-                        <td class="text-end">${formatCurrency(pos.avg_price)}</td>
-                        <td class="text-end">${formatCurrency(pos.total_cost)}</td>
-                        <td class="text-end text-info"><strong>${priceText}</strong></td>
-                        <td class="text-end text-info"><strong>${marketValueText}</strong></td>
-                        <td class="text-end" style="color: ${unrealizedColor};"><strong>${unrealizedText}</strong></td>
-                    </tr>
-                `;
+                const pnlColor = (pos.unrealized_pnl || 0) >= 0 ? '#28a745' : '#dc3545';
+                return `<tr>
+                    <td><strong>${pos.symbol}</strong></td>
+                    <td class="text-end">${(pos.quantity || 0).toFixed(6)}</td>
+                    <td class="text-end">${formatCurrency(pos.avg_price)}</td>
+                    <td class="text-end">${formatCurrency(pos.total_cost)}</td>
+                    <td class="text-end text-info"><strong>${pos.current_price ? formatCurrency(pos.current_price) : '—'}</strong></td>
+                    <td class="text-end">${pos.market_value ? formatCurrency(pos.market_value) : '—'}</td>
+                    <td class="text-end" style="color: ${pnlColor};"><strong>${pos.unrealized_pnl != null ? formatCurrency(pos.unrealized_pnl) : '—'}</strong></td>
+                </tr>`;
             }).join('');
         }
     }
-    
-    // Update summary from WebSocket data
-    function updateSummaryFromWebSocket(summary) {
-        const totalTradesEl = document.getElementById('total-trades');
-        const realizedPnLEl = document.getElementById('realized-pnl');
-        const unrealizedPnLEl = document.getElementById('unrealized-pnl');
-        const totalInvestedEl = document.getElementById('total-invested');
-        const totalMarketValueEl = document.getElementById('total-market-value');
-        const totalEquityEl = document.getElementById('total-equity');
-        
-        if (totalTradesEl) totalTradesEl.textContent = summary.total_trades;
-        if (realizedPnLEl) {
-            realizedPnLEl.textContent = formatCurrency(summary.realized_pnl);
-            realizedPnLEl.style.color = summary.realized_pnl >= 0 ? '#28a745' : '#dc3545';
-        }
-        if (unrealizedPnLEl) {
-            unrealizedPnLEl.textContent = formatCurrency(summary.unrealized_pnl);
-            unrealizedPnLEl.style.color = summary.unrealized_pnl >= 0 ? '#28a745' : '#dc3545';
-        }
-        if (totalInvestedEl) totalInvestedEl.textContent = formatCurrency(summary.total_invested);
-        if (totalMarketValueEl) totalMarketValueEl.textContent = formatCurrency(summary.total_market_value);
-        if (totalEquityEl) {
-            totalEquityEl.textContent = formatCurrency(summary.total_equity);
-            totalEquityEl.style.color = summary.total_equity >= 10000 ? '#28a745' : '#dc3545';
+
+    async function loadTrades() {
+        try {
+            const response = await fetch('/api/trades');
+            const trades = await response.json();
+            updateTradesDOM(trades);
+        } catch (error) {
+            console.error('Error loading trades:', error);
         }
     }
 
-    // Connect WebSocket for live updates
-    connectWebSocket();
+    function updateTradesDOM(trades) {
+        const tbody = document.getElementById('trades-tbody');
+        const noTrades = document.getElementById('no-trades');
+        
+        if (!trades || trades.length === 0) {
+            tbody.innerHTML = '';
+            noTrades.style.display = 'block';
+        } else {
+            noTrades.style.display = 'none';
+            tbody.innerHTML = trades.slice(0, 50).map(t => {
+                const pnlColor = (t.realized_pnl || 0) >= 0 ? '#28a745' : '#dc3545';
+                return `<tr>
+                    <td><small>${formatDateTime(t.entry_time)}</small></td>
+                    <td><strong>${t.symbol}</strong></td>
+                    <td><span class="badge ${t.side === 'BUY' ? 'bg-success' : 'bg-danger'}">${t.side}</span></td>
+                    <td class="text-end">${(t.entry_qty || 0).toFixed(6)}</td>
+                    <td class="text-end">${formatCurrency(t.entry_price)}</td>
+                    <td><span class="badge ${t.status === 'OPEN' ? 'bg-warning text-dark' : 'bg-success'}">${t.status}</span></td>
+                    <td class="text-end" style="color: ${pnlColor};"><strong>${t.realized_pnl != null ? formatCurrency(t.realized_pnl) : '—'}</strong></td>
+                </tr>`;
+            }).join('');
+        }
+    }
+
+    async function loadPendingOrders() {
+        try {
+            const response = await fetch('/api/pending');
+            const orders = await response.json();
+            updatePendingDOM(orders);
+        } catch (error) {
+            console.error('Error loading pending orders:', error);
+        }
+    }
+
+    function updatePendingDOM(orders) {
+        const tbody = document.getElementById('pending-tbody');
+        const noPending = document.getElementById('no-pending');
+        const countBadge = document.getElementById('pending-count');
+        const tabBadge = document.getElementById('pending-badge');
+        
+        const pendingOrders = (orders || []).filter(o => o.status === 'pending');
+        countBadge.textContent = pendingOrders.length;
+        tabBadge.textContent = pendingOrders.length;
+        
+        if (pendingOrders.length === 0) {
+            tbody.innerHTML = '';
+            noPending.style.display = 'block';
+        } else {
+            noPending.style.display = 'none';
+            tbody.innerHTML = pendingOrders.map(o => `<tr>
+                <td><strong>${o.symbol}</strong></td>
+                <td><span class="badge ${o.side === 'BUY' ? 'bg-success' : 'bg-danger'}">${o.side}</span></td>
+                <td class="text-end">${o.quantity}</td>
+                <td class="text-end">${formatCurrency(o.price)}</td>
+                <td><small>${o.order_type || 'LIMIT'}</small></td>
+                <td><small>${o.source || 'manual'}</small></td>
+                <td><span class="badge bg-warning text-dark">${o.status}</span></td>
+                <td><small>${formatDateTime(o.created_at)}</small></td>
+                <td class="text-center">
+                    <button class="btn btn-sm btn-success" onclick="approvePendingOrder(${o.id}, '${o.symbol}')"><i class="fas fa-check"></i></button>
+                    <button class="btn btn-sm btn-danger" onclick="rejectPendingOrder(${o.id}, '${o.symbol}')"><i class="fas fa-times"></i></button>
+                </td>
+            </tr>`).join('');
+        }
+    }
+
+    async function loadRiskMetrics() {
+        // Mock data for now (replace with /api/risk endpoint when available)
+        const portfolioExposure = 5.0, maxExposure = 10.0;
+        const dailyLoss = 250.0, dailyLossPct = 2.5, maxDailyLoss = 5.0;
+
+        document.getElementById('portfolio-exposure').textContent = portfolioExposure.toFixed(1) + '%';
+        document.getElementById('exposure-value').textContent = portfolioExposure.toFixed(1) + '%';
+        document.getElementById('exposure-bar').style.width = (portfolioExposure / maxExposure * 100) + '%';
+        
+        const exposureBar = document.getElementById('exposure-bar');
+        exposureBar.className = 'progress-bar ' + (portfolioExposure > maxExposure * 0.8 ? 'bg-danger' : portfolioExposure > maxExposure * 0.5 ? 'bg-warning' : 'bg-info');
+
+        document.getElementById('daily-loss').textContent = formatCurrency(dailyLoss);
+        document.getElementById('daily-loss-pct').textContent = dailyLossPct.toFixed(1) + '%';
+        document.getElementById('loss-bar').style.width = (dailyLossPct / maxDailyLoss * 100) + '%';
+    }
+
+    // Approve/Reject pending orders
+    async function approvePendingOrder(orderId, symbol) {
+        if (!confirm(`Approve order for ${symbol}?`)) return;
+        try {
+            const response = await fetch(`/api/pending/approve/${orderId}`, { method: 'POST' });
+            if (response.ok) {
+                loadPendingOrders();
+                loadPositions();
+                loadTrades();
+                loadSummary();
+            } else { alert('Failed to approve order'); }
+        } catch (error) { console.error(error); alert('Error approving order'); }
+    }
+
+    async function rejectPendingOrder(orderId, symbol) {
+        const reason = prompt(`Reject order for ${symbol}? (Enter reason):`, 'Market conditions changed');
+        if (reason === null) return;
+        try {
+            const response = await fetch(`/api/pending/reject/${orderId}`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({reason: reason || 'User rejected'})
+            });
+            if (response.ok) { loadPendingOrders(); }
+            else { alert('Failed to reject order'); }
+        } catch (error) { console.error(error); alert('Error rejecting order'); }
+    }
 
     // ==========================================
-    // KSS (Kai Strategy Service) Functions v0.10.0
+    // WEBSOCKET - SELECTIVE REALTIME UPDATES
     // ==========================================
+    function connectWebSocket() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(`${protocol}//${window.location.host}/ws/dashboard`);
+        
+        ws.onopen = function() {
+            console.log('WebSocket connected');
+        };
+        
+        ws.onmessage = function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.type === 'dashboard_update') {
+                    // Selective DOM updates - no page reload!
+                    if (data.positions) updatePositionsDOM(data.positions);
+                    if (data.summary) updateSummaryDOM(data.summary);
+                    if (data.kss_sessions) updateKSSSessionsDOM(data.kss_sessions);
+                }
+            } catch (error) {
+                console.error('WebSocket parse error:', error);
+            }
+        };
+        
+        ws.onerror = function(error) {
+            console.error('WebSocket error:', error);
+        };
+        
+        ws.onclose = function() {
+            console.log('WebSocket closed, reconnecting in 5s...');
+            setTimeout(connectWebSocket, 5000);
+        };
+    }
+
+    // ==========================================
+    // LOCALSTORAGE - FORM PERSISTENCE
+    // ==========================================
+    const KSS_FORM_KEY = 'kss_form_data';
     
-    // Load KSS sessions
+    function saveKSSFormToStorage() {
+        const formData = {
+            symbol: document.getElementById('kss-symbol').value,
+            entry_price: document.getElementById('kss-entry-price').value,
+            distance_pct: document.getElementById('kss-distance-pct').value,
+            max_waves: document.getElementById('kss-max-waves').value,
+            isolated_fund: document.getElementById('kss-isolated-fund').value,
+            tp_pct: document.getElementById('kss-tp-pct').value,
+            timeout: document.getElementById('kss-timeout').value,
+            gap: document.getElementById('kss-gap').value
+        };
+        localStorage.setItem(KSS_FORM_KEY, JSON.stringify(formData));
+    }
+    
+    function restoreKSSFormFromStorage() {
+        const saved = localStorage.getItem(KSS_FORM_KEY);
+        if (saved) {
+            try {
+                const data = JSON.parse(saved);
+                if (data.symbol) document.getElementById('kss-symbol').value = data.symbol;
+                if (data.entry_price) document.getElementById('kss-entry-price').value = data.entry_price;
+                if (data.distance_pct) document.getElementById('kss-distance-pct').value = data.distance_pct;
+                if (data.max_waves) document.getElementById('kss-max-waves').value = data.max_waves;
+                if (data.isolated_fund) document.getElementById('kss-isolated-fund').value = data.isolated_fund;
+                if (data.tp_pct) document.getElementById('kss-tp-pct').value = data.tp_pct;
+                if (data.timeout) document.getElementById('kss-timeout').value = data.timeout;
+                if (data.gap) document.getElementById('kss-gap').value = data.gap;
+            } catch (e) { console.error('Error restoring form:', e); }
+        }
+    }
+    
+    // Attach change listeners for auto-save
+    document.querySelectorAll('#kss-create-form input').forEach(input => {
+        input.addEventListener('change', saveKSSFormToStorage);
+        input.addEventListener('input', saveKSSFormToStorage);
+    });
+
+    // ==========================================
+    // KSS FUNCTIONS
+    // ==========================================
     async function loadKSSSessions() {
         try {
             const response = await fetch('/api/kss/sessions');
             const data = await response.json();
-            
-            // Update summary
-            document.getElementById('kss-active-sessions').textContent = data.active_count || 0;
-            document.getElementById('kss-total-fund').textContent = formatCurrency(data.total_isolated_fund || 0);
-            
-            // Calculate used fund and PnL
-            let usedFund = 0;
-            let unrealizedPnl = 0;
-            (data.sessions || []).forEach(s => {
-                if (s.status === 'active') {
-                    usedFund += s.used_fund || 0;
-                    unrealizedPnl += s.unrealized_pnl || 0;
-                }
-            });
-            document.getElementById('kss-used-fund').textContent = formatCurrency(usedFund);
-            const pnlEl = document.getElementById('kss-unrealized-pnl');
-            pnlEl.textContent = formatCurrency(unrealizedPnl);
-            pnlEl.style.color = unrealizedPnl >= 0 ? '#28a745' : '#dc3545';
-            
-            // Render sessions table
-            const tbody = document.getElementById('kss-sessions-tbody');
-            const noSessions = document.getElementById('no-kss-sessions');
-            
-            if (!data.sessions || data.sessions.length === 0) {
-                tbody.innerHTML = '';
-                noSessions.style.display = 'block';
-            } else {
-                noSessions.style.display = 'none';
-                tbody.innerHTML = data.sessions.map(session => {
-                    const statusBadge = getKSSStatusBadge(session.status);
-                    const pnlColor = (session.unrealized_pnl || 0) >= 0 ? '#28a745' : '#dc3545';
-                    return `
-                        <tr>
-                            <td><strong>#${session.id}</strong></td>
-                            <td><span class="badge bg-primary">${session.symbol}</span></td>
-                            <td>${statusBadge}</td>
-                            <td class="text-end">${formatCurrency(session.entry_price)}</td>
-                            <td class="text-end">${session.avg_price > 0 ? formatCurrency(session.avg_price) : '—'}</td>
-                            <td>${session.filled_waves_count || 0}/${session.max_waves}</td>
-                            <td class="text-end">${(session.total_filled_qty || 0).toFixed(6)}</td>
-                            <td class="text-end text-success">${formatCurrency(session.estimated_tp_price || 0)}</td>
-                            <td class="text-end" style="color: ${pnlColor};">${formatCurrency(session.unrealized_pnl || 0)}</td>
-                            <td class="text-center">
-                                ${getKSSActions(session)}
-                            </td>
-                        </tr>
-                    `;
-                }).join('');
-            }
+            updateKSSSessionsDOM(data);
         } catch (error) {
             console.error('Error loading KSS sessions:', error);
         }
     }
-    
+
+    function updateKSSSessionsDOM(data) {
+        document.getElementById('kss-active-sessions').textContent = data.active_count || 0;
+        document.getElementById('kss-total-fund').textContent = formatCurrency(data.total_isolated_fund || 0);
+        
+        let usedFund = 0, unrealizedPnl = 0;
+        (data.sessions || []).forEach(s => {
+            if (s.status === 'active') {
+                usedFund += s.used_fund || 0;
+                unrealizedPnl += s.unrealized_pnl || 0;
+            }
+        });
+        document.getElementById('kss-used-fund').textContent = formatCurrency(usedFund);
+        const pnlEl = document.getElementById('kss-unrealized-pnl');
+        pnlEl.textContent = formatCurrency(unrealizedPnl);
+        pnlEl.style.color = unrealizedPnl >= 0 ? '#28a745' : '#dc3545';
+        
+        const tbody = document.getElementById('kss-sessions-tbody');
+        const noSessions = document.getElementById('no-kss-sessions');
+        
+        if (!data.sessions || data.sessions.length === 0) {
+            tbody.innerHTML = '';
+            noSessions.style.display = 'block';
+        } else {
+            noSessions.style.display = 'none';
+            tbody.innerHTML = data.sessions.map(s => {
+                const pnlColor = (s.unrealized_pnl || 0) >= 0 ? '#28a745' : '#dc3545';
+                return `<tr>
+                    <td><strong>#${s.id}</strong></td>
+                    <td><span class="badge bg-primary">${s.symbol}</span></td>
+                    <td>${getKSSStatusBadge(s.status)}</td>
+                    <td class="text-end">${formatCurrency(s.entry_price)}</td>
+                    <td class="text-end">${s.avg_price > 0 ? formatCurrency(s.avg_price) : '—'}</td>
+                    <td>${s.filled_waves_count || 0}/${s.max_waves}</td>
+                    <td class="text-end">${(s.total_filled_qty || 0).toFixed(6)}</td>
+                    <td class="text-end text-success">${formatCurrency(s.estimated_tp_price || 0)}</td>
+                    <td class="text-end" style="color: ${pnlColor};">${formatCurrency(s.unrealized_pnl || 0)}</td>
+                    <td class="text-center">${getKSSActions(s)}</td>
+                </tr>`;
+            }).join('');
+        }
+    }
+
     function getKSSStatusBadge(status) {
         const badges = {
             'pending': '<span class="badge bg-secondary">Pending</span>',
@@ -976,40 +885,19 @@
         };
         return badges[status] || `<span class="badge bg-dark">${status}</span>`;
     }
-    
-    function getKSSActions(session) {
-        const viewBtn = `<button class="btn btn-sm btn-outline-secondary me-1" onclick="viewKSSSession(${session.id})" title="View Details">
-            <i class="fas fa-eye"></i>
-        </button>`;
-        
-        if (session.status === 'pending') {
-            return viewBtn + `
-                <button class="btn btn-sm btn-success" onclick="startKSSSession(${session.id})" title="Start">
-                    <i class="fas fa-play"></i>
-                </button>
-                <button class="btn btn-sm btn-danger" onclick="deleteKSSSession(${session.id})" title="Delete">
-                    <i class="fas fa-trash"></i>
-                </button>
-            `;
-        } else if (session.status === 'active') {
-            return viewBtn + `
-                <button class="btn btn-sm btn-warning" onclick="stopKSSSession(${session.id})" title="Stop">
-                    <i class="fas fa-stop"></i>
-                </button>
-                <button class="btn btn-sm btn-info" onclick="checkKSSTP(${session.id})" title="Check TP">
-                    <i class="fas fa-bullseye"></i>
-                </button>
-            `;
-        } else {
-            return viewBtn + `
-                <button class="btn btn-sm btn-danger" onclick="deleteKSSSession(${session.id})" title="Delete">
-                    <i class="fas fa-trash"></i>
-                </button>
-            `;
+
+    function getKSSActions(s) {
+        const viewBtn = `<button class="btn btn-sm btn-outline-secondary" onclick="viewKSSSession(${s.id})" title="View"><i class="fas fa-eye"></i></button>`;
+        if (s.status === 'pending') {
+            return viewBtn + `<button class="btn btn-sm btn-success ms-1" onclick="startKSSSession(${s.id})"><i class="fas fa-play"></i></button>
+                <button class="btn btn-sm btn-danger ms-1" onclick="deleteKSSSession(${s.id})"><i class="fas fa-trash"></i></button>`;
+        } else if (s.status === 'active') {
+            return viewBtn + `<button class="btn btn-sm btn-warning ms-1" onclick="stopKSSSession(${s.id})"><i class="fas fa-stop"></i></button>
+                <button class="btn btn-sm btn-info ms-1" onclick="checkKSSTP(${s.id})"><i class="fas fa-bullseye"></i></button>`;
         }
+        return viewBtn + `<button class="btn btn-sm btn-danger ms-1" onclick="deleteKSSSession(${s.id})"><i class="fas fa-trash"></i></button>`;
     }
-    
-    // Create KSS session
+
     async function createKSSSession() {
         const data = {
             symbol: document.getElementById('kss-symbol').value.toUpperCase(),
@@ -1021,18 +909,16 @@
             timeout_x_min: parseFloat(document.getElementById('kss-timeout').value),
             gap_y_min: parseFloat(document.getElementById('kss-gap').value),
         };
-        
         try {
+            showSpinner();
             const response = await fetch('/api/kss/sessions', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(data)
             });
-            
             if (response.ok) {
                 const result = await response.json();
-                alert(`Session #${result.id} created! Click Start to begin.`);
-                bootstrap.Modal.getInstance(document.getElementById('kssCreateModal')).hide();
+                alert(`Session #${result.id} created!`);
                 loadKSSSessions();
             } else {
                 const error = await response.json();
@@ -1041,111 +927,65 @@
         } catch (error) {
             console.error('Error creating KSS session:', error);
             alert('Error creating session');
+        } finally {
+            hideSpinner();
         }
     }
-    
-    // Start KSS session
+
     async function startKSSSession(sessionId) {
-        if (!confirm(`Start pyramid session #${sessionId}? This will queue wave 0.`)) return;
-        
+        if (!confirm(`Start session #${sessionId}?`)) return;
         try {
-            const response = await fetch(`/api/kss/sessions/${sessionId}/start`, {
-                method: 'POST'
-            });
-            
+            showSpinner();
+            const response = await fetch(`/api/kss/sessions/${sessionId}/start`, { method: 'POST' });
             if (response.ok) {
                 const result = await response.json();
-                alert(`Session started! Wave 0 queued (Order #${result.pending_order_id})`);
+                alert(`Started! Wave 0 queued.`);
                 loadKSSSessions();
                 loadPendingOrders();
             } else {
                 const error = await response.json();
-                alert('Error: ' + (error.detail || 'Failed to start session'));
+                alert('Error: ' + (error.detail || 'Failed'));
             }
-        } catch (error) {
-            console.error('Error starting KSS session:', error);
-            alert('Error starting session');
-        }
+        } catch (error) { console.error(error); alert('Error'); }
+        finally { hideSpinner(); }
     }
-    
-    // Stop KSS session
+
     async function stopKSSSession(sessionId) {
-        if (!confirm(`Stop pyramid session #${sessionId}?`)) return;
-        
+        if (!confirm(`Stop session #${sessionId}?`)) return;
         try {
-            const response = await fetch(`/api/kss/sessions/${sessionId}/stop`, {
-                method: 'POST'
-            });
-            
-            if (response.ok) {
-                alert('Session stopped');
-                loadKSSSessions();
-            } else {
-                const error = await response.json();
-                alert('Error: ' + (error.detail || 'Failed to stop session'));
-            }
-        } catch (error) {
-            console.error('Error stopping KSS session:', error);
-            alert('Error stopping session');
-        }
+            const response = await fetch(`/api/kss/sessions/${sessionId}/stop`, { method: 'POST' });
+            if (response.ok) { alert('Stopped'); loadKSSSessions(); }
+            else { alert('Failed to stop'); }
+        } catch (error) { console.error(error); alert('Error'); }
     }
-    
-    // Delete KSS session
+
     async function deleteKSSSession(sessionId) {
-        if (!confirm(`Delete pyramid session #${sessionId}? This cannot be undone.`)) return;
-        
+        if (!confirm(`Delete session #${sessionId}?`)) return;
         try {
-            const response = await fetch(`/api/kss/sessions/${sessionId}`, {
-                method: 'DELETE'
-            });
-            
-            if (response.ok) {
-                alert('Session deleted');
-                loadKSSSessions();
-            } else {
-                const error = await response.json();
-                alert('Error: ' + (error.detail || 'Failed to delete session'));
-            }
-        } catch (error) {
-            console.error('Error deleting KSS session:', error);
-            alert('Error deleting session');
-        }
+            const response = await fetch(`/api/kss/sessions/${sessionId}`, { method: 'DELETE' });
+            if (response.ok) { alert('Deleted'); loadKSSSessions(); }
+            else { alert('Failed to delete'); }
+        } catch (error) { console.error(error); alert('Error'); }
     }
-    
-    // Check TP for KSS session
+
     async function checkKSSTP(sessionId) {
         try {
-            const response = await fetch(`/api/kss/sessions/${sessionId}/check-tp`, {
-                method: 'POST'
-            });
-            
+            const response = await fetch(`/api/kss/sessions/${sessionId}/check-tp`, { method: 'POST' });
             if (response.ok) {
                 const result = await response.json();
                 if (result.tp_triggered) {
-                    alert(`TP TRIGGERED! Sell order queued (Order #${result.pending_order_id})`);
+                    alert(`TP TRIGGERED!`);
                     loadKSSSessions();
                     loadPendingOrders();
                 } else {
-                    alert(`TP not triggered yet.\nCurrent: ${formatCurrency(result.current_price)}\nTP Target: ${formatCurrency(result.tp_price)}`);
+                    alert(`TP not hit. Current: ${formatCurrency(result.current_price)}, Target: ${formatCurrency(result.tp_price)}`);
                 }
-            } else {
-                const error = await response.json();
-                alert('Error: ' + (error.detail || 'Failed to check TP'));
             }
-        } catch (error) {
-            console.error('Error checking KSS TP:', error);
-            alert('Error checking TP');
-        }
+        } catch (error) { console.error(error); alert('Error checking TP'); }
     }
-    
-    // Load KSS sessions on page load
-    loadKSSSessions();
 
-    // ==========================================
-    // KSS Phase 7: Preview & Visualization (v0.10.0)
-    // ==========================================
-    
-    let kssDetailChart = null;  // Chart.js instance
+    // KSS Preview & Visualization
+    let kssDetailChart = null;
     
     // Preview pyramid session without creating
     async function previewKSSSession() {
@@ -1426,13 +1266,42 @@
         });
     }
 
-    // Also keep polling every 60 seconds as fallback
-    setInterval(() => {
-        loadSummary();
-        loadTrades();
-        loadPendingOrders();
-        loadRiskMetrics();
-        loadKSSSessions();
-    }, 60000);
+    // ==========================================
+    // INITIALIZATION
+    // ==========================================
+    (function init() {
+        // Restore form from localStorage
+        restoreKSSFormFromStorage();
+        
+        // Initial data load with spinner
+        showSpinner();
+        Promise.all([
+            loadSummary(),
+            loadPositions(),
+            loadTrades(),
+            loadPendingOrders(),
+            loadRiskMetrics(),
+            loadKSSSessions()
+        ]).finally(() => {
+            hideSpinner();
+        });
+        
+        // Connect WebSocket for realtime updates
+        connectWebSocket();
+        
+        // Fallback polling every 30s (selective updates, no page reload)
+        setInterval(() => {
+            loadSummary();
+            loadPositions();
+            loadPendingOrders();
+            loadKSSSessions();
+        }, 30000);
+        
+        // Less frequent: trades & risk every 60s
+        setInterval(() => {
+            loadTrades();
+            loadRiskMetrics();
+        }, 60000);
+    })();
 </script>
 {% endblock %}

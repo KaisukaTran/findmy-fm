@@ -6,6 +6,13 @@ The **FINDMY FM Dashboard** is a beautiful, responsive HTML interface that provi
 
 ## Features
 
+### � Tab-Based Navigation (v0.11.0)
+The dashboard uses Bootstrap nav-tabs for organized content:
+- **Overview**: System status, summary cards, risk metrics
+- **Positions/Trades**: Current positions table, trade history
+- **Pending Orders**: Order approval queue with actions
+- **KSS Pyramid**: Dedicated tab for KSS pyramid DCA trading
+
 ### 📊 System Status
 - **Database Connection**: Real-time verification of database connectivity
 - **Trade Service Status**: Active/inactive state of the TS engine
@@ -42,6 +49,41 @@ Key performance metrics at a glance:
 - **Market Value**: Sum of all position market values at current prices *(NEW)*
 - **Price Source**: Binance public API (live, refreshed every 60 seconds) *(NEW)*
 
+### 🔺 KSS Pyramid Tab (v0.11.0)
+Dedicated tab for KSS pyramid DCA trading:
+- **Session Summary**: Active sessions, total/used fund, unrealized PnL
+- **Create Form**: Inline form with symbol, entry price, distance %, max waves, etc.
+- **Preview**: Click to preview projected waves before creating
+- **Sessions Table**: View all sessions with status, avg price, TP target, PnL
+- **Realtime Waves Table**: View wave details for selected session
+- **Chart.js Visualization**: Price levels chart with legend (Avg=yellow dashed, TP=green dashed, Market=blue solid)
+
+## Real-Time Updates (v0.11.0)
+
+### No Page Reload Architecture
+The dashboard now uses **selective DOM updates** instead of full page refresh:
+- WebSocket receives updates and updates only specific elements
+- Form inputs are preserved during updates (no lost data)
+- Loading spinner indicates background fetch activity
+
+### WebSocket Selective Updates
+```javascript
+// WebSocket updates specific DOM elements
+ws.onmessage = function(event) {
+    const data = JSON.parse(event.data);
+    if (data.positions) updatePositionsDOM(data.positions);
+    if (data.summary) updateSummaryDOM(data.summary);
+    if (data.kss_sessions) updateKSSSessionsDOM(data.kss_sessions);
+};
+```
+
+### Fallback Polling
+- **Every 30s**: Summary, positions, pending orders, KSS sessions
+- **Every 60s**: Trades, risk metrics (less volatile data)
+
+### localStorage Form Persistence
+KSS form inputs are automatically saved to localStorage on change and restored on page load, preventing data loss during updates.
+
 ## Real-Time Market Data
 
 ### Live Price Integration
@@ -52,7 +94,6 @@ The dashboard uses **Binance public API** (via CCXT) to fetch real-time spot pri
 - **Symbols**: Assumes base currency symbols (BTC, ETH, SOL) and creates USDT pairs automatically
 - **Refresh rate**: 60-second cache TTL prevents rate limiting while keeping prices fresh
 - **Fallback**: Shows last known prices if Binance is temporarily unavailable
-- **Auto-update**: Dashboard data refreshes every 30 seconds
 
 ### Mark-to-Market Valuation
 
@@ -84,26 +125,14 @@ docker run -p 8000:8000 findmy-fm
 
 ## Real-Time Updates
 
-The dashboard includes several auto-refresh mechanisms:
+The dashboard uses selective DOM updates instead of page refresh:
 
-1. **JavaScript Poll**: Every 10 seconds, the dashboard polls the API endpoints to fetch updated data
-2. **Full Page Refresh**: Every 30 seconds, the entire page reloads (useful for stylesheet/template changes)
-3. **Manual Refresh**: Click the "Refresh" button in the header to force an immediate update
+1. **WebSocket**: Real-time updates from server push data to specific DOM elements
+2. **Fallback Polling**: Every 30s for positions/pending, 60s for trades/risk
+3. **No Page Reload**: Form inputs preserved, no interruption to user workflow
+4. **Loading Spinner**: Visual feedback during background fetches
 
-To adjust refresh intervals, edit `templates/dashboard.html` and modify these lines:
-```javascript
-// Reload data every 10 seconds
-setInterval(() => {
-    loadSummary();
-    loadPositions();
-    loadTrades();
-}, 10000);
-
-// Full page refresh every 30 seconds
-setInterval(() => {
-    location.reload();
-}, 30000);
-```
+To adjust refresh intervals, edit `templates/dashboard.html` and modify the `setInterval` calls in the initialization section.
 
 ## API Endpoints
 
@@ -268,5 +297,5 @@ For production with thousands of trades:
 
 ---
 
-**Last Updated**: 2025-12-30  
-**Status**: ✅ Complete – Ready for Phase 3 (Binance Integration)
+**Last Updated**: 2026-01-12  
+**Status**: ✅ Complete – v0.11.0 (Tab-based UI + Selective Updates)

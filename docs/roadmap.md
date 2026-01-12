@@ -1,8 +1,8 @@
 # FINDMY – Project Roadmap
 
 **Last Updated:** January 2026  
-**Current Phase:** Phase 2 Complete – v0.7.0 Release  
-**Latest Release:** v0.7.0 (Performance & Security Hardening)
+**Current Phase:** Phase 2 Complete – v0.10.0 Release  
+**Latest Release:** v0.10.0 (KSS Pyramid DCA Strategy)
 
 ## Vision
 
@@ -223,6 +223,95 @@ FINDMY evolves from a **paper trading simulator** to a **production-grade tradin
 **Docs**: api.md, new security.md, roadmap updated.
 
 **Tests**: pytest (syntax fixed, coverage improved).
+
+---
+
+## v0.9.0: Production Readiness (Jan 2026)
+
+**Timeline**: January 2026
+
+**Completed Features** ✅:
+- [x] Repository audit and cleanup
+- [x] Documentation consolidation
+- [x] Removed empty placeholder directories
+- [x] Updated version references
+- [x] CI/CD verification
+
+---
+
+## v0.10.0: KSS Pyramid DCA Strategy (COMPLETE – Jan 2026)
+
+**Timeline**: January 2026
+
+**Completed Features** ✅:
+- [x] **Pyramid DCA Sessions**
+  - Automated position building with progressive orders
+  - Wave-based entries at decreasing price levels
+  - Quantity increases with each wave (pyramid pattern)
+  - Isolated fund management per session
+
+- [x] **Wave Generation**
+  - Formula: `qty(n) = (n + 1) × pip_size`
+  - Formula: `price(n) = entry × (1 - distance%)^n`
+  - Configurable max_waves, distance_pct
+  - Cost estimation before starting
+
+- [x] **Take Profit Automation**
+  - TP triggers when price > avg_price × (1 + tp_pct%)
+  - Automatic SELL order for full position
+  - Manual TP check via API endpoint
+
+- [x] **Session Management**
+  - Lifecycle: PENDING → ACTIVE → TP_TRIGGERED → COMPLETED
+  - Stop/restart capabilities
+  - Parameter adjustment mid-session
+  - Timeout handling for stale sessions
+
+- [x] **API Endpoints** (8 endpoints)
+  - POST `/kss/sessions` - Create session
+  - POST `/kss/sessions/{id}/start` - Start session
+  - POST `/kss/sessions/{id}/stop` - Stop session
+  - PATCH `/kss/sessions/{id}` - Adjust parameters
+  - GET `/kss/sessions` - List sessions
+  - DELETE `/kss/sessions/{id}` - Delete session
+  - POST `/kss/sessions/{id}/check-tp` - Check TP
+  - GET `/kss/summary` - Session summary
+
+- [x] **Database Integration**
+  - kss_sessions table with full state tracking
+  - kss_waves table for order history
+  - Migration script: `002_add_kss_tables_v0.10.0.py`
+
+- [x] **Dashboard Integration**
+  - KSS Pyramid Sessions section
+  - Summary cards (Total/Active/Pending)
+  - Sessions table with real-time status
+  - Create session modal form
+  - Start/Stop/Delete/Check-TP actions
+
+- [x] **Pending Orders Integration**
+  - Hooks for order approval events
+  - Fill event propagation to session
+  - Automatic next wave generation
+
+- [x] **Documentation**
+  - Comprehensive docs/kss.md
+  - API examples and best practices
+  - Configuration guide
+
+**Files Added**:
+- `src/findmy/kss/__init__.py`
+- `src/findmy/kss/pyramid.py` - Core session logic
+- `src/findmy/kss/manager.py` - Session lifecycle manager
+- `src/findmy/kss/models.py` - SQLAlchemy models
+- `src/findmy/kss/repository.py` - Database operations
+- `src/findmy/kss/routes.py` - FastAPI endpoints
+- `src/findmy/kss/hooks.py` - Event hooks
+- `db/migrations/002_add_kss_tables_v0.10.0.py`
+- `docs/kss.md`
+- `tests/test_kss.py`
+
+**Test Results**: Comprehensive tests for session logic, manager, and API ✅
 
 ---
 

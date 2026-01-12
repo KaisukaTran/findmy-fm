@@ -80,8 +80,14 @@ async def add_security_headers(request: Request, call_next):
 # v0.7.0: Import caching
 from services.cache.manager import cache_manager, CacheConfig
 
+# v0.10.0: Import KSS routes
+from src.findmy.kss.routes import router as kss_router
+
 # Include authentication routes
 app.include_router(auth_router)
+
+# v0.10.0: Include KSS routes
+app.include_router(kss_router)
 
 # v0.7.0: Initialize caching on startup
 @app.on_event("startup")

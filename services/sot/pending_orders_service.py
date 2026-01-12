@@ -7,6 +7,15 @@ import logging
 from services.sot.db import SessionLocal
 from services.sot.pending_orders import PendingOrder, PendingOrderStatus
 from services.risk import calculate_order_qty, check_all_risks
+from src.findmy.config import settings
+
+# v0.10.0: KSS hooks (lazy import to avoid circular deps)
+def _get_kss_hooks():
+    try:
+        from src.findmy.kss.hooks import on_order_approved, on_order_rejected
+        return on_order_approved, on_order_rejected
+    except ImportError:
+        return None, None
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +193,12 @@ def approve_order(order_id: int, reviewed_by: str = "user", note: Optional[str] 
                 db.commit()
         
         logger.info(f"Approved order {order_id}: {order.side} {order.quantity} {order.symbol}")
+        
+        # v0.10.0: Call KSS hook if this is a KSS order
+        on_approved, _ = _get_kss_hooks()
+        if on_approved:
+            on_approved(order_id, order.source_ref)
+        
         return order
     finally:
         db.close()
@@ -220,6 +235,12 @@ def reject_order(order_id: int, reviewed_by: str = "user", note: str = "") -> Pe
         db.refresh(order)
         
         logger.info(f"Rejected order {order_id}: {order.side} {order.quantity} {order.symbol}")
+        
+        # v0.10.0: Call KSS hook if this is a KSS order
+        _, on_rejected = _get_kss_hooks()
+        if on_rejected:
+            on_rejected(order_id, order.source_ref)
+        
         return order
     finally:
         db.close()

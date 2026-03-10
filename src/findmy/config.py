@@ -67,6 +67,30 @@ class Settings(BaseSettings):
         description="Maximum daily loss as % of account equity. Default: 5%"
     )
 
+    # Paper Trading Fund (v1.1.0)
+    initial_fund: float = Field(
+        default=10000.0,
+        description="Initial demo fund in USD. Default: $10,000"
+    )
+
+    # Transaction Cost Simulation (v1.1.0)
+    maker_fee_rate: float = Field(
+        default=0.0,
+        description="Maker fee rate (e.g. 0.001 = 0.1%). Default: 0 (disabled)"
+    )
+    taker_fee_rate: float = Field(
+        default=0.0,
+        description="Taker fee rate (e.g. 0.001 = 0.1%). Default: 0 (disabled)"
+    )
+    slippage_pct: float = Field(
+        default=0.0,
+        description="Max slippage as fraction of price (e.g. 0.0005 = 0.05%). Default: 0 (disabled)"
+    )
+    fill_pct: float = Field(
+        default=1.0,
+        description="Order fill percentage (1.0 = full fill, 0.5 = 50% partial). Default: 1.0"
+    )
+
     live_trading: bool = Field(
         default=False,
         description="Enable live trading on real exchange (default: paper trading)"

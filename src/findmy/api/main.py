@@ -479,6 +479,9 @@ class SummaryResponse(BaseModel):
     total_invested: float
     total_market_value: float = 0.0
     total_equity: float = 0.0
+    initial_fund: float = 10000.0
+    available_fund: float = 10000.0
+    fund_utilization_pct: float = 0.0
     last_trade_time: Optional[datetime] = None
     status: str
 
@@ -635,8 +638,12 @@ async def get_summary(request: Request, db: Session = Depends(get_db)):
         except Exception:
             last_trade_time = None
 
-        # Calculate total equity
+        # Calculate total equity and fund balance
         total_equity = total_invested + unrealized_pnl
+        from findmy.config import settings as _app_cfg
+        initial_fund = _app_cfg.initial_fund
+        available_fund = max(0.0, initial_fund - total_invested)
+        fund_utilization_pct = (total_invested / initial_fund * 100) if initial_fund > 0 else 0.0
 
         result = SummaryResponse(
             total_trades=int(total_trades),
@@ -645,6 +652,9 @@ async def get_summary(request: Request, db: Session = Depends(get_db)):
             total_invested=total_invested,
             total_market_value=total_market_value,
             total_equity=total_equity,
+            initial_fund=initial_fund,
+            available_fund=available_fund,
+            fund_utilization_pct=round(fund_utilization_pct, 2),
             last_trade_time=last_trade_time,
             status="✓ Active",
         )
@@ -660,6 +670,11 @@ async def get_summary(request: Request, db: Session = Depends(get_db)):
         return result
     except Exception:
         # Return empty summary if database is not initialized
+        try:
+            from findmy.config import settings as _app_cfg
+            _initial = _app_cfg.initial_fund
+        except Exception:
+            _initial = 10000.0
         return SummaryResponse(
             total_trades=0,
             realized_pnl=0.0,
@@ -667,6 +682,9 @@ async def get_summary(request: Request, db: Session = Depends(get_db)):
             total_invested=0.0,
             total_market_value=0.0,
             total_equity=0.0,
+            initial_fund=_initial,
+            available_fund=_initial,
+            fund_utilization_pct=0.0,
             last_trade_time=None,
             status="✓ Active",
         )

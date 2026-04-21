@@ -4,6 +4,11 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 import logging
 
+try:
+    import ccxt
+except ImportError:
+    ccxt = None  # type: ignore[assignment]
+
 from services.sot.db import SessionLocal
 from services.sot.pending_orders import PendingOrder, PendingOrderStatus
 from services.risk import calculate_order_qty, check_all_risks
@@ -173,24 +178,30 @@ def approve_order(order_id: int, reviewed_by: str = "user", note: Optional[str] 
         
         # v0.9.0: Live execution if enabled
         if settings.live_trading:
-            try:
-                exchange = ccxt.binance({
-                    'apiKey': settings.broker_api_key,
-                    'secret': settings.broker_api_secret.get_secret_value() if settings.broker_api_secret else None,
-                    'sandbox': True,  # Testnet
-                })
-                side = 'buy' if order.side == 'BUY' else 'sell'
-                result = exchange.create_market_order(
-                    symbol=order.symbol.replace('/', '/'),  # BTC/USD -> BTC/USD
-                    side=side,
-                    amount=order.quantity
-                )
-                order.live_order_id = result['id']
-                logger.info(f"Live order executed: {result['id']} for {order.symbol}")
-            except Exception as e:
-                logger.error(f"Live execution failed for order {order_id}: {e}")
-                order.note += f" | Live exec failed: {e}"
+            if ccxt is None:
+                logger.error("Live trading enabled but ccxt not installed. Install ccxt to use live trading.")
+                order.note = (order.note or "") + " | Live exec blocked: ccxt not installed"
                 db.commit()
+            else:
+                try:
+                    exchange = ccxt.binance({
+                        'apiKey': settings.broker_api_key,
+                        'secret': settings.broker_api_secret.get_secret_value() if settings.broker_api_secret else None,
+                        'sandbox': True,  # Testnet
+                    })
+                    side = 'buy' if order.side == 'BUY' else 'sell'
+                    result = exchange.create_market_order(
+                        symbol=order.symbol,
+                        side=side,
+                        amount=order.quantity
+                    )
+                    order.live_order_id = result['id']
+                    logger.info(f"Live order executed: {result['id']} for {order.symbol}")
+                    db.commit()
+                except Exception as e:
+                    logger.error(f"Live execution failed for order {order_id}: {e}")
+                    order.note = (order.note or "") + f" | Live exec failed: {e}"
+                    db.commit()
         
         logger.info(f"Approved order {order_id}: {order.side} {order.quantity} {order.symbol}")
         

@@ -7,10 +7,19 @@ Provides JWT-based authentication and authorization for API endpoints.
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
-import os
 
-# Configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
+from src.findmy.config import settings as _cfg
+from services.auth.password import hash_password, verify_password
+
+# Derive JWT secret from app settings – fail loudly if weak or default.
+_raw_secret = _cfg.app_secret_key.get_secret_value()
+if len(_raw_secret) < 32:
+    raise RuntimeError(
+        "APP_SECRET_KEY must be at least 32 characters. "
+        "Set a strong random value before starting the server."
+    )
+SECRET_KEY = _raw_secret
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 REFRESH_TOKEN_EXPIRE_DAYS = 30
@@ -52,10 +61,10 @@ class User:
 
 
 class UserInDB(User):
-    """User with password."""
-    def __init__(self, username: str, password: str, email: Optional[str] = None, full_name: Optional[str] = None, disabled: bool = False):
+    """User with bcrypt-hashed password."""
+    def __init__(self, username: str, password_hash: str, email: Optional[str] = None, full_name: Optional[str] = None, disabled: bool = False):
         super().__init__(username, email, full_name, disabled)
-        self.password = password
+        self.password_hash = password_hash
 
 
 def create_access_token(
@@ -103,19 +112,19 @@ def verify_token(token: str) -> Optional[TokenData]:
         return None
 
 
-# Demo user database (replace with real database in production)
-# Using plain text for demo; replace with hashed passwords in production
+# Demo user database – passwords stored as bcrypt hashes.
+# Replace with a real database in production (see Day 2 task in RUNBOOK).
 DEMO_USERS = {
     "trader1": UserInDB(
         username="trader1",
-        password="password123",  # v0.7.0: For demo only; use hashed passwords in production
+        password_hash=hash_password("password123"),
         email="trader1@findmy.io",
         full_name="Trader One",
         disabled=False,
     ),
     "trader2": UserInDB(
         username="trader2",
-        password="password456",  # v0.7.0: For demo only
+        password_hash=hash_password("password456"),
         email="trader2@findmy.io",
         full_name="Trader Two",
         disabled=False,
@@ -124,15 +133,12 @@ DEMO_USERS = {
 
 
 def authenticate_user(username: str, password: str) -> Optional[UserInDB]:
-    """Authenticate a user (demo implementation)."""
+    """Authenticate a user against the demo store."""
     if username not in DEMO_USERS:
         return None
-    
     user = DEMO_USERS[username]
-    # For demo: simple password comparison (use bcrypt in production)
-    if user.password != password:
+    if not verify_password(password, user.password_hash):
         return None
-    
     return user
 
 

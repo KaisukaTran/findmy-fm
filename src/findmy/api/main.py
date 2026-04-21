@@ -368,6 +368,8 @@ async def approve_pending_order(
     Returns:
         Updated pending order
     """
+    if is_halted():
+        raise HTTPException(status_code=503, detail="System is in emergency halt. Resume trading before approving orders.")
     try:
         start_time = time.time()
         order = approve_order(order_id, reviewed_by="user", note=note)
@@ -892,6 +894,41 @@ class ConnectionManager:
             except Exception:
                 # Connection may have closed, will be cleaned up
                 pass
+
+
+# ========================
+# EMERGENCY STOP
+# ========================
+
+_EMERGENCY_HALT: bool = False
+
+
+def is_halted() -> bool:
+    return _EMERGENCY_HALT
+
+
+@app.post("/api/emergency-stop")
+async def emergency_stop(current_user: dict = Depends(get_current_user)):
+    """Immediately halt all order approvals. Requires authentication."""
+    global _EMERGENCY_HALT
+    _EMERGENCY_HALT = True
+    logger.warning(f"EMERGENCY HALT activated by {current_user.get('sub', 'unknown')}")
+    return {"status": "halted", "message": "All order approvals are now blocked."}
+
+
+@app.post("/api/emergency-resume")
+async def emergency_resume(current_user: dict = Depends(get_current_user)):
+    """Resume normal operations after emergency halt. Requires authentication."""
+    global _EMERGENCY_HALT
+    _EMERGENCY_HALT = False
+    logger.warning(f"EMERGENCY HALT cleared by {current_user.get('sub', 'unknown')}")
+    return {"status": "active", "message": "Order approvals resumed."}
+
+
+@app.get("/api/system/status")
+async def system_status():
+    """Get current system halt state (public read)."""
+    return {"emergency_halt": _EMERGENCY_HALT}
 
 
 manager = ConnectionManager()

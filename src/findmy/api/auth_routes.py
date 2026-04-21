@@ -6,6 +6,8 @@ JWT-based authentication endpoints with rate limiting protection.
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from datetime import timedelta
+from typing import List
+from pydantic import BaseModel
 from services.auth.service import (
     authenticate_user,
     create_access_token,
@@ -15,8 +17,50 @@ from services.auth.service import (
     User,
 )
 from src.findmy.api.schemas import LoginRequest, TokenResponse, UserResponse
+from findmy.api.security import get_current_user
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
+
+
+# ── Admin user management ────────────────────────────────────────────────────
+
+class CreateUserRequest(BaseModel):
+    username: str
+    password: str
+    role: str = "trader"
+
+
+class UserListItem(BaseModel):
+    id: int
+    username: str
+    role: str
+    is_active: bool
+
+
+def _require_admin(current_user: dict = Depends(get_current_user)) -> dict:
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin role required")
+    return current_user
+
+
+@router.post("/admin/users", response_model=UserListItem, status_code=201)
+async def create_user(body: CreateUserRequest, _: dict = Depends(_require_admin)):
+    """Create a new user (admin only)."""
+    from services.auth.user_repository import create_user as db_create, get_by_username, ensure_table
+    ensure_table()
+    if get_by_username(body.username):
+        raise HTTPException(status_code=409, detail="Username already exists")
+    user = db_create(body.username, body.password, body.role)
+    return UserListItem(id=user.id, username=user.username, role=user.role, is_active=user.is_active)
+
+
+@router.get("/admin/users", response_model=List[UserListItem])
+async def list_users(_: dict = Depends(_require_admin)):
+    """List all users (admin only)."""
+    from services.auth.user_repository import list_users as db_list, ensure_table
+    ensure_table()
+    return [UserListItem(id=u.id, username=u.username, role=u.role, is_active=u.is_active)
+            for u in db_list()]
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -37,9 +81,10 @@ async def login(request: LoginRequest):
     
     # Create tokens
     access_token_expires = timedelta(minutes=60)
+    role = getattr(user, "role", "trader")
     access_token = create_access_token(
-        data={"sub": user.username, "scopes": ["read", "write"]},
-        expires_delta=access_token_expires
+        data={"sub": user.username, "scopes": ["read", "write"], "role": role},
+        expires_delta=access_token_expires,
     )
     refresh_token = create_refresh_token(data={"sub": user.username})
     

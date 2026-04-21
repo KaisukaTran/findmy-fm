@@ -112,39 +112,53 @@ def verify_token(token: str) -> Optional[TokenData]:
         return None
 
 
-# Demo user database – passwords stored as bcrypt hashes.
-# Replace with a real database in production (see Day 2 task in RUNBOOK).
-DEMO_USERS = {
-    "trader1": UserInDB(
-        username="trader1",
-        password_hash=hash_password("password123"),
-        email="trader1@findmy.io",
-        full_name="Trader One",
-        disabled=False,
-    ),
-    "trader2": UserInDB(
-        username="trader2",
-        password_hash=hash_password("password456"),
-        email="trader2@findmy.io",
-        full_name="Trader Two",
-        disabled=False,
-    ),
+def _db_user_to_model(db_user) -> UserInDB:
+    return UserInDB(
+        username=db_user.username,
+        password_hash=db_user.password_hash,
+        disabled=not db_user.is_active,
+    )
+
+
+_DEMO_USERS: dict[str, UserInDB] = {
+    "trader1": UserInDB(username="trader1", password_hash=hash_password("password123"),
+                        email="trader1@findmy.io", full_name="Trader One"),
+    "trader2": UserInDB(username="trader2", password_hash=hash_password("password456"),
+                        email="trader2@findmy.io", full_name="Trader Two"),
 }
 
 
+def _has_db_users() -> bool:
+    try:
+        from services.auth.user_repository import list_users
+        return bool(list_users())
+    except Exception:
+        return False
+
+
 def authenticate_user(username: str, password: str) -> Optional[UserInDB]:
-    """Authenticate a user against the demo store."""
-    if username not in DEMO_USERS:
-        return None
-    user = DEMO_USERS[username]
-    if not verify_password(password, user.password_hash):
-        return None
-    return user
+    """Authenticate against DB first; demo store fallback when DB is empty."""
+    if _has_db_users():
+        try:
+            from services.auth.user_repository import authenticate as db_auth
+            db_user = db_auth(username, password)
+            return _db_user_to_model(db_user) if db_user else None
+        except Exception:
+            return None
+    user = _DEMO_USERS.get(username)
+    if user and verify_password(password, user.password_hash):
+        return user
+    return None
 
 
 def get_user(username: str) -> Optional[UserInDB]:
-    """Get a user by username."""
-    if username in DEMO_USERS:
-        return DEMO_USERS[username]
-    return None
+    """Get user from DB, fallback to demo store."""
+    try:
+        from services.auth.user_repository import get_by_username
+        db_user = get_by_username(username)
+        if db_user:
+            return _db_user_to_model(db_user)
+    except Exception:
+        pass
+    return _DEMO_USERS.get(username)
 

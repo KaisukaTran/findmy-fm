@@ -82,8 +82,18 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
             detail="Token expired",
             headers={"WWW-Authenticate": "bearer"},
         )
-    
-    return token_data
+
+    # Decode role claim from token payload (added in Day-2 login)
+    role = "trader"
+    try:
+        from jose import jwt as _jwt
+        from services.auth.service import SECRET_KEY, ALGORITHM
+        payload = _jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        role = payload.get("role", "trader")
+    except Exception:
+        pass
+
+    return {"sub": token_data.sub, "scopes": token_data.scopes, "role": role}
 
 
 async def get_optional_user(request: Request) -> Optional[str]:

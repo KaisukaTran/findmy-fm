@@ -327,3 +327,82 @@ def count_pending() -> int:
         ).count()
     finally:
         db.close()
+
+
+def queue_ai_order(
+    symbol: str,
+    side: str,
+    quantity_usdt: float,
+    price: Optional[float] = None,
+    confidence: Optional[float] = None,
+    reasoning: Optional[str] = None,
+) -> tuple:
+    """
+    Queue an AI-generated order and auto-approve it if within ai_max_spend_usdt.
+    Uses current market price if price not provided.
+    Returns (PendingOrder | None, violation_str | None).
+    """
+    from services.sot.system_state import is_halted
+    if is_halted():
+        return None, "Emergency halt active"
+
+    # Resolve price
+    if price is None or price <= 0:
+        try:
+            from src.findmy.services.market_data import get_current_prices
+            prices = get_current_prices([symbol])
+            price = prices.get(symbol, 0.0)
+        except Exception:
+            price = 0.0
+
+    if price <= 0:
+        return None, "Cannot determine market price"
+
+    # Cap spend at ai_max_spend_usdt
+    max_usdt = min(quantity_usdt, settings.ai_max_spend_usdt)
+    quantity = max_usdt / price
+
+    db = SessionLocal()
+    try:
+        all_passed, violations = check_all_risks(symbol, quantity, db)
+        risk_note = "; ".join(violations) if violations else None
+
+        if not all_passed:
+            return None, risk_note
+
+        order = PendingOrder(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            price=price,
+            order_type="MARKET",
+            source="ai_agent",
+            source_ref="claude",
+            strategy_name="AI_AGENT",
+            confidence=confidence,
+            note=reasoning,
+            status=PendingOrderStatus.PENDING,
+            ai_trusted=True,
+        )
+        db.add(order)
+        db.commit()
+        db.refresh(order)
+
+        # Auto-approve AI-trusted orders within limit
+        order.status = PendingOrderStatus.APPROVED
+        order.reviewed_at = datetime.utcnow()
+        order.reviewed_by = "ai_agent"
+        db.commit()
+        db.refresh(order)
+
+        if settings.live_trading:
+            live_order_id = _execute_live_order(order)
+            if live_order_id:
+                order.live_order_id = live_order_id
+                db.commit()
+
+        logger.info(f"AI auto-approved order: {side} {quantity:.6f} {symbol} @ {price}")
+        return order, None
+
+    finally:
+        db.close()

@@ -1040,3 +1040,147 @@ async def websocket_dashboard(websocket: WebSocket):
         manager.disconnect(websocket)
     except Exception:
         manager.disconnect(websocket)
+
+
+# ========================
+# AI AGENT ROUTES
+# ========================
+
+@app.post("/api/ai/start")
+@limiter.limit("10/minute")
+async def ai_start(request: Request, current_user: dict = Depends(get_current_user)):
+    """Start the autonomous AI trading agent loop. Admin only."""
+    _require_admin(current_user)
+    from services.ai import agent_runner
+    started = agent_runner.start()
+    if not started:
+        raise HTTPException(status_code=409, detail="AI agent is already running")
+    # Record paper start date if not set
+    from services.ai.state import get_paper_start_date, set_paper_start_date
+    if not get_paper_start_date():
+        set_paper_start_date(datetime.utcnow().strftime("%Y-%m-%d"))
+    return {"status": "started", "mode": agent_runner.get_status()["mode"]}
+
+
+@app.post("/api/ai/stop")
+@limiter.limit("10/minute")
+async def ai_stop(request: Request, current_user: dict = Depends(get_current_user)):
+    """Stop the autonomous AI trading agent loop. Admin only."""
+    _require_admin(current_user)
+    from services.ai import agent_runner
+    stopped = agent_runner.stop()
+    if not stopped:
+        raise HTTPException(status_code=409, detail="AI agent is not running")
+    return {"status": "stopped"}
+
+
+@app.get("/api/ai/status")
+@limiter.limit("60/minute")
+async def ai_status(request: Request, current_user: dict = Depends(get_current_user)):
+    """Get current AI agent status, config, and today's activity."""
+    from services.ai import agent_runner
+    return agent_runner.get_status()
+
+
+@app.get("/api/ai/decisions")
+@limiter.limit("30/minute")
+async def ai_decisions(
+    request: Request,
+    limit: int = 50,
+    symbol: str = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """List recent AI trading decisions with reasoning."""
+    from services.ai.decision_log import get_decisions
+    return get_decisions(limit=min(limit, 200), symbol=symbol)
+
+
+@app.get("/api/ai/paper-report")
+@limiter.limit("10/minute")
+async def ai_paper_report(
+    request: Request,
+    days: int = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """Get AI paper trading performance report."""
+    from services.ai.paper_report import get_paper_report
+    from src.findmy.config import settings
+    return get_paper_report(days=days or settings.ai_paper_min_days)
+
+
+@app.post("/api/ai/promote-to-live")
+@limiter.limit("5/minute")
+async def ai_promote_to_live(request: Request, current_user: dict = Depends(get_current_user)):
+    """Promote AI agent from paper to live trading if performance gate passes. Admin only."""
+    _require_admin(current_user)
+    from services.ai.paper_report import promote_to_live
+    result = promote_to_live()
+    if not result["promoted"]:
+        raise HTTPException(status_code=400, detail={"eligible": False, "reasons": result["reasons"]})
+    return result
+
+
+# ── Consultant registry ───────────────────────────────────────────────────────
+
+@app.get("/api/ai/consultants")
+@limiter.limit("30/minute")
+async def list_consultants(request: Request, current_user: dict = Depends(get_current_user)):
+    """List all registered AI consultant agents."""
+    from services.ai.consultants.registry import list_consultants as _list
+    return _list()
+
+
+@app.post("/api/ai/consultants")
+@limiter.limit("10/minute")
+async def add_consultant(
+    request: Request,
+    body: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Register a new AI consultant agent. Admin only.
+    Body: {name, type: 'technical'|'llm', config: {}, enabled: true}
+    """
+    _require_admin(current_user)
+    from services.ai.consultants.registry import add_consultant as _add
+    name = body.get("name")
+    type_ = body.get("type", "llm")
+    config = body.get("config", {})
+    enabled = body.get("enabled", True)
+    if not name:
+        raise HTTPException(status_code=422, detail="name is required")
+    return _add(name, type_, config, enabled)
+
+
+@app.patch("/api/ai/consultants/{consultant_id}/toggle")
+@limiter.limit("10/minute")
+async def toggle_consultant(
+    request: Request,
+    consultant_id: int,
+    body: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    """Enable or disable a consultant agent. Admin only."""
+    _require_admin(current_user)
+    from services.ai.consultants.registry import toggle_consultant as _toggle
+    enabled = bool(body.get("enabled", True))
+    ok = _toggle(consultant_id, enabled)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Consultant not found")
+    return {"id": consultant_id, "enabled": enabled}
+
+
+@app.delete("/api/ai/consultants/{consultant_id}")
+@limiter.limit("10/minute")
+async def delete_consultant(
+    request: Request,
+    consultant_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """Remove a consultant agent. Admin only."""
+    _require_admin(current_user)
+    from services.ai.consultants.registry import remove_consultant as _remove
+    ok = _remove(consultant_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Consultant not found")
+    return {"deleted": True, "id": consultant_id}

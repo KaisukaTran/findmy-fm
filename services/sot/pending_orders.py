@@ -1,6 +1,6 @@
 """Pending Orders Model for manual approval workflow."""
 
-from sqlalchemy import Column, Integer, String, Float, DateTime, Enum, Text, Index
+from sqlalchemy import Column, Integer, String, Float, DateTime, Enum, Text, Index, Boolean
 from datetime import datetime
 from enum import Enum as PyEnum
 
@@ -58,7 +58,8 @@ class PendingOrder(Base):
     note = Column(Text, nullable=True)  # Reason for rejection or approval notes
     strategy_name = Column(String, nullable=True)  # If from strategy source
     confidence = Column(Float, nullable=True)  # Signal confidence if from strategy
-    
+    ai_trusted = Column(Boolean, nullable=False, default=False)  # AI auto-approve eligible
+
     def to_dict(self):
         """Convert to dictionary for JSON response."""
         return {
@@ -78,4 +79,5 @@ class PendingOrder(Base):
             "note": self.note,
             "strategy_name": self.strategy_name,
             "confidence": self.confidence,
+            "ai_trusted": self.ai_trusted,
         }

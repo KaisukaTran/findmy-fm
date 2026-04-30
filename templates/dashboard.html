@@ -63,6 +63,12 @@
             <i class="fas fa-layer-group"></i> KSS Pyramid
         </button>
     </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="ai-tab" data-bs-toggle="tab" data-bs-target="#ai" type="button" role="tab" onclick="loadAIStatus()">
+            <i class="fas fa-robot"></i> AI Agent
+            <span id="ai-running-badge" class="badge bg-success ms-1" style="display:none; font-size:0.65rem;">LIVE</span>
+        </button>
+    </li>
 </ul>
 
 <!-- ── Tab Content ── -->
@@ -449,6 +455,109 @@
 
     </div>
     <!-- END KSS TAB -->
+
+    <!-- ══════════════ AI AGENT TAB ══════════════ -->
+    <div class="tab-pane fade" id="ai" role="tabpanel">
+        <div class="row g-3 mb-3">
+
+            <!-- Control Panel -->
+            <div class="col-md-4">
+                <div class="card h-100" style="border:1px solid var(--border);">
+                    <div class="card-header d-flex align-items-center gap-2" style="background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;">
+                        <i class="fas fa-robot"></i><strong>AI Control Panel</strong>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3 text-center">
+                            <span id="ai-status-badge" class="badge fs-6 px-3 py-2 bg-secondary">Loading…</span>
+                        </div>
+                        <div class="mb-2 small text-muted">Mode: <strong id="ai-mode-label">—</strong></div>
+                        <div class="mb-2 small text-muted">Last action: <span id="ai-last-action" style="font-family:monospace;font-size:0.75rem;">—</span></div>
+                        <div class="mb-3 small text-muted">Model: <span id="ai-model">—</span></div>
+                        <div class="d-grid gap-2">
+                            <button id="ai-start-btn" class="btn btn-success btn-sm" onclick="aiControl('start')" disabled>
+                                <i class="fas fa-play"></i> Start AI Agent
+                            </button>
+                            <button id="ai-stop-btn" class="btn btn-danger btn-sm" onclick="aiControl('stop')" disabled>
+                                <i class="fas fa-stop"></i> Stop AI Agent
+                            </button>
+                        </div>
+                        <hr class="my-3">
+                        <div class="small">
+                            <div class="d-flex justify-content-between"><span>Today orders</span><strong id="ai-today-orders">—</strong></div>
+                            <div class="d-flex justify-content-between"><span>Today skipped</span><strong id="ai-today-skipped">—</strong></div>
+                            <div class="d-flex justify-content-between"><span>Daily target</span><strong id="ai-daily-target">—</strong></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Config & Consultants -->
+            <div class="col-md-4">
+                <div class="card h-100" style="border:1px solid var(--border);">
+                    <div class="card-header"><strong><i class="fas fa-sliders-h"></i> Configuration</strong></div>
+                    <div class="card-body small" id="ai-config-panel">
+                        <div class="text-muted">Loading…</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Paper Report -->
+            <div class="col-md-4">
+                <div class="card h-100" style="border:1px solid var(--border);">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <strong><i class="fas fa-file-alt"></i> Paper Report</strong>
+                        <button class="btn btn-xs btn-outline-success" style="font-size:0.7rem;padding:2px 8px;" onclick="promoteLive()" id="promote-btn">
+                            Promote → Live
+                        </button>
+                    </div>
+                    <div class="card-body small" id="ai-paper-panel">
+                        <div class="text-muted">Loading…</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- AI Decisions Log -->
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <strong><i class="fas fa-history"></i> AI Decision Log</strong>
+                <button class="btn btn-sm btn-outline-primary" onclick="loadAIDecisions()">Refresh</button>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover mb-0" style="font-size:0.8rem;">
+                        <thead class="table-dark">
+                            <tr><th>Time</th><th>Symbol</th><th>Signal</th><th>Conf</th><th>Action</th><th>Reasoning</th></tr>
+                        </thead>
+                        <tbody id="ai-decisions-tbody">
+                            <tr><td colspan="6" class="text-center text-muted py-3">No decisions yet</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Consultants -->
+        <div class="card mt-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <strong><i class="fas fa-users"></i> Consultant Agents</strong>
+                <button class="btn btn-sm btn-outline-primary" onclick="showAddConsultant()">+ Add</button>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0" style="font-size:0.8rem;">
+                        <thead class="table-dark">
+                            <tr><th>Name</th><th>Type</th><th>Status</th><th>Actions</th></tr>
+                        </thead>
+                        <tbody id="consultants-tbody">
+                            <tr><td colspan="4" class="text-center text-muted py-3">No consultants registered</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- END AI TAB -->
 
 </div>
 <!-- END Tab Content -->
@@ -1084,6 +1193,166 @@ function renderKSSChart(s) {
     // Polling fallback — 30s for hot data, 60s for slow data
     setInterval(() => { loadSummary(); loadPositions(); loadPendingOrders(); loadKSSSessions(); }, 30000);
     setInterval(() => { loadTrades(); loadRiskMetrics(); }, 60000);
+    setInterval(() => { if (document.getElementById('ai')?.classList.contains('show')) loadAIStatus(); }, 15000);
 })();
+
+// ── AI Agent UI ───────────────────────────────────────────────────────────────
+
+async function loadAIStatus() {
+    try {
+        const token = localStorage.getItem('auth_token') || '';
+        const r = await fetch('/api/ai/status', { headers: token ? { Authorization: 'Bearer ' + token } : {} });
+        if (!r.ok) return;
+        const d = await r.json();
+        const running = d.running;
+
+        document.getElementById('ai-status-badge').textContent = running ? (d.mode === 'live' ? '⚡ RUNNING (LIVE)' : '✅ RUNNING (PAPER)') : '⏹ STOPPED';
+        document.getElementById('ai-status-badge').className = 'badge fs-6 px-3 py-2 ' + (running ? 'bg-success' : 'bg-secondary');
+        document.getElementById('ai-running-badge').style.display = running ? '' : 'none';
+        document.getElementById('ai-mode-label').textContent = d.mode || '—';
+        document.getElementById('ai-last-action').textContent = d.last_action || '—';
+        document.getElementById('ai-model').textContent = d.config?.model || '—';
+        document.getElementById('ai-start-btn').disabled = running;
+        document.getElementById('ai-stop-btn').disabled = !running;
+
+        const t = d.today || {};
+        document.getElementById('ai-today-orders').textContent = t.orders_submitted ?? 0;
+        document.getElementById('ai-today-skipped').textContent = t.orders_skipped ?? 0;
+        document.getElementById('ai-daily-target').textContent = t.target_usdt != null ? '$' + t.target_usdt.toFixed(2) + ' (' + t.target_pct + '%)' : '—';
+
+        const cfg = d.config || {};
+        document.getElementById('ai-config-panel').innerHTML = `
+            <table class="table table-sm table-borderless mb-0">
+                <tr><td class="text-muted">Confidence threshold</td><td><strong>${cfg.confidence_threshold ?? '—'}</strong></td></tr>
+                <tr><td class="text-muted">Max spend / order</td><td><strong>$${cfg.max_spend_usdt ?? '—'}</strong></td></tr>
+                <tr><td class="text-muted">Loop interval</td><td><strong>${cfg.loop_interval_seconds ?? '—'}s</strong></td></tr>
+                <tr><td class="text-muted">Watchlist</td><td><strong>${(cfg.watchlist || []).join(', ')}</strong></td></tr>
+            </table>`;
+
+        loadAIDecisions();
+        loadConsultants();
+        loadPaperReport();
+    } catch(e) { console.warn('AI status error', e); }
+}
+
+async function aiControl(action) {
+    const token = localStorage.getItem('auth_token') || '';
+    const btn = document.getElementById('ai-' + action + '-btn');
+    btn.disabled = true;
+    try {
+        const r = await fetch('/api/ai/' + action, {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + token }
+        });
+        const d = await r.json();
+        if (!r.ok) { alert('Error: ' + (d.detail || JSON.stringify(d))); }
+        await loadAIStatus();
+    } finally { btn.disabled = false; }
+}
+
+async function loadAIDecisions() {
+    try {
+        const token = localStorage.getItem('auth_token') || '';
+        const r = await fetch('/api/ai/decisions?limit=20', { headers: token ? { Authorization: 'Bearer ' + token } : {} });
+        if (!r.ok) return;
+        const rows = await r.json();
+        const tbody = document.getElementById('ai-decisions-tbody');
+        if (!rows.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No decisions yet</td></tr>'; return; }
+        tbody.innerHTML = rows.map(d => {
+            const sigColor = d.signal === 'BUY' ? 'text-success' : d.signal === 'SELL' ? 'text-danger' : 'text-muted';
+            const actionColor = d.action === 'ORDER_SUBMITTED' ? 'text-success' : d.action === 'SKIPPED' ? 'text-muted' : 'text-warning';
+            return `<tr>
+                <td style="white-space:nowrap">${(d.created_at||'').replace('T',' ').substring(0,16)}</td>
+                <td><strong>${d.symbol}</strong></td>
+                <td class="${sigColor}"><strong>${d.signal}</strong></td>
+                <td>${d.confidence != null ? (d.confidence*100).toFixed(0)+'%' : '—'}</td>
+                <td class="${actionColor} small">${d.action}</td>
+                <td class="text-muted small" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(d.reasoning||'').replace(/"/g,"'")}">
+                    ${d.reasoning || '—'}
+                </td>
+            </tr>`;
+        }).join('');
+    } catch(e) {}
+}
+
+async function loadConsultants() {
+    try {
+        const token = localStorage.getItem('auth_token') || '';
+        const r = await fetch('/api/ai/consultants', { headers: token ? { Authorization: 'Bearer ' + token } : {} });
+        if (!r.ok) return;
+        const rows = await r.json();
+        const tbody = document.getElementById('consultants-tbody');
+        if (!rows.length) { tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-2">No consultants registered</td></tr>'; return; }
+        tbody.innerHTML = rows.map(c => `<tr>
+            <td><strong>${c.name}</strong></td>
+            <td><span class="badge bg-secondary">${c.type}</span></td>
+            <td>${c.enabled ? '<span class="badge bg-success">Enabled</span>' : '<span class="badge bg-secondary">Disabled</span>'}</td>
+            <td>
+                <button class="btn btn-xs btn-outline-${c.enabled?'warning':'success'}" style="font-size:0.7rem;padding:1px 6px;"
+                    onclick="toggleConsultant(${c.id},${!c.enabled})">${c.enabled?'Disable':'Enable'}</button>
+                <button class="btn btn-xs btn-outline-danger" style="font-size:0.7rem;padding:1px 6px;"
+                    onclick="deleteConsultant(${c.id})">Delete</button>
+            </td>
+        </tr>`).join('');
+    } catch(e) {}
+}
+
+async function loadPaperReport() {
+    try {
+        const token = localStorage.getItem('auth_token') || '';
+        const r = await fetch('/api/ai/paper-report', { headers: token ? { Authorization: 'Bearer ' + token } : {} });
+        if (!r.ok) return;
+        const d = await r.json();
+        document.getElementById('ai-paper-panel').innerHTML = `
+            <table class="table table-sm table-borderless mb-0">
+                <tr><td class="text-muted">Period</td><td><strong>${d.period_days} days</strong></td></tr>
+                <tr><td class="text-muted">Paper start</td><td><strong>${d.paper_start_date||'Not started'}</strong></td></tr>
+                <tr><td class="text-muted">Orders submitted</td><td><strong>${d.orders_submitted}</strong></td></tr>
+                <tr><td class="text-muted">Orders skipped</td><td><strong>${d.orders_skipped}</strong></td></tr>
+                <tr><td class="text-muted">Avg/day</td><td><strong>${d.avg_orders_per_day}</strong></td></tr>
+                <tr><td class="text-muted">Win rate</td><td><strong>${d.estimated_win_rate!=null?(d.estimated_win_rate*100).toFixed(1)+'%':'Pending data'}</strong></td></tr>
+            </table>
+            <div class="text-muted mt-2" style="font-size:0.7rem;">${d.note||''}</div>`;
+    } catch(e) {}
+}
+
+async function promoteLive() {
+    if (!confirm('Promote AI agent from paper to live mode? This requires you to also set LIVE_TRADING=true and restart the server.')) return;
+    const token = localStorage.getItem('auth_token') || '';
+    const r = await fetch('/api/ai/promote-to-live', { method: 'POST', headers: { Authorization: 'Bearer ' + token } });
+    const d = await r.json();
+    if (r.ok) { alert('Promoted! ' + (d.message || '')); loadAIStatus(); }
+    else { alert('Cannot promote: ' + JSON.stringify(d.detail || d)); }
+}
+
+async function toggleConsultant(id, enabled) {
+    const token = localStorage.getItem('auth_token') || '';
+    await fetch('/api/ai/consultants/' + id + '/toggle', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ enabled })
+    });
+    loadConsultants();
+}
+
+async function deleteConsultant(id) {
+    if (!confirm('Delete this consultant?')) return;
+    const token = localStorage.getItem('auth_token') || '';
+    await fetch('/api/ai/consultants/' + id, { method: 'DELETE', headers: { Authorization: 'Bearer ' + token } });
+    loadConsultants();
+}
+
+function showAddConsultant() {
+    const name = prompt('Consultant name:');
+    if (!name) return;
+    const type = prompt('Type (technical / llm):', 'technical');
+    if (!type) return;
+    const token = localStorage.getItem('auth_token') || '';
+    fetch('/api/ai/consultants', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ name, type, config: {}, enabled: true })
+    }).then(() => loadConsultants());
+}
 </script>
 {% endblock %}

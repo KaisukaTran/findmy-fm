@@ -12,6 +12,8 @@ services:
       - SOT_DATABASE_URL=sqlite:////app/data/findmy_fm_paper.db
       - DATABASE_URL=sqlite:////app/data/findmy_fm_paper.db
       - WORKERS=4
+      # Required — set in .env or environment:
+      # - APP_SECRET_KEY=<strong-random-32+-chars>
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
@@ -23,3 +25,31 @@ services:
       resources:
         limits:
           memory: 512M
+
+  # Optional monitoring stack — enable with: docker compose --profile monitoring up
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    profiles: ["monitoring"]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring:/etc/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=15d"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    profiles: ["monitoring"]
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+    restart: unless-stopped
+
+volumes:
+  grafana_data:

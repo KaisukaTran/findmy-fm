@@ -120,12 +120,27 @@ def _db_user_to_model(db_user) -> UserInDB:
     )
 
 
-_DEMO_USERS: dict[str, UserInDB] = {
-    "trader1": UserInDB(username="trader1", password_hash=hash_password("password123"),
-                        email="trader1@findmy.io", full_name="Trader One"),
-    "trader2": UserInDB(username="trader2", password_hash=hash_password("password456"),
-                        email="trader2@findmy.io", full_name="Trader Two"),
+_DEMO_RAW = {
+    "trader1": ("password123", "trader1@findmy.io", "Trader One"),
+    "trader2": ("password456", "trader2@findmy.io", "Trader Two"),
 }
+_DEMO_USERS: dict[str, UserInDB] = {}  # populated lazily on first auth attempt
+
+
+def _get_demo_users() -> dict[str, UserInDB]:
+    """Build demo user dict on first use — avoids 300ms bcrypt at import time."""
+    global _DEMO_USERS
+    if not _DEMO_USERS:
+        _DEMO_USERS = {
+            username: UserInDB(
+                username=username,
+                password_hash=hash_password(pw),
+                email=email,
+                full_name=name,
+            )
+            for username, (pw, email, name) in _DEMO_RAW.items()
+        }
+    return _DEMO_USERS
 
 
 def _has_db_users() -> bool:
@@ -145,7 +160,7 @@ def authenticate_user(username: str, password: str) -> Optional[UserInDB]:
             return _db_user_to_model(db_user) if db_user else None
         except Exception:
             return None
-    user = _DEMO_USERS.get(username)
+    user = _get_demo_users().get(username)
     if user and verify_password(password, user.password_hash):
         return user
     return None
@@ -160,5 +175,5 @@ def get_user(username: str) -> Optional[UserInDB]:
             return _db_user_to_model(db_user)
     except Exception:
         pass
-    return _DEMO_USERS.get(username)
+    return _get_demo_users().get(username)
 

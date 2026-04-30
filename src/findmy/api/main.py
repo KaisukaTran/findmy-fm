@@ -18,6 +18,7 @@ from findmy.services.strategy_executor import StrategyExecutor
 from services.sot.pending_orders_service import (
     queue_order, get_pending_orders, approve_order, reject_order, count_pending
 )
+from services.sot.system_state import is_halted, set_halt
 
 # v0.7.0: Import security middleware
 from findmy.api.security import (
@@ -900,35 +901,34 @@ class ConnectionManager:
 # EMERGENCY STOP
 # ========================
 
-_EMERGENCY_HALT: bool = False
-
-
-def is_halted() -> bool:
-    return _EMERGENCY_HALT
+def _require_admin(user: dict) -> None:
+    if user.get("role") != "admin":
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Admin role required")
 
 
 @app.post("/api/emergency-stop")
 async def emergency_stop(current_user: dict = Depends(get_current_user)):
-    """Immediately halt all order approvals. Requires authentication."""
-    global _EMERGENCY_HALT
-    _EMERGENCY_HALT = True
+    """Halt all order approvals across all workers. Admin only."""
+    _require_admin(current_user)
+    set_halt(True)
     logger.warning(f"EMERGENCY HALT activated by {current_user.get('sub', 'unknown')}")
     return {"status": "halted", "message": "All order approvals are now blocked."}
 
 
 @app.post("/api/emergency-resume")
 async def emergency_resume(current_user: dict = Depends(get_current_user)):
-    """Resume normal operations after emergency halt. Requires authentication."""
-    global _EMERGENCY_HALT
-    _EMERGENCY_HALT = False
+    """Resume normal operations. Admin only."""
+    _require_admin(current_user)
+    set_halt(False)
     logger.warning(f"EMERGENCY HALT cleared by {current_user.get('sub', 'unknown')}")
     return {"status": "active", "message": "Order approvals resumed."}
 
 
 @app.get("/api/system/status")
 async def system_status():
-    """Get current system halt state (public read)."""
-    return {"emergency_halt": _EMERGENCY_HALT}
+    """Get current system halt state (public read, DB-backed)."""
+    return {"emergency_halt": is_halted()}
 
 
 manager = ConnectionManager()

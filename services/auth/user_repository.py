@@ -1,7 +1,8 @@
-"""User repository – CRUD against the users table in the SOT database."""
+"""User repository – CRUD against the users table in the main DB."""
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 from typing import Optional
@@ -9,22 +10,41 @@ from dataclasses import dataclass
 
 from services.auth.password import hash_password, verify_password
 
-# Reuse same DB file as SOT
-_DB_PATH = Path("db/sot.db")
+
+def _db_path() -> str:
+    """Resolve DB path from env vars — same logic as alembic/env.py."""
+    url = (
+        os.getenv("DATABASE_URL")
+        or os.getenv("SOT_DATABASE_URL")
+        or "sqlite:///./data/findmy_fm_paper.db"
+    )
+    if url.startswith("sqlite:///"):
+        return url[len("sqlite:///"):]
+    return "./data/findmy_fm_paper.db"
 
 
 def _conn() -> sqlite3.Connection:
-    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(str(_DB_PATH))
+    path = _db_path()
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(path)
     con.row_factory = sqlite3.Row
     return con
 
 
 def ensure_table() -> None:
-    """Create users table if it doesn't exist (idempotent)."""
-    sql = Path("db/migrations/007_users.sql").read_text()
+    """Ensure users table exists — Alembic revision 0008 owns this schema."""
     with _conn() as con:
-        con.executescript(sql)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'trader',
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        con.commit()
 
 
 @dataclass

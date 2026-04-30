@@ -1,17 +1,11 @@
 """Paper trading performance report and live promotion gate."""
 
-import sqlite3
-import os
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Optional
 
 from src.findmy.config import settings
-
-
-def _db_path() -> str:
-    url = os.getenv("DATABASE_URL") or os.getenv("SOT_DATABASE_URL") or "sqlite:///./data/findmy_fm_paper.db"
-    return url[len("sqlite:///"):] if url.startswith("sqlite:///") else "./data/findmy_fm_paper.db"
+from ._db import read_connect
+from .state import get_paper_start_date
 
 
 def get_paper_report(days: Optional[int] = None) -> dict:
@@ -19,19 +13,15 @@ def get_paper_report(days: Optional[int] = None) -> dict:
     Compute paper trading performance metrics for the AI agent.
     Uses ai_decision_log + pending_orders to calculate outcomes.
     """
-    from .state import get_paper_start_date
-
     if days is None:
         days = settings.ai_paper_min_days
 
     cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
-    path = _db_path()
 
-    if not Path(path).exists():
-        return _empty_report(days)
+    with read_connect() as con:
+        if con is None:
+            return _empty_report(days)
 
-    with sqlite3.connect(path) as con:
-        # Count AI-submitted orders in period
         submitted = con.execute(
             "SELECT COUNT(*) FROM ai_decision_log WHERE action='ORDER_SUBMITTED' AND created_at >= ?",
             (cutoff,),
@@ -42,7 +32,6 @@ def get_paper_report(days: Optional[int] = None) -> dict:
             (cutoff,),
         ).fetchone()[0]
 
-        # Get approved AI orders with PnL from pending_orders join trade data
         orders = con.execute(
             """
             SELECT po.symbol, po.side, po.quantity, po.price, po.created_at
@@ -122,7 +111,12 @@ def check_promotion_eligibility() -> dict:
 
 
 def promote_to_live() -> dict:
-    """Promote AI agent to live trading if eligible."""
+    """
+    Promote AI agent to live trading if eligible.
+    Sets ai_agent_state.mode='live'. queue_ai_order() requires both
+    settings.live_trading AND mode='live' to actually send to exchange,
+    so this is a true runtime gate (no settings reload needed).
+    """
     check = check_promotion_eligibility()
     if not check["eligible"]:
         return {"promoted": False, "reasons": check["reasons"]}
@@ -130,14 +124,16 @@ def promote_to_live() -> dict:
     from .state import set_mode
     set_mode("live")
 
-    # Enable live trading in settings requires restart or dynamic config
-    # For now: set DB flag and return instructions
+    note = ""
+    if not settings.live_trading:
+        note = (
+            " Note: settings.live_trading is currently False — orders will continue "
+            "to run in paper mode. Set LIVE_TRADING=true and restart to enable real exchange execution."
+        )
+
     return {
         "promoted": True,
-        "message": (
-            "Mode set to 'live' in DB. "
-            "Set LIVE_TRADING=true and restart the server to activate real order execution."
-        ),
+        "message": "AI mode set to 'live'." + note,
     }
 
 

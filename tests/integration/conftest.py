@@ -17,6 +17,7 @@ sys.path.insert(0, str(_root / "src"))
 
 # Set required env vars BEFORE any app imports
 os.environ.setdefault("APP_SECRET_KEY", "integration-test-secret-key-32chars!")
+os.environ.setdefault("ANTHROPIC_API_KEY", "sk-test-fake-key-for-integration-tests")
 
 # Point all DB connections at a temp file for this session
 _tmp_db = tempfile.mktemp(suffix=".db", prefix="findmy_test_")

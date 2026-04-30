@@ -1,16 +1,10 @@
 """AI decision audit log — persists every AI analysis and action to DB."""
 
-import sqlite3
 import json
-import os
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
-
-def _db_path() -> str:
-    url = os.getenv("DATABASE_URL") or os.getenv("SOT_DATABASE_URL") or "sqlite:///./data/findmy_fm_paper.db"
-    return url[len("sqlite:///"):] if url.startswith("sqlite:///") else "./data/findmy_fm_paper.db"
+from ._db import connect, read_connect
 
 
 def log_decision(
@@ -24,9 +18,7 @@ def log_decision(
     market_context: Optional[dict] = None,
 ) -> int:
     """Insert one AI decision record. Returns inserted row id."""
-    path = _db_path()
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as con:
+    with connect() as con:
         cur = con.execute(
             """
             INSERT INTO ai_decision_log
@@ -42,17 +34,13 @@ def log_decision(
                 datetime.utcnow().isoformat(),
             ),
         )
-        con.commit()
         return cur.lastrowid
 
 
 def get_decisions(limit: int = 50, symbol: Optional[str] = None) -> list[dict]:
-    """Fetch recent AI decisions."""
-    path = _db_path()
-    if not Path(path).exists():
-        return []
-    with sqlite3.connect(path) as con:
-        con.row_factory = sqlite3.Row
+    with read_connect() as con:
+        if con is None:
+            return []
         if symbol:
             rows = con.execute(
                 "SELECT * FROM ai_decision_log WHERE symbol=? ORDER BY created_at DESC LIMIT ?",
@@ -63,17 +51,15 @@ def get_decisions(limit: int = 50, symbol: Optional[str] = None) -> list[dict]:
                 "SELECT * FROM ai_decision_log ORDER BY created_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
-    return [dict(r) for r in rows]
+        return [dict(r) for r in rows]
 
 
 def get_daily_ai_pnl(date_str: Optional[str] = None) -> dict:
-    """Aggregate AI decision outcomes for a given date (YYYY-MM-DD)."""
     if date_str is None:
         date_str = datetime.utcnow().strftime("%Y-%m-%d")
-    path = _db_path()
-    if not Path(path).exists():
-        return {"date": date_str, "orders_submitted": 0, "orders_skipped": 0}
-    with sqlite3.connect(path) as con:
+    with read_connect() as con:
+        if con is None:
+            return {"date": date_str, "orders_submitted": 0, "orders_skipped": 0}
         submitted = con.execute(
             "SELECT COUNT(*) FROM ai_decision_log WHERE action='ORDER_SUBMITTED' AND created_at LIKE ?",
             (f"{date_str}%",),
@@ -83,3 +69,24 @@ def get_daily_ai_pnl(date_str: Optional[str] = None) -> dict:
             (f"{date_str}%",),
         ).fetchone()[0]
     return {"date": date_str, "orders_submitted": submitted, "orders_skipped": skipped}
+
+
+def sum_daily_ai_spend_usdt(date_str: Optional[str] = None) -> float:
+    """Sum approved AI orders' notional value (qty * price) for the given day."""
+    if date_str is None:
+        date_str = datetime.utcnow().strftime("%Y-%m-%d")
+    with read_connect() as con:
+        if con is None:
+            return 0.0
+        # Status names use SQLAlchemy Enum default (uppercase)
+        row = con.execute(
+            """
+            SELECT COALESCE(SUM(quantity * price), 0)
+            FROM pending_orders
+            WHERE source = 'ai_agent'
+              AND status = 'APPROVED'
+              AND created_at LIKE ?
+            """,
+            (f"{date_str}%",),
+        ).fetchone()
+        return float(row[0] or 0.0)

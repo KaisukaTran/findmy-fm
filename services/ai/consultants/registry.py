@@ -2,32 +2,28 @@
 
 import sqlite3
 import json
-import os
 import logging
-from pathlib import Path
+from datetime import datetime
+
 from .base import ConsultantAgent
+from .._db import connect, read_connect
 
 logger = logging.getLogger(__name__)
 
 
-def _db_path() -> str:
-    url = os.getenv("DATABASE_URL") or os.getenv("SOT_DATABASE_URL") or "sqlite:///./data/findmy_fm_paper.db"
-    return url[len("sqlite:///"):] if url.startswith("sqlite:///") else "./data/findmy_fm_paper.db"
+class DuplicateConsultantError(ValueError):
+    """Raised when a consultant with the same name already exists."""
 
 
 def get_enabled_consultants() -> list[ConsultantAgent]:
     """Load and instantiate all enabled consultant agents from DB."""
-    path = _db_path()
-    if not Path(path).exists():
-        return []
-    try:
-        with sqlite3.connect(path) as con:
-            con.row_factory = sqlite3.Row
-            rows = con.execute(
-                "SELECT * FROM ai_consultants WHERE enabled=1"
-            ).fetchall()
-    except Exception:
-        return []
+    with read_connect() as con:
+        if con is None:
+            return []
+        try:
+            rows = con.execute("SELECT * FROM ai_consultants WHERE enabled=1").fetchall()
+        except sqlite3.OperationalError:
+            return []
 
     agents = []
     for row in rows:
@@ -53,46 +49,38 @@ def _build(name: str, type_: str, config: dict) -> ConsultantAgent | None:
 
 
 def list_consultants() -> list[dict]:
-    path = _db_path()
-    if not Path(path).exists():
-        return []
-    with sqlite3.connect(path) as con:
-        con.row_factory = sqlite3.Row
-        rows = con.execute("SELECT * FROM ai_consultants ORDER BY id").fetchall()
+    with read_connect() as con:
+        if con is None:
+            return []
+        try:
+            rows = con.execute("SELECT * FROM ai_consultants ORDER BY id").fetchall()
+        except sqlite3.OperationalError:
+            return []
     return [dict(r) for r in rows]
 
 
 def add_consultant(name: str, type_: str, config: dict, enabled: bool = True) -> dict:
-    from datetime import datetime
-    path = _db_path()
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as con:
-        con.execute(
-            "INSERT INTO ai_consultants(name, type, config_json, enabled, created_at) VALUES(?,?,?,?,?)",
-            (name, type_, json.dumps(config), 1 if enabled else 0, datetime.utcnow().isoformat()),
-        )
-        con.commit()
+    try:
+        with connect() as con:
+            con.execute(
+                "INSERT INTO ai_consultants(name, type, config_json, enabled, created_at) VALUES(?,?,?,?,?)",
+                (name, type_, json.dumps(config), 1 if enabled else 0, datetime.utcnow().isoformat()),
+            )
+    except sqlite3.IntegrityError as e:
+        raise DuplicateConsultantError(f"Consultant '{name}' already exists") from e
     return {"name": name, "type": type_, "enabled": enabled}
 
 
 def toggle_consultant(consultant_id: int, enabled: bool) -> bool:
-    path = _db_path()
-    if not Path(path).exists():
-        return False
-    with sqlite3.connect(path) as con:
+    with connect() as con:
         cur = con.execute(
             "UPDATE ai_consultants SET enabled=? WHERE id=?",
             (1 if enabled else 0, consultant_id),
         )
-        con.commit()
-    return cur.rowcount > 0
+        return cur.rowcount > 0
 
 
 def remove_consultant(consultant_id: int) -> bool:
-    path = _db_path()
-    if not Path(path).exists():
-        return False
-    with sqlite3.connect(path) as con:
+    with connect() as con:
         cur = con.execute("DELETE FROM ai_consultants WHERE id=?", (consultant_id,))
-        con.commit()
-    return cur.rowcount > 0
+        return cur.rowcount > 0

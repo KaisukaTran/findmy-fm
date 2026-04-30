@@ -338,11 +338,15 @@ def queue_ai_order(
     reasoning: Optional[str] = None,
 ) -> tuple:
     """
-    Queue an AI-generated order and auto-approve it if within ai_max_spend_usdt.
+    Queue an AI-generated order and auto-approve it if within ai_max_spend_usdt
+    AND today's cumulative AI spend has not exceeded the daily budget.
     Uses current market price if price not provided.
     Returns (PendingOrder | None, violation_str | None).
     """
     from services.sot.system_state import is_halted
+    from services.ai.decision_log import sum_daily_ai_spend_usdt
+    from services.ai.state import get_mode
+
     if is_halted():
         return None, "Emergency halt active"
 
@@ -358,17 +362,35 @@ def queue_ai_order(
     if price <= 0:
         return None, "Cannot determine market price"
 
-    # Cap spend at ai_max_spend_usdt
+    # Per-order cap
     max_usdt = min(quantity_usdt, settings.ai_max_spend_usdt)
+
+    # Daily cumulative cap: 10x per-order = soft daily budget
+    daily_budget = settings.ai_max_spend_usdt * 10
+    spent_today = sum_daily_ai_spend_usdt()
+    if spent_today + max_usdt > daily_budget:
+        return None, (
+            f"Daily AI spend cap reached: ${spent_today:.0f} spent, "
+            f"would add ${max_usdt:.0f}, budget ${daily_budget:.0f}"
+        )
+
     quantity = max_usdt / price
 
     db = SessionLocal()
     try:
+        # Risk checks (position size, daily loss, etc.)
         all_passed, violations = check_all_risks(symbol, quantity, db)
-        risk_note = "; ".join(violations) if violations else None
-
         if not all_passed:
-            return None, risk_note
+            return None, "; ".join(violations)
+
+        # Circuit breaker (orders/min, etc.) — same as manual approval path
+        try:
+            from services.trading.circuit_breaker import check as cb_check
+            cb = cb_check(symbol, quantity, price)
+            if not cb.allowed:
+                return None, "Circuit breaker: " + "; ".join(cb.violations)
+        except ImportError:
+            pass
 
         order = PendingOrder(
             symbol=symbol,
@@ -395,7 +417,9 @@ def queue_ai_order(
         db.commit()
         db.refresh(order)
 
-        if settings.live_trading:
+        # Live execution gated on BOTH global flag AND AI mode
+        ai_live = get_mode() == "live"
+        if settings.live_trading and ai_live:
             live_order_id = _execute_live_order(order)
             if live_order_id:
                 order.live_order_id = live_order_id

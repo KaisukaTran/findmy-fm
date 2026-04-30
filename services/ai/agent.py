@@ -71,9 +71,11 @@ class AITradingAgent:
             }
         ]
 
-        # Agentic loop: max 5 tool-use rounds to prevent runaway
-        for _ in range(5):
-            response = client.messages.create(
+        max_rounds = 5
+        last_response = None
+        hit_max = False
+        for round_idx in range(max_rounds):
+            last_response = client.messages.create(
                 model=settings.ai_model,
                 max_tokens=1024,
                 system=TRADING_SYSTEM_PROMPT,
@@ -81,15 +83,19 @@ class AITradingAgent:
                 messages=messages,
             )
 
-            # Collect all tool uses in this response
-            tool_uses = [b for b in response.content if b.type == "tool_use"]
-
-            if not tool_uses:
-                # Final text response — extract JSON signal
+            if last_response.stop_reason != "tool_use":
                 break
 
-            # Execute all tool calls, append results
-            messages.append({"role": "assistant", "content": response.content})
+            tool_uses = [b for b in last_response.content if getattr(b, "type", None) == "tool_use"]
+            if not tool_uses:
+                break
+
+            if round_idx == max_rounds - 1:
+                hit_max = True
+                logger.warning(f"Max agent rounds reached for {symbol}; tool calls remained")
+                break
+
+            messages.append({"role": "assistant", "content": last_response.content})
             tool_results = []
             for tu in tool_uses:
                 result = execute_tool(tu.name, tu.input)
@@ -100,9 +106,15 @@ class AITradingAgent:
                 })
             messages.append({"role": "user", "content": tool_results})
 
-        # Parse final signal from last text block
-        signal = self._parse_signal(symbol, response)
-        return signal
+        if last_response is None:
+            return TradingSignal(symbol=symbol, signal="HOLD", confidence=0.0,
+                                 reasoning="No response from model")
+
+        if hit_max:
+            return TradingSignal(symbol=symbol, signal="HOLD", confidence=0.0,
+                                 reasoning="Max agent rounds reached without final signal")
+
+        return self._parse_signal(symbol, last_response)
 
     def _parse_signal(self, symbol: str, response) -> TradingSignal:
         """Extract structured signal from Claude's final response."""

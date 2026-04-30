@@ -3,41 +3,47 @@
    Clean, minimal, data-dense design
    ============================================================ */
 
-/* ---- Google Fonts (Inter) ---- */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+/* ---- Google Fonts (Claude Design — Poppins headings + Lora body) ---- */
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Lora:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
-/* ---- Design Tokens ---- */
+/* ---- Design Tokens — Claude Design (warm terracotta + cream) ---- */
 :root {
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+  --font-sans:    'Lora', Georgia, serif;
+  --font-heading: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono:    'JetBrains Mono', 'SF Mono', Consolas, monospace;
 
-  --bg-body:    #f1f5f9;
+  /* Claude warm palette */
+  --bg-body:    #faf9f5;   /* Light */
   --bg-card:    #ffffff;
-  --bg-muted:   #f8fafc;
+  --bg-muted:   #f4f3ee;   /* Pampas */
+  --bg-warm:    #f8f5f0;
 
-  --nav-bg:     #0f172a;
-  --nav-text:   #94a3b8;
-  --nav-active: #ffffff;
+  --nav-bg:     #141413;   /* Dark */
+  --nav-text:   #b1ada1;   /* Cloudy */
+  --nav-active: #faf9f5;
 
-  --color-primary:  #3b82f6;
-  --color-success:  #16a34a;
-  --color-danger:   #dc2626;
-  --color-warning:  #d97706;
-  --color-info:     #0891b2;
-  --color-purple:   #7c3aed;
+  --color-primary:  #d97757;   /* Claude orange */
+  --color-primary-deep: #c15f3c; /* Crail */
+  --color-success:  #788c5d;   /* warm sage green */
+  --color-danger:   #b34c3a;   /* warm red */
+  --color-warning:  #d99757;   /* warm amber */
+  --color-info:     #6a9bcc;   /* Claude blue */
+  --color-purple:   #8c6dba;   /* warm violet */
 
-  --text-primary: #0f172a;
-  --text-muted:   #64748b;
-  --text-subtle:  #94a3b8;
+  --text-primary: #141413;
+  --text-muted:   #6b6862;
+  --text-subtle:  #b0aea5;
 
-  --border:       #e2e8f0;
-  --border-light: #f1f5f9;
+  --border:       #e8e6dc;   /* Light Gray */
+  --border-light: #f4f3ee;
 
-  --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.07), 0 1px 2px -1px rgb(0 0 0 / 0.07);
-  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.07);
+  --shadow-sm: 0 1px 2px 0 rgb(20 20 19 / 0.04), 0 1px 1px -1px rgb(20 20 19 / 0.05);
+  --shadow-md: 0 4px 8px -2px rgb(20 20 19 / 0.06), 0 2px 4px -2px rgb(20 20 19 / 0.05);
+  --shadow-warm: 0 2px 12px -2px rgb(217 119 87 / 0.12);
 
-  --radius: 8px;
-  --radius-sm: 4px;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --radius-lg: 14px;
 }
 
 /* ---- Base ---- */
@@ -48,8 +54,21 @@ body {
   background-color: var(--bg-body);
   color: var(--text-primary);
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.005em;
+}
+
+h1, h2, h3, h4, h5, h6,
+.dash-header h1, .navbar-brand,
+.card-header strong, .card-header b {
+  font-family: var(--font-heading);
+  letter-spacing: -0.015em;
+}
+
+.text-num, .metric-value, code, pre, .font-monospace {
+  font-family: var(--font-mono);
+  letter-spacing: -0.02em;
 }
 
 a {
@@ -329,7 +348,7 @@ main.py-4 { padding-top: 1.5rem !important; padding-bottom: 2rem !important; }
 
 .table tbody tr:last-child td { border-bottom: none; }
 
-.table tbody tr:hover td { background: #f8fafc; }
+.table tbody tr:hover td { background: var(--bg-muted); }
 
 /* Mono numbers in tables */
 .table td.num, .table th.num {
@@ -347,17 +366,17 @@ main.py-4 { padding-top: 1.5rem !important; padding-bottom: 2rem !important; }
   letter-spacing: 0.02em;
 }
 
-.badge-buy  { background: #dcfce7; color: #15803d; }
-.badge-sell { background: #fee2e2; color: #b91c1c; }
-.badge-open { background: #fef9c3; color: #a16207; }
-.badge-closed { background: #dcfce7; color: #15803d; }
-.badge-pending { background: #fef3c7; color: #92400e; }
-.badge-approved { background: #d1fae5; color: #065f46; }
-.badge-rejected { background: #fee2e2; color: #991b1b; }
-.badge-active   { background: #dbeafe; color: #1d4ed8; }
-.badge-stopped  { background: #f3f4f6; color: #6b7280; }
-.badge-completed { background: #d1fae5; color: #065f46; }
-.badge-tp       { background: #ede9fe; color: #5b21b6; }
+.badge-buy  { background: #e8eedc; color: #4d6135; }
+.badge-sell { background: #f5e0db; color: #8c3a2c; }
+.badge-open { background: #f7ecd5; color: #8a6d2a; }
+.badge-closed { background: #e8eedc; color: #4d6135; }
+.badge-pending { background: #fbeed0; color: #8a5a17; }
+.badge-approved { background: #e5ecd6; color: #43562d; }
+.badge-rejected { background: #f5e0db; color: #8c3a2c; }
+.badge-active   { background: #e0e9f4; color: #3b6b9a; }
+.badge-stopped  { background: var(--bg-muted); color: var(--text-muted); }
+.badge-completed { background: #e5ecd6; color: #43562d; }
+.badge-tp       { background: #ebe4f4; color: #5b3e8a; }
 
 /* ---- Buttons ---- */
 .btn {
@@ -368,28 +387,28 @@ main.py-4 { padding-top: 1.5rem !important; padding-bottom: 2rem !important; }
   transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 
-.btn:focus { box-shadow: 0 0 0 3px rgba(59,130,246,0.25); }
+.btn:focus { box-shadow: 0 0 0 3px rgb(217 119 87 / 0.22); }
 
 .btn-primary {
   background: var(--color-primary);
   border-color: var(--color-primary);
   color: #fff;
 }
-.btn-primary:hover { background: #2563eb; border-color: #2563eb; }
+.btn-primary:hover { background: var(--color-primary-deep); border-color: var(--color-primary-deep); }
 
 .btn-success {
   background: var(--color-success);
   border-color: var(--color-success);
   color: #fff;
 }
-.btn-success:hover { background: #15803d; border-color: #15803d; }
+.btn-success:hover { background: #607547; border-color: #607547; }
 
 .btn-danger {
   background: var(--color-danger);
   border-color: var(--color-danger);
   color: #fff;
 }
-.btn-danger:hover { background: #b91c1c; border-color: #b91c1c; }
+.btn-danger:hover { background: #94402f; border-color: #94402f; }
 
 .btn-sm {
   font-size: 0.75rem;
@@ -464,17 +483,31 @@ main.py-4 { padding-top: 1.5rem !important; padding-bottom: 2rem !important; }
 
 .form-control:focus, .form-select:focus {
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(59,130,246,0.15);
+  box-shadow: 0 0 0 3px rgb(217 119 87 / 0.18);
 }
 
 .form-control-sm { font-size: 0.8125rem; padding: 0.3rem 0.6rem; }
 
 /* ---- KSS Card ---- */
 .card-kss > .card-header {
-  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%) !important;
+  background: linear-gradient(135deg, var(--color-primary-deep) 0%, var(--color-primary) 100%) !important;
   color: #fff;
 }
-.card-kss > .card-header i { color: rgba(255,255,255,0.7); }
+.card-kss > .card-header i { color: rgba(255,255,255,0.78); }
+
+/* ---- Subtle warm card hover ---- */
+.card { transition: box-shadow 0.2s ease, transform 0.2s ease; }
+.metric-card:hover { box-shadow: var(--shadow-warm); }
+
+/* ---- Brand ribbon for AI Agent tab ---- */
+#ai-running-badge {
+  background: var(--color-primary) !important;
+  color: #fff;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
 
 /* ---- Preview Area ---- */
 .preview-area {

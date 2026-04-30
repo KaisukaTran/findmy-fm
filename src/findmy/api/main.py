@@ -1052,10 +1052,9 @@ async def ai_start(request: Request, current_user: dict = Depends(get_current_us
     """Start the autonomous AI trading agent loop. Admin only."""
     _require_admin(current_user)
     from services.ai import agent_runner
-    started = agent_runner.start()
-    if not started:
-        raise HTTPException(status_code=409, detail="AI agent is already running")
-    # Record paper start date if not set
+    result = await agent_runner.start()
+    if not result["started"]:
+        raise HTTPException(status_code=409, detail=result.get("error", "Could not start"))
     from services.ai.state import get_paper_start_date, set_paper_start_date
     if not get_paper_start_date():
         set_paper_start_date(datetime.utcnow().strftime("%Y-%m-%d"))
@@ -1068,9 +1067,9 @@ async def ai_stop(request: Request, current_user: dict = Depends(get_current_use
     """Stop the autonomous AI trading agent loop. Admin only."""
     _require_admin(current_user)
     from services.ai import agent_runner
-    stopped = agent_runner.stop()
-    if not stopped:
-        raise HTTPException(status_code=409, detail="AI agent is not running")
+    result = await agent_runner.stop()
+    if not result["stopped"]:
+        raise HTTPException(status_code=409, detail=result.get("error", "Could not stop"))
     return {"status": "stopped"}
 
 
@@ -1142,14 +1141,17 @@ async def add_consultant(
     Body: {name, type: 'technical'|'llm', config: {}, enabled: true}
     """
     _require_admin(current_user)
-    from services.ai.consultants.registry import add_consultant as _add
+    from services.ai.consultants.registry import add_consultant as _add, DuplicateConsultantError
     name = body.get("name")
     type_ = body.get("type", "llm")
     config = body.get("config", {})
     enabled = body.get("enabled", True)
     if not name:
         raise HTTPException(status_code=422, detail="name is required")
-    return _add(name, type_, config, enabled)
+    try:
+        return _add(name, type_, config, enabled)
+    except DuplicateConsultantError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 @app.patch("/api/ai/consultants/{consultant_id}/toggle")

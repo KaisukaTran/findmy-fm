@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta
 from src.findmy.config import settings
 from services.ts.db import SessionLocal
-from services.ts.models import Trade
+from services.ts.models import Trade, TradePnL
 
 
 class RiskCheckResult:
@@ -110,15 +110,19 @@ def get_daily_loss(db_session=None) -> float:
         today_start = datetime.combine(today, datetime.min.time())
         today_end = datetime.combine(today, datetime.max.time())
 
-        # Query closed trades from today
-        trades = db_session.query(Trade).filter(
-            Trade.status == "CLOSED",
-            Trade.exit_time >= today_start,
-            Trade.exit_time <= today_end,
-            Trade.realized_pnl < 0  # Only losses
-        ).all()
-
-        total_loss = sum(abs(t.realized_pnl) for t in trades)
+        # Query closed trades with negative PnL from today
+        rows = (
+            db_session.query(TradePnL.realized_pnl)
+            .join(Trade, Trade.id == TradePnL.trade_id)
+            .filter(
+                Trade.status == "CLOSED",
+                Trade.exit_time >= today_start,
+                Trade.exit_time <= today_end,
+                TradePnL.realized_pnl < 0,
+            )
+            .all()
+        )
+        total_loss = sum(abs(r.realized_pnl) for r in rows)
         return total_loss
 
     finally:

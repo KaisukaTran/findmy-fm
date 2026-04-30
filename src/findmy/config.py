@@ -95,6 +95,11 @@ class Settings(BaseSettings):
         default=False,
         description="Enable live trading on real exchange (default: paper trading)"
     )
+    live_trading_dry_run: bool = Field(
+        default=True,
+        description="When True, orders go to Binance testnet only. "
+                    "Set False only after end-to-end testnet validation."
+    )
 
     class Config:
         """Pydantic settings configuration."""

@@ -931,6 +931,29 @@ async def system_status():
     return {"emergency_halt": is_halted()}
 
 
+@app.get("/api/system/circuit-status")
+async def circuit_status():
+    """Current circuit-breaker thresholds and live order-rate (public read)."""
+    try:
+        from src.findmy.config import settings as _cfg
+        from services.trading.circuit_breaker import MAX_ORDERS_PER_MINUTE, _conn
+        with _conn() as con:
+            row = con.execute("""
+                SELECT COUNT(*) as cnt FROM pending_orders
+                WHERE created_at >= datetime('now', '-1 minute')
+                  AND status IN ('pending', 'approved')
+            """).fetchone()
+        rate = int(row["cnt"]) if row else 0
+        return {
+            "max_position_size_pct": _cfg.max_position_size_pct,
+            "max_daily_loss_pct": _cfg.max_daily_loss_pct,
+            "max_orders_per_minute": MAX_ORDERS_PER_MINUTE,
+            "orders_last_minute": rate,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 manager = ConnectionManager()
 
 

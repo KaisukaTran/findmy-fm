@@ -25,6 +25,76 @@ def _get_kss_hooks():
 logger = logging.getLogger(__name__)
 
 
+def _write_audit(order, dry_run: bool, request_payload: str,
+                 response_payload: str, status: str, error: str = "") -> None:
+    """Persist one live-order audit record via raw sqlite (no ORM dependency)."""
+    import sqlite3, os
+    from pathlib import Path
+    url = os.getenv("DATABASE_URL") or os.getenv("SOT_DATABASE_URL") or "sqlite:///./data/findmy_fm_paper.db"
+    db_path = url[len("sqlite:///"):] if url.startswith("sqlite:///") else "./data/findmy_fm_paper.db"
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with sqlite3.connect(db_path) as con:
+            con.execute("""
+                INSERT INTO live_orders_audit
+                    (pending_order_id, symbol, side, quantity, dry_run,
+                     exchange_request, exchange_response, status, error_message)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (order.id, order.symbol, order.side, order.quantity,
+                  1 if dry_run else 0,
+                  request_payload, response_payload, status, error))
+            con.commit()
+    except Exception as e:
+        logger.error(f"Audit write failed: {e}")
+
+
+def _execute_live_order(order) -> Optional[str]:
+    """
+    Send order to Binance. Respects live_trading_dry_run config.
+
+    Returns exchange order ID on success, None on failure.
+    Logs and audits every attempt.
+    """
+    if ccxt is None:
+        logger.error("ccxt not installed — live trading blocked. pip install ccxt")
+        _write_audit(order, dry_run=True, request_payload="",
+                     response_payload="", status="blocked",
+                     error="ccxt not installed")
+        return None
+
+    dry_run: bool = getattr(settings, "live_trading_dry_run", True)
+    exchange_cfg = {
+        "apiKey": settings.broker_api_key,
+        "secret": (settings.broker_api_secret.get_secret_value()
+                   if settings.broker_api_secret else None),
+        "sandbox": dry_run,  # True = Binance testnet
+    }
+    side = "buy" if order.side == "BUY" else "sell"
+    req = {"symbol": order.symbol, "side": side, "amount": order.quantity, "dry_run": dry_run}
+
+    try:
+        exchange = ccxt.binance(exchange_cfg)
+        result = exchange.create_market_order(
+            symbol=order.symbol, side=side, amount=order.quantity
+        )
+        exchange_id = result.get("id", "")
+        _write_audit(order, dry_run=dry_run,
+                     request_payload=str(req),
+                     response_payload=str(result),
+                     status="filled")
+        mode = "DRY-RUN" if dry_run else "LIVE"
+        logger.info(f"[{mode}] Order executed: id={exchange_id} {order.side} {order.quantity} {order.symbol}")
+        return exchange_id
+    except Exception as e:
+        logger.error(f"Live execution failed for order {order.id}: {e}")
+        _write_audit(order, dry_run=dry_run,
+                     request_payload=str(req),
+                     response_payload="",
+                     status="error",
+                     error=str(e))
+        return None
+
+
 def queue_order(
     symbol: str,
     side: str,
@@ -163,10 +233,21 @@ def approve_order(order_id: int, reviewed_by: str = "user", note: Optional[str] 
         
         if not order:
             raise ValueError(f"Pending order {order_id} not found")
-        
+
         if order.status != PendingOrderStatus.PENDING:
             raise ValueError(f"Order {order_id} is not pending (status: {order.status.value})")
-        
+
+        # Circuit breaker check before approving
+        try:
+            from services.trading.circuit_breaker import check as cb_check
+            cb = cb_check(order.symbol, order.quantity, order.price)
+            if not cb.allowed:
+                raise ValueError(
+                    f"Circuit breaker blocked order {order_id}: {'; '.join(cb.violations)}"
+                )
+        except ImportError:
+            pass  # circuit breaker not available, proceed
+
         order.status = PendingOrderStatus.APPROVED
         order.reviewed_at = datetime.utcnow()
         order.reviewed_by = reviewed_by
@@ -176,32 +257,12 @@ def approve_order(order_id: int, reviewed_by: str = "user", note: Optional[str] 
         db.commit()
         db.refresh(order)
         
-        # v0.9.0: Live execution if enabled
+        # v0.9.0+: Live execution if enabled
         if settings.live_trading:
-            if ccxt is None:
-                logger.error("Live trading enabled but ccxt not installed. Install ccxt to use live trading.")
-                order.note = (order.note or "") + " | Live exec blocked: ccxt not installed"
+            live_order_id = _execute_live_order(order)
+            if live_order_id:
+                order.live_order_id = live_order_id
                 db.commit()
-            else:
-                try:
-                    exchange = ccxt.binance({
-                        'apiKey': settings.broker_api_key,
-                        'secret': settings.broker_api_secret.get_secret_value() if settings.broker_api_secret else None,
-                        'sandbox': True,  # Testnet
-                    })
-                    side = 'buy' if order.side == 'BUY' else 'sell'
-                    result = exchange.create_market_order(
-                        symbol=order.symbol,
-                        side=side,
-                        amount=order.quantity
-                    )
-                    order.live_order_id = result['id']
-                    logger.info(f"Live order executed: {result['id']} for {order.symbol}")
-                    db.commit()
-                except Exception as e:
-                    logger.error(f"Live execution failed for order {order_id}: {e}")
-                    order.note = (order.note or "") + f" | Live exec failed: {e}"
-                    db.commit()
         
         logger.info(f"Approved order {order_id}: {order.side} {order.quantity} {order.symbol}")
         

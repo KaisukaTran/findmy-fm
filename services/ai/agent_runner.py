@@ -50,6 +50,11 @@ async def _run_once() -> None:
     if is_halted():
         logger.info("AI agent: emergency halt active, skipping loop")
         set_last_action(f"{datetime.utcnow().isoformat()} HALT_SKIP")
+        try:
+            from findmy.api.metrics import ai_loop_iterations_total as _iter_metric
+            _iter_metric.labels(outcome="halt_skip").inc()
+        except Exception:
+            pass
         return
 
     agent = get_agent()
@@ -60,9 +65,14 @@ async def _run_once() -> None:
         if not is_running():
             break
         try:
-            # Run blocking Anthropic SDK call in a thread to avoid blocking event loop
             signal = await asyncio.to_thread(agent.analyze, symbol)
             logger.info(f"AI signal: {symbol} {signal.signal} conf={signal.confidence:.2f}")
+
+            try:
+                from findmy.api.metrics import ai_signal_confidence as _conf_metric
+                _conf_metric.labels(signal=signal.signal, symbol=symbol).observe(signal.confidence)
+            except Exception:
+                pass
 
             votes = {}
             if consultants and signal.should_trade():
@@ -80,15 +90,36 @@ async def _run_once() -> None:
             if votes and not aggregate_votes(signal, votes):
                 logger.info(f"Consultants blocked signal for {symbol}: {votes}")
                 set_last_action(f"{datetime.utcnow().isoformat()} CONSULTANT_BLOCKED {symbol}")
+                try:
+                    from findmy.api.metrics import ai_loop_iterations_total as _iter_metric
+                    _iter_metric.labels(outcome="consultant_blocked").inc()
+                except Exception:
+                    pass
                 continue
 
             order_id = await asyncio.to_thread(submit_ai_order, signal, votes)
             action = f"ORDER:{order_id}" if order_id else "SKIPPED"
             set_last_action(f"{datetime.utcnow().isoformat()} {symbol} {signal.signal} {action}")
 
+            try:
+                from findmy.api.metrics import ai_loop_iterations_total as _iter_metric
+                _iter_metric.labels(outcome="order_submitted" if order_id else "skipped").inc()
+            except Exception:
+                pass
+
         except Exception as e:
             logger.error(f"AI loop error for {symbol}: {e}", exc_info=True)
             set_last_action(f"{datetime.utcnow().isoformat()} ERROR {symbol} {e}")
+            try:
+                from findmy.api.metrics import ai_errors_total as _err_metric
+                _err_metric.labels(symbol=symbol, error_type=type(e).__name__).inc()
+            except Exception:
+                pass
+            try:
+                from findmy.api.sentry_config import capture_ai_error
+                capture_ai_error(e, context={"symbol": symbol, "loop": "run_once"})
+            except Exception:
+                pass
 
 
 async def _loop() -> None:
@@ -96,16 +127,23 @@ async def _loop() -> None:
     logger.info("AI agent loop started")
     try:
         while is_running():
+            from services.sot.system_state import is_halted
+            if is_halted():
+                logger.info("AI agent: emergency halt detected — stopping agent loop")
+                break
             try:
                 await _run_once()
             except Exception as e:
-                # Per-iteration safety net — never let a single failure kill the loop
                 logger.error(f"AI loop iteration failed: {e}", exc_info=True)
                 set_last_action(f"{datetime.utcnow().isoformat()} LOOP_ERROR {e}")
 
             interval = settings.ai_loop_interval_seconds
             for _ in range(interval):
                 if not is_running():
+                    break
+                from services.sot.system_state import is_halted
+                if is_halted():
+                    logger.info("AI agent: emergency halt during sleep — stopping")
                     break
                 await asyncio.sleep(1)
     except asyncio.CancelledError:
@@ -114,7 +152,6 @@ async def _loop() -> None:
     except Exception as e:
         logger.error(f"AI agent loop crashed: {e}", exc_info=True)
     finally:
-        # Always clear the running flag so /api/ai/start can recover
         set_running(False)
         logger.info("AI agent loop stopped")
 
@@ -127,11 +164,9 @@ async def start() -> dict:
         return {"started": False, "error": err}
 
     async with _start_lock:
-        # Check task liveness first
         if _loop_task and not _loop_task.done():
             return {"started": False, "error": "AI agent is already running"}
 
-        # CAS to flip the DB flag from false → true
         if not cas_set_running(expected=False, target=True):
             return {"started": False, "error": "AI agent is already running (state contention)"}
 

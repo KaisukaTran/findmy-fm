@@ -4,7 +4,7 @@ Prometheus Observability Module (v0.7.0)
 Provides Prometheus metrics for monitoring API performance, database queries, caching, and system health.
 """
 
-from prometheus_client import Counter, Histogram, Gauge, Info
+from prometheus_client import Counter, Gauge, Histogram, Info
 import time
 from functools import wraps
 from typing import Callable
@@ -165,6 +165,30 @@ health_check_failures_total = Counter(
 uptime_seconds = Gauge(
     "app_uptime_seconds",
     "Application uptime in seconds"
+)
+
+
+# =========================================================================
+# AI Agent Metrics
+# =========================================================================
+
+ai_errors_total = Counter(
+    'ai_agent_errors_total',
+    'Total AI agent errors by symbol and error type',
+    ['symbol', 'error_type']
+)
+
+ai_loop_iterations_total = Counter(
+    'ai_agent_loop_iterations_total',
+    'Total AI agent loop iterations',
+    ['outcome']  # labels: success, error, halt_skip, consultant_blocked
+)
+
+ai_signal_confidence = Histogram(
+    'ai_agent_signal_confidence',
+    'Distribution of AI signal confidence scores',
+    ['signal', 'symbol'],
+    buckets=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 )
 
 

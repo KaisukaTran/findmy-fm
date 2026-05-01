@@ -50,6 +50,9 @@ from findmy.api.exception_handlers import register_exception_handlers
 configure_logging()
 logger = get_logger(__name__)
 
+from findmy.api.sentry_config import init_sentry
+init_sentry()
+
 # ✅ 1. DECLARE APP FIRST
 app = FastAPI(
     title="FINDMY FM – Paper Trading API",

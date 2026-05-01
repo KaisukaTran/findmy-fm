@@ -1,0 +1,30 @@
+groups:
+  - name: ai_agent
+    interval: 60s
+    rules:
+      - alert: AIAgentHighErrorRate
+        expr: rate(ai_agent_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AI agent error rate high"
+          description: "AI agent errors > 0.1/s over last 5 minutes ({{ $value | humanize }}/s)"
+
+      - alert: AIAgentLoopStalled
+        expr: increase(ai_agent_loop_iterations_total[10m]) == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "AI agent loop appears stalled"
+          description: "No AI loop iterations in the last 10 minutes"
+
+      - alert: AIAgentHighSpend
+        expr: increase(ai_agent_errors_total{error_type="SpendLimitError"}[1h]) > 5
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AI agent hitting spend limits frequently"
+          description: "SpendLimitError occurred {{ $value }} times in the last hour"

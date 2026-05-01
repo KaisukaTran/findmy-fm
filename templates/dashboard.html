@@ -618,11 +618,74 @@
     </div>
 </div>
 
+<!-- App Modal -->
+<div id="appModal" class="modal-overlay" role="dialog" aria-modal="true">
+  <div class="modal-box">
+    <h3 id="modalTitle"></h3>
+    <p id="modalBody"></p>
+    <div id="modalInputArea"></div>
+    <div class="modal-actions" id="modalActions"></div>
+  </div>
+</div>
+
 {% endblock %}
 
+{% block extra_css %}
+<style>
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:1000; align-items:center; justify-content:center; }
+.modal-overlay.open { display:flex; }
+.modal-box { background:#1e293b; border:1px solid #334155; border-radius:.5rem; padding:1.5rem; max-width:420px; width:90%; }
+.modal-box h3 { margin:0 0 1rem; color:#f1f5f9; }
+.modal-box p { color:#94a3b8; margin:0 0 1.5rem; }
+.modal-actions { display:flex; gap:.75rem; justify-content:flex-end; }
+.modal-input { width:100%; padding:.5rem; background:#0f172a; border:1px solid #334155; border-radius:.25rem; color:#f1f5f9; margin-bottom:1rem; box-sizing:border-box; }
+</style>
+{% endblock %}
 
 {% block extra_js %}
 <script>
+    function getCsrfHeaders() {
+        const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+        return match ? {'X-CSRF-Token': decodeURIComponent(match[1])} : {};
+    }
+
+    function showModal({title, body, inputs=[], buttons}) {
+        return new Promise(resolve => {
+            document.getElementById('modalTitle').textContent = title;
+            document.getElementById('modalBody').textContent = body;
+            const inputArea = document.getElementById('modalInputArea');
+            inputArea.innerHTML = '';
+            const inputEls = inputs.map(inp => {
+                const el = inp.type === 'textarea'
+                    ? Object.assign(document.createElement('textarea'), {className:'modal-input', placeholder:inp.placeholder||'', rows:3, value:inp.default||''})
+                    : Object.assign(document.createElement('input'), {className:'modal-input', type:inp.type||'text', placeholder:inp.placeholder||'', value:inp.default||''});
+                inputArea.appendChild(el);
+                return el;
+            });
+            const actionsEl = document.getElementById('modalActions');
+            actionsEl.innerHTML = '';
+            buttons.forEach(btn => {
+                const b = document.createElement('button');
+                b.textContent = btn.label;
+                b.className = btn.primary ? 'btn btn-primary' : 'btn btn-secondary';
+                b.onclick = () => {
+                    document.getElementById('appModal').classList.remove('open');
+                    resolve(btn.value !== undefined ? btn.value : inputEls.map(e => e.value));
+                };
+                actionsEl.appendChild(b);
+            });
+            document.getElementById('appModal').classList.add('open');
+            if (inputEls.length) inputEls[0].focus();
+        });
+    }
+
+    function confirmModal(title, body) {
+        return showModal({title, body, buttons:[
+            {label:'Cancel', value:false},
+            {label:'Confirm', value:true, primary:true}
+        ]});
+    }
+
 // ── Utilities ──────────────────────────────────────────────
 function updateCurrentTime() {
     const el = document.getElementById('current-time');
@@ -827,18 +890,25 @@ async function loadRiskMetrics() {
 
 // ── Approve / Reject ───────────────────────────────────────
 async function approvePendingOrder(id, symbol) {
-    if (!confirm(`Approve ${symbol} order #${id}?`)) return;
-    const r = await fetch(`/api/pending/approve/${id}`, { method: 'POST' });
+    if (!await confirmModal('Approve Order', `Approve ${symbol} order #${id}?`)) return;
+    const r = await fetch(`/api/pending/approve/${id}`, { method: 'POST', headers: {...getCsrfHeaders()} });
     if (r.ok) { loadPendingOrders(); loadPositions(); loadTrades(); loadSummary(); }
     else alert('Failed to approve');
 }
 
 async function rejectPendingOrder(id, symbol) {
-    const reason = prompt(`Reject ${symbol} order #${id}?\nEnter reason:`, 'Market conditions changed');
+    const values = await showModal({
+        title: `Reject Order #${id}`,
+        body: `Reject ${symbol} order #${id}? Enter reason:`,
+        inputs: [{type:'textarea', placeholder:'Reason', default:'Market conditions changed'}],
+        buttons: [{label:'Cancel', value:null}, {label:'Reject', primary:true}]
+    });
+    if (values === null || values[0] === null) return;
+    const reason = Array.isArray(values) ? values[0] : values;
     if (reason === null) return;
     const r = await fetch(`/api/pending/reject/${id}`, {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        headers: {'Content-Type': 'application/json', ...getCsrfHeaders()},
         body: JSON.stringify({reason})
     });
     if (r.ok) loadPendingOrders();
@@ -995,24 +1065,24 @@ async function createKSSSession() {
 }
 
 async function startKSSSession(id) {
-    if (!confirm(`Start session #${id}?`)) return;
+    if (!await confirmModal('Start Session', `Start session #${id}?`)) return;
     showSpinner();
-    const r = await fetch(`/api/kss/sessions/${id}/start`, { method: 'POST' });
+    const r = await fetch(`/api/kss/sessions/${id}/start`, { method: 'POST', headers: {...getCsrfHeaders()} });
     hideSpinner();
     if (r.ok) { alert('Started — Wave 0 queued'); loadKSSSessions(); loadPendingOrders(); }
     else alert('Failed to start');
 }
 
 async function stopKSSSession(id) {
-    if (!confirm(`Stop session #${id}?`)) return;
-    const r = await fetch(`/api/kss/sessions/${id}/stop`, { method: 'POST' });
+    if (!await confirmModal('Stop Session', `Stop session #${id}?`)) return;
+    const r = await fetch(`/api/kss/sessions/${id}/stop`, { method: 'POST', headers: {...getCsrfHeaders()} });
     if (r.ok) { alert('Stopped'); loadKSSSessions(); }
     else alert('Failed to stop');
 }
 
 async function deleteKSSSession(id) {
-    if (!confirm(`Delete session #${id}? This cannot be undone.`)) return;
-    const r = await fetch(`/api/kss/sessions/${id}`, { method: 'DELETE' });
+    if (!await confirmModal('Delete Session', `Delete session #${id}? This cannot be undone.`)) return;
+    const r = await fetch(`/api/kss/sessions/${id}`, { method: 'DELETE', headers: {...getCsrfHeaders()} });
     if (r.ok) loadKSSSessions();
     else alert('Failed to delete');
 }
@@ -1317,7 +1387,7 @@ async function loadPaperReport() {
 }
 
 async function promoteLive() {
-    if (!confirm('Promote AI agent from paper to live mode? This requires you to also set LIVE_TRADING=true and restart the server.')) return;
+    if (!await confirmModal('Promote to Live', 'Promote AI agent from paper to live mode? You must also set LIVE_TRADING=true and restart the server.')) return;
     const token = localStorage.getItem('auth_token') || '';
     const r = await fetch('/api/ai/promote-to-live', { method: 'POST', headers: { Authorization: 'Bearer ' + token } });
     const d = await r.json();
@@ -1336,17 +1406,25 @@ async function toggleConsultant(id, enabled) {
 }
 
 async function deleteConsultant(id) {
-    if (!confirm('Delete this consultant?')) return;
+    if (!await confirmModal('Delete Consultant', 'Delete this consultant?')) return;
     const token = localStorage.getItem('auth_token') || '';
     await fetch('/api/ai/consultants/' + id, { method: 'DELETE', headers: { Authorization: 'Bearer ' + token } });
     loadConsultants();
 }
 
-function showAddConsultant() {
-    const name = prompt('Consultant name:');
-    if (!name) return;
-    const type = prompt('Type (technical / llm):', 'technical');
-    if (!type) return;
+async function showAddConsultant() {
+    const values = await showModal({
+        title: 'Add Consultant',
+        body: '',
+        inputs: [
+            {type:'text', placeholder:'Consultant name'},
+            {type:'text', placeholder:'Type (technical / llm)', default:'technical'}
+        ],
+        buttons: [{label:'Cancel', value:null}, {label:'Add', primary:true}]
+    });
+    if (values === null || !values[0]) return;
+    const [name, type] = values;
+    if (!name || !type) return;
     const token = localStorage.getItem('auth_token') || '';
     fetch('/api/ai/consultants', {
         method: 'POST',

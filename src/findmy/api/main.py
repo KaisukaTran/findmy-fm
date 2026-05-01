@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -8,6 +9,7 @@ from pathlib import Path
 import shutil
 import uuid
 import os
+import secrets
 import asyncio
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
@@ -53,10 +55,28 @@ logger = get_logger(__name__)
 from findmy.api.sentry_config import init_sentry
 init_sentry()
 
+# v0.7.0: Import caching (needed for lifespan)
+from services.cache.manager import cache_manager, CacheConfig  # noqa: E402
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await cache_manager.init()
+    logger.info("Cache manager initialized")
+    try:
+        app_info.info({"version": "1.0.0"})
+    except Exception:
+        pass
+    logger.info("Application startup complete - v1.0.1 with observability")
+    yield
+    await cache_manager.clear()
+    logger.info("Cache manager shutdown")
+
+
 # ✅ 1. DECLARE APP FIRST
 app = FastAPI(
     title="FINDMY FM – Paper Trading API",
     version="1.0",
+    lifespan=lifespan,
 )
 
 # v1.0.1: Register centralized exception handlers
@@ -95,9 +115,6 @@ async def add_security_headers(request: Request, call_next):
         response.headers[header] = value
     return response
 
-# v0.7.0: Import caching
-from services.cache.manager import cache_manager, CacheConfig
-
 # v0.10.0: Import KSS routes
 from src.findmy.kss.routes import router as kss_router
 
@@ -107,25 +124,41 @@ app.include_router(auth_router)
 # v0.10.0: Include KSS routes
 app.include_router(kss_router)
 
-# v0.7.0: Initialize caching on startup
-@app.on_event("startup")
-async def startup_event():
-    """Initialize caching and metrics on application startup."""
-    await cache_manager.init()
-    logger.info("Cache manager initialized")
-    
-    # v0.7.0: Initialize application info metric
-    try:
-        app_info.info({"version": "1.0.0"})
-    except Exception:
-        pass  # Ignore metric errors on startup
-    logger.info("Application startup complete - v1.0.1 with observability")
+# CSRF protection middleware
+@app.middleware("http")
+async def csrf_middleware(request: Request, call_next):
+    """
+    Sets a csrf_token cookie on GET requests; validates X-CSRF-Token on mutating methods.
+    Skips /api/ai/ (Bearer auth), /health, and /metrics.
+    """
+    mutating_methods = {"POST", "PATCH", "DELETE", "PUT"}
+    skip_paths = {"/health", "/metrics"}
+    skip_prefixes = ("/api/ai/",)
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown."""
-    await cache_manager.clear()
-    logger.info("Cache manager shutdown")
+    if request.method in mutating_methods:
+        path = request.url.path
+        if path not in skip_paths and not any(path.startswith(p) for p in skip_prefixes):
+            cookie_token = request.cookies.get("csrf_token")
+            header_token = request.headers.get("X-CSRF-Token")
+            if not cookie_token or not header_token or cookie_token != header_token:
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "CSRF token missing or invalid"},
+                )
+
+    response = await call_next(request)
+
+    if request.method == "GET" and not request.cookies.get("csrf_token"):
+        token = secrets.token_urlsafe(32)
+        response.set_cookie(
+            "csrf_token",
+            token,
+            httponly=False,  # must be JS-readable
+            samesite="strict",
+            secure=False,  # set True behind HTTPS in production
+        )
+
+    return response
 
 # ✅ 2. CONFIGURE TEMPLATES AND STATIC FILES
 templates = Jinja2Templates(directory="templates")
@@ -1189,3 +1222,56 @@ async def delete_consultant(
     if not ok:
         raise HTTPException(status_code=404, detail="Consultant not found")
     return {"deleted": True, "id": consultant_id}
+
+
+@app.post("/api/ai/inject-signal")
+async def inject_ai_signal(
+    payload: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    """Inject a synthetic AI signal to test consensus without Claude API calls. Admin only."""
+    _require_admin(current_user)
+
+    from services.ai.agent import TradingSignal, submit_ai_order
+    from services.ai.consultants.registry import get_enabled_consultants
+    from services.ai.consensus import aggregate_votes
+
+    symbol = payload.get("symbol", "BTC/USDT")
+    signal_type = payload.get("signal", "HOLD").upper()
+    confidence = float(payload.get("confidence", 0.5))
+    reasoning = payload.get("reasoning", "Manual injection for testing")
+
+    signal = TradingSignal(
+        symbol=symbol,
+        signal=signal_type,
+        confidence=confidence,
+        reasoning=reasoning,
+        suggested_price=payload.get("suggested_price"),
+        suggested_quantity_usdt=payload.get("suggested_quantity_usdt"),
+    )
+
+    consultants = get_enabled_consultants()
+    votes = {}
+    for c in consultants:
+        try:
+            vote = await asyncio.to_thread(c.vote, symbol, signal)
+            votes[c.name] = {"vote": vote.vote, "confidence": vote.confidence, "reasoning": vote.reasoning}
+        except Exception as e:
+            votes[c.name] = {"error": str(e)}
+
+    consensus_passed = True
+    if votes:
+        consensus_passed = aggregate_votes(signal, votes)
+
+    order_id = None
+    if consensus_passed:
+        order_id = await asyncio.to_thread(submit_ai_order, signal, votes)
+
+    return {
+        "symbol": symbol,
+        "signal": signal_type,
+        "confidence": confidence,
+        "votes": votes,
+        "consensus_passed": consensus_passed,
+        "order_id": order_id,
+    }

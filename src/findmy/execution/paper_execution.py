@@ -56,20 +56,19 @@ DATA_DIR.mkdir(exist_ok=True)
 DB_PATH = DATA_DIR / "findmy_fm_paper.db"
 SHEET_NAME = "purchase order"
 
-# Execution configuration
-# Fraction of remaining quantity to fill on each simulated partial fill (0.0-1.0)
-# Default to 1.0 (full-fill) for backward compatibility with existing tests and
-# behavior; make configurable later if partial-fill testing is desired.
-DEFAULT_FILL_PCT = float(1.0)
-
-# Slippage configuration (max percent of price to move)
-# Default to 0.0 (no slippage) for backward compatibility; enable later if desired.
-DEFAULT_SLIPPAGE_PCT = float(0.0)
-
-# Default fee rates (percentage, e.g. 0.001 = 0.1%)
-# Default to 0.0 (no fees) to preserve previous behavior; configurable per-order or globally.
-DEFAULT_MAKER_FEE = float(0.0)
-DEFAULT_TAKER_FEE = float(0.0)
+# Execution configuration — loaded from config (overridable via .env)
+try:
+    from findmy.config import settings as _cfg
+    DEFAULT_FILL_PCT = float(_cfg.fill_pct)
+    DEFAULT_SLIPPAGE_PCT = float(_cfg.slippage_pct)
+    DEFAULT_MAKER_FEE = float(_cfg.maker_fee_rate)
+    DEFAULT_TAKER_FEE = float(_cfg.taker_fee_rate)
+except Exception:
+    # Fallback to safe defaults if config not available (e.g. during unit tests)
+    DEFAULT_FILL_PCT = float(1.0)
+    DEFAULT_SLIPPAGE_PCT = float(0.0)
+    DEFAULT_MAKER_FEE = float(0.0)
+    DEFAULT_TAKER_FEE = float(0.0)
 
 # Latency configuration (ms)
 # Default to 0 (no latency) for backward compatibility; set > 0 to simulate network/exchange delay

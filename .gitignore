@@ -1,4 +1,7 @@
 
+# Claude Code internal state
+.claude/
+
 # Python
 .venv/
 __pycache__/

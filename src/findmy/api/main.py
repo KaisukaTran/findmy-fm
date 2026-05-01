@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -8,6 +9,7 @@ from pathlib import Path
 import shutil
 import uuid
 import os
+import secrets
 import asyncio
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
@@ -18,6 +20,7 @@ from findmy.services.strategy_executor import StrategyExecutor
 from services.sot.pending_orders_service import (
     queue_order, get_pending_orders, approve_order, reject_order, count_pending
 )
+from services.sot.system_state import is_halted, set_halt
 
 # v0.7.0: Import security middleware
 from findmy.api.security import (
@@ -49,10 +52,34 @@ from findmy.api.exception_handlers import register_exception_handlers
 configure_logging()
 logger = get_logger(__name__)
 
+from findmy.api.sentry_config import init_sentry
+try:
+    init_sentry()
+except Exception as _sentry_err:
+    logger.warning(f"Sentry init failed; continuing without error reporting: {_sentry_err}")
+
+# v0.7.0: Import caching (needed for lifespan)
+from services.cache.manager import cache_manager, CacheConfig  # noqa: E402
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await cache_manager.init()
+    logger.info("Cache manager initialized")
+    try:
+        app_info.info({"version": "1.0.0"})
+    except Exception:
+        pass
+    logger.info("Application startup complete - v1.0.1 with observability")
+    yield
+    await cache_manager.clear()
+    logger.info("Cache manager shutdown")
+
+
 # ✅ 1. DECLARE APP FIRST
 app = FastAPI(
     title="FINDMY FM – Paper Trading API",
     version="1.0",
+    lifespan=lifespan,
 )
 
 # v1.0.1: Register centralized exception handlers
@@ -91,9 +118,6 @@ async def add_security_headers(request: Request, call_next):
         response.headers[header] = value
     return response
 
-# v0.7.0: Import caching
-from services.cache.manager import cache_manager, CacheConfig
-
 # v0.10.0: Import KSS routes
 from src.findmy.kss.routes import router as kss_router
 
@@ -103,25 +127,48 @@ app.include_router(auth_router)
 # v0.10.0: Include KSS routes
 app.include_router(kss_router)
 
-# v0.7.0: Initialize caching on startup
-@app.on_event("startup")
-async def startup_event():
-    """Initialize caching and metrics on application startup."""
-    await cache_manager.init()
-    logger.info("Cache manager initialized")
-    
-    # v0.7.0: Initialize application info metric
-    try:
-        app_info.info({"version": "1.0.0"})
-    except Exception:
-        pass  # Ignore metric errors on startup
-    logger.info("Application startup complete - v1.0.1 with observability")
+# CSRF protection middleware
+@app.middleware("http")
+async def csrf_middleware(request: Request, call_next):
+    """
+    Sets a csrf_token cookie on GET requests; validates X-CSRF-Token on mutating methods.
+    Skips /api/ai/ (Bearer auth), /health, and /metrics.
+    """
+    mutating_methods = {"POST", "PATCH", "DELETE", "PUT"}
+    skip_paths = {"/health", "/metrics"}
+    skip_prefixes = ("/api/ai/", "/api/auth/")
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown."""
-    await cache_manager.clear()
-    logger.info("Cache manager shutdown")
+    if request.method in mutating_methods:
+        path = request.url.path
+        auth_header = request.headers.get("Authorization", "")
+        # Skip CSRF for Bearer-token auth (not vulnerable to CSRF) and explicit allowlist
+        is_bearer_auth = auth_header.startswith("Bearer ")
+        if (
+            not is_bearer_auth
+            and path not in skip_paths
+            and not any(path.startswith(p) for p in skip_prefixes)
+        ):
+            cookie_token = request.cookies.get("csrf_token")
+            header_token = request.headers.get("X-CSRF-Token")
+            if not cookie_token or not header_token or cookie_token != header_token:
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "CSRF token missing or invalid"},
+                )
+
+    response = await call_next(request)
+
+    if request.method == "GET" and not request.cookies.get("csrf_token"):
+        token = secrets.token_urlsafe(32)
+        response.set_cookie(
+            "csrf_token",
+            token,
+            httponly=False,  # must be JS-readable
+            samesite="strict",
+            secure=False,  # set True behind HTTPS in production
+        )
+
+    return response
 
 # ✅ 2. CONFIGURE TEMPLATES AND STATIC FILES
 templates = Jinja2Templates(directory="templates")
@@ -368,6 +415,8 @@ async def approve_pending_order(
     Returns:
         Updated pending order
     """
+    if is_halted():
+        raise HTTPException(status_code=503, detail="System is in emergency halt. Resume trading before approving orders.")
     try:
         start_time = time.time()
         order = approve_order(order_id, reviewed_by="user", note=note)
@@ -479,6 +528,9 @@ class SummaryResponse(BaseModel):
     total_invested: float
     total_market_value: float = 0.0
     total_equity: float = 0.0
+    initial_fund: float = 10000.0
+    available_fund: float = 10000.0
+    fund_utilization_pct: float = 0.0
     last_trade_time: Optional[datetime] = None
     status: str
 
@@ -635,8 +687,12 @@ async def get_summary(request: Request, db: Session = Depends(get_db)):
         except Exception:
             last_trade_time = None
 
-        # Calculate total equity
+        # Calculate total equity and fund balance
         total_equity = total_invested + unrealized_pnl
+        from findmy.config import settings as _app_cfg
+        initial_fund = _app_cfg.initial_fund
+        available_fund = max(0.0, initial_fund - total_invested)
+        fund_utilization_pct = (total_invested / initial_fund * 100) if initial_fund > 0 else 0.0
 
         result = SummaryResponse(
             total_trades=int(total_trades),
@@ -645,6 +701,9 @@ async def get_summary(request: Request, db: Session = Depends(get_db)):
             total_invested=total_invested,
             total_market_value=total_market_value,
             total_equity=total_equity,
+            initial_fund=initial_fund,
+            available_fund=available_fund,
+            fund_utilization_pct=round(fund_utilization_pct, 2),
             last_trade_time=last_trade_time,
             status="✓ Active",
         )
@@ -660,6 +719,11 @@ async def get_summary(request: Request, db: Session = Depends(get_db)):
         return result
     except Exception:
         # Return empty summary if database is not initialized
+        try:
+            from findmy.config import settings as _app_cfg
+            _initial = _app_cfg.initial_fund
+        except Exception:
+            _initial = 10000.0
         return SummaryResponse(
             total_trades=0,
             realized_pnl=0.0,
@@ -667,6 +731,9 @@ async def get_summary(request: Request, db: Session = Depends(get_db)):
             total_invested=0.0,
             total_market_value=0.0,
             total_equity=0.0,
+            initial_fund=_initial,
+            available_fund=_initial,
+            fund_utilization_pct=0.0,
             last_trade_time=None,
             status="✓ Active",
         )
@@ -876,6 +943,63 @@ class ConnectionManager:
                 pass
 
 
+# ========================
+# EMERGENCY STOP
+# ========================
+
+def _require_admin(user: dict) -> None:
+    if user.get("role") != "admin":
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Admin role required")
+
+
+@app.post("/api/emergency-stop")
+async def emergency_stop(current_user: dict = Depends(get_current_user)):
+    """Halt all order approvals across all workers. Admin only."""
+    _require_admin(current_user)
+    set_halt(True)
+    logger.warning(f"EMERGENCY HALT activated by {current_user.get('sub', 'unknown')}")
+    return {"status": "halted", "message": "All order approvals are now blocked."}
+
+
+@app.post("/api/emergency-resume")
+async def emergency_resume(current_user: dict = Depends(get_current_user)):
+    """Resume normal operations. Admin only."""
+    _require_admin(current_user)
+    set_halt(False)
+    logger.warning(f"EMERGENCY HALT cleared by {current_user.get('sub', 'unknown')}")
+    return {"status": "active", "message": "Order approvals resumed."}
+
+
+@app.get("/api/system/status")
+async def system_status():
+    """Get current system halt state (public read, DB-backed)."""
+    return {"emergency_halt": is_halted()}
+
+
+@app.get("/api/system/circuit-status")
+async def circuit_status():
+    """Current circuit-breaker thresholds and live order-rate (public read)."""
+    try:
+        from src.findmy.config import settings as _cfg
+        from services.trading.circuit_breaker import MAX_ORDERS_PER_MINUTE, _conn
+        with _conn() as con:
+            row = con.execute("""
+                SELECT COUNT(*) as cnt FROM pending_orders
+                WHERE created_at >= datetime('now', '-1 minute')
+                  AND status IN ('pending', 'approved')
+            """).fetchone()
+        rate = int(row["cnt"]) if row else 0
+        return {
+            "max_position_size_pct": _cfg.max_position_size_pct,
+            "max_daily_loss_pct": _cfg.max_daily_loss_pct,
+            "max_orders_per_minute": MAX_ORDERS_PER_MINUTE,
+            "orders_last_minute": rate,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 manager = ConnectionManager()
 
 
@@ -962,3 +1086,202 @@ async def websocket_dashboard(websocket: WebSocket):
         manager.disconnect(websocket)
     except Exception:
         manager.disconnect(websocket)
+
+
+# ========================
+# AI AGENT ROUTES
+# ========================
+
+@app.post("/api/ai/start")
+@limiter.limit("10/minute")
+async def ai_start(request: Request, current_user: dict = Depends(get_current_user)):
+    """Start the autonomous AI trading agent loop. Admin only."""
+    _require_admin(current_user)
+    from services.ai import agent_runner
+    result = await agent_runner.start()
+    if not result["started"]:
+        raise HTTPException(status_code=409, detail=result.get("error", "Could not start"))
+    from services.ai.state import get_paper_start_date, set_paper_start_date
+    if not get_paper_start_date():
+        set_paper_start_date(datetime.utcnow().strftime("%Y-%m-%d"))
+    return {"status": "started", "mode": agent_runner.get_status()["mode"]}
+
+
+@app.post("/api/ai/stop")
+@limiter.limit("10/minute")
+async def ai_stop(request: Request, current_user: dict = Depends(get_current_user)):
+    """Stop the autonomous AI trading agent loop. Admin only."""
+    _require_admin(current_user)
+    from services.ai import agent_runner
+    result = await agent_runner.stop()
+    if not result["stopped"]:
+        raise HTTPException(status_code=409, detail=result.get("error", "Could not stop"))
+    return {"status": "stopped"}
+
+
+@app.get("/api/ai/status")
+@limiter.limit("60/minute")
+async def ai_status(request: Request, current_user: dict = Depends(get_current_user)):
+    """Get current AI agent status, config, and today's activity."""
+    from services.ai import agent_runner
+    return agent_runner.get_status()
+
+
+@app.get("/api/ai/decisions")
+@limiter.limit("30/minute")
+async def ai_decisions(
+    request: Request,
+    limit: int = 50,
+    symbol: str = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """List recent AI trading decisions with reasoning."""
+    from services.ai.decision_log import get_decisions
+    return get_decisions(limit=min(limit, 200), symbol=symbol)
+
+
+@app.get("/api/ai/paper-report")
+@limiter.limit("10/minute")
+async def ai_paper_report(
+    request: Request,
+    days: int = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """Get AI paper trading performance report."""
+    from services.ai.paper_report import get_paper_report
+    from src.findmy.config import settings
+    return get_paper_report(days=days or settings.ai_paper_min_days)
+
+
+@app.post("/api/ai/promote-to-live")
+@limiter.limit("5/minute")
+async def ai_promote_to_live(request: Request, current_user: dict = Depends(get_current_user)):
+    """Promote AI agent from paper to live trading if performance gate passes. Admin only."""
+    _require_admin(current_user)
+    from services.ai.paper_report import promote_to_live
+    result = promote_to_live()
+    if not result["promoted"]:
+        raise HTTPException(status_code=400, detail={"eligible": False, "reasons": result["reasons"]})
+    return result
+
+
+# ── Consultant registry ───────────────────────────────────────────────────────
+
+@app.get("/api/ai/consultants")
+@limiter.limit("30/minute")
+async def list_consultants(request: Request, current_user: dict = Depends(get_current_user)):
+    """List all registered AI consultant agents."""
+    from services.ai.consultants.registry import list_consultants as _list
+    return _list()
+
+
+@app.post("/api/ai/consultants")
+@limiter.limit("10/minute")
+async def add_consultant(
+    request: Request,
+    body: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Register a new AI consultant agent. Admin only.
+    Body: {name, type: 'technical'|'llm', config: {}, enabled: true}
+    """
+    _require_admin(current_user)
+    from services.ai.consultants.registry import add_consultant as _add, DuplicateConsultantError
+    name = body.get("name")
+    type_ = body.get("type", "llm")
+    config = body.get("config", {})
+    enabled = body.get("enabled", True)
+    if not name:
+        raise HTTPException(status_code=422, detail="name is required")
+    try:
+        return _add(name, type_, config, enabled)
+    except DuplicateConsultantError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.patch("/api/ai/consultants/{consultant_id}/toggle")
+@limiter.limit("10/minute")
+async def toggle_consultant(
+    request: Request,
+    consultant_id: int,
+    body: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    """Enable or disable a consultant agent. Admin only."""
+    _require_admin(current_user)
+    from services.ai.consultants.registry import toggle_consultant as _toggle
+    enabled = bool(body.get("enabled", True))
+    ok = _toggle(consultant_id, enabled)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Consultant not found")
+    return {"id": consultant_id, "enabled": enabled}
+
+
+@app.delete("/api/ai/consultants/{consultant_id}")
+@limiter.limit("10/minute")
+async def delete_consultant(
+    request: Request,
+    consultant_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    """Remove a consultant agent. Admin only."""
+    _require_admin(current_user)
+    from services.ai.consultants.registry import remove_consultant as _remove
+    ok = _remove(consultant_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Consultant not found")
+    return {"deleted": True, "id": consultant_id}
+
+
+@app.post("/api/ai/inject-signal")
+async def inject_ai_signal(
+    payload: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    """Inject a synthetic AI signal to test consensus without Claude API calls. Admin only."""
+    _require_admin(current_user)
+
+    from services.ai.agent import TradingSignal, submit_ai_order
+    from services.ai.consultants.registry import get_enabled_consultants
+    from services.ai.consensus import aggregate_votes
+
+    symbol = payload.get("symbol", "BTC/USDT")
+    signal_type = payload.get("signal", "HOLD").upper()
+    confidence = float(payload.get("confidence", 0.5))
+    reasoning = payload.get("reasoning", "Manual injection for testing")
+
+    signal = TradingSignal(
+        symbol=symbol,
+        signal=signal_type,
+        confidence=confidence,
+        reasoning=reasoning,
+        suggested_price=payload.get("suggested_price"),
+        suggested_quantity_usdt=payload.get("suggested_quantity_usdt"),
+    )
+
+    consultants = get_enabled_consultants()
+    votes = {}
+    for c in consultants:
+        try:
+            vote = await asyncio.to_thread(c.vote, symbol, signal)
+            votes[c.name] = {"vote": vote.vote, "confidence": vote.confidence, "reasoning": vote.reasoning}
+        except Exception as e:
+            votes[c.name] = {"error": str(e)}
+
+    consensus_passed = True
+    if votes:
+        consensus_passed = aggregate_votes(signal, votes)
+
+    order_id = None
+    if consensus_passed:
+        order_id = await asyncio.to_thread(submit_ai_order, signal, votes)
+
+    return {
+        "symbol": symbol,
+        "signal": signal_type,
+        "confidence": confidence,
+        "votes": votes,
+        "consensus_passed": consensus_passed,
+        "order_id": order_id,
+    }

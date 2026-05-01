@@ -7,10 +7,19 @@ Provides JWT-based authentication and authorization for API endpoints.
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
-import os
 
-# Configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
+from src.findmy.config import settings as _cfg
+from services.auth.password import hash_password, verify_password
+
+# Derive JWT secret from app settings – fail loudly if weak or default.
+_raw_secret = _cfg.app_secret_key.get_secret_value()
+if len(_raw_secret) < 32:
+    raise RuntimeError(
+        "APP_SECRET_KEY must be at least 32 characters. "
+        "Set a strong random value before starting the server."
+    )
+SECRET_KEY = _raw_secret
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 REFRESH_TOKEN_EXPIRE_DAYS = 30
@@ -52,10 +61,10 @@ class User:
 
 
 class UserInDB(User):
-    """User with password."""
-    def __init__(self, username: str, password: str, email: Optional[str] = None, full_name: Optional[str] = None, disabled: bool = False):
+    """User with bcrypt-hashed password."""
+    def __init__(self, username: str, password_hash: str, email: Optional[str] = None, full_name: Optional[str] = None, disabled: bool = False):
         super().__init__(username, email, full_name, disabled)
-        self.password = password
+        self.password_hash = password_hash
 
 
 def create_access_token(
@@ -103,42 +112,68 @@ def verify_token(token: str) -> Optional[TokenData]:
         return None
 
 
-# Demo user database (replace with real database in production)
-# Using plain text for demo; replace with hashed passwords in production
-DEMO_USERS = {
-    "trader1": UserInDB(
-        username="trader1",
-        password="password123",  # v0.7.0: For demo only; use hashed passwords in production
-        email="trader1@findmy.io",
-        full_name="Trader One",
-        disabled=False,
-    ),
-    "trader2": UserInDB(
-        username="trader2",
-        password="password456",  # v0.7.0: For demo only
-        email="trader2@findmy.io",
-        full_name="Trader Two",
-        disabled=False,
-    ),
+def _db_user_to_model(db_user) -> UserInDB:
+    return UserInDB(
+        username=db_user.username,
+        password_hash=db_user.password_hash,
+        disabled=not db_user.is_active,
+    )
+
+
+_DEMO_RAW = {
+    "trader1": ("password123", "trader1@findmy.io", "Trader One"),
+    "trader2": ("password456", "trader2@findmy.io", "Trader Two"),
 }
+_DEMO_USERS: dict[str, UserInDB] = {}  # populated lazily on first auth attempt
+
+
+def _get_demo_users() -> dict[str, UserInDB]:
+    """Build demo user dict on first use — avoids 300ms bcrypt at import time."""
+    global _DEMO_USERS
+    if not _DEMO_USERS:
+        _DEMO_USERS = {
+            username: UserInDB(
+                username=username,
+                password_hash=hash_password(pw),
+                email=email,
+                full_name=name,
+            )
+            for username, (pw, email, name) in _DEMO_RAW.items()
+        }
+    return _DEMO_USERS
+
+
+def _has_db_users() -> bool:
+    try:
+        from services.auth.user_repository import list_users
+        return bool(list_users())
+    except Exception:
+        return False
 
 
 def authenticate_user(username: str, password: str) -> Optional[UserInDB]:
-    """Authenticate a user (demo implementation)."""
-    if username not in DEMO_USERS:
-        return None
-    
-    user = DEMO_USERS[username]
-    # For demo: simple password comparison (use bcrypt in production)
-    if user.password != password:
-        return None
-    
-    return user
+    """Authenticate against DB first; demo store fallback when DB is empty."""
+    if _has_db_users():
+        try:
+            from services.auth.user_repository import authenticate as db_auth
+            db_user = db_auth(username, password)
+            return _db_user_to_model(db_user) if db_user else None
+        except Exception:
+            return None
+    user = _get_demo_users().get(username)
+    if user and verify_password(password, user.password_hash):
+        return user
+    return None
 
 
 def get_user(username: str) -> Optional[UserInDB]:
-    """Get a user by username."""
-    if username in DEMO_USERS:
-        return DEMO_USERS[username]
-    return None
+    """Get user from DB, fallback to demo store."""
+    try:
+        from services.auth.user_repository import get_by_username
+        db_user = get_by_username(username)
+        if db_user:
+            return _db_user_to_model(db_user)
+    except Exception:
+        pass
+    return _get_demo_users().get(username)
 

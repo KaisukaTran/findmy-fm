@@ -4,6 +4,11 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 import logging
 
+try:
+    import ccxt
+except ImportError:
+    ccxt = None  # type: ignore[assignment]
+
 from services.sot.db import SessionLocal
 from services.sot.pending_orders import PendingOrder, PendingOrderStatus
 from services.risk import calculate_order_qty, check_all_risks
@@ -18,6 +23,76 @@ def _get_kss_hooks():
         return None, None
 
 logger = logging.getLogger(__name__)
+
+
+def _write_audit(order, dry_run: bool, request_payload: str,
+                 response_payload: str, status: str, error: str = "") -> None:
+    """Persist one live-order audit record via raw sqlite (no ORM dependency)."""
+    import sqlite3, os
+    from pathlib import Path
+    url = os.getenv("DATABASE_URL") or os.getenv("SOT_DATABASE_URL") or "sqlite:///./data/findmy_fm_paper.db"
+    db_path = url[len("sqlite:///"):] if url.startswith("sqlite:///") else "./data/findmy_fm_paper.db"
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with sqlite3.connect(db_path) as con:
+            con.execute("""
+                INSERT INTO live_orders_audit
+                    (pending_order_id, symbol, side, quantity, dry_run,
+                     exchange_request, exchange_response, status, error_message)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (order.id, order.symbol, order.side, order.quantity,
+                  1 if dry_run else 0,
+                  request_payload, response_payload, status, error))
+            con.commit()
+    except Exception as e:
+        logger.error(f"Audit write failed: {e}")
+
+
+def _execute_live_order(order) -> Optional[str]:
+    """
+    Send order to Binance. Respects live_trading_dry_run config.
+
+    Returns exchange order ID on success, None on failure.
+    Logs and audits every attempt.
+    """
+    if ccxt is None:
+        logger.error("ccxt not installed — live trading blocked. pip install ccxt")
+        _write_audit(order, dry_run=True, request_payload="",
+                     response_payload="", status="blocked",
+                     error="ccxt not installed")
+        return None
+
+    dry_run: bool = getattr(settings, "live_trading_dry_run", True)
+    exchange_cfg = {
+        "apiKey": settings.broker_api_key,
+        "secret": (settings.broker_api_secret.get_secret_value()
+                   if settings.broker_api_secret else None),
+        "sandbox": dry_run,  # True = Binance testnet
+    }
+    side = "buy" if order.side == "BUY" else "sell"
+    req = {"symbol": order.symbol, "side": side, "amount": order.quantity, "dry_run": dry_run}
+
+    try:
+        exchange = ccxt.binance(exchange_cfg)
+        result = exchange.create_market_order(
+            symbol=order.symbol, side=side, amount=order.quantity
+        )
+        exchange_id = result.get("id", "")
+        _write_audit(order, dry_run=dry_run,
+                     request_payload=str(req),
+                     response_payload=str(result),
+                     status="filled")
+        mode = "DRY-RUN" if dry_run else "LIVE"
+        logger.info(f"[{mode}] Order executed: id={exchange_id} {order.side} {order.quantity} {order.symbol}")
+        return exchange_id
+    except Exception as e:
+        logger.error(f"Live execution failed for order {order.id}: {e}")
+        _write_audit(order, dry_run=dry_run,
+                     request_payload=str(req),
+                     response_payload="",
+                     status="error",
+                     error=str(e))
+        return None
 
 
 def queue_order(
@@ -158,10 +233,21 @@ def approve_order(order_id: int, reviewed_by: str = "user", note: Optional[str] 
         
         if not order:
             raise ValueError(f"Pending order {order_id} not found")
-        
+
         if order.status != PendingOrderStatus.PENDING:
             raise ValueError(f"Order {order_id} is not pending (status: {order.status.value})")
-        
+
+        # Circuit breaker check before approving
+        try:
+            from services.trading.circuit_breaker import check as cb_check
+            cb = cb_check(order.symbol, order.quantity, order.price)
+            if not cb.allowed:
+                raise ValueError(
+                    f"Circuit breaker blocked order {order_id}: {'; '.join(cb.violations)}"
+                )
+        except ImportError:
+            pass  # circuit breaker not available, proceed
+
         order.status = PendingOrderStatus.APPROVED
         order.reviewed_at = datetime.utcnow()
         order.reviewed_by = reviewed_by
@@ -171,25 +257,11 @@ def approve_order(order_id: int, reviewed_by: str = "user", note: Optional[str] 
         db.commit()
         db.refresh(order)
         
-        # v0.9.0: Live execution if enabled
+        # v0.9.0+: Live execution if enabled
         if settings.live_trading:
-            try:
-                exchange = ccxt.binance({
-                    'apiKey': settings.broker_api_key,
-                    'secret': settings.broker_api_secret.get_secret_value() if settings.broker_api_secret else None,
-                    'sandbox': True,  # Testnet
-                })
-                side = 'buy' if order.side == 'BUY' else 'sell'
-                result = exchange.create_market_order(
-                    symbol=order.symbol.replace('/', '/'),  # BTC/USD -> BTC/USD
-                    side=side,
-                    amount=order.quantity
-                )
-                order.live_order_id = result['id']
-                logger.info(f"Live order executed: {result['id']} for {order.symbol}")
-            except Exception as e:
-                logger.error(f"Live execution failed for order {order_id}: {e}")
-                order.note += f" | Live exec failed: {e}"
+            live_order_id = _execute_live_order(order)
+            if live_order_id:
+                order.live_order_id = live_order_id
                 db.commit()
         
         logger.info(f"Approved order {order_id}: {order.side} {order.quantity} {order.symbol}")
@@ -253,5 +325,108 @@ def count_pending() -> int:
         return db.query(PendingOrder).filter(
             PendingOrder.status == PendingOrderStatus.PENDING
         ).count()
+    finally:
+        db.close()
+
+
+def queue_ai_order(
+    symbol: str,
+    side: str,
+    quantity_usdt: float,
+    price: Optional[float] = None,
+    confidence: Optional[float] = None,
+    reasoning: Optional[str] = None,
+) -> tuple:
+    """
+    Queue an AI-generated order and auto-approve it if within ai_max_spend_usdt
+    AND today's cumulative AI spend has not exceeded the daily budget.
+    Uses current market price if price not provided.
+    Returns (PendingOrder | None, violation_str | None).
+    """
+    from services.sot.system_state import is_halted
+    from services.ai.decision_log import sum_daily_ai_spend_usdt
+    from services.ai.state import get_mode
+
+    if is_halted():
+        return None, "Emergency halt active"
+
+    # Resolve price
+    if price is None or price <= 0:
+        try:
+            from src.findmy.services.market_data import get_current_prices
+            prices = get_current_prices([symbol])
+            price = prices.get(symbol, 0.0)
+        except Exception:
+            price = 0.0
+
+    if price <= 0:
+        return None, "Cannot determine market price"
+
+    # Per-order cap
+    max_usdt = min(quantity_usdt, settings.ai_max_spend_usdt)
+
+    # Daily cumulative cap: 10x per-order = soft daily budget
+    daily_budget = settings.ai_max_spend_usdt * 10
+    spent_today = sum_daily_ai_spend_usdt()
+    if spent_today + max_usdt > daily_budget:
+        return None, (
+            f"Daily AI spend cap reached: ${spent_today:.0f} spent, "
+            f"would add ${max_usdt:.0f}, budget ${daily_budget:.0f}"
+        )
+
+    quantity = max_usdt / price
+
+    db = SessionLocal()
+    try:
+        # Risk checks (position size, daily loss, etc.)
+        all_passed, violations = check_all_risks(symbol, quantity, db)
+        if not all_passed:
+            return None, "; ".join(violations)
+
+        # Circuit breaker (orders/min, etc.) — same as manual approval path
+        try:
+            from services.trading.circuit_breaker import check as cb_check
+            cb = cb_check(symbol, quantity, price)
+            if not cb.allowed:
+                return None, "Circuit breaker: " + "; ".join(cb.violations)
+        except ImportError:
+            pass
+
+        order = PendingOrder(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            price=price,
+            order_type="MARKET",
+            source="ai_agent",
+            source_ref="claude",
+            strategy_name="AI_AGENT",
+            confidence=confidence,
+            note=reasoning,
+            status=PendingOrderStatus.PENDING,
+            ai_trusted=True,
+        )
+        db.add(order)
+        db.commit()
+        db.refresh(order)
+
+        # Auto-approve AI-trusted orders within limit
+        order.status = PendingOrderStatus.APPROVED
+        order.reviewed_at = datetime.utcnow()
+        order.reviewed_by = "ai_agent"
+        db.commit()
+        db.refresh(order)
+
+        # Live execution gated on BOTH global flag AND AI mode
+        ai_live = get_mode() == "live"
+        if settings.live_trading and ai_live:
+            live_order_id = _execute_live_order(order)
+            if live_order_id:
+                order.live_order_id = live_order_id
+                db.commit()
+
+        logger.info(f"AI auto-approved order: {side} {quantity:.6f} {symbol} @ {price}")
+        return order, None
+
     finally:
         db.close()

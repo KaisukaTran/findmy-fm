@@ -1,0 +1,70 @@
+groups:
+  - name: findmy_fm_trading
+    rules:
+
+      # ── Emergency halt activated ───────────────────────────────────────
+      - alert: EmergencyHaltActivated
+        expr: findmy_fm_emergency_halt == 1
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "FINDMY FM emergency halt is ACTIVE"
+          description: "All order approvals are blocked. Check /api/system/status."
+
+      # ── High unrealized loss ───────────────────────────────────────────
+      - alert: HighUnrealizedLoss
+        expr: |
+          (findmy_fm_positions_total_value_usd - findmy_fm_total_invested_usd)
+          / findmy_fm_initial_fund_usd * 100 < -10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Unrealized P&L below -10% for 5 minutes"
+          description: "Unrealized loss exceeds 10% of initial fund. Review open positions."
+
+      # ── Pending orders backlog ─────────────────────────────────────────
+      - alert: PendingOrdersBacklog
+        expr: findmy_fm_orders_pending_total > 20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 20 orders pending for 10 minutes"
+          description: "{{ $value }} orders awaiting approval. Manual review required."
+
+      # ── DB query latency ──────────────────────────────────────────────
+      - alert: DBQueryLatencyHigh
+        expr: |
+          histogram_quantile(0.95,
+            rate(findmy_fm_db_query_duration_seconds_bucket[5m])
+          ) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DB query p95 latency > 500ms"
+          description: "p95 DB latency is {{ $value | humanizeDuration }}. Check for lock contention."
+
+      # ── API error rate ────────────────────────────────────────────────
+      - alert: HighAPIErrorRate
+        expr: |
+          rate(http_requests_total{status=~"5.."}[5m])
+          / rate(http_requests_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API 5xx error rate > 5%"
+          description: "Error rate is {{ $value | humanizePercentage }}. Check application logs."
+
+      # ── Circuit breaker firing frequently ─────────────────────────────
+      - alert: CircuitBreakerTripping
+        expr: rate(findmy_fm_orders_rejected_total[5m]) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Circuit breaker rejecting >0.5 orders/sec"
+          description: "High order rejection rate may indicate a misbehaving strategy."

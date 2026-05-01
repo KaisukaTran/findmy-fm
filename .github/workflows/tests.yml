@@ -39,9 +39,16 @@ jobs:
         mypy src/ --ignore-missing-imports
       continue-on-error: true
 
-    - name: Run tests with pytest
+    - name: Run unit tests with pytest
       run: |
-        pytest tests/ -v --cov=src --cov-report=xml --cov-report=term-missing
+        pytest tests/ -v --ignore=tests/integration --cov=src --cov-report=xml --cov-report=term-missing
+
+    - name: Run integration tests
+      env:
+        APP_SECRET_KEY: ${{ secrets.APP_SECRET_KEY || 'ci-integration-test-secret-key-32!' }}
+      run: |
+        pip install -r requirements-prod.txt
+        pytest tests/integration/ -v --no-cov
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3

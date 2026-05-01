@@ -3,29 +3,45 @@
 {% block title %}Dashboard – FINDMY FM{% endblock %}
 
 {% block content %}
-<!-- Header Section -->
-<div class="row mb-3">
-    <div class="col-md-8">
-        <h1 class="display-6 fw-bold mb-1">
-            <i class="fas fa-chart-line text-primary"></i> FINDMY FM Dashboard
-        </h1>
-        <p class="text-muted small mb-0">Trade Service & Statement of Truth Monitor</p>
+
+<!-- ── Dashboard Header ── -->
+<div class="dash-header">
+    <div>
+        <h1><i class="fas fa-chart-line"></i> Trading Dashboard</h1>
+        <div class="meta">Paper Trading · Statement of Truth Monitor</div>
     </div>
-    <div class="col-md-4 text-end">
-        <div class="d-flex align-items-center justify-content-end gap-2">
-            <div class="text-end">
-                <p class="mb-0 text-muted small">Current Time</p>
-                <p class="mb-0 fw-bold" id="current-time">—</p>
-            </div>
-            <div id="loading-spinner" class="spinner-border spinner-border-sm text-primary d-none" role="status">
-                <span class="visually-hidden">Loading...</span>
-            </div>
-        </div>
+    <div class="d-flex align-items-center gap-3">
+        <div class="dash-time" id="current-time">—</div>
+        <div id="loading-spinner" class="spinner-border spinner-border-sm text-primary d-none" role="status"></div>
     </div>
 </div>
 
-<!-- Nav Tabs -->
-<ul class="nav nav-tabs mb-3" id="dashboardTabs" role="tablist">
+<!-- ── System Status Bar ── -->
+<div class="status-bar">
+    <div class="status-item">
+        <div class="status-dot"></div>
+        <span>Database</span> Connected
+    </div>
+    <div class="status-item">
+        <div class="status-dot"></div>
+        <span>Trade Service</span> Active
+    </div>
+    <div class="status-item">
+        <div class="status-dot"></div>
+        <span>SOT Audit</span> Ready
+    </div>
+    <div class="status-item">
+        <div class="status-dot"></div>
+        <span>Market Data</span> Binance Live
+    </div>
+    <div class="status-item ms-auto">
+        <i class="fas fa-clock" style="color:var(--text-subtle); font-size:0.75rem;"></i>
+        Last sync: <span id="last-update">—</span>
+    </div>
+</div>
+
+<!-- ── Nav Tabs ── -->
+<ul class="nav nav-tabs" id="dashboardTabs" role="tablist">
     <li class="nav-item" role="presentation">
         <button class="nav-link active" id="overview-tab" data-bs-toggle="tab" data-bs-target="#overview" type="button" role="tab">
             <i class="fas fa-tachometer-alt"></i> Overview
@@ -33,12 +49,13 @@
     </li>
     <li class="nav-item" role="presentation">
         <button class="nav-link" id="positions-tab" data-bs-toggle="tab" data-bs-target="#positions" type="button" role="tab">
-            <i class="fas fa-list"></i> Positions/Trades
+            <i class="fas fa-wallet"></i> Positions &amp; Trades
         </button>
     </li>
     <li class="nav-item" role="presentation">
         <button class="nav-link" id="pending-tab" data-bs-toggle="tab" data-bs-target="#pending" type="button" role="tab">
-            <i class="fas fa-hourglass-half"></i> Pending Orders <span class="badge bg-warning text-dark" id="pending-badge">0</span>
+            <i class="fas fa-clock"></i> Pending Orders
+            <span class="navbar-badge" id="pending-badge" style="display:none">0</span>
         </button>
     </li>
     <li class="nav-item" role="presentation">
@@ -46,349 +63,328 @@
             <i class="fas fa-layer-group"></i> KSS Pyramid
         </button>
     </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="ai-tab" data-bs-toggle="tab" data-bs-target="#ai" type="button" role="tab" onclick="loadAIStatus()">
+            <i class="fas fa-robot"></i> AI Agent
+            <span id="ai-running-badge" class="badge bg-success ms-1" style="display:none; font-size:0.65rem;">LIVE</span>
+        </button>
+    </li>
 </ul>
 
-<!-- Tab Content -->
+<!-- ── Tab Content ── -->
 <div class="tab-content" id="dashboardTabContent">
 
-    <!-- ==================== OVERVIEW TAB ==================== -->
+    <!-- ══════════════ OVERVIEW TAB ══════════════ -->
     <div class="tab-pane fade show active" id="overview" role="tabpanel">
-        <!-- System Status -->
-        <div class="card border-0 shadow-sm mb-3">
-            <div class="card-header bg-primary text-white py-2">
-                <h6 class="mb-0"><i class="fas fa-heartbeat"></i> System Status</h6>
+
+        <!-- Metric Cards Row 1 -->
+        <div class="row g-3 mb-3">
+            <div class="col-6 col-lg-3">
+                <div class="metric-card">
+                    <div class="metric-label">Available Fund</div>
+                    <div class="metric-value text-num" id="available-fund">$10,000</div>
+                    <div class="metric-sub">of <span id="initial-fund">$10,000</span> initial · <span id="fund-util">0%</span> used</div>
+                </div>
             </div>
-            <div class="card-body py-2">
-                <div class="row g-2 text-center">
-                    <div class="col-md-3">
-                        <i class="fas fa-database text-success"></i>
-                        <small class="d-block text-muted">Database</small>
-                        <small class="fw-bold">✓ Connected</small>
+            <div class="col-6 col-lg-3">
+                <div class="metric-card accent-info">
+                    <div class="metric-label">Total Invested</div>
+                    <div class="metric-value text-num" id="total-invested">$0.00</div>
+                    <div class="metric-sub">Market value: <span id="total-market-value">$0.00</span></div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="metric-card accent-success">
+                    <div class="metric-label">Realized P&amp;L</div>
+                    <div class="metric-value text-num" id="realized-pnl">$0.00</div>
+                    <div class="metric-sub">Closed positions</div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="metric-card accent-warning">
+                    <div class="metric-label">Unrealized P&amp;L</div>
+                    <div class="metric-value text-num" id="unrealized-pnl">$0.00</div>
+                    <div class="metric-sub">Open positions · mark-to-market</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Metric Cards Row 2 -->
+        <div class="row g-3 mb-3">
+            <div class="col-6 col-lg-3">
+                <div class="metric-card accent-purple">
+                    <div class="metric-label">Total Equity</div>
+                    <div class="metric-value text-num" id="total-equity">$0.00</div>
+                    <div class="metric-sub">Invested + unrealized P&amp;L</div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="metric-card">
+                    <div class="metric-label">Total Trades</div>
+                    <div class="metric-value text-num" id="total-trades">0</div>
+                    <div class="metric-sub">All executed trades</div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="metric-card">
+                    <div class="metric-label">Price Source</div>
+                    <div class="metric-value" style="font-size:1rem;" id="price-source">Binance</div>
+                    <div class="metric-sub">Live spot prices · 60s cache</div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="metric-card">
+                    <div class="metric-label">Open Positions</div>
+                    <div class="metric-value text-num" id="open-positions">0</div>
+                    <div class="metric-sub">Active symbols</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Risk Panel -->
+        <div class="card mb-3">
+            <div class="card-header">
+                <i class="fas fa-shield-alt"></i> Risk Monitor
+            </div>
+            <div class="card-body py-3">
+                <div class="risk-panel">
+                    <div>
+                        <div class="risk-row">
+                            <span class="risk-label">Portfolio Exposure</span>
+                            <span class="risk-value" id="portfolio-exposure">0.0%</span>
+                        </div>
+                        <div class="progress mb-1">
+                            <div id="exposure-bar" class="progress-bar bg-primary" style="width:0%"></div>
+                        </div>
+                        <div class="risk-hint">Limit: 10% · Current: <span id="exposure-value">0.0%</span></div>
                     </div>
-                    <div class="col-md-3">
-                        <i class="fas fa-exchange-alt text-success"></i>
-                        <small class="d-block text-muted">Trade Service</small>
-                        <small class="fw-bold">✓ Active</small>
-                    </div>
-                    <div class="col-md-3">
-                        <i class="fas fa-shield-alt text-success"></i>
-                        <small class="d-block text-muted">SOT Audit</small>
-                        <small class="fw-bold">✓ Ready</small>
-                    </div>
-                    <div class="col-md-3">
-                        <i class="fas fa-clock text-info"></i>
-                        <small class="d-block text-muted">Last Update</small>
-                        <small class="fw-bold" id="last-update">—</small>
+                    <div>
+                        <div class="risk-row">
+                            <span class="risk-label">Daily Loss</span>
+                            <span class="risk-value text-negative" id="daily-loss">$0.00</span>
+                        </div>
+                        <div class="progress mb-1">
+                            <div id="loss-bar" class="progress-bar bg-danger" style="width:0%"></div>
+                        </div>
+                        <div class="risk-hint">Limit: 5% · Today: <span id="daily-loss-pct">0.0%</span></div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Summary Cards -->
-        <div class="row g-2 mb-3" id="summary-cards">
-            <div class="col-md-3">
-                <div class="card border-0 shadow-sm h-100">
-                    <div class="card-body text-center py-2">
-                        <p class="mb-1 text-muted small">Total Trades</p>
-                        <p class="h4 fw-bold text-primary mb-0" id="total-trades">0</p>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card border-0 shadow-sm h-100">
-                    <div class="card-body text-center py-2">
-                        <p class="mb-1 text-muted small">Realized P&L</p>
-                        <p class="h4 fw-bold mb-0" id="realized-pnl">$0.00</p>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card border-0 shadow-sm h-100">
-                    <div class="card-body text-center py-2">
-                        <p class="mb-1 text-muted small">Unrealized P&L</p>
-                        <p class="h4 fw-bold mb-0" id="unrealized-pnl">$0.00</p>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card border-0 shadow-sm h-100">
-                    <div class="card-body text-center py-2">
-                        <p class="mb-1 text-muted small">Total Equity</p>
-                        <p class="h4 fw-bold text-success mb-0" id="total-equity">$0.00</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Secondary Summary -->
-        <div class="row g-2 mb-3">
-            <div class="col-md-4">
-                <div class="card border-0 shadow-sm bg-light h-100">
-                    <div class="card-body text-center py-2">
-                        <p class="mb-1 text-muted small">Total Invested</p>
-                        <p class="h5 fw-bold text-info mb-0" id="total-invested">$0.00</p>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="card border-0 shadow-sm bg-light h-100">
-                    <div class="card-body text-center py-2">
-                        <p class="mb-1 text-muted small">Market Value</p>
-                        <p class="h5 fw-bold text-primary mb-0" id="total-market-value">$0.00</p>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="card border-0 shadow-sm bg-light h-100">
-                    <div class="card-body text-center py-2">
-                        <p class="mb-1 text-muted small"><i class="fas fa-coins"></i> Price Source</p>
-                        <p class="fw-bold mb-0 small" id="price-source">Binance (live)</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Risk Metrics -->
-        <div class="card border-0 shadow-sm mb-3">
-            <div class="card-header bg-danger text-white py-2" style="opacity: 0.9;">
-                <h6 class="mb-0"><i class="fas fa-exclamation-triangle"></i> Risk Metrics</h6>
-            </div>
-            <div class="card-body py-2">
-                <div class="row g-3">
-                    <div class="col-md-6">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
-                            <span class="text-muted small">Portfolio Exposure</span>
-                            <span id="portfolio-exposure" class="fw-bold small">0.0%</span>
-                        </div>
-                        <div class="progress" style="height: 8px;">
-                            <div id="exposure-bar" class="progress-bar bg-info" style="width: 0%"></div>
-                        </div>
-                        <small class="text-muted">Max: 10.0% | Current: <span id="exposure-value">0.0%</span></small>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
-                            <span class="text-muted small">Today's Loss</span>
-                            <span id="daily-loss" class="fw-bold small text-danger">$0.00</span>
-                        </div>
-                        <div class="progress" style="height: 8px;">
-                            <div id="loss-bar" class="progress-bar bg-danger" style="width: 0%"></div>
-                        </div>
-                        <small class="text-muted">Max Loss: 5.0% | Daily: <span id="daily-loss-pct">0.0%</span></small>
-                    </div>
-                </div>
-            </div>
-        </div>
     </div>
     <!-- END OVERVIEW TAB -->
 
-    <!-- ==================== POSITIONS/TRADES TAB ==================== -->
+    <!-- ══════════════ POSITIONS / TRADES TAB ══════════════ -->
     <div class="tab-pane fade" id="positions" role="tabpanel">
+
         <!-- Current Positions -->
-        <div class="card border-0 shadow-sm mb-3">
-            <div class="card-header bg-success text-white py-2">
-                <h6 class="mb-0"><i class="fas fa-wallet"></i> Current Positions</h6>
+        <div class="card mb-3">
+            <div class="card-header">
+                <i class="fas fa-wallet"></i> Open Positions
             </div>
-            <div class="card-body p-0">
-                <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
-                    <table class="table table-hover table-sm mb-0">
-                        <thead class="table-light sticky-top">
-                            <tr>
-                                <th>Symbol</th>
-                                <th class="text-end">Quantity</th>
-                                <th class="text-end">Avg Price</th>
-                                <th class="text-end">Total Cost</th>
-                                <th class="text-end">Current Price</th>
-                                <th class="text-end">Market Value</th>
-                                <th class="text-end">Unrealized P&L</th>
-                            </tr>
-                        </thead>
-                        <tbody id="positions-tbody">
-                            <tr><td colspan="7" class="text-center text-muted py-3"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-                <div id="no-positions" class="alert alert-info m-2 mb-0 small" style="display: none;">
-                    <i class="fas fa-info-circle"></i> No open positions yet.
-                </div>
+            <div class="table-responsive" style="max-height:280px; overflow-y:auto;">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th class="text-end num">Qty</th>
+                            <th class="text-end num">Avg Entry</th>
+                            <th class="text-end num">Cost Basis</th>
+                            <th class="text-end num">Current</th>
+                            <th class="text-end num">Mkt Value</th>
+                            <th class="text-end num">Unreal. P&amp;L</th>
+                        </tr>
+                    </thead>
+                    <tbody id="positions-tbody">
+                        <tr><td colspan="7" class="text-center py-4 text-neutral">
+                            <i class="fas fa-spinner fa-spin"></i> Loading…
+                        </td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div id="no-positions" class="empty-state" style="display:none;">
+                <i class="fas fa-inbox"></i>
+                <p>No open positions yet. Upload an Excel order file to get started.</p>
             </div>
         </div>
 
         <!-- Trade History -->
-        <div class="card border-0 shadow-sm">
-            <div class="card-header bg-info text-white py-2">
-                <h6 class="mb-0"><i class="fas fa-history"></i> Trade History (Recent 50)</h6>
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-history"></i> Trade History
+                <span style="color:var(--text-subtle); font-weight:400; font-size:0.75rem; margin-left:4px;">(recent 50)</span>
             </div>
-            <div class="card-body p-0">
-                <div class="table-responsive" style="max-height: 350px; overflow-y: auto;">
-                    <table class="table table-hover table-sm mb-0">
-                        <thead class="table-light sticky-top">
-                            <tr>
-                                <th>Timestamp</th>
-                                <th>Symbol</th>
-                                <th>Side</th>
-                                <th class="text-end">Quantity</th>
-                                <th class="text-end">Price</th>
-                                <th>Status</th>
-                                <th class="text-end">Realized P&L</th>
-                            </tr>
-                        </thead>
-                        <tbody id="trades-tbody">
-                            <tr><td colspan="7" class="text-center text-muted py-3"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-                <div id="no-trades" class="alert alert-info m-2 mb-0 small" style="display: none;">
-                    <i class="fas fa-info-circle"></i> No trades yet.
-                </div>
+            <div class="table-responsive" style="max-height:350px; overflow-y:auto;">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Symbol</th>
+                            <th>Side</th>
+                            <th class="text-end num">Qty</th>
+                            <th class="text-end num">Price</th>
+                            <th>Status</th>
+                            <th class="text-end num">Realized P&amp;L</th>
+                        </tr>
+                    </thead>
+                    <tbody id="trades-tbody">
+                        <tr><td colspan="7" class="text-center py-4 text-neutral">
+                            <i class="fas fa-spinner fa-spin"></i> Loading…
+                        </td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div id="no-trades" class="empty-state" style="display:none;">
+                <i class="fas fa-inbox"></i>
+                <p>No trades yet.</p>
             </div>
         </div>
-    </div>
-    <!-- END POSITIONS/TRADES TAB -->
 
-    <!-- ==================== PENDING ORDERS TAB ==================== -->
+    </div>
+    <!-- END POSITIONS TAB -->
+
+    <!-- ══════════════ PENDING ORDERS TAB ══════════════ -->
     <div class="tab-pane fade" id="pending" role="tabpanel">
-        <div class="card border-0 shadow-sm">
-            <div class="card-header bg-warning text-dark py-2">
-                <div class="d-flex justify-content-between align-items-center">
-                    <h6 class="mb-0"><i class="fas fa-hourglass-half"></i> Pending Orders Queue</h6>
-                    <span class="badge bg-warning text-dark" id="pending-count">0</span>
-                </div>
+
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-clock"></i> Pending Approval Queue
+                <span class="badge-count" id="pending-count">0</span>
             </div>
-            <div class="card-body p-0">
-                <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
-                    <table class="table table-hover table-sm mb-0">
-                        <thead class="table-light sticky-top">
-                            <tr>
-                                <th>Symbol</th>
-                                <th>Side</th>
-                                <th class="text-end">Quantity</th>
-                                <th class="text-end">Price</th>
-                                <th>Type</th>
-                                <th>Source</th>
-                                <th>Status</th>
-                                <th>Created</th>
-                                <th class="text-center" style="width: 120px;">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="pending-tbody">
-                            <tr><td colspan="9" class="text-center text-muted py-3"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-                <div id="no-pending" class="alert alert-success m-2 mb-0 small" style="display: none;">
-                    <i class="fas fa-check-circle"></i> No pending orders. All orders have been reviewed!
-                </div>
+            <div class="table-responsive" style="max-height:500px; overflow-y:auto;">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Side</th>
+                            <th class="text-end num">Qty</th>
+                            <th class="text-end num">Price</th>
+                            <th>Type</th>
+                            <th>Source</th>
+                            <th>Created</th>
+                            <th class="text-center" style="width:110px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="pending-tbody">
+                        <tr><td colspan="8" class="text-center py-4 text-neutral">
+                            <i class="fas fa-spinner fa-spin"></i> Loading…
+                        </td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div id="no-pending" class="empty-state" style="display:none;">
+                <i class="fas fa-check-circle" style="color:var(--color-success);"></i>
+                <p>No pending orders. All caught up!</p>
             </div>
         </div>
+
     </div>
-    <!-- END PENDING ORDERS TAB -->
+    <!-- END PENDING TAB -->
 
-    <!-- ==================== KSS PYRAMID TAB ==================== -->
+    <!-- ══════════════ KSS PYRAMID TAB ══════════════ -->
     <div class="tab-pane fade" id="kss" role="tabpanel">
-        <!-- KSS Summary Row -->
-        <div class="row g-2 mb-3">
-            <div class="col-md-3">
-                <div class="card border-0 shadow-sm bg-light h-100">
-                    <div class="card-body text-center py-2">
-                        <p class="mb-0 text-muted small">Active Sessions</p>
-                        <p class="h5 fw-bold text-primary mb-0" id="kss-active-sessions">0</p>
-                    </div>
+
+        <!-- KSS Metrics -->
+        <div class="row g-3 mb-3">
+            <div class="col-6 col-lg-3">
+                <div class="metric-card accent-purple">
+                    <div class="metric-label">Active Sessions</div>
+                    <div class="metric-value text-num" id="kss-active-sessions">0</div>
+                    <div class="metric-sub">Running pyramids</div>
                 </div>
             </div>
-            <div class="col-md-3">
-                <div class="card border-0 shadow-sm bg-light h-100">
-                    <div class="card-body text-center py-2">
-                        <p class="mb-0 text-muted small">Total Isolated Fund</p>
-                        <p class="h5 fw-bold text-info mb-0" id="kss-total-fund">$0.00</p>
-                    </div>
+            <div class="col-6 col-lg-3">
+                <div class="metric-card accent-info">
+                    <div class="metric-label">Isolated Fund</div>
+                    <div class="metric-value text-num" id="kss-total-fund">$0.00</div>
+                    <div class="metric-sub">Total allocated</div>
                 </div>
             </div>
-            <div class="col-md-3">
-                <div class="card border-0 shadow-sm bg-light h-100">
-                    <div class="card-body text-center py-2">
-                        <p class="mb-0 text-muted small">Used Fund</p>
-                        <p class="h5 fw-bold mb-0" id="kss-used-fund">$0.00</p>
-                    </div>
+            <div class="col-6 col-lg-3">
+                <div class="metric-card">
+                    <div class="metric-label">Used Fund</div>
+                    <div class="metric-value text-num" id="kss-used-fund">$0.00</div>
+                    <div class="metric-sub">Active fills</div>
                 </div>
             </div>
-            <div class="col-md-3">
-                <div class="card border-0 shadow-sm bg-light h-100">
-                    <div class="card-body text-center py-2">
-                        <p class="mb-0 text-muted small">Unrealized PnL</p>
-                        <p class="h5 fw-bold mb-0" id="kss-unrealized-pnl">$0.00</p>
-                    </div>
+            <div class="col-6 col-lg-3">
+                <div class="metric-card accent-success">
+                    <div class="metric-label">Unrealized P&amp;L</div>
+                    <div class="metric-value text-num" id="kss-unrealized-pnl">$0.00</div>
+                    <div class="metric-sub">KSS positions</div>
                 </div>
             </div>
         </div>
 
-        <!-- KSS Create Form (inline, not modal) -->
-        <div class="card border-0 shadow-sm mb-3">
-            <div class="card-header py-2" style="background-color: #6f42c1; color: white;">
-                <div class="d-flex justify-content-between align-items-center">
-                    <h6 class="mb-0"><i class="fas fa-plus-circle"></i> Create New Session</h6>
-                    <button class="btn btn-sm btn-light" type="button" data-bs-toggle="collapse" data-bs-target="#kssFormCollapse">
-                        <i class="fas fa-chevron-down"></i>
-                    </button>
-                </div>
+        <!-- Create Session + Preview -->
+        <div class="card card-kss mb-3">
+            <div class="card-header" style="background:linear-gradient(135deg,#4f46e5,#7c3aed)!important; color:#fff;">
+                <i class="fas fa-plus-circle" style="color:rgba(255,255,255,0.7)!important;"></i>
+                New Pyramid Session
+                <button class="btn btn-sm ms-auto" style="color:#fff; border-color:rgba(255,255,255,0.3);"
+                        type="button" data-bs-toggle="collapse" data-bs-target="#kssFormCollapse">
+                    <i class="fas fa-chevron-down"></i>
+                </button>
             </div>
             <div class="collapse show" id="kssFormCollapse">
-                <div class="card-body">
-                    <div class="row">
-                        <!-- Left: Form -->
+                <div class="card-body py-3">
+                    <div class="row g-3">
+                        <!-- Form -->
                         <div class="col-md-5">
                             <form id="kss-create-form">
                                 <div class="row g-2">
                                     <div class="col-6">
-                                        <label class="form-label small">Symbol</label>
+                                        <label class="form-label">Symbol</label>
                                         <input type="text" class="form-control form-control-sm" id="kss-symbol" value="BTC" required>
                                     </div>
                                     <div class="col-6">
-                                        <label class="form-label small">Entry Price</label>
+                                        <label class="form-label">Entry Price</label>
                                         <input type="number" class="form-control form-control-sm" id="kss-entry-price" step="0.01" required>
                                     </div>
                                     <div class="col-6">
-                                        <label class="form-label small">Distance %</label>
+                                        <label class="form-label">Distance %</label>
                                         <input type="number" class="form-control form-control-sm" id="kss-distance-pct" value="2.0" step="0.1" required>
                                     </div>
                                     <div class="col-6">
-                                        <label class="form-label small">Max Waves</label>
+                                        <label class="form-label">Max Waves</label>
                                         <input type="number" class="form-control form-control-sm" id="kss-max-waves" value="10" min="1" max="100" required>
                                     </div>
                                     <div class="col-6">
-                                        <label class="form-label small">Isolated Fund ($)</label>
+                                        <label class="form-label">Isolated Fund ($)</label>
                                         <input type="number" class="form-control form-control-sm" id="kss-isolated-fund" value="1000" step="0.01" required>
                                     </div>
                                     <div class="col-6">
-                                        <label class="form-label small">Take Profit %</label>
+                                        <label class="form-label">Take Profit %</label>
                                         <input type="number" class="form-control form-control-sm" id="kss-tp-pct" value="3.0" step="0.1" required>
                                     </div>
                                     <div class="col-6">
-                                        <label class="form-label small">Timeout (min)</label>
+                                        <label class="form-label">Timeout (min)</label>
                                         <input type="number" class="form-control form-control-sm" id="kss-timeout" value="30" min="1" required>
                                     </div>
                                     <div class="col-6">
-                                        <label class="form-label small">Gap Min (min)</label>
+                                        <label class="form-label">Gap (min)</label>
                                         <input type="number" class="form-control form-control-sm" id="kss-gap" value="5" min="0" required>
                                     </div>
-                                    <div class="col-12 mt-2">
-                                        <button type="button" class="btn btn-outline-secondary btn-sm w-100" onclick="previewKSSSession()">
+                                    <div class="col-12 mt-1 d-flex gap-2">
+                                        <button type="button" class="btn btn-sm btn-outline-secondary flex-fill"
+                                                onclick="previewKSSSession()">
                                             <i class="fas fa-eye"></i> Preview
                                         </button>
-                                    </div>
-                                    <div class="col-12">
-                                        <button type="button" class="btn btn-sm text-white w-100" style="background-color: #6f42c1;" onclick="createKSSSession()">
-                                            <i class="fas fa-plus"></i> Create Session
+                                        <button type="button" class="btn btn-sm btn-primary flex-fill"
+                                                onclick="createKSSSession()" style="background:var(--color-purple); border-color:var(--color-purple);">
+                                            <i class="fas fa-plus"></i> Create
                                         </button>
                                     </div>
                                 </div>
                             </form>
                         </div>
-                        <!-- Right: Preview -->
+                        <!-- Preview -->
                         <div class="col-md-7">
-                            <div id="kss-preview-area" class="border rounded p-2 bg-light h-100" style="min-height: 250px; max-height: 300px; overflow-y: auto;">
-                                <div class="text-center text-muted py-4">
-                                    <i class="fas fa-eye fa-2x mb-2 opacity-25"></i>
-                                    <p class="small">Click "Preview" to see projected waves</p>
+                            <div class="preview-area" id="kss-preview-area">
+                                <div class="preview-empty">
+                                    <i class="fas fa-eye"></i>
+                                    <span style="font-size:0.8125rem;">Click Preview to see projected waves</span>
                                 </div>
                             </div>
                         </div>
@@ -397,911 +393,1044 @@
             </div>
         </div>
 
-        <!-- KSS Sessions Table -->
-        <div class="card border-0 shadow-sm mb-3">
-            <div class="card-header py-2" style="background-color: #6f42c1; color: white;">
-                <h6 class="mb-0"><i class="fas fa-layer-group"></i> Active Sessions</h6>
+        <!-- Sessions Table -->
+        <div class="card mb-3">
+            <div class="card-header">
+                <i class="fas fa-layer-group"></i> Sessions
             </div>
-            <div class="card-body p-0">
-                <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
-                    <table class="table table-hover table-sm mb-0">
-                        <thead class="table-light sticky-top">
-                            <tr>
-                                <th>ID</th>
-                                <th>Symbol</th>
-                                <th>Status</th>
-                                <th class="text-end">Entry</th>
-                                <th class="text-end">Avg Price</th>
-                                <th>Waves</th>
-                                <th class="text-end">Filled Qty</th>
-                                <th class="text-end">TP Target</th>
-                                <th class="text-end">PnL</th>
-                                <th class="text-center">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="kss-sessions-tbody">
-                            <tr><td colspan="10" class="text-center text-muted py-3"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>
-                        </tbody>
-                    </table>
+            <div class="table-responsive" style="max-height:300px; overflow-y:auto;">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Symbol</th>
+                            <th>Status</th>
+                            <th class="text-end num">Entry</th>
+                            <th class="text-end num">Avg Price</th>
+                            <th>Waves</th>
+                            <th class="text-end num">Filled Qty</th>
+                            <th class="text-end num">TP Target</th>
+                            <th class="text-end num">P&amp;L</th>
+                            <th class="text-center" style="width:110px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="kss-sessions-tbody">
+                        <tr><td colspan="10" class="text-center py-4 text-neutral">
+                            <i class="fas fa-spinner fa-spin"></i> Loading…
+                        </td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div id="no-kss-sessions" class="empty-state" style="display:none;">
+                <i class="fas fa-inbox"></i>
+                <p>No sessions yet. Create one above.</p>
+            </div>
+        </div>
+
+        <!-- Realtime Waves -->
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-wave-square"></i> Wave Detail
+                <span style="color:var(--text-subtle); font-weight:400; font-size:0.75rem; margin-left:4px;">Select a session to view</span>
+            </div>
+            <div class="table-responsive" style="max-height:240px; overflow-y:auto;">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th class="text-end num">Target</th>
+                            <th class="text-end num">Qty</th>
+                            <th>Status</th>
+                            <th class="text-end num">Filled At</th>
+                            <th class="text-end num">Avg After</th>
+                            <th class="text-end num">TP After</th>
+                        </tr>
+                    </thead>
+                    <tbody id="kss-waves-tbody">
+                        <tr><td colspan="7" class="text-center py-3 text-neutral">Select a session to view waves</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>
+    <!-- END KSS TAB -->
+
+    <!-- ══════════════ AI AGENT TAB ══════════════ -->
+    <div class="tab-pane fade" id="ai" role="tabpanel">
+        <div class="row g-3 mb-3">
+
+            <!-- Control Panel -->
+            <div class="col-md-4">
+                <div class="card h-100" style="border:1px solid var(--border);">
+                    <div class="card-header d-flex align-items-center gap-2" style="background:linear-gradient(135deg,var(--color-primary-deep),var(--color-primary));color:#fff;">
+                        <i class="fas fa-robot"></i><strong>AI Control Panel</strong>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3 text-center">
+                            <span id="ai-status-badge" class="badge fs-6 px-3 py-2 bg-secondary">Loading…</span>
+                        </div>
+                        <div class="mb-2 small text-muted">Mode: <strong id="ai-mode-label">—</strong></div>
+                        <div class="mb-2 small text-muted">Last action: <span id="ai-last-action" style="font-family:monospace;font-size:0.75rem;">—</span></div>
+                        <div class="mb-3 small text-muted">Model: <span id="ai-model">—</span></div>
+                        <div class="d-grid gap-2">
+                            <button id="ai-start-btn" class="btn btn-success btn-sm" onclick="aiControl('start')" disabled>
+                                <i class="fas fa-play"></i> Start AI Agent
+                            </button>
+                            <button id="ai-stop-btn" class="btn btn-danger btn-sm" onclick="aiControl('stop')" disabled>
+                                <i class="fas fa-stop"></i> Stop AI Agent
+                            </button>
+                        </div>
+                        <hr class="my-3">
+                        <div class="small">
+                            <div class="d-flex justify-content-between"><span>Today orders</span><strong id="ai-today-orders">—</strong></div>
+                            <div class="d-flex justify-content-between"><span>Today skipped</span><strong id="ai-today-skipped">—</strong></div>
+                            <div class="d-flex justify-content-between"><span>Daily target</span><strong id="ai-daily-target">—</strong></div>
+                        </div>
+                    </div>
                 </div>
-                <div id="no-kss-sessions" class="alert alert-secondary m-2 mb-0 small" style="display: none;">
-                    <i class="fas fa-info-circle"></i> No KSS sessions. Create one above!
+            </div>
+
+            <!-- Config & Consultants -->
+            <div class="col-md-4">
+                <div class="card h-100" style="border:1px solid var(--border);">
+                    <div class="card-header"><strong><i class="fas fa-sliders-h"></i> Configuration</strong></div>
+                    <div class="card-body small" id="ai-config-panel">
+                        <div class="text-muted">Loading…</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Paper Report -->
+            <div class="col-md-4">
+                <div class="card h-100" style="border:1px solid var(--border);">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <strong><i class="fas fa-file-alt"></i> Paper Report</strong>
+                        <button class="btn btn-xs btn-outline-success" style="font-size:0.7rem;padding:2px 8px;" onclick="promoteLive()" id="promote-btn">
+                            Promote → Live
+                        </button>
+                    </div>
+                    <div class="card-body small" id="ai-paper-panel">
+                        <div class="text-muted">Loading…</div>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- KSS Realtime Waves Table -->
-        <div class="card border-0 shadow-sm">
-            <div class="card-header py-2 bg-secondary text-white">
-                <h6 class="mb-0"><i class="fas fa-wave-square"></i> Realtime Waves (Active Session)</h6>
+        <!-- AI Decisions Log -->
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <strong><i class="fas fa-history"></i> AI Decision Log</strong>
+                <button class="btn btn-sm btn-outline-primary" onclick="loadAIDecisions()">Refresh</button>
             </div>
             <div class="card-body p-0">
-                <div class="table-responsive" style="max-height: 250px; overflow-y: auto;">
-                    <table class="table table-sm table-bordered mb-0">
-                        <thead class="table-light sticky-top">
-                            <tr>
-                                <th>#</th>
-                                <th class="text-end">Target</th>
-                                <th class="text-end">Qty</th>
-                                <th>Status</th>
-                                <th class="text-end">Filled At</th>
-                                <th class="text-end">Avg After</th>
-                                <th class="text-end">TP After</th>
-                            </tr>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover mb-0" style="font-size:0.8rem;">
+                        <thead class="table-dark">
+                            <tr><th>Time</th><th>Symbol</th><th>Signal</th><th>Conf</th><th>Action</th><th>Reasoning</th></tr>
                         </thead>
-                        <tbody id="kss-waves-tbody">
-                            <tr><td colspan="7" class="text-center text-muted py-3">Select a session to view waves</td></tr>
+                        <tbody id="ai-decisions-tbody">
+                            <tr><td colspan="6" class="text-center text-muted py-3">No decisions yet</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Consultants -->
+        <div class="card mt-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <strong><i class="fas fa-users"></i> Consultant Agents</strong>
+                <button class="btn btn-sm btn-outline-primary" onclick="showAddConsultant()">+ Add</button>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0" style="font-size:0.8rem;">
+                        <thead class="table-dark">
+                            <tr><th>Name</th><th>Type</th><th>Status</th><th>Actions</th></tr>
+                        </thead>
+                        <tbody id="consultants-tbody">
+                            <tr><td colspan="4" class="text-center text-muted py-3">No consultants registered</td></tr>
                         </tbody>
                     </table>
                 </div>
             </div>
         </div>
     </div>
-    <!-- END KSS PYRAMID TAB -->
+    <!-- END AI TAB -->
 
 </div>
 <!-- END Tab Content -->
 
-<!-- KSS Session Detail Modal -->
+
+<!-- ── KSS Detail Modal ── -->
 <div class="modal fade" id="kssDetailModal" tabindex="-1">
     <div class="modal-dialog modal-xl">
         <div class="modal-content">
-            <div class="modal-header py-2" style="background-color: #6f42c1; color: white;">
-                <h6 class="modal-title"><i class="fas fa-layer-group"></i> Session Detail <span id="kss-detail-title"></span></h6>
+            <div class="modal-header" style="background:linear-gradient(135deg,#4f46e5,#7c3aed); color:#fff;">
+                <h6 class="modal-title"><i class="fas fa-layer-group"></i> Session <span id="kss-detail-title"></span></h6>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
-            <div class="modal-body">
-                <div class="row">
-                    <!-- Left: Info + Waves Table -->
+            <div class="modal-body p-3">
+                <div class="row g-3">
+                    <!-- Info + Waves -->
                     <div class="col-md-6">
-                        <div class="card mb-2">
-                            <div class="card-body py-2">
-                                <div class="row g-1 small">
-                                    <div class="col-6"><strong>Symbol:</strong> <span id="kss-detail-symbol"></span></div>
-                                    <div class="col-6"><strong>Status:</strong> <span id="kss-detail-status"></span></div>
-                                    <div class="col-6"><strong>Entry:</strong> <span id="kss-detail-entry"></span></div>
-                                    <div class="col-6"><strong>Avg Price:</strong> <span id="kss-detail-avg" class="text-warning fw-bold"></span></div>
-                                    <div class="col-6"><strong>Filled Qty:</strong> <span id="kss-detail-qty"></span></div>
-                                    <div class="col-6"><strong>TP Target:</strong> <span id="kss-detail-tp" class="text-success fw-bold"></span></div>
-                                    <div class="col-6"><strong>Current:</strong> <span id="kss-detail-current" class="text-primary fw-bold"></span></div>
-                                    <div class="col-6"><strong>PnL:</strong> <span id="kss-detail-pnl"></span></div>
-                                </div>
-                            </div>
+                        <div class="row g-2 mb-3 small">
+                            <div class="col-6"><span class="text-neutral">Symbol</span><br><strong id="kss-detail-symbol"></strong></div>
+                            <div class="col-6"><span class="text-neutral">Status</span><br><span id="kss-detail-status"></span></div>
+                            <div class="col-6"><span class="text-neutral">Entry Price</span><br><strong class="mono" id="kss-detail-entry"></strong></div>
+                            <div class="col-6"><span class="text-neutral">Avg Price</span><br><strong class="mono" id="kss-detail-avg" style="color:var(--color-warning);"></strong></div>
+                            <div class="col-6"><span class="text-neutral">Filled Qty</span><br><strong class="mono" id="kss-detail-qty"></strong></div>
+                            <div class="col-6"><span class="text-neutral">TP Target</span><br><strong class="mono" id="kss-detail-tp" style="color:var(--color-success);"></strong></div>
+                            <div class="col-6"><span class="text-neutral">Current</span><br><strong class="mono" id="kss-detail-current" style="color:var(--color-primary);"></strong></div>
+                            <div class="col-6"><span class="text-neutral">P&amp;L</span><br><strong class="mono" id="kss-detail-pnl"></strong></div>
                         </div>
-                        <div class="table-responsive" style="max-height: 280px; overflow-y: auto;">
-                            <table class="table table-sm table-bordered mb-0">
-                                <thead class="table-light sticky-top">
+                        <div class="table-responsive" style="max-height:260px; overflow-y:auto;">
+                            <table class="table">
+                                <thead>
                                     <tr>
                                         <th>#</th>
-                                        <th class="text-end">Target</th>
-                                        <th class="text-end">Qty</th>
+                                        <th class="text-end num">Target</th>
+                                        <th class="text-end num">Qty</th>
                                         <th>Status</th>
-                                        <th class="text-end">Filled At</th>
+                                        <th class="text-end num">Filled At</th>
                                     </tr>
                                 </thead>
                                 <tbody id="kss-detail-waves-tbody"></tbody>
                             </table>
                         </div>
                     </div>
-                    <!-- Right: Chart -->
+                    <!-- Chart -->
                     <div class="col-md-6">
                         <div class="card h-100">
-                            <div class="card-header py-1">
-                                <small><i class="fas fa-chart-line"></i> Price Levels</small>
-                            </div>
+                            <div class="card-header"><i class="fas fa-chart-line"></i> Price Levels</div>
                             <div class="card-body p-2">
-                                <canvas id="kss-detail-chart" style="max-height: 320px;"></canvas>
+                                <canvas id="kss-detail-chart" style="max-height:330px;"></canvas>
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
-            <div class="modal-footer py-1">
-                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Close</button>
             </div>
         </div>
     </div>
 </div>
 
+<!-- App Modal -->
+<div id="appModal" class="modal-overlay" role="dialog" aria-modal="true">
+  <div class="modal-box">
+    <h3 id="modalTitle"></h3>
+    <p id="modalBody"></p>
+    <div id="modalInputArea"></div>
+    <div class="modal-actions" id="modalActions"></div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:1000; align-items:center; justify-content:center; }
+.modal-overlay.open { display:flex; }
+.modal-box { background:#1e293b; border:1px solid #334155; border-radius:.5rem; padding:1.5rem; max-width:420px; width:90%; }
+.modal-box h3 { margin:0 0 1rem; color:#f1f5f9; }
+.modal-box p { color:#94a3b8; margin:0 0 1.5rem; }
+.modal-actions { display:flex; gap:.75rem; justify-content:flex-end; }
+.modal-input { width:100%; padding:.5rem; background:#0f172a; border:1px solid #334155; border-radius:.25rem; color:#f1f5f9; margin-bottom:1rem; box-sizing:border-box; }
+</style>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-    // ==========================================
-    // UTILITIES
-    // ==========================================
-    function updateCurrentTime() {
-        const now = new Date();
-        document.getElementById('current-time').textContent = now.toLocaleString();
-    }
-    updateCurrentTime();
-    setInterval(updateCurrentTime, 1000);
-
-    function formatCurrency(value) {
-        return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value || 0);
+    function getCsrfHeaders() {
+        const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+        return match ? {'X-CSRF-Token': decodeURIComponent(match[1])} : {};
     }
 
-    function formatDateTime(dateString) {
-        if (!dateString) return '—';
-        return new Date(dateString).toLocaleString();
-    }
-
-    function showSpinner() {
-        document.getElementById('loading-spinner').classList.remove('d-none');
-    }
-    function hideSpinner() {
-        document.getElementById('loading-spinner').classList.add('d-none');
-    }
-
-    // ==========================================
-    // LOAD FUNCTIONS (API fetch + DOM update)
-    // ==========================================
-    async function loadSummary() {
-        try {
-            const response = await fetch('/api/summary');
-            const data = await response.json();
-            updateSummaryDOM(data);
-        } catch (error) {
-            console.error('Error loading summary:', error);
-        }
-    }
-
-    function updateSummaryDOM(data) {
-        const el = (id) => document.getElementById(id);
-        el('total-trades').textContent = data.total_trades || 0;
-        
-        const realizedEl = el('realized-pnl');
-        realizedEl.textContent = formatCurrency(data.realized_pnl);
-        realizedEl.style.color = (data.realized_pnl || 0) >= 0 ? '#28a745' : '#dc3545';
-        
-        const unrealizedEl = el('unrealized-pnl');
-        unrealizedEl.textContent = formatCurrency(data.unrealized_pnl);
-        unrealizedEl.style.color = (data.unrealized_pnl || 0) >= 0 ? '#28a745' : '#dc3545';
-        
-        el('total-invested').textContent = formatCurrency(data.total_invested);
-        el('total-market-value').textContent = formatCurrency(data.total_market_value);
-        
-        const equityEl = el('total-equity');
-        equityEl.textContent = formatCurrency(data.total_equity);
-        equityEl.style.color = (data.total_equity || 0) >= (data.total_invested || 0) ? '#28a745' : '#dc3545';
-        
-        el('last-update').textContent = data.last_trade_time ? formatDateTime(data.last_trade_time) : '—';
-    }
-
-    async function loadPositions() {
-        try {
-            const response = await fetch('/api/positions');
-            const positions = await response.json();
-            updatePositionsDOM(positions);
-        } catch (error) {
-            console.error('Error loading positions:', error);
-        }
-    }
-
-    function updatePositionsDOM(positions) {
-        const tbody = document.getElementById('positions-tbody');
-        const noPos = document.getElementById('no-positions');
-        
-        if (!positions || positions.length === 0) {
-            tbody.innerHTML = '';
-            noPos.style.display = 'block';
-        } else {
-            noPos.style.display = 'none';
-            tbody.innerHTML = positions.map(pos => {
-                const pnlColor = (pos.unrealized_pnl || 0) >= 0 ? '#28a745' : '#dc3545';
-                return `<tr>
-                    <td><strong>${pos.symbol}</strong></td>
-                    <td class="text-end">${(pos.quantity || 0).toFixed(6)}</td>
-                    <td class="text-end">${formatCurrency(pos.avg_price)}</td>
-                    <td class="text-end">${formatCurrency(pos.total_cost)}</td>
-                    <td class="text-end text-info"><strong>${pos.current_price ? formatCurrency(pos.current_price) : '—'}</strong></td>
-                    <td class="text-end">${pos.market_value ? formatCurrency(pos.market_value) : '—'}</td>
-                    <td class="text-end" style="color: ${pnlColor};"><strong>${pos.unrealized_pnl != null ? formatCurrency(pos.unrealized_pnl) : '—'}</strong></td>
-                </tr>`;
-            }).join('');
-        }
-    }
-
-    async function loadTrades() {
-        try {
-            const response = await fetch('/api/trades');
-            const trades = await response.json();
-            updateTradesDOM(trades);
-        } catch (error) {
-            console.error('Error loading trades:', error);
-        }
-    }
-
-    function updateTradesDOM(trades) {
-        const tbody = document.getElementById('trades-tbody');
-        const noTrades = document.getElementById('no-trades');
-        
-        if (!trades || trades.length === 0) {
-            tbody.innerHTML = '';
-            noTrades.style.display = 'block';
-        } else {
-            noTrades.style.display = 'none';
-            tbody.innerHTML = trades.slice(0, 50).map(t => {
-                const pnlColor = (t.realized_pnl || 0) >= 0 ? '#28a745' : '#dc3545';
-                return `<tr>
-                    <td><small>${formatDateTime(t.entry_time)}</small></td>
-                    <td><strong>${t.symbol}</strong></td>
-                    <td><span class="badge ${t.side === 'BUY' ? 'bg-success' : 'bg-danger'}">${t.side}</span></td>
-                    <td class="text-end">${(t.entry_qty || 0).toFixed(6)}</td>
-                    <td class="text-end">${formatCurrency(t.entry_price)}</td>
-                    <td><span class="badge ${t.status === 'OPEN' ? 'bg-warning text-dark' : 'bg-success'}">${t.status}</span></td>
-                    <td class="text-end" style="color: ${pnlColor};"><strong>${t.realized_pnl != null ? formatCurrency(t.realized_pnl) : '—'}</strong></td>
-                </tr>`;
-            }).join('');
-        }
-    }
-
-    async function loadPendingOrders() {
-        try {
-            const response = await fetch('/api/pending');
-            const orders = await response.json();
-            updatePendingDOM(orders);
-        } catch (error) {
-            console.error('Error loading pending orders:', error);
-        }
-    }
-
-    function updatePendingDOM(orders) {
-        const tbody = document.getElementById('pending-tbody');
-        const noPending = document.getElementById('no-pending');
-        const countBadge = document.getElementById('pending-count');
-        const tabBadge = document.getElementById('pending-badge');
-        
-        const pendingOrders = (orders || []).filter(o => o.status === 'pending');
-        countBadge.textContent = pendingOrders.length;
-        tabBadge.textContent = pendingOrders.length;
-        
-        if (pendingOrders.length === 0) {
-            tbody.innerHTML = '';
-            noPending.style.display = 'block';
-        } else {
-            noPending.style.display = 'none';
-            tbody.innerHTML = pendingOrders.map(o => `<tr>
-                <td><strong>${o.symbol}</strong></td>
-                <td><span class="badge ${o.side === 'BUY' ? 'bg-success' : 'bg-danger'}">${o.side}</span></td>
-                <td class="text-end">${o.quantity}</td>
-                <td class="text-end">${formatCurrency(o.price)}</td>
-                <td><small>${o.order_type || 'LIMIT'}</small></td>
-                <td><small>${o.source || 'manual'}</small></td>
-                <td><span class="badge bg-warning text-dark">${o.status}</span></td>
-                <td><small>${formatDateTime(o.created_at)}</small></td>
-                <td class="text-center">
-                    <button class="btn btn-sm btn-success" onclick="approvePendingOrder(${o.id}, '${o.symbol}')"><i class="fas fa-check"></i></button>
-                    <button class="btn btn-sm btn-danger" onclick="rejectPendingOrder(${o.id}, '${o.symbol}')"><i class="fas fa-times"></i></button>
-                </td>
-            </tr>`).join('');
-        }
-    }
-
-    async function loadRiskMetrics() {
-        // Mock data for now (replace with /api/risk endpoint when available)
-        const portfolioExposure = 5.0, maxExposure = 10.0;
-        const dailyLoss = 250.0, dailyLossPct = 2.5, maxDailyLoss = 5.0;
-
-        document.getElementById('portfolio-exposure').textContent = portfolioExposure.toFixed(1) + '%';
-        document.getElementById('exposure-value').textContent = portfolioExposure.toFixed(1) + '%';
-        document.getElementById('exposure-bar').style.width = (portfolioExposure / maxExposure * 100) + '%';
-        
-        const exposureBar = document.getElementById('exposure-bar');
-        exposureBar.className = 'progress-bar ' + (portfolioExposure > maxExposure * 0.8 ? 'bg-danger' : portfolioExposure > maxExposure * 0.5 ? 'bg-warning' : 'bg-info');
-
-        document.getElementById('daily-loss').textContent = formatCurrency(dailyLoss);
-        document.getElementById('daily-loss-pct').textContent = dailyLossPct.toFixed(1) + '%';
-        document.getElementById('loss-bar').style.width = (dailyLossPct / maxDailyLoss * 100) + '%';
-    }
-
-    // Approve/Reject pending orders
-    async function approvePendingOrder(orderId, symbol) {
-        if (!confirm(`Approve order for ${symbol}?`)) return;
-        try {
-            const response = await fetch(`/api/pending/approve/${orderId}`, { method: 'POST' });
-            if (response.ok) {
-                loadPendingOrders();
-                loadPositions();
-                loadTrades();
-                loadSummary();
-            } else { alert('Failed to approve order'); }
-        } catch (error) { console.error(error); alert('Error approving order'); }
-    }
-
-    async function rejectPendingOrder(orderId, symbol) {
-        const reason = prompt(`Reject order for ${symbol}? (Enter reason):`, 'Market conditions changed');
-        if (reason === null) return;
-        try {
-            const response = await fetch(`/api/pending/reject/${orderId}`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({reason: reason || 'User rejected'})
+    function showModal({title, body, inputs=[], buttons}) {
+        return new Promise(resolve => {
+            document.getElementById('modalTitle').textContent = title;
+            document.getElementById('modalBody').textContent = body;
+            const inputArea = document.getElementById('modalInputArea');
+            inputArea.innerHTML = '';
+            const inputEls = inputs.map(inp => {
+                const el = inp.type === 'textarea'
+                    ? Object.assign(document.createElement('textarea'), {className:'modal-input', placeholder:inp.placeholder||'', rows:3, value:inp.default||''})
+                    : Object.assign(document.createElement('input'), {className:'modal-input', type:inp.type||'text', placeholder:inp.placeholder||'', value:inp.default||''});
+                inputArea.appendChild(el);
+                return el;
             });
-            if (response.ok) { loadPendingOrders(); }
-            else { alert('Failed to reject order'); }
-        } catch (error) { console.error(error); alert('Error rejecting order'); }
+            const actionsEl = document.getElementById('modalActions');
+            actionsEl.innerHTML = '';
+            buttons.forEach(btn => {
+                const b = document.createElement('button');
+                b.textContent = btn.label;
+                b.className = btn.primary ? 'btn btn-primary' : 'btn btn-secondary';
+                b.onclick = () => {
+                    document.getElementById('appModal').classList.remove('open');
+                    resolve(btn.value !== undefined ? btn.value : inputEls.map(e => e.value));
+                };
+                actionsEl.appendChild(b);
+            });
+            document.getElementById('appModal').classList.add('open');
+            if (inputEls.length) inputEls[0].focus();
+        });
     }
 
-    // ==========================================
-    // WEBSOCKET - SELECTIVE REALTIME UPDATES
-    // ==========================================
-    function connectWebSocket() {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const ws = new WebSocket(`${protocol}//${window.location.host}/ws/dashboard`);
-        
-        ws.onopen = function() {
-            console.log('WebSocket connected');
-        };
-        
-        ws.onmessage = function(event) {
-            try {
-                const data = JSON.parse(event.data);
-                if (data.type === 'dashboard_update') {
-                    // Selective DOM updates - no page reload!
-                    if (data.positions) updatePositionsDOM(data.positions);
-                    if (data.summary) updateSummaryDOM(data.summary);
-                    if (data.kss_sessions) updateKSSSessionsDOM(data.kss_sessions);
-                }
-            } catch (error) {
-                console.error('WebSocket parse error:', error);
-            }
-        };
-        
-        ws.onerror = function(error) {
-            console.error('WebSocket error:', error);
-        };
-        
-        ws.onclose = function() {
-            console.log('WebSocket closed, reconnecting in 5s...');
-            setTimeout(connectWebSocket, 5000);
-        };
+    function confirmModal(title, body) {
+        return showModal({title, body, buttons:[
+            {label:'Cancel', value:false},
+            {label:'Confirm', value:true, primary:true}
+        ]});
     }
 
-    // ==========================================
-    // LOCALSTORAGE - FORM PERSISTENCE
-    // ==========================================
-    const KSS_FORM_KEY = 'kss_form_data';
-    
-    function saveKSSFormToStorage() {
-        const formData = {
-            symbol: document.getElementById('kss-symbol').value,
-            entry_price: document.getElementById('kss-entry-price').value,
-            distance_pct: document.getElementById('kss-distance-pct').value,
-            max_waves: document.getElementById('kss-max-waves').value,
-            isolated_fund: document.getElementById('kss-isolated-fund').value,
-            tp_pct: document.getElementById('kss-tp-pct').value,
-            timeout: document.getElementById('kss-timeout').value,
-            gap: document.getElementById('kss-gap').value
-        };
-        localStorage.setItem(KSS_FORM_KEY, JSON.stringify(formData));
+// ── Utilities ──────────────────────────────────────────────
+function updateCurrentTime() {
+    const el = document.getElementById('current-time');
+    if (el) el.textContent = new Date().toLocaleString();
+}
+updateCurrentTime();
+setInterval(updateCurrentTime, 1000);
+
+function fmt(v) {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 }).format(v || 0);
+}
+
+function fmtTime(s) {
+    if (!s) return '—';
+    return new Date(s).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+}
+
+function pnlColor(v) {
+    return (v || 0) >= 0 ? 'var(--color-success)' : 'var(--color-danger)';
+}
+
+function showSpinner()  { document.getElementById('loading-spinner').classList.remove('d-none'); }
+function hideSpinner()  { document.getElementById('loading-spinner').classList.add('d-none'); }
+
+// ── Summary ────────────────────────────────────────────────
+async function loadSummary() {
+    try {
+        const data = await fetch('/api/summary').then(r => r.json());
+        updateSummaryDOM(data);
+    } catch(e) { console.error('summary:', e); }
+}
+
+function updateSummaryDOM(d) {
+    const $ = id => document.getElementById(id);
+    const initialFund = d.initial_fund || 10000;
+    const avail = d.available_fund != null ? d.available_fund : initialFund;
+
+    $('available-fund').textContent = fmt(avail);
+    $('available-fund').style.color = avail < initialFund * 0.1 ? 'var(--color-danger)' : '';
+    $('initial-fund').textContent = fmt(initialFund);
+    $('fund-util').textContent = (d.fund_utilization_pct || 0).toFixed(1) + '%';
+
+    $('total-invested').textContent = fmt(d.total_invested);
+    $('total-market-value').textContent = fmt(d.total_market_value);
+
+    const rpnl = $('realized-pnl');
+    rpnl.textContent = fmt(d.realized_pnl);
+    rpnl.className = 'metric-value text-num ' + ((d.realized_pnl || 0) >= 0 ? 'positive' : 'negative');
+
+    const upnl = $('unrealized-pnl');
+    upnl.textContent = fmt(d.unrealized_pnl);
+    upnl.className = 'metric-value text-num ' + ((d.unrealized_pnl || 0) >= 0 ? 'positive' : 'negative');
+
+    const eq = $('total-equity');
+    eq.textContent = fmt(d.total_equity);
+    eq.className = 'metric-value text-num ' + ((d.total_equity || 0) >= initialFund ? 'positive' : 'negative');
+
+    $('total-trades').textContent = d.total_trades || 0;
+    $('last-update').textContent = d.last_trade_time ? fmtTime(d.last_trade_time) : 'No trades yet';
+}
+
+// ── Positions ──────────────────────────────────────────────
+async function loadPositions() {
+    try {
+        const data = await fetch('/api/positions').then(r => r.json());
+        updatePositionsDOM(data);
+    } catch(e) { console.error('positions:', e); }
+}
+
+function updatePositionsDOM(positions) {
+    const tbody = document.getElementById('positions-tbody');
+    const empty = document.getElementById('no-positions');
+    const openEl = document.getElementById('open-positions');
+
+    if (!positions || positions.length === 0) {
+        tbody.innerHTML = '';
+        empty.style.display = '';
+        if (openEl) openEl.textContent = '0';
+        return;
     }
-    
-    function restoreKSSFormFromStorage() {
-        const saved = localStorage.getItem(KSS_FORM_KEY);
-        if (saved) {
-            try {
-                const data = JSON.parse(saved);
-                if (data.symbol) document.getElementById('kss-symbol').value = data.symbol;
-                if (data.entry_price) document.getElementById('kss-entry-price').value = data.entry_price;
-                if (data.distance_pct) document.getElementById('kss-distance-pct').value = data.distance_pct;
-                if (data.max_waves) document.getElementById('kss-max-waves').value = data.max_waves;
-                if (data.isolated_fund) document.getElementById('kss-isolated-fund').value = data.isolated_fund;
-                if (data.tp_pct) document.getElementById('kss-tp-pct').value = data.tp_pct;
-                if (data.timeout) document.getElementById('kss-timeout').value = data.timeout;
-                if (data.gap) document.getElementById('kss-gap').value = data.gap;
-            } catch (e) { console.error('Error restoring form:', e); }
-        }
+    empty.style.display = 'none';
+    if (openEl) openEl.textContent = positions.length;
+
+    tbody.innerHTML = positions.map(p => {
+        const pnl = p.unrealized_pnl;
+        const pnlCls = pnl != null ? (pnl >= 0 ? 'text-positive' : 'text-negative') : '';
+        return `<tr>
+            <td><strong>${p.symbol}</strong></td>
+            <td class="text-end num">${(p.quantity||0).toFixed(6)}</td>
+            <td class="text-end num">${fmt(p.avg_price)}</td>
+            <td class="text-end num">${fmt(p.total_cost)}</td>
+            <td class="text-end num" style="font-weight:600; color:var(--color-info);">${p.current_price ? fmt(p.current_price) : '—'}</td>
+            <td class="text-end num">${p.market_value ? fmt(p.market_value) : '—'}</td>
+            <td class="text-end num ${pnlCls}" style="font-weight:600;">${pnl != null ? fmt(pnl) : '—'}</td>
+        </tr>`;
+    }).join('');
+}
+
+// ── Trades ─────────────────────────────────────────────────
+async function loadTrades() {
+    try {
+        const data = await fetch('/api/trades').then(r => r.json());
+        updateTradesDOM(data);
+    } catch(e) { console.error('trades:', e); }
+}
+
+function updateTradesDOM(trades) {
+    const tbody = document.getElementById('trades-tbody');
+    const empty = document.getElementById('no-trades');
+
+    if (!trades || trades.length === 0) {
+        tbody.innerHTML = '';
+        empty.style.display = '';
+        return;
     }
-    
-    // Attach change listeners for auto-save
-    document.querySelectorAll('#kss-create-form input').forEach(input => {
-        input.addEventListener('change', saveKSSFormToStorage);
-        input.addEventListener('input', saveKSSFormToStorage);
+    empty.style.display = 'none';
+    tbody.innerHTML = trades.slice(0, 50).map(t => {
+        const pnl = t.realized_pnl;
+        const pnlCls = pnl != null ? (pnl >= 0 ? 'text-positive' : 'text-negative') : '';
+        const sideCls = t.side === 'BUY' ? 'badge-buy' : 'badge-sell';
+        const stCls = t.status === 'OPEN' ? 'badge-open' : 'badge-closed';
+        return `<tr>
+            <td style="color:var(--text-subtle); font-size:0.75rem;">${fmtTime(t.entry_time)}</td>
+            <td><strong>${t.symbol}</strong></td>
+            <td><span class="badge ${sideCls}">${t.side}</span></td>
+            <td class="text-end num">${(t.entry_qty||0).toFixed(6)}</td>
+            <td class="text-end num">${fmt(t.entry_price)}</td>
+            <td><span class="badge ${stCls}">${t.status}</span></td>
+            <td class="text-end num ${pnlCls}" style="font-weight:600;">${pnl != null ? fmt(pnl) : '—'}</td>
+        </tr>`;
+    }).join('');
+}
+
+// ── Pending Orders ─────────────────────────────────────────
+async function loadPendingOrders() {
+    try {
+        const data = await fetch('/api/pending').then(r => r.json());
+        updatePendingDOM(data);
+    } catch(e) { console.error('pending:', e); }
+}
+
+function updatePendingDOM(orders) {
+    const tbody   = document.getElementById('pending-tbody');
+    const empty   = document.getElementById('no-pending');
+    const count   = document.getElementById('pending-count');
+    const badge   = document.getElementById('pending-badge');
+
+    const pending = (orders || []).filter(o => o.status === 'pending');
+
+    count.textContent = pending.length;
+    if (pending.length > 0) {
+        badge.textContent = pending.length;
+        badge.style.display = '';
+    } else {
+        badge.style.display = 'none';
+    }
+
+    if (pending.length === 0) {
+        tbody.innerHTML = '';
+        empty.style.display = '';
+        return;
+    }
+    empty.style.display = 'none';
+
+    tbody.innerHTML = pending.map(o => {
+        const sideCls = o.side === 'BUY' ? 'badge-buy' : 'badge-sell';
+        return `<tr>
+            <td><strong>${o.symbol}</strong></td>
+            <td><span class="badge ${sideCls}">${o.side}</span></td>
+            <td class="text-end num">${o.quantity}</td>
+            <td class="text-end num">${fmt(o.price)}</td>
+            <td style="color:var(--text-muted); font-size:0.75rem;">${o.order_type||'MARKET'}</td>
+            <td style="color:var(--text-muted); font-size:0.75rem;">${o.source||'manual'}</td>
+            <td style="color:var(--text-subtle); font-size:0.75rem;">${fmtTime(o.created_at)}</td>
+            <td class="text-center">
+                <button class="btn btn-sm btn-success btn-icon me-1" title="Approve"
+                        onclick="approvePendingOrder(${o.id},'${o.symbol}')">
+                    <i class="fas fa-check"></i>
+                </button>
+                <button class="btn btn-sm btn-danger btn-icon" title="Reject"
+                        onclick="rejectPendingOrder(${o.id},'${o.symbol}')">
+                    <i class="fas fa-times"></i>
+                </button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+async function loadRiskMetrics() {
+    // Placeholder — replace with /api/risk endpoint when available
+    const exposure = 5.0, maxE = 10.0;
+    const loss = 250.0, lossPct = 2.5, maxL = 5.0;
+    document.getElementById('portfolio-exposure').textContent = exposure.toFixed(1) + '%';
+    document.getElementById('exposure-value').textContent = exposure.toFixed(1) + '%';
+    document.getElementById('exposure-bar').style.width = (exposure / maxE * 100) + '%';
+    document.getElementById('exposure-bar').className = 'progress-bar ' +
+        (exposure > maxE * 0.8 ? 'bg-danger' : exposure > maxE * 0.5 ? 'bg-warning' : 'bg-primary');
+    document.getElementById('daily-loss').textContent = fmt(loss);
+    document.getElementById('daily-loss-pct').textContent = lossPct.toFixed(1) + '%';
+    document.getElementById('loss-bar').style.width = (lossPct / maxL * 100) + '%';
+}
+
+// ── Approve / Reject ───────────────────────────────────────
+async function approvePendingOrder(id, symbol) {
+    if (!await confirmModal('Approve Order', `Approve ${symbol} order #${id}?`)) return;
+    const r = await fetch(`/api/pending/approve/${id}`, { method: 'POST', headers: {...getCsrfHeaders()} });
+    if (r.ok) { loadPendingOrders(); loadPositions(); loadTrades(); loadSummary(); }
+    else alert('Failed to approve');
+}
+
+async function rejectPendingOrder(id, symbol) {
+    const values = await showModal({
+        title: `Reject Order #${id}`,
+        body: `Reject ${symbol} order #${id}? Enter reason:`,
+        inputs: [{type:'textarea', placeholder:'Reason', default:'Market conditions changed'}],
+        buttons: [{label:'Cancel', value:null}, {label:'Reject', primary:true}]
     });
+    if (values === null || values[0] === null) return;
+    const reason = Array.isArray(values) ? values[0] : values;
+    if (reason === null) return;
+    const r = await fetch(`/api/pending/reject/${id}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', ...getCsrfHeaders()},
+        body: JSON.stringify({reason})
+    });
+    if (r.ok) loadPendingOrders();
+    else alert('Failed to reject');
+}
 
-    // ==========================================
-    // KSS FUNCTIONS
-    // ==========================================
-    async function loadKSSSessions() {
+// ── WebSocket ──────────────────────────────────────────────
+function connectWebSocket() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${proto}//${location.host}/ws/dashboard`);
+
+    ws.onmessage = function(e) {
         try {
-            const response = await fetch('/api/kss/sessions');
-            const data = await response.json();
-            updateKSSSessionsDOM(data);
-        } catch (error) {
-            console.error('Error loading KSS sessions:', error);
-        }
-    }
-
-    function updateKSSSessionsDOM(data) {
-        document.getElementById('kss-active-sessions').textContent = data.active_count || 0;
-        document.getElementById('kss-total-fund').textContent = formatCurrency(data.total_isolated_fund || 0);
-        
-        let usedFund = 0, unrealizedPnl = 0;
-        (data.sessions || []).forEach(s => {
-            if (s.status === 'active') {
-                usedFund += s.used_fund || 0;
-                unrealizedPnl += s.unrealized_pnl || 0;
+            const d = JSON.parse(e.data);
+            if (d.type === 'dashboard_update') {
+                if (d.positions) updatePositionsDOM(d.positions);
+                if (d.summary)   updateSummaryDOM(d.summary);
+                if (d.kss_sessions) updateKSSSessionsDOM(d.kss_sessions);
             }
+        } catch(err) { console.error('ws parse:', err); }
+    };
+
+    ws.onclose = () => setTimeout(connectWebSocket, 5000);
+    ws.onerror = () => ws.close();
+}
+
+// ── KSS LocalStorage ──────────────────────────────────────
+const KSS_KEY = 'kss_form_v1';
+
+function saveKSSForm() {
+    const f = ['symbol','entry-price','distance-pct','max-waves','isolated-fund','tp-pct','timeout','gap'];
+    const data = {};
+    f.forEach(k => { const el = document.getElementById('kss-' + k); if (el) data[k] = el.value; });
+    localStorage.setItem(KSS_KEY, JSON.stringify(data));
+}
+
+function restoreKSSForm() {
+    try {
+        const saved = JSON.parse(localStorage.getItem(KSS_KEY) || '{}');
+        Object.entries(saved).forEach(([k, v]) => {
+            const el = document.getElementById('kss-' + k);
+            if (el && v) el.value = v;
         });
-        document.getElementById('kss-used-fund').textContent = formatCurrency(usedFund);
-        const pnlEl = document.getElementById('kss-unrealized-pnl');
-        pnlEl.textContent = formatCurrency(unrealizedPnl);
-        pnlEl.style.color = unrealizedPnl >= 0 ? '#28a745' : '#dc3545';
-        
-        const tbody = document.getElementById('kss-sessions-tbody');
-        const noSessions = document.getElementById('no-kss-sessions');
-        
-        if (!data.sessions || data.sessions.length === 0) {
-            tbody.innerHTML = '';
-            noSessions.style.display = 'block';
-        } else {
-            noSessions.style.display = 'none';
-            tbody.innerHTML = data.sessions.map(s => {
-                const pnlColor = (s.unrealized_pnl || 0) >= 0 ? '#28a745' : '#dc3545';
-                return `<tr>
-                    <td><strong>#${s.id}</strong></td>
-                    <td><span class="badge bg-primary">${s.symbol}</span></td>
-                    <td>${getKSSStatusBadge(s.status)}</td>
-                    <td class="text-end">${formatCurrency(s.entry_price)}</td>
-                    <td class="text-end">${s.avg_price > 0 ? formatCurrency(s.avg_price) : '—'}</td>
-                    <td>${s.filled_waves_count || 0}/${s.max_waves}</td>
-                    <td class="text-end">${(s.total_filled_qty || 0).toFixed(6)}</td>
-                    <td class="text-end text-success">${formatCurrency(s.estimated_tp_price || 0)}</td>
-                    <td class="text-end" style="color: ${pnlColor};">${formatCurrency(s.unrealized_pnl || 0)}</td>
-                    <td class="text-center">${getKSSActions(s)}</td>
-                </tr>`;
-            }).join('');
-        }
-    }
+    } catch(e) {}
+}
 
-    function getKSSStatusBadge(status) {
-        const badges = {
-            'pending': '<span class="badge bg-secondary">Pending</span>',
-            'active': '<span class="badge bg-success">Active</span>',
-            'stopped': '<span class="badge bg-warning text-dark">Stopped</span>',
-            'completed': '<span class="badge bg-info">Completed</span>',
-            'tp_triggered': '<span class="badge bg-primary">TP Hit!</span>',
-        };
-        return badges[status] || `<span class="badge bg-dark">${status}</span>`;
-    }
+document.querySelectorAll('#kss-create-form input').forEach(el => {
+    el.addEventListener('input', saveKSSForm);
+});
 
-    function getKSSActions(s) {
-        const viewBtn = `<button class="btn btn-sm btn-outline-secondary" onclick="viewKSSSession(${s.id})" title="View"><i class="fas fa-eye"></i></button>`;
-        if (s.status === 'pending') {
-            return viewBtn + `<button class="btn btn-sm btn-success ms-1" onclick="startKSSSession(${s.id})"><i class="fas fa-play"></i></button>
-                <button class="btn btn-sm btn-danger ms-1" onclick="deleteKSSSession(${s.id})"><i class="fas fa-trash"></i></button>`;
-        } else if (s.status === 'active') {
-            return viewBtn + `<button class="btn btn-sm btn-warning ms-1" onclick="stopKSSSession(${s.id})"><i class="fas fa-stop"></i></button>
-                <button class="btn btn-sm btn-info ms-1" onclick="checkKSSTP(${s.id})"><i class="fas fa-bullseye"></i></button>`;
-        }
-        return viewBtn + `<button class="btn btn-sm btn-danger ms-1" onclick="deleteKSSSession(${s.id})"><i class="fas fa-trash"></i></button>`;
-    }
+// ── KSS API Functions ──────────────────────────────────────
+async function loadKSSSessions() {
+    try {
+        const data = await fetch('/api/kss/sessions').then(r => r.json());
+        updateKSSSessionsDOM(data);
+    } catch(e) { console.error('kss sessions:', e); }
+}
 
-    async function createKSSSession() {
-        const data = {
-            symbol: document.getElementById('kss-symbol').value.toUpperCase(),
-            entry_price: parseFloat(document.getElementById('kss-entry-price').value),
-            distance_pct: parseFloat(document.getElementById('kss-distance-pct').value),
-            max_waves: parseInt(document.getElementById('kss-max-waves').value),
-            isolated_fund: parseFloat(document.getElementById('kss-isolated-fund').value),
-            tp_pct: parseFloat(document.getElementById('kss-tp-pct').value),
-            timeout_x_min: parseFloat(document.getElementById('kss-timeout').value),
-            gap_y_min: parseFloat(document.getElementById('kss-gap').value),
-        };
-        try {
-            showSpinner();
-            const response = await fetch('/api/kss/sessions', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(data)
-            });
-            if (response.ok) {
-                const result = await response.json();
-                alert(`Session #${result.id} created!`);
-                loadKSSSessions();
-            } else {
-                const error = await response.json();
-                alert('Error: ' + (error.detail || 'Failed to create session'));
-            }
-        } catch (error) {
-            console.error('Error creating KSS session:', error);
-            alert('Error creating session');
-        } finally {
-            hideSpinner();
-        }
-    }
+function updateKSSSessionsDOM(data) {
+    document.getElementById('kss-active-sessions').textContent = data.active_count || 0;
+    document.getElementById('kss-total-fund').textContent = fmt(data.total_isolated_fund || 0);
 
-    async function startKSSSession(sessionId) {
-        if (!confirm(`Start session #${sessionId}?`)) return;
-        try {
-            showSpinner();
-            const response = await fetch(`/api/kss/sessions/${sessionId}/start`, { method: 'POST' });
-            if (response.ok) {
-                const result = await response.json();
-                alert(`Started! Wave 0 queued.`);
-                loadKSSSessions();
-                loadPendingOrders();
-            } else {
-                const error = await response.json();
-                alert('Error: ' + (error.detail || 'Failed'));
-            }
-        } catch (error) { console.error(error); alert('Error'); }
-        finally { hideSpinner(); }
-    }
+    let used = 0, upnl = 0;
+    (data.sessions || []).forEach(s => {
+        if (s.status === 'active') { used += s.used_fund || 0; upnl += s.unrealized_pnl || 0; }
+    });
+    document.getElementById('kss-used-fund').textContent = fmt(used);
+    const upnlEl = document.getElementById('kss-unrealized-pnl');
+    upnlEl.textContent = fmt(upnl);
+    upnlEl.className = 'metric-value text-num ' + (upnl >= 0 ? 'positive' : 'negative');
 
-    async function stopKSSSession(sessionId) {
-        if (!confirm(`Stop session #${sessionId}?`)) return;
-        try {
-            const response = await fetch(`/api/kss/sessions/${sessionId}/stop`, { method: 'POST' });
-            if (response.ok) { alert('Stopped'); loadKSSSessions(); }
-            else { alert('Failed to stop'); }
-        } catch (error) { console.error(error); alert('Error'); }
-    }
+    const tbody = document.getElementById('kss-sessions-tbody');
+    const empty = document.getElementById('no-kss-sessions');
 
-    async function deleteKSSSession(sessionId) {
-        if (!confirm(`Delete session #${sessionId}?`)) return;
-        try {
-            const response = await fetch(`/api/kss/sessions/${sessionId}`, { method: 'DELETE' });
-            if (response.ok) { alert('Deleted'); loadKSSSessions(); }
-            else { alert('Failed to delete'); }
-        } catch (error) { console.error(error); alert('Error'); }
+    if (!data.sessions || data.sessions.length === 0) {
+        tbody.innerHTML = '';
+        empty.style.display = '';
+        return;
     }
+    empty.style.display = 'none';
 
-    async function checkKSSTP(sessionId) {
-        try {
-            const response = await fetch(`/api/kss/sessions/${sessionId}/check-tp`, { method: 'POST' });
-            if (response.ok) {
-                const result = await response.json();
-                if (result.tp_triggered) {
-                    alert(`TP TRIGGERED!`);
-                    loadKSSSessions();
-                    loadPendingOrders();
-                } else {
-                    alert(`TP not hit. Current: ${formatCurrency(result.current_price)}, Target: ${formatCurrency(result.tp_price)}`);
-                }
-            }
-        } catch (error) { console.error(error); alert('Error checking TP'); }
-    }
+    tbody.innerHTML = data.sessions.map(s => {
+        const pnlCls = (s.unrealized_pnl || 0) >= 0 ? 'text-positive' : 'text-negative';
+        return `<tr>
+            <td style="font-weight:600; color:var(--color-primary);">#${s.id}</td>
+            <td><strong>${s.symbol}</strong></td>
+            <td>${kssStatusBadge(s.status)}</td>
+            <td class="text-end num">${fmt(s.entry_price)}</td>
+            <td class="text-end num">${s.avg_price > 0 ? fmt(s.avg_price) : '—'}</td>
+            <td style="font-size:0.75rem; color:var(--text-muted);">${s.filled_waves_count||0}/${s.max_waves}</td>
+            <td class="text-end num">${(s.total_filled_qty||0).toFixed(6)}</td>
+            <td class="text-end num" style="color:var(--color-success); font-weight:600;">${fmt(s.estimated_tp_price||0)}</td>
+            <td class="text-end num ${pnlCls}" style="font-weight:600;">${fmt(s.unrealized_pnl||0)}</td>
+            <td class="text-center">${kssActions(s)}</td>
+        </tr>`;
+    }).join('');
+}
 
-    // KSS Preview & Visualization
-    let kssDetailChart = null;
-    
-    // Preview pyramid session without creating
-    async function previewKSSSession() {
-        const data = {
-            symbol: document.getElementById('kss-symbol').value.toUpperCase(),
-            entry_price: parseFloat(document.getElementById('kss-entry-price').value),
-            distance_pct: parseFloat(document.getElementById('kss-distance-pct').value),
-            max_waves: parseInt(document.getElementById('kss-max-waves').value),
-            isolated_fund: parseFloat(document.getElementById('kss-isolated-fund').value),
-            tp_pct: parseFloat(document.getElementById('kss-tp-pct').value),
-        };
-        
-        // Validate
-        if (!data.entry_price || data.entry_price <= 0) {
-            alert('Please enter a valid entry price');
-            return;
-        }
-        
-        try {
-            const response = await fetch('/api/kss/preview', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(data)
-            });
-            
-            if (response.ok) {
-                const preview = await response.json();
-                renderKSSPreview(preview);
-            } else {
-                const error = await response.json();
-                alert('Preview error: ' + (error.detail || 'Failed to preview'));
-            }
-        } catch (error) {
-            console.error('Error previewing KSS session:', error);
-            alert('Error generating preview');
-        }
-    }
-    
-    // Render preview result in the modal
-    function renderKSSPreview(preview) {
-        const area = document.getElementById('kss-preview-area');
-        
-        let html = `
-            <div class="mb-3">
-                <h6 class="text-muted mb-2"><i class="fas fa-chart-bar"></i> Preview: ${preview.symbol} Pyramid</h6>
-                <div class="row g-2 small">
-                    <div class="col-6"><strong>Qty/Wave:</strong> ${preview.qty_per_wave.toFixed(6)}</div>
-                    <div class="col-6"><strong>Price Range:</strong> ${preview.price_range_pct.toFixed(1)}%</div>
-                    <div class="col-6"><strong>Total Qty:</strong> ${preview.total_qty.toFixed(6)}</div>
-                    <div class="col-6"><strong>Final Avg:</strong> ${formatCurrency(preview.final_avg_price)}</div>
-                    <div class="col-6"><strong>Total Cost:</strong> ${formatCurrency(preview.total_cost)}</div>
-                    <div class="col-6"><strong>TP Target:</strong> <span class="text-success fw-bold">${formatCurrency(preview.final_tp_price)}</span></div>
-                </div>
-            </div>
-            <div class="table-responsive" style="max-height: 200px; overflow-y: auto;">
-                <table class="table table-sm table-bordered mb-0">
-                    <thead class="table-light sticky-top">
-                        <tr>
-                            <th>#</th>
-                            <th class="text-end">Target</th>
-                            <th class="text-end">Qty</th>
-                            <th class="text-end">Cumul Qty</th>
-                            <th class="text-end">Avg After</th>
-                            <th class="text-end">TP After</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-        `;
-        
-        preview.waves.forEach(w => {
-            html += `
-                <tr>
-                    <td>${w.wave_num}</td>
-                    <td class="text-end">${formatCurrency(w.target_price)}</td>
-                    <td class="text-end">${w.quantity.toFixed(6)}</td>
-                    <td class="text-end">${w.cumulative_qty.toFixed(6)}</td>
-                    <td class="text-end text-warning">${formatCurrency(w.avg_price_after)}</td>
-                    <td class="text-end text-success">${formatCurrency(w.tp_price_after)}</td>
-                </tr>
-            `;
-        });
-        
-        html += `
-                    </tbody>
-                </table>
-            </div>
-        `;
-        
-        area.innerHTML = html;
-    }
-    
-    // View session detail with Chart.js visualization
-    async function viewKSSSession(sessionId) {
-        try {
-            const response = await fetch(`/api/kss/sessions/${sessionId}`);
-            if (!response.ok) {
-                alert('Failed to load session');
-                return;
-            }
-            
-            const session = await response.json();
-            
-            // Populate modal
-            document.getElementById('kss-detail-title').textContent = `#${session.id} - ${session.symbol}`;
-            document.getElementById('kss-detail-symbol').innerHTML = `<span class="badge bg-primary">${session.symbol}</span>`;
-            document.getElementById('kss-detail-status').innerHTML = getKSSStatusBadge(session.status);
-            document.getElementById('kss-detail-entry').textContent = formatCurrency(session.entry_price);
-            document.getElementById('kss-detail-avg').textContent = session.avg_price > 0 ? formatCurrency(session.avg_price) : '—';
-            document.getElementById('kss-detail-qty').textContent = session.total_filled_qty.toFixed(6);
-            document.getElementById('kss-detail-tp').textContent = formatCurrency(session.estimated_tp_price);
-            document.getElementById('kss-detail-current').textContent = formatCurrency(session.current_price);
-            
-            const pnlEl = document.getElementById('kss-detail-pnl');
-            pnlEl.textContent = `${formatCurrency(session.unrealized_pnl)} (${session.unrealized_pnl_pct.toFixed(2)}%)`;
-            pnlEl.style.color = session.unrealized_pnl >= 0 ? '#28a745' : '#dc3545';
-            
-            // Render waves table with color coding
-            renderDetailWavesTable(session);
-            
-            // Render Chart.js price levels
-            renderKSSChart(session);
-            
-            // Show modal
-            const modal = new bootstrap.Modal(document.getElementById('kssDetailModal'));
-            modal.show();
-            
-        } catch (error) {
-            console.error('Error viewing KSS session:', error);
-            alert('Error loading session details');
-        }
-    }
-    
-    // Render waves table with color coding (green=filled, red=pending)
-    function renderDetailWavesTable(session) {
-        const tbody = document.getElementById('kss-detail-waves-tbody');
-        
-        if (!session.waves || session.waves.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No waves generated yet</td></tr>';
-            return;
-        }
-        
-        tbody.innerHTML = session.waves.map(wave => {
-            const isFilled = wave.status === 'filled';
-            const rowClass = isFilled ? 'table-success' : 'table-danger';
-            const statusBadge = isFilled 
-                ? '<span class="badge bg-success"><i class="fas fa-check"></i> Filled</span>'
-                : '<span class="badge bg-danger"><i class="fas fa-clock"></i> Pending</span>';
-            
-            return `
-                <tr class="${rowClass}">
-                    <td><strong>${wave.wave_num}</strong></td>
-                    <td class="text-end">${formatCurrency(wave.target_price)}</td>
-                    <td class="text-end">${wave.quantity.toFixed(6)}</td>
-                    <td>${statusBadge}</td>
-                    <td class="text-end">${wave.filled_price ? formatCurrency(wave.filled_price) : '—'}</td>
-                </tr>
-            `;
-        }).join('');
-    }
-    
-    // Render Chart.js horizontal price lines
-    function renderKSSChart(session) {
-        const ctx = document.getElementById('kss-detail-chart').getContext('2d');
-        
-        // Destroy existing chart
-        if (kssDetailChart) {
-            kssDetailChart.destroy();
-        }
-        
-        // Build data points for wave targets
-        const labels = [];
-        const targetPrices = [];
-        const avgPrices = [];
-        const tpPrices = [];
-        const currentPrices = [];
-        
-        // Calculate running avg and TP for each wave (even unfilled)
-        let cumulativeQty = 0;
-        let cumulativeCost = 0;
-        const qtyPerWave = session.isolated_fund / session.max_waves / session.entry_price;
-        
-        for (let i = 0; i < session.max_waves; i++) {
-            const targetPrice = session.entry_price * (1 - session.distance_pct / 100 * i);
-            const waveCost = qtyPerWave * targetPrice;
-            cumulativeQty += qtyPerWave;
-            cumulativeCost += waveCost;
-            const avgPrice = cumulativeCost / cumulativeQty;
-            const tpPrice = avgPrice * (1 + session.tp_pct / 100);
-            
-            labels.push(`W${i}`);
-            targetPrices.push(targetPrice);
-            avgPrices.push(avgPrice);
-            tpPrices.push(tpPrice);
-            currentPrices.push(session.current_price);
-        }
-        
-        kssDetailChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [
-                    {
-                        label: 'Wave Target',
-                        data: targetPrices,
-                        borderColor: '#dc3545',
-                        backgroundColor: 'rgba(220,53,69,0.1)',
-                        borderWidth: 2,
-                        fill: false,
-                        tension: 0,
-                        pointRadius: 4,
-                    },
-                    {
-                        label: 'Avg Price',
-                        data: avgPrices,
-                        borderColor: '#ffc107',
-                        borderDash: [5, 5],
-                        borderWidth: 2,
-                        fill: false,
-                        tension: 0,
-                        pointRadius: 2,
-                    },
-                    {
-                        label: 'TP Target',
-                        data: tpPrices,
-                        borderColor: '#28a745',
-                        borderDash: [5, 5],
-                        borderWidth: 2,
-                        fill: false,
-                        tension: 0,
-                        pointRadius: 2,
-                    },
-                    {
-                        label: 'Current Price',
-                        data: currentPrices,
-                        borderColor: '#007bff',
-                        borderWidth: 3,
-                        fill: false,
-                        tension: 0,
-                        pointRadius: 0,
-                    },
-                ]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        position: 'bottom',
-                        labels: { usePointStyle: true, padding: 15 }
-                    },
-                    tooltip: {
-                        mode: 'index',
-                        intersect: false,
-                        callbacks: {
-                            label: function(context) {
-                                return context.dataset.label + ': ' + formatCurrency(context.raw);
-                            }
-                        }
-                    }
-                },
-                scales: {
-                    y: {
-                        title: { display: true, text: 'Price ($)' },
-                        ticks: {
-                            callback: function(value) { return '$' + value.toLocaleString(); }
-                        }
-                    },
-                    x: {
-                        title: { display: true, text: 'Wave' }
-                    }
-                },
-                interaction: {
-                    mode: 'nearest',
-                    axis: 'x',
-                    intersect: false
-                }
-            }
-        });
-    }
+function kssStatusBadge(status) {
+    const m = {
+        pending: 'badge-pending', active: 'badge-active', stopped: 'badge-stopped',
+        completed: 'badge-completed', tp_triggered: 'badge-tp'
+    };
+    const labels = {
+        pending: 'Pending', active: 'Active', stopped: 'Stopped',
+        completed: 'Done', tp_triggered: 'TP Hit!'
+    };
+    return `<span class="badge ${m[status]||'badge-stopped'}">${labels[status]||status}</span>`;
+}
 
-    // ==========================================
-    // INITIALIZATION
-    // ==========================================
-    (function init() {
-        // Restore form from localStorage
-        restoreKSSFormFromStorage();
-        
-        // Initial data load with spinner
+function kssActions(s) {
+    const view = `<button class="btn btn-sm btn-outline-secondary btn-icon me-1" title="Details" onclick="viewKSSSession(${s.id})"><i class="fas fa-eye"></i></button>`;
+    if (s.status === 'pending') {
+        return view +
+            `<button class="btn btn-sm btn-success btn-icon me-1" title="Start" onclick="startKSSSession(${s.id})"><i class="fas fa-play"></i></button>` +
+            `<button class="btn btn-sm btn-danger btn-icon" title="Delete" onclick="deleteKSSSession(${s.id})"><i class="fas fa-trash"></i></button>`;
+    }
+    if (s.status === 'active') {
+        return view +
+            `<button class="btn btn-sm btn-warning btn-icon me-1" title="Stop" onclick="stopKSSSession(${s.id})"><i class="fas fa-stop"></i></button>` +
+            `<button class="btn btn-sm btn-primary btn-icon" title="Check TP" onclick="checkKSSTP(${s.id})"><i class="fas fa-bullseye"></i></button>`;
+    }
+    return view +
+        `<button class="btn btn-sm btn-danger btn-icon" title="Delete" onclick="deleteKSSSession(${s.id})"><i class="fas fa-trash"></i></button>`;
+}
+
+async function createKSSSession() {
+    const data = {
+        symbol: document.getElementById('kss-symbol').value.toUpperCase(),
+        entry_price: parseFloat(document.getElementById('kss-entry-price').value),
+        distance_pct: parseFloat(document.getElementById('kss-distance-pct').value),
+        max_waves: parseInt(document.getElementById('kss-max-waves').value),
+        isolated_fund: parseFloat(document.getElementById('kss-isolated-fund').value),
+        tp_pct: parseFloat(document.getElementById('kss-tp-pct').value),
+        timeout_x_min: parseFloat(document.getElementById('kss-timeout').value),
+        gap_y_min: parseFloat(document.getElementById('kss-gap').value),
+    };
+    try {
         showSpinner();
-        Promise.all([
-            loadSummary(),
-            loadPositions(),
-            loadTrades(),
-            loadPendingOrders(),
-            loadRiskMetrics(),
-            loadKSSSessions()
-        ]).finally(() => {
-            hideSpinner();
+        const r = await fetch('/api/kss/sessions', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
         });
-        
-        // Connect WebSocket for realtime updates
-        connectWebSocket();
-        
-        // Fallback polling every 30s (selective updates, no page reload)
-        setInterval(() => {
-            loadSummary();
-            loadPositions();
-            loadPendingOrders();
+        if (r.ok) {
+            const res = await r.json();
+            alert(`Session #${res.id} created`);
             loadKSSSessions();
-        }, 30000);
-        
-        // Less frequent: trades & risk every 60s
-        setInterval(() => {
-            loadTrades();
-            loadRiskMetrics();
-        }, 60000);
-    })();
+        } else {
+            const err = await r.json();
+            alert('Error: ' + (err.detail || 'Failed'));
+        }
+    } catch(e) { alert('Error creating session'); }
+    finally { hideSpinner(); }
+}
+
+async function startKSSSession(id) {
+    if (!await confirmModal('Start Session', `Start session #${id}?`)) return;
+    showSpinner();
+    const r = await fetch(`/api/kss/sessions/${id}/start`, { method: 'POST', headers: {...getCsrfHeaders()} });
+    hideSpinner();
+    if (r.ok) { alert('Started — Wave 0 queued'); loadKSSSessions(); loadPendingOrders(); }
+    else alert('Failed to start');
+}
+
+async function stopKSSSession(id) {
+    if (!await confirmModal('Stop Session', `Stop session #${id}?`)) return;
+    const r = await fetch(`/api/kss/sessions/${id}/stop`, { method: 'POST', headers: {...getCsrfHeaders()} });
+    if (r.ok) { alert('Stopped'); loadKSSSessions(); }
+    else alert('Failed to stop');
+}
+
+async function deleteKSSSession(id) {
+    if (!await confirmModal('Delete Session', `Delete session #${id}? This cannot be undone.`)) return;
+    const r = await fetch(`/api/kss/sessions/${id}`, { method: 'DELETE', headers: {...getCsrfHeaders()} });
+    if (r.ok) loadKSSSessions();
+    else alert('Failed to delete');
+}
+
+async function checkKSSTP(id) {
+    const r = await fetch(`/api/kss/sessions/${id}/check-tp`, { method: 'POST' });
+    if (r.ok) {
+        const res = await r.json();
+        if (res.tp_triggered) { alert('Take Profit TRIGGERED!'); loadKSSSessions(); loadPendingOrders(); }
+        else alert(`TP not reached.\nCurrent: ${fmt(res.current_price)}\nTarget:  ${fmt(res.tp_price)}`);
+    } else alert('Error checking TP');
+}
+
+// ── KSS Preview ────────────────────────────────────────────
+async function previewKSSSession() {
+    const data = {
+        symbol: document.getElementById('kss-symbol').value.toUpperCase(),
+        entry_price: parseFloat(document.getElementById('kss-entry-price').value),
+        distance_pct: parseFloat(document.getElementById('kss-distance-pct').value),
+        max_waves: parseInt(document.getElementById('kss-max-waves').value),
+        isolated_fund: parseFloat(document.getElementById('kss-isolated-fund').value),
+        tp_pct: parseFloat(document.getElementById('kss-tp-pct').value),
+    };
+    if (!data.entry_price || data.entry_price <= 0) {
+        alert('Enter a valid entry price first');
+        return;
+    }
+    const r = await fetch('/api/kss/preview', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    });
+    if (r.ok) renderKSSPreview(await r.json());
+    else { const e = await r.json(); alert('Preview error: ' + (e.detail || 'Failed')); }
+}
+
+function renderKSSPreview(p) {
+    const area = document.getElementById('kss-preview-area');
+    area.innerHTML = `
+        <div class="mb-2">
+            <div style="font-size:0.75rem; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px;">
+                ${p.symbol} Pyramid Preview
+            </div>
+            <div class="row g-2" style="font-size:0.8125rem;">
+                <div class="col-6"><span style="color:var(--text-subtle);">Qty/Wave</span><br><strong class="mono">${p.qty_per_wave.toFixed(6)}</strong></div>
+                <div class="col-6"><span style="color:var(--text-subtle);">Price Range</span><br><strong>${p.price_range_pct.toFixed(1)}%</strong></div>
+                <div class="col-6"><span style="color:var(--text-subtle);">Total Qty</span><br><strong class="mono">${p.total_qty.toFixed(6)}</strong></div>
+                <div class="col-6"><span style="color:var(--text-subtle);">Final Avg</span><br><strong class="mono">${fmt(p.final_avg_price)}</strong></div>
+                <div class="col-6"><span style="color:var(--text-subtle);">Total Cost</span><br><strong class="mono">${fmt(p.total_cost)}</strong></div>
+                <div class="col-6"><span style="color:var(--text-subtle);">TP Target</span><br><strong class="mono" style="color:var(--color-success);">${fmt(p.final_tp_price)}</strong></div>
+            </div>
+        </div>
+        <div class="table-responsive" style="max-height:150px; overflow-y:auto; margin-top:8px;">
+            <table class="table" style="font-size:0.75rem;">
+                <thead><tr>
+                    <th>#</th>
+                    <th class="text-end">Target</th>
+                    <th class="text-end">Qty</th>
+                    <th class="text-end">Cum Qty</th>
+                    <th class="text-end">Avg</th>
+                    <th class="text-end">TP</th>
+                </tr></thead>
+                <tbody>
+                ${p.waves.map(w => `<tr>
+                    <td>${w.wave_num}</td>
+                    <td class="text-end mono">${fmt(w.target_price)}</td>
+                    <td class="text-end mono">${w.quantity.toFixed(6)}</td>
+                    <td class="text-end mono">${w.cumulative_qty.toFixed(6)}</td>
+                    <td class="text-end mono" style="color:var(--color-warning);">${fmt(w.avg_price_after)}</td>
+                    <td class="text-end mono" style="color:var(--color-success);">${fmt(w.tp_price_after)}</td>
+                </tr>`).join('')}
+                </tbody>
+            </table>
+        </div>`;
+}
+
+// ── KSS Detail + Chart ─────────────────────────────────────
+let kssChart = null;
+
+async function viewKSSSession(id) {
+    const r = await fetch(`/api/kss/sessions/${id}`);
+    if (!r.ok) { alert('Failed to load session'); return; }
+    const s = await r.json();
+
+    document.getElementById('kss-detail-title').textContent = `#${s.id} · ${s.symbol}`;
+    document.getElementById('kss-detail-symbol').innerHTML = `<span class="badge badge-active">${s.symbol}</span>`;
+    document.getElementById('kss-detail-status').innerHTML = kssStatusBadge(s.status);
+    document.getElementById('kss-detail-entry').textContent = fmt(s.entry_price);
+    document.getElementById('kss-detail-avg').textContent = s.avg_price > 0 ? fmt(s.avg_price) : '—';
+    document.getElementById('kss-detail-qty').textContent = s.total_filled_qty.toFixed(6);
+    document.getElementById('kss-detail-tp').textContent = fmt(s.estimated_tp_price);
+    document.getElementById('kss-detail-current').textContent = fmt(s.current_price);
+
+    const pnlEl = document.getElementById('kss-detail-pnl');
+    pnlEl.textContent = `${fmt(s.unrealized_pnl)} (${s.unrealized_pnl_pct.toFixed(2)}%)`;
+    pnlEl.style.color = s.unrealized_pnl >= 0 ? 'var(--color-success)' : 'var(--color-danger)';
+
+    renderDetailWaves(s);
+    renderKSSChart(s);
+    new bootstrap.Modal(document.getElementById('kssDetailModal')).show();
+}
+
+function renderDetailWaves(s) {
+    const tbody = document.getElementById('kss-detail-waves-tbody');
+    if (!s.waves || s.waves.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center py-3 text-neutral">No waves yet</td></tr>';
+        return;
+    }
+    tbody.innerHTML = s.waves.map(w => {
+        const filled = w.status === 'filled';
+        return `<tr style="background:${filled ? 'rgba(22,163,74,0.06)' : 'rgba(220,38,38,0.04)'};">
+            <td><strong>${w.wave_num}</strong></td>
+            <td class="text-end mono">${fmt(w.target_price)}</td>
+            <td class="text-end mono">${w.quantity.toFixed(6)}</td>
+            <td><span class="badge ${filled ? 'badge-approved' : 'badge-pending'}">${filled ? 'Filled' : 'Pending'}</span></td>
+            <td class="text-end mono">${w.filled_price ? fmt(w.filled_price) : '—'}</td>
+        </tr>`;
+    }).join('');
+}
+
+function renderKSSChart(s) {
+    const ctx = document.getElementById('kss-detail-chart').getContext('2d');
+    if (kssChart) kssChart.destroy();
+
+    const labels = [], targets = [], avgs = [], tps = [], currents = [];
+    let cumQty = 0, cumCost = 0;
+    const qpw = s.isolated_fund / s.max_waves / s.entry_price;
+
+    for (let i = 0; i < s.max_waves; i++) {
+        const tp = s.entry_price * (1 - s.distance_pct / 100 * i);
+        cumQty += qpw; cumCost += qpw * tp;
+        const avg = cumCost / cumQty;
+        labels.push(`W${i}`);
+        targets.push(tp);
+        avgs.push(avg);
+        tps.push(avg * (1 + s.tp_pct / 100));
+        currents.push(s.current_price);
+    }
+
+    kssChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [
+                { label: 'Wave Target', data: targets, borderColor: '#dc2626', backgroundColor: 'rgba(220,38,38,0.06)', borderWidth: 2, pointRadius: 4, tension: 0, fill: false },
+                { label: 'Avg Price', data: avgs, borderColor: '#d97706', borderDash: [4,4], borderWidth: 1.5, pointRadius: 0, tension: 0, fill: false },
+                { label: 'TP Target', data: tps, borderColor: '#16a34a', borderDash: [4,4], borderWidth: 1.5, pointRadius: 0, tension: 0, fill: false },
+                { label: 'Current', data: currents, borderColor: '#3b82f6', borderWidth: 2, pointRadius: 0, tension: 0, fill: false },
+            ]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'bottom', labels: { usePointStyle: true, padding: 12, font: { size: 11 } } },
+                tooltip: {
+                    mode: 'index', intersect: false,
+                    callbacks: { label: ctx => ctx.dataset.label + ': ' + fmt(ctx.raw) }
+                }
+            },
+            scales: {
+                y: { ticks: { callback: v => '$' + v.toLocaleString(), font: { size: 11 } }, grid: { color: '#f1f5f9' } },
+                x: { ticks: { font: { size: 11 } }, grid: { display: false } }
+            }
+        }
+    });
+}
+
+// ── Init ───────────────────────────────────────────────────
+(function init() {
+    restoreKSSForm();
+    showSpinner();
+    Promise.all([
+        loadSummary(), loadPositions(), loadTrades(),
+        loadPendingOrders(), loadRiskMetrics(), loadKSSSessions()
+    ]).finally(hideSpinner);
+
+    connectWebSocket();
+
+    // Polling fallback — 30s for hot data, 60s for slow data
+    setInterval(() => { loadSummary(); loadPositions(); loadPendingOrders(); loadKSSSessions(); }, 30000);
+    setInterval(() => { loadTrades(); loadRiskMetrics(); }, 60000);
+    setInterval(() => { if (document.getElementById('ai')?.classList.contains('show')) loadAIStatus(); }, 15000);
+})();
+
+// ── AI Agent UI ───────────────────────────────────────────────────────────────
+
+async function loadAIStatus() {
+    try {
+        const token = localStorage.getItem('auth_token') || '';
+        const r = await fetch('/api/ai/status', { headers: token ? { Authorization: 'Bearer ' + token } : {} });
+        if (!r.ok) return;
+        const d = await r.json();
+        const running = d.running;
+
+        document.getElementById('ai-status-badge').textContent = running ? (d.mode === 'live' ? '⚡ RUNNING (LIVE)' : '✅ RUNNING (PAPER)') : '⏹ STOPPED';
+        document.getElementById('ai-status-badge').className = 'badge fs-6 px-3 py-2 ' + (running ? 'bg-success' : 'bg-secondary');
+        document.getElementById('ai-running-badge').style.display = running ? '' : 'none';
+        document.getElementById('ai-mode-label').textContent = d.mode || '—';
+        document.getElementById('ai-last-action').textContent = d.last_action || '—';
+        document.getElementById('ai-model').textContent = d.config?.model || '—';
+        document.getElementById('ai-start-btn').disabled = running;
+        document.getElementById('ai-stop-btn').disabled = !running;
+
+        const t = d.today || {};
+        document.getElementById('ai-today-orders').textContent = t.orders_submitted ?? 0;
+        document.getElementById('ai-today-skipped').textContent = t.orders_skipped ?? 0;
+        document.getElementById('ai-daily-target').textContent = t.target_usdt != null ? '$' + t.target_usdt.toFixed(2) + ' (' + t.target_pct + '%)' : '—';
+
+        const cfg = d.config || {};
+        document.getElementById('ai-config-panel').innerHTML = `
+            <table class="table table-sm table-borderless mb-0">
+                <tr><td class="text-muted">Confidence threshold</td><td><strong>${cfg.confidence_threshold ?? '—'}</strong></td></tr>
+                <tr><td class="text-muted">Max spend / order</td><td><strong>$${cfg.max_spend_usdt ?? '—'}</strong></td></tr>
+                <tr><td class="text-muted">Loop interval</td><td><strong>${cfg.loop_interval_seconds ?? '—'}s</strong></td></tr>
+                <tr><td class="text-muted">Watchlist</td><td><strong>${(cfg.watchlist || []).join(', ')}</strong></td></tr>
+            </table>`;
+
+        loadAIDecisions();
+        loadConsultants();
+        loadPaperReport();
+    } catch(e) { console.warn('AI status error', e); }
+}
+
+async function aiControl(action) {
+    const token = localStorage.getItem('auth_token') || '';
+    const btn = document.getElementById('ai-' + action + '-btn');
+    btn.disabled = true;
+    try {
+        const r = await fetch('/api/ai/' + action, {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + token }
+        });
+        const d = await r.json();
+        if (!r.ok) { alert('Error: ' + (d.detail || JSON.stringify(d))); }
+        await loadAIStatus();
+    } finally { btn.disabled = false; }
+}
+
+async function loadAIDecisions() {
+    try {
+        const token = localStorage.getItem('auth_token') || '';
+        const r = await fetch('/api/ai/decisions?limit=20', { headers: token ? { Authorization: 'Bearer ' + token } : {} });
+        if (!r.ok) return;
+        const rows = await r.json();
+        const tbody = document.getElementById('ai-decisions-tbody');
+        if (!rows.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No decisions yet</td></tr>'; return; }
+        tbody.innerHTML = rows.map(d => {
+            const sigColor = d.signal === 'BUY' ? 'text-success' : d.signal === 'SELL' ? 'text-danger' : 'text-muted';
+            const actionColor = d.action === 'ORDER_SUBMITTED' ? 'text-success' : d.action === 'SKIPPED' ? 'text-muted' : 'text-warning';
+            return `<tr>
+                <td style="white-space:nowrap">${(d.created_at||'').replace('T',' ').substring(0,16)}</td>
+                <td><strong>${d.symbol}</strong></td>
+                <td class="${sigColor}"><strong>${d.signal}</strong></td>
+                <td>${d.confidence != null ? (d.confidence*100).toFixed(0)+'%' : '—'}</td>
+                <td class="${actionColor} small">${d.action}</td>
+                <td class="text-muted small" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(d.reasoning||'').replace(/"/g,"'")}">
+                    ${d.reasoning || '—'}
+                </td>
+            </tr>`;
+        }).join('');
+    } catch(e) {}
+}
+
+async function loadConsultants() {
+    try {
+        const token = localStorage.getItem('auth_token') || '';
+        const r = await fetch('/api/ai/consultants', { headers: token ? { Authorization: 'Bearer ' + token } : {} });
+        if (!r.ok) return;
+        const rows = await r.json();
+        const tbody = document.getElementById('consultants-tbody');
+        if (!rows.length) { tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-2">No consultants registered</td></tr>'; return; }
+        tbody.innerHTML = rows.map(c => `<tr>
+            <td><strong>${c.name}</strong></td>
+            <td><span class="badge bg-secondary">${c.type}</span></td>
+            <td>${c.enabled ? '<span class="badge bg-success">Enabled</span>' : '<span class="badge bg-secondary">Disabled</span>'}</td>
+            <td>
+                <button class="btn btn-xs btn-outline-${c.enabled?'warning':'success'}" style="font-size:0.7rem;padding:1px 6px;"
+                    onclick="toggleConsultant(${c.id},${!c.enabled})">${c.enabled?'Disable':'Enable'}</button>
+                <button class="btn btn-xs btn-outline-danger" style="font-size:0.7rem;padding:1px 6px;"
+                    onclick="deleteConsultant(${c.id})">Delete</button>
+            </td>
+        </tr>`).join('');
+    } catch(e) {}
+}
+
+async function loadPaperReport() {
+    try {
+        const token = localStorage.getItem('auth_token') || '';
+        const r = await fetch('/api/ai/paper-report', { headers: token ? { Authorization: 'Bearer ' + token } : {} });
+        if (!r.ok) return;
+        const d = await r.json();
+        document.getElementById('ai-paper-panel').innerHTML = `
+            <table class="table table-sm table-borderless mb-0">
+                <tr><td class="text-muted">Period</td><td><strong>${d.period_days} days</strong></td></tr>
+                <tr><td class="text-muted">Paper start</td><td><strong>${d.paper_start_date||'Not started'}</strong></td></tr>
+                <tr><td class="text-muted">Orders submitted</td><td><strong>${d.orders_submitted}</strong></td></tr>
+                <tr><td class="text-muted">Orders skipped</td><td><strong>${d.orders_skipped}</strong></td></tr>
+                <tr><td class="text-muted">Avg/day</td><td><strong>${d.avg_orders_per_day}</strong></td></tr>
+                <tr><td class="text-muted">Win rate</td><td><strong>${d.estimated_win_rate!=null?(d.estimated_win_rate*100).toFixed(1)+'%':'Pending data'}</strong></td></tr>
+            </table>
+            <div class="text-muted mt-2" style="font-size:0.7rem;">${d.note||''}</div>`;
+    } catch(e) {}
+}
+
+async function promoteLive() {
+    if (!await confirmModal('Promote to Live', 'Promote AI agent from paper to live mode? You must also set LIVE_TRADING=true and restart the server.')) return;
+    const token = localStorage.getItem('auth_token') || '';
+    const r = await fetch('/api/ai/promote-to-live', { method: 'POST', headers: { Authorization: 'Bearer ' + token } });
+    const d = await r.json();
+    if (r.ok) { alert('Promoted! ' + (d.message || '')); loadAIStatus(); }
+    else { alert('Cannot promote: ' + JSON.stringify(d.detail || d)); }
+}
+
+async function toggleConsultant(id, enabled) {
+    const token = localStorage.getItem('auth_token') || '';
+    await fetch('/api/ai/consultants/' + id + '/toggle', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ enabled })
+    });
+    loadConsultants();
+}
+
+async function deleteConsultant(id) {
+    if (!await confirmModal('Delete Consultant', 'Delete this consultant?')) return;
+    const token = localStorage.getItem('auth_token') || '';
+    await fetch('/api/ai/consultants/' + id, { method: 'DELETE', headers: { Authorization: 'Bearer ' + token } });
+    loadConsultants();
+}
+
+async function showAddConsultant() {
+    const values = await showModal({
+        title: 'Add Consultant',
+        body: '',
+        inputs: [
+            {type:'text', placeholder:'Consultant name'},
+            {type:'text', placeholder:'Type (technical / llm)', default:'technical'}
+        ],
+        buttons: [{label:'Cancel', value:null}, {label:'Add', primary:true}]
+    });
+    if (values === null || !values[0]) return;
+    const [name, type] = values;
+    if (!name || !type) return;
+    const token = localStorage.getItem('auth_token') || '';
+    fetch('/api/ai/consultants', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ name, type, config: {}, enabled: true })
+    }).then(() => loadConsultants());
+}
 </script>
 {% endblock %}

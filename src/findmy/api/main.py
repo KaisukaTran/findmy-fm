@@ -137,7 +137,14 @@ async def csrf_middleware(request: Request, call_next):
 
     if request.method in mutating_methods:
         path = request.url.path
-        if path not in skip_paths and not any(path.startswith(p) for p in skip_prefixes):
+        auth_header = request.headers.get("Authorization", "")
+        # Skip CSRF for Bearer-token auth (not vulnerable to CSRF) and explicit allowlist
+        is_bearer_auth = auth_header.startswith("Bearer ")
+        if (
+            not is_bearer_auth
+            and path not in skip_paths
+            and not any(path.startswith(p) for p in skip_prefixes)
+        ):
             cookie_token = request.cookies.get("csrf_token")
             header_token = request.headers.get("X-CSRF-Token")
             if not cookie_token or not header_token or cookie_token != header_token:

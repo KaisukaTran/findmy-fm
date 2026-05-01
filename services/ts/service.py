@@ -134,7 +134,23 @@ class TSService:
         self._update_position(trade)
         
         self.db.commit()
-        
+
+        from services.ai.decision_log import log_trade_close as _log_trade_close
+        try:
+            if trade.signal_source == "ai_agent":
+                _log_trade_close(
+                    trade_id=trade.id,
+                    symbol=trade.symbol,
+                    side=trade.side,
+                    entry_price=trade.entry_price,
+                    exit_price=trade.exit_price or 0.0,
+                    net_pnl=pnl_data["net_pnl"],
+                    return_pct=pnl_data["return_pct"],
+                    pending_order_id=trade.entry_order_id,
+                )
+        except Exception:
+            pass  # Never block trade close due to logging failure
+
         return {
             "trade_id": trade.id,
             "status": trade.status,

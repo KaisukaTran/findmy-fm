@@ -8,6 +8,55 @@ from ._db import read_connect
 from .state import get_paper_start_date
 
 
+def _compute_trade_metrics(cutoff: str) -> dict:
+    """
+    Query closed AI agent trades from the TS database for real win-rate/drawdown.
+    Returns dict with win_rate, avg_daily_pct, max_drawdown_pct (all may be None if no data).
+    """
+    try:
+        from services.ts.db import SessionLocal
+        from services.ts.models import Trade, TradePnL
+        from sqlalchemy.orm import joinedload
+
+        session = SessionLocal()
+        try:
+            closed_trades = (
+                session.query(Trade)
+                .options(joinedload(Trade.pnl))
+                .filter(
+                    Trade.status == "CLOSED",
+                    Trade.signal_source == "ai_agent",
+                    Trade.exit_time >= cutoff,
+                )
+                .all()
+            )
+
+            if not closed_trades:
+                return {"win_rate": None, "avg_daily_pct": None, "max_drawdown_pct": None}
+
+            pnls = [t.pnl for t in closed_trades if t.pnl is not None]
+            if not pnls:
+                return {"win_rate": None, "avg_daily_pct": None, "max_drawdown_pct": None}
+
+            wins = sum(1 for p in pnls if p.net_pnl > 0)
+            win_rate = wins / len(pnls)
+
+            avg_daily_pct = sum(p.return_pct for p in pnls) / len(pnls) if pnls else None
+            max_drawdown_pct = max((p.max_drawdown or 0.0) for p in pnls) if pnls else None
+
+            return {
+                "win_rate": round(win_rate, 4),
+                "avg_daily_pct": round(avg_daily_pct, 4) if avg_daily_pct is not None else None,
+                "max_drawdown_pct": round(max_drawdown_pct, 4) if max_drawdown_pct is not None else None,
+            }
+        finally:
+            session.close()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Trade metrics query failed: {e}")
+        return {"win_rate": None, "avg_daily_pct": None, "max_drawdown_pct": None}
+
+
 def get_paper_report(days: Optional[int] = None) -> dict:
     """
     Compute paper trading performance metrics for the AI agent.
@@ -45,11 +94,11 @@ def get_paper_report(days: Optional[int] = None) -> dict:
         ).fetchall()
 
     total_orders = len(orders)
-    # Without actual trade close data, estimate win_rate from signal log
-    # (Full P&L tracking requires trade close events — this is a scaffold)
     days_active = max(1, days)
 
     paper_start = get_paper_start_date()
+
+    trade_metrics = _compute_trade_metrics(cutoff)
 
     report = {
         "period_days": days,
@@ -58,11 +107,14 @@ def get_paper_report(days: Optional[int] = None) -> dict:
         "orders_skipped": skipped,
         "total_approved_orders": total_orders,
         "avg_orders_per_day": round(submitted / days_active, 2),
-        "note": "Win rate and P&L require closed trade data — currently showing order counts only",
-        # Placeholder metrics (will be accurate once trade close tracking is wired)
-        "estimated_win_rate": None,
-        "estimated_daily_pct": None,
-        "max_drawdown_pct": None,
+        "estimated_win_rate": trade_metrics["win_rate"],
+        "estimated_daily_pct": trade_metrics["avg_daily_pct"],
+        "max_drawdown_pct": trade_metrics["max_drawdown_pct"],
+        "note": (
+            "Win rate computed from closed AI trades"
+            if trade_metrics["win_rate"] is not None
+            else "Win rate pending — no closed AI trades yet in this period"
+        ),
     }
     return report
 
@@ -148,5 +200,5 @@ def _empty_report(days: int) -> dict:
         "estimated_win_rate": None,
         "estimated_daily_pct": None,
         "max_drawdown_pct": None,
-        "note": "No data yet",
+        "note": "No AI DB connection — trade metrics unavailable",
     }

@@ -37,6 +37,34 @@ def log_decision(
         return cur.lastrowid
 
 
+def log_trade_close(
+    trade_id: int,
+    symbol: str,
+    side: str,
+    entry_price: float,
+    exit_price: float,
+    net_pnl: float,
+    return_pct: float,
+    pending_order_id: Optional[int] = None,
+) -> int:
+    """Record trade close event in ai_decision_log for paper report computation."""
+    action = f"TRADE_CLOSED:{'WIN' if net_pnl > 0 else 'LOSS'}:{trade_id}"
+    reasoning = (
+        f"Trade {trade_id} closed: {side} {symbol} "
+        f"entry={entry_price:.4f} exit={exit_price:.4f} "
+        f"net_pnl={net_pnl:.4f} return={return_pct:.2f}%"
+    )
+    return log_decision(
+        symbol=symbol,
+        signal=side,
+        confidence=1.0,
+        reasoning=reasoning,
+        action=action,
+        pending_order_id=pending_order_id,
+        market_context={"trade_id": trade_id, "net_pnl": net_pnl, "return_pct": return_pct},
+    )
+
+
 def get_decisions(limit: int = 50, symbol: Optional[str] = None) -> list[dict]:
     with read_connect() as con:
         if con is None:

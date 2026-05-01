@@ -133,7 +133,7 @@ async def csrf_middleware(request: Request, call_next):
     """
     mutating_methods = {"POST", "PATCH", "DELETE", "PUT"}
     skip_paths = {"/health", "/metrics"}
-    skip_prefixes = ("/api/ai/",)
+    skip_prefixes = ("/api/ai/", "/api/auth/")
 
     if request.method in mutating_methods:
         path = request.url.path

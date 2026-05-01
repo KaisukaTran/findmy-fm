@@ -53,7 +53,10 @@ configure_logging()
 logger = get_logger(__name__)
 
 from findmy.api.sentry_config import init_sentry
-init_sentry()
+try:
+    init_sentry()
+except Exception as _sentry_err:
+    logger.warning(f"Sentry init failed; continuing without error reporting: {_sentry_err}")
 
 # v0.7.0: Import caching (needed for lifespan)
 from services.cache.manager import cache_manager, CacheConfig  # noqa: E402

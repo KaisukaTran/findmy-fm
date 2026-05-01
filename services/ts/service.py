@@ -148,8 +148,11 @@ class TSService:
                     return_pct=pnl_data["return_pct"],
                     pending_order_id=trade.entry_order_id,
                 )
-        except Exception:
-            pass  # Never block trade close due to logging failure
+        except Exception as _log_err:
+            import logging
+            logging.getLogger(__name__).warning(
+                f"log_trade_close failed for trade {getattr(trade, 'id', '?')}: {_log_err}"
+            )
 
         return {
             "trade_id": trade.id,

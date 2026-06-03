@@ -43,7 +43,24 @@ button.sm { padding: 3px 8px; font-size: 12px; }
 .modal { margin-top: 12px; padding: 12px; border: 1px dashed var(--line); border-radius: 8px; background: var(--bg); }
 .modal form { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); align-items: end; }
 label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
-input, select { background: var(--panel); border: 1px solid var(--line); color: var(--fg); border-radius: 6px; padding: 6px; }
-.row-actions { display: flex; gap: 6px; }
+input, select {
+  width: 100%; max-width: 100%; box-sizing: border-box;
+  background: var(--panel); border: 1px solid var(--line); color: var(--fg);
+  border-radius: 6px; padding: 6px;
+}
+.row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .muted { color: var(--muted); }
+button { white-space: nowrap; }
+/* preview table is injected by JS — keep it scrollable inside the modal */
+#preview-output { overflow-x: auto; margin-top: 10px; }
 [x-cloak] { display: none !important; }
+
+/* Phone / narrow viewports */
+@media (max-width: 600px) {
+  header { padding: 10px 12px; }
+  header h1 { font-size: 16px; }
+  main { padding: 12px; }
+  .grid { gap: 12px; }
+  .card .value { font-size: 16px; }
+  .modal form { grid-template-columns: 1fr; }
+}

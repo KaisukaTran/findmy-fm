@@ -1,6 +1,6 @@
 # FINDMY-FM v2 — Lean Rebuild
 
-A from-scratch, tinh-gọn rebuild of FINDMY-FM that keeps the product purpose
+A from-scratch, lean rebuild of FINDMY-FM that keeps the product purpose
 (paper-trading simulator centered on the **KSS Pyramid DCA** strategy) while
 removing the over-engineering of the original (split SOT/TS services + two DBs,
 L1/L2 cache, full JWT, Prometheus, an in-memory KSS manager alongside the DB).

@@ -1,6 +1,6 @@
 # FINDMY (FM) – v1.0 Stable Paper Trading Simulator
 
-> **🆕 v2 Lean Rebuild** lives in [`app/`](app/) — a tinh-gọn single-package
+> **🆕 v2 Lean Rebuild** lives in [`app/`](app/) — a lean single-package
 > rewrite (one SQLite DB, HTMX/Alpine UI, API-key auth, tight CSP) that keeps the
 > KSS Pyramid DCA core. See **[docs/REBUILD.md](docs/REBUILD.md)**. Run it with
 > `uvicorn app.main:app --reload` and test with `pytest tests/app -c tests/app/pytest.ini`.

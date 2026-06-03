@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FINDMY-FM · Paper Trading</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script defer src="/static/app.js"></script>
+  <script defer src="/static/alpine.min.js"></script>
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body x-data="ui">
+  <header>
+    <h1>FINDMY-FM <span class="muted">· KSS Pyramid DCA</span></h1>
+    <div class="actions">
+      <button class="ghost" @click="toggleOrder">+ Order</button>
+      <button class="ghost" @click="toggleKss">+ KSS Session</button>
+      <button class="ghost" @click="togglePreview">Preview Pyramid</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Summary cards -->
+    <div hx-get="/partials/summary" hx-trigger="load, every 15s, refresh from:body" hx-swap="innerHTML"></div>
+
+    <!-- Create-order modal -->
+    <div class="modal" x-show="orderOpen" x-cloak>
+      <h2>Queue manual order</h2>
+      <form id="order-form">
+        <label>Symbol<input name="symbol" value="BTC" required /></label>
+        <label>Side
+          <select name="side"><option>BUY</option><option>SELL</option></select>
+        </label>
+        <label>Quantity<input name="quantity" type="number" step="any" required /></label>
+        <label>Price (0=market)<input name="price" type="number" step="any" value="0" /></label>
+        <label>Type
+          <select name="order_type"><option>LIMIT</option><option>MARKET</option></select>
+        </label>
+        <button type="submit">Queue</button>
+      </form>
+    </div>
+
+    <!-- Create-KSS modal -->
+    <div class="modal" x-show="kssOpen" x-cloak>
+      <h2>New KSS pyramid session</h2>
+      <form id="kss-form">
+        <label>Symbol<input name="symbol" value="BTC" required /></label>
+        <label>Entry price<input name="entry_price" type="number" step="any" value="50000" required /></label>
+        <label>Distance %<input name="distance_pct" type="number" step="any" value="2" required /></label>
+        <label>Max waves<input name="max_waves" type="number" value="10" required /></label>
+        <label>Isolated fund<input name="isolated_fund" type="number" step="any" value="10000" required /></label>
+        <label>TP %<input name="tp_pct" type="number" step="any" value="3" required /></label>
+        <button type="submit">Create</button>
+      </form>
+    </div>
+
+    <!-- Preview modal -->
+    <div class="modal" x-show="previewOpen" x-cloak>
+      <h2>Preview pyramid (projection)</h2>
+      <form id="preview-form">
+        <label>Symbol<input name="symbol" value="BTC" /></label>
+        <label>Entry price<input name="entry_price" type="number" step="any" value="50000" required /></label>
+        <label>Distance %<input name="distance_pct" type="number" step="any" value="2" required /></label>
+        <label>Max waves<input name="max_waves" type="number" value="5" required /></label>
+        <label>Isolated fund<input name="isolated_fund" type="number" step="any" value="1000" required /></label>
+        <label>TP %<input name="tp_pct" type="number" step="any" value="3" required /></label>
+        <button type="submit">Preview</button>
+      </form>
+      <div id="preview-output"></div>
+    </div>
+
+    <div class="grid" style="margin-top:16px">
+      <div class="panel">
+        <h2>KSS Sessions</h2>
+        <div hx-get="/partials/kss" hx-trigger="load, every 10s, refresh from:body" hx-swap="innerHTML"></div>
+      </div>
+      <div class="panel">
+        <h2>Pending approval queue</h2>
+        <div hx-get="/partials/pending" hx-trigger="load, every 10s, refresh from:body" hx-swap="innerHTML"></div>
+      </div>
+      <div class="panel">
+        <h2>Positions</h2>
+        <div hx-get="/partials/positions" hx-trigger="load, every 15s, refresh from:body" hx-swap="innerHTML"></div>
+      </div>
+      <div class="panel">
+        <h2>Trade history</h2>
+        <div hx-get="/partials/trades" hx-trigger="load, every 15s, refresh from:body" hx-swap="innerHTML"></div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

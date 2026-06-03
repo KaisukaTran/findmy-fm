@@ -1,0 +1,8 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "extraPaths": ["."],
+  "include": ["app", "tests/app"],
+  "exclude": ["src", "services", ".venv", "**/__pycache__"],
+  "reportMissingImports": "warning"
+}

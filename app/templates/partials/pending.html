@@ -1,0 +1,20 @@
+{% if rows %}
+<table class="tbl">
+  <thead><tr><th>Sym</th><th>Side</th><th>Qty</th><th>Price</th><th>Source</th><th></th></tr></thead>
+  <tbody>
+    {% for o in rows %}
+    <tr>
+      <td>{{ o.symbol }}</td>
+      <td class="{{ 'pos' if o.side == 'BUY' else 'neg' }}">{{ o.side }}</td>
+      <td>{{ "%.6f"|format(o.quantity) }}</td>
+      <td>{{ "%.2f"|format(o.price) if o.price else "mkt" }}</td>
+      <td class="muted">{{ o.source }}{% if o.risk_note %} ⚠{% endif %}</td>
+      <td class="row-actions">
+        <button class="ok sm" data-action="approve" data-id="{{ o.id }}">Approve</button>
+        <button class="danger sm" data-action="reject" data-id="{{ o.id }}">Reject</button>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="muted">Queue empty.</p>{% endif %}

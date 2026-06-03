@@ -1,5 +1,11 @@
 # FINDMY (FM) – v1.0 Stable Paper Trading Simulator
 
+> **🆕 v2 Lean Rebuild** lives in [`app/`](app/) — a tinh-gọn single-package
+> rewrite (one SQLite DB, HTMX/Alpine UI, API-key auth, tight CSP) that keeps the
+> KSS Pyramid DCA core. See **[docs/REBUILD.md](docs/REBUILD.md)**. Run it with
+> `uvicorn app.main:app --reload` and test with `pytest tests/app -c tests/app/pytest.ini`.
+> The sections below describe the original v1 architecture (kept for reference).
+
 Small. Cute. Flexible. Funny Project
 
 > **FINDMY (FM)** is a modular Python-based trading bot focused on research-first development, featuring a robust **paper trading execution engine** with KSS pyramid strategy, real-time dashboard, and comprehensive REST API.

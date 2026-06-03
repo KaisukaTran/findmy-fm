@@ -1,0 +1,18 @@
+{% if rows %}
+<table class="tbl">
+  <thead><tr><th>Time</th><th>Sym</th><th>Side</th><th>Qty</th><th>Price</th><th>Fee</th><th>P&L</th></tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td class="muted">{{ (r.executed_at or "")[11:19] }}</td>
+      <td>{{ r.symbol }}</td>
+      <td class="{{ 'pos' if r.side == 'BUY' else 'neg' }}">{{ r.side }}</td>
+      <td>{{ "%.6f"|format(r.quantity) }}</td>
+      <td>{{ "%.2f"|format(r.price) }}</td>
+      <td>{{ "%.4f"|format(r.fee) }}</td>
+      <td class="{{ 'pos' if r.realized_pnl >= 0 else 'neg' }}">{{ "%.2f"|format(r.realized_pnl) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="muted">No trades yet.</p>{% endif %}

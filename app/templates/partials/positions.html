@@ -1,0 +1,19 @@
+{% if rows %}
+<table class="tbl">
+  <thead><tr><th>Symbol</th><th>Qty</th><th>Avg</th><th>Price</th><th>Value</th><th>uP&L</th></tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.symbol }}</td>
+      <td>{{ "%.6f"|format(r.quantity) }}</td>
+      <td>{{ "%.2f"|format(r.avg_entry_price) }}</td>
+      <td>{{ "%.2f"|format(r.current_price) }}</td>
+      <td>${{ "%.2f"|format(r.market_value) }}</td>
+      <td class="{{ 'pos' if r.unrealized_pnl >= 0 else 'neg' }}">
+        ${{ "%.2f"|format(r.unrealized_pnl) }} ({{ "%.1f"|format(r.unrealized_pnl_pct) }}%)
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="muted">No open positions.</p>{% endif %}

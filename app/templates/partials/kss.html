@@ -1,0 +1,33 @@
+<div class="cards" style="margin-bottom:10px">
+  <div class="card"><div class="label">Sessions</div><div class="value">{{ summary.total_sessions }}</div></div>
+  <div class="card"><div class="label">Active</div><div class="value">{{ summary.active_sessions }}</div></div>
+  <div class="card"><div class="label">Active fund</div><div class="value">${{ "%.0f"|format(summary.total_isolated_fund) }}</div></div>
+</div>
+{% if sessions %}
+<table class="tbl">
+  <thead><tr><th>#</th><th>Sym</th><th>Status</th><th>Wave</th><th>Avg</th><th>uP&L</th><th></th></tr></thead>
+  <tbody>
+    {% for s in sessions %}
+    <tr>
+      <td>{{ s.id }}</td>
+      <td>{{ s.symbol }}</td>
+      <td><span class="badge {{ s.status }}">{{ s.status }}</span></td>
+      <td>{{ s.filled_waves_count }}/{{ s.max_waves }}</td>
+      <td>{{ "%.2f"|format(s.avg_price) }}</td>
+      <td class="{{ 'pos' if s.unrealized_pnl >= 0 else 'neg' }}">{{ "%.2f"|format(s.unrealized_pnl) }}</td>
+      <td class="row-actions">
+        {% if s.status == 'pending' %}
+        <button class="ok sm" data-action="kssStart" data-id="{{ s.id }}">Start</button>
+        {% elif s.status == 'active' %}
+        <button class="ghost sm" data-action="kssCheckTp" data-id="{{ s.id }}">TP?</button>
+        <button class="danger sm" data-action="kssStop" data-id="{{ s.id }}">Stop</button>
+        {% endif %}
+        {% if s.status != 'active' %}
+        <button class="ghost sm" data-action="kssDelete" data-id="{{ s.id }}">Del</button>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="muted">No sessions. Click "+ KSS Session".</p>{% endif %}

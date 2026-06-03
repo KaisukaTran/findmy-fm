@@ -57,7 +57,34 @@ class Settings(BaseSettings):
     slippage_pct: float = Field(default=0.05, description="Simulated slippage % on market fills.")
 
     # --- Market data ---
-    price_cache_ttl: int = Field(default=60, description="Seconds to cache Binance prices.")
+    price_cache_ttl: int = Field(default=60, description="Seconds to cache live prices.")
+    live_exchange: str = Field(default="binance", description="ccxt exchange id for live prices.")
+    data_exchange: str = Field(
+        default="kraken",
+        description="ccxt exchange id for backtest/scan history (public, no key — e.g. kraken/coinbase).",
+    )
+
+    # --- Scanner / multi-agent decision layer ---
+    watchlist: list[str] = Field(
+        default=["BTC", "ETH", "SOL"], description="Symbols always evaluated by the scanner."
+    )
+    scan_top_n: int = Field(default=10, description="Also auto-scan the top-N symbols by volume.")
+    backtest_lookback_days: int = Field(default=180, description="History window for win-rate estimate.")
+    backtest_timeframe: str = Field(default="1d", description="Candle timeframe for backtest.")
+
+    min_win_rate: float = Field(default=80.0, description="Min backtested win-rate %% to qualify a pair.")
+    min_confidence: float = Field(default=70.0, description="Min agent consensus %% to qualify a pair.")
+    deadline_days: int = Field(default=30, description="Max days a KSS session may wait for TP.")
+    auto_trade: bool = Field(
+        default=False,
+        description="Full-auto: auto-approve qualifying KSS orders. Off = semi-auto (human approves).",
+    )
+
+    # Default KSS parameters used when the scanner proposes a session
+    scan_distance_pct: float = Field(default=2.0, description="Distance %% per wave for proposed sessions.")
+    scan_tp_pct: float = Field(default=3.0, description="Take-profit %% for proposed sessions.")
+    scan_max_waves: int = Field(default=10, description="Max waves for proposed sessions.")
+    scan_fund: float = Field(default=1000.0, description="Isolated fund per proposed session (USD).")
 
 
 settings = Settings()

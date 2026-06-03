@@ -1,0 +1,15 @@
+{% if rows %}
+<table class="tbl">
+  <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Entity</th></tr></thead>
+  <tbody>
+    {% for a in rows %}
+    <tr>
+      <td class="muted">{{ (a.created_at or "")[11:19] }}</td>
+      <td>{{ a.actor }}</td>
+      <td>{{ a.action }}</td>
+      <td class="muted">{{ a.entity or "" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="muted">No AI activity yet.</p>{% endif %}

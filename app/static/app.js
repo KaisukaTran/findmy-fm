@@ -61,6 +61,17 @@ const actions = {
     alert(r.tp_triggered ? "TP triggered — sell queued" : "TP not reached");
     refreshAll();
   },
+  async scan() {
+    await api("POST", "/api/scan");
+    refreshAll();
+  },
+  async toggleAuto() {
+    const state = await api("GET", "/api/autotrade");
+    if (!state.auto_trade &&
+        !confirm("Enable FULL-AUTO trading? Qualifying sessions will be auto-approved.")) return;
+    await api("POST", "/api/autotrade", { enabled: !state.auto_trade });
+    refreshAll();
+  },
 };
 
 document.addEventListener("click", (e) => {

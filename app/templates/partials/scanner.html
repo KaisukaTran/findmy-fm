@@ -1,0 +1,23 @@
+<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+  <span class="muted">gates: win ≥ {{ "%.0f"|format(min_win_rate) }}% · consensus ≥ {{ "%.0f"|format(min_confidence) }}% · ≤ {{ deadline_days }}d</span>
+  <span class="row-actions">
+    <button class="sm" data-action="scan">Run scan</button>
+    <button class="sm {{ 'ok' if auto else 'ghost' }}" data-action="toggleAuto">Auto-trade: {{ 'ON' if auto else 'OFF' }}</button>
+  </span>
+</div>
+{% if rows %}
+<table class="tbl">
+  <thead><tr><th>Sym</th><th>Consensus</th><th>Win%</th><th>~Days</th><th>Decision</th></tr></thead>
+  <tbody>
+    {% for c in rows %}
+    <tr>
+      <td>{{ c.symbol }}</td>
+      <td>{{ "%.0f"|format(c.consensus_pct) }}%</td>
+      <td class="{{ 'pos' if c.win_rate >= min_win_rate else 'neg' }}">{{ "%.0f"|format(c.win_rate) }}%</td>
+      <td>{{ "%.1f"|format(c.est_days_to_tp) if c.est_days_to_tp is not none else "—" }}</td>
+      <td><span class="badge {{ 'active' if c.decision == 'trade' else '' }}">{{ c.decision }}</span></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="muted">No scan yet. Click "Run scan".</p>{% endif %}

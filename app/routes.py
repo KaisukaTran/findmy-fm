@@ -16,9 +16,11 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app import orders, portfolio
+from app import orders, portfolio, scanner
+from app.config import settings
 from app.db import get_db
 from app.kss import service as kss_service
+from app.models import AgentVoteRecord, AuditLog, Candidate, ScanRun
 from app.security import require_api_key
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -108,6 +110,63 @@ def reject(order_id: int, body: RejectBody, db: Session = Depends(get_db)):
     return {"message": "rejected", "order": order.to_dict()}
 
 
+class AutoTradeBody(BaseModel):
+    enabled: bool
+
+
+def _latest_candidates(db: Session) -> list[dict]:
+    scan = db.query(ScanRun).order_by(ScanRun.id.desc()).first()
+    if not scan:
+        return []
+    rows = (
+        db.query(Candidate)
+        .filter(Candidate.scan_id == scan.id)
+        .order_by(Candidate.consensus_pct.desc())
+        .all()
+    )
+    return [c.to_dict() for c in rows]
+
+
+@api_router.post("/api/scan", dependencies=[Depends(require_api_key)])
+def run_scan(db: Session = Depends(get_db)):
+    """Run one multi-agent scan; creates sessions per the current auto-trade mode."""
+    return scanner.run_scan(db)
+
+
+@api_router.get("/api/candidates")
+def get_candidates(db: Session = Depends(get_db)):
+    return _latest_candidates(db)
+
+
+@api_router.get("/api/agents/decisions")
+def get_agent_decisions(limit: int = 100, db: Session = Depends(get_db)):
+    rows = db.query(AgentVoteRecord).order_by(AgentVoteRecord.id.desc()).limit(limit).all()
+    return [r.to_dict() for r in rows]
+
+
+@api_router.get("/api/audit")
+def get_audit(limit: int = 100, db: Session = Depends(get_db)):
+    rows = db.query(AuditLog).order_by(AuditLog.id.desc()).limit(limit).all()
+    return [r.to_dict() for r in rows]
+
+
+@api_router.get("/api/autotrade")
+def autotrade_state():
+    return {
+        "auto_trade": settings.auto_trade,
+        "min_win_rate": settings.min_win_rate,
+        "min_confidence": settings.min_confidence,
+        "deadline_days": settings.deadline_days,
+    }
+
+
+@api_router.post("/api/autotrade", dependencies=[Depends(require_api_key)])
+def set_autotrade(body: AutoTradeBody):
+    """Toggle full-auto for this process. Persist via env/.env for restarts."""
+    settings.auto_trade = body.enabled
+    return autotrade_state()
+
+
 # --- dashboard (HTMX) ---------------------------------------------------
 
 
@@ -154,6 +213,29 @@ def partial_kss(request: Request, db: Session = Depends(get_db)):
             "sessions": kss_service.list_sessions(db),
             "summary": kss_service.summary(db),
         },
+    )
+
+
+@ui_router.get("/partials/scanner", response_class=HTMLResponse)
+def partial_scanner(request: Request, db: Session = Depends(get_db)):
+    return templates.TemplateResponse(
+        "partials/scanner.html",
+        {
+            "request": request,
+            "rows": _latest_candidates(db),
+            "auto": settings.auto_trade,
+            "min_win_rate": settings.min_win_rate,
+            "min_confidence": settings.min_confidence,
+            "deadline_days": settings.deadline_days,
+        },
+    )
+
+
+@ui_router.get("/partials/audit", response_class=HTMLResponse)
+def partial_audit(request: Request, db: Session = Depends(get_db)):
+    rows = db.query(AuditLog).order_by(AuditLog.id.desc()).limit(40).all()
+    return templates.TemplateResponse(
+        "partials/audit.html", {"request": request, "rows": [r.to_dict() for r in rows]}
     )
 
 

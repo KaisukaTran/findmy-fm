@@ -10,12 +10,12 @@ state. Generated orders always go through the pending-order approval queue.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app import orders
+from app import audit, orders
 from app.kss.pyramid import PyramidSession, PyramidSessionStatus, WaveInfo
 from app.models import (
     SESSION_ACTIVE,
@@ -101,9 +101,12 @@ def _wave_row(db: Session, session_id: int, wave_num: int) -> KssWave | None:
 
 def create_session(db: Session, **params: Any) -> KssSession:
     """Validate params (via PyramidSession) and persist a PENDING session."""
+    from app.config import settings
+
     note = params.pop("note", None)
-    PyramidSession(**params)  # raises ValueError on invalid params
-    row = KssSession(status=SESSION_PENDING, note=note, **params)
+    deadline_days = params.pop("deadline_days", settings.deadline_days)
+    PyramidSession(**params)  # raises ValueError on invalid params (strategy fields only)
+    row = KssSession(status=SESSION_PENDING, note=note, deadline_days=deadline_days, **params)
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -123,6 +126,7 @@ def start_session(db: Session, session_id: int) -> dict:
 
     pending, risk_note = _queue(db, order_dict)
     _save_state(row, py)
+    row.deadline_at = datetime.utcnow() + timedelta(days=row.deadline_days)
     db.add(
         KssWave(
             session_id=session_id,
@@ -136,6 +140,7 @@ def start_session(db: Session, session_id: int) -> dict:
     db.commit()
     return {
         "message": f"Session {session_id} started",
+        "deadline_at": row.deadline_at.isoformat(),
         "pending_order_id": pending.id,
         "risk_note": risk_note,
         "order": {k: order_dict[k] for k in ("symbol", "side", "quantity", "price")},
@@ -210,6 +215,44 @@ def stop_session(db: Session, session_id: int, reason: str = "manual") -> dict:
     _save_state(row, py)
     db.commit()
     return {"message": f"Session {session_id} stopped", "reason": reason}
+
+
+def sweep_deadlines(db: Session, now: datetime | None = None) -> list[int]:
+    """
+    Force-close ACTIVE sessions past their ≤30-day deadline without TP.
+
+    If the session still holds inventory, a market SELL is queued through the
+    normal approval flow (never bypassed). Every close is audit-logged.
+    Returns the list of closed session ids.
+    """
+    now = now or datetime.utcnow()
+    overdue = (
+        db.query(KssSession)
+        .filter(
+            KssSession.status == SESSION_ACTIVE,
+            KssSession.deadline_at.isnot(None),
+            KssSession.deadline_at < now,
+        )
+        .all()
+    )
+    closed: list[int] = []
+    for row in overdue:
+        py = _to_pyramid(row)
+        py.stop("deadline")
+        _save_state(row, py)
+        if row.total_filled_qty > 0:
+            _queue(db, {
+                "symbol": row.symbol, "side": "SELL", "quantity": row.total_filled_qty,
+                "price": 0.0, "order_type": "MARKET",
+                "source_ref": f"pyramid:{row.id}:deadline",
+                "strategy_name": f"Pyramid_{row.symbol}",
+                "note": f"Deadline close after {row.deadline_days}d",
+            })
+        audit.log(db, "scheduler", "deadline_close", entity=f"kss:{row.id}",
+                  symbol=row.symbol, deadline_days=row.deadline_days)
+        closed.append(row.id)
+    db.commit()
+    return closed
 
 
 def adjust_session(db: Session, session_id: int, **changes: Any) -> dict:

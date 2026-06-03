@@ -4,6 +4,9 @@
 > rewrite (one SQLite DB, HTMX/Alpine UI, API-key auth, tight CSP) that keeps the
 > KSS Pyramid DCA core. See **[docs/REBUILD.md](docs/REBUILD.md)**. Run it with
 > `uvicorn app.main:app --reload` and test with `pytest tests/app -c tests/app/pytest.ini`.
+> It also ships a **multi-agent scanner** that evaluates pairs (deterministic
+> quant agents + backtested win-rate), with semi/full-auto KSS sessions, a ≤30-day
+> deadline and a full audit trail — see **[docs/AGENTS.md](docs/AGENTS.md)**.
 > The sections below describe the original v1 architecture (kept for reference).
 
 Small. Cute. Flexible. Funny Project

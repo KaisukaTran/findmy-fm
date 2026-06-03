@@ -197,6 +197,9 @@ class KssSession(Base):
     total_cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Max days the session may wait for take-profit before being force-closed.
+    deadline_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    deadline_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_fill_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -231,3 +234,90 @@ class KssWave(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     session: Mapped[KssSession] = relationship(back_populates="waves")
+
+
+# --- scanner / multi-agent audit ----------------------------------------
+
+
+class ScanRun(Base):
+    """One run of the multi-agent scanner."""
+
+    __tablename__ = "scan_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    mode: Mapped[str] = mapped_column(String(12), nullable=False, default="semi")  # semi / auto
+    universe_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    params: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON snapshot of thresholds
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class Candidate(Base):
+    """Per-symbol result of a scan: consensus, win-rate, and the trade/skip decision."""
+
+    __tablename__ = "candidates"
+    __table_args__ = (Index("ix_candidates_scan_id", "scan_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    scan_id: Mapped[int] = mapped_column(ForeignKey("scan_runs.id"), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    consensus_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    win_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    est_days_to_tp: Mapped[float | None] = mapped_column(Float, nullable=True)
+    decision: Mapped[str] = mapped_column(String(8), nullable=False, default="skip")  # trade / skip
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    session_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "scan_id": self.scan_id, "symbol": self.symbol,
+            "consensus_pct": self.consensus_pct, "win_rate": self.win_rate,
+            "est_days_to_tp": self.est_days_to_tp, "decision": self.decision,
+            "reason": self.reason, "session_id": self.session_id,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class AgentVoteRecord(Base):
+    """One agent's vote on one symbol in one scan (full audit of agent reasoning)."""
+
+    __tablename__ = "agent_votes"
+    __table_args__ = (Index("ix_agent_votes_scan_id", "scan_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    scan_id: Mapped[int] = mapped_column(ForeignKey("scan_runs.id"), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    agent_name: Mapped[str] = mapped_column(String(32), nullable=False)
+    score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "scan_id": self.scan_id, "symbol": self.symbol,
+            "agent_name": self.agent_name, "score": self.score,
+            "confidence": self.confidence, "reason": self.reason,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class AuditLog(Base):
+    """Append-only log of every AI/automation action (decisions, sessions, approvals)."""
+
+    __tablename__ = "audit_log"
+    __table_args__ = (Index("ix_audit_log_created_at", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    actor: Mapped[str] = mapped_column(String(48), nullable=False)  # e.g. agent:dip, scanner, auto-trader
+    action: Mapped[str] = mapped_column(String(48), nullable=False)
+    entity: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "actor": self.actor, "action": self.action,
+            "entity": self.entity, "detail": self.detail,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }

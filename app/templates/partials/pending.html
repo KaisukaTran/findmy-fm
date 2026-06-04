@@ -1,5 +1,8 @@
 <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-  <span class="muted">auto-approve: {{ aa_sources }} ≤ ${{ aa_max | money }} <b>[{{ 'ON' if aa_enabled else 'OFF' }}]</b></span>
+  <span class="muted" title="Quy tắc tự duyệt: chỉ duyệt lệnh từ các nguồn này có notional (KL×giá) ≤ ngưỡng. Notional lớn hơn vẫn phải người duyệt.">auto-approve:</span> <span class="muted">{{ aa_sources }} ≤ $<input id="aa-max-input" type="number" min="1" step="1"
+      value="{{ '%.2f' | format(aa_max) }}" style="width:5.5em" title="Ngưỡng notional tối đa (USD) để tự duyệt. Sửa số rồi bấm Set.">
+    <button class="sm ghost" data-action="setAutoApproveMax">Set</button>
+    <b>[{{ 'ON' if aa_enabled else 'OFF' }}]</b></span>
   <span class="row-actions">
     {% if rows %}
     <button class="ok sm" data-action="approveAll">Approve all</button>
@@ -11,7 +14,14 @@
 </div>
 {% if rows %}
 <table class="tbl">
-  <thead><tr><th>Sym</th><th>Side</th><th>Qty</th><th>Price</th><th>Source</th><th></th></tr></thead>
+  <thead><tr>
+    <th title="Mã coin của lệnh.">Sym</th>
+    <th title="Hướng lệnh: BUY (mua) hoặc SELL (bán).">Side</th>
+    <th title="Khối lượng đặt.">Qty</th>
+    <th title="Giá đặt; 'mkt' = lệnh thị trường (khớp theo giá hiện tại).">Price</th>
+    <th title="Nguồn tạo lệnh (vd kss = từ chiến lược KSS). ⚠ = có ghi chú rủi ro; VETOED = bị AI Guardian chặn.">Source</th>
+    <th></th>
+  </tr></thead>
   <tbody>
     {% for o in rows %}
     <tr>

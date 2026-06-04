@@ -1,11 +1,11 @@
 <div class="cards">
-  <div class="card"><div class="label">Total equity</div><div class="value">${{ s.total_equity | money }}</div></div>
-  <div class="card"><div class="label">Cash</div><div class="value">${{ s.cash | money }}</div></div>
-  <div class="card"><div class="label">Market value</div><div class="value">${{ s.total_market_value | money }}</div></div>
-  <div class="card"><div class="label">Realized P&L</div>
+  <div class="card"><div class="label" data-tip="Tổng vốn định giá theo thị trường (MTM) = tiền mặt + giá trị thị trường các vị thế. Dùng cho mọi kiểm tra rủi ro.">Total equity</div><div class="value">${{ s.total_equity | money }}</div></div>
+  <div class="card"><div class="label" data-tip="Tiền mặt khả dụng = vốn ban đầu − vốn đã đầu tư + lãi/lỗ đã chốt.">Cash</div><div class="value">${{ s.cash | money }}</div></div>
+  <div class="card"><div class="label" data-tip="Tổng giá trị thị trường các vị thế đang nắm = Σ (khối lượng × giá hiện tại).">Market value</div><div class="value">${{ s.total_market_value | money }}</div></div>
+  <div class="card"><div class="label" data-tip="Lãi/lỗ ĐÃ chốt = tiền bán − giá vốn − phí (phí đã trừ ở mỗi lệnh khớp).">Realized P&L</div>
     <div class="value {{ 'pos' if s.realized_pnl >= 0 else 'neg' }}">${{ s.realized_pnl | money }}</div></div>
-  <div class="card"><div class="label">Unrealized P&L</div>
+  <div class="card"><div class="label" data-tip="Lãi/lỗ tạm tính CHƯA chốt = (giá hiện tại − giá vốn trung bình) × khối lượng.">Unrealized P&L</div>
     <div class="value {{ 'pos' if s.unrealized_pnl >= 0 else 'neg' }}">${{ s.unrealized_pnl | money }}</div></div>
-  <div class="card"><div class="label">Trades</div><div class="value">{{ s.total_trades }}</div></div>
-  <div class="card"><div class="label">Pending</div><div class="value">{{ s.pending_count }}</div></div>
+  <div class="card"><div class="label" data-tip="Tổng số lệnh đã khớp (fill) từ trước tới nay.">Trades</div><div class="value">{{ s.total_trades }}</div></div>
+  <div class="card"><div class="label" data-tip="Số lệnh đang chờ duyệt trong hàng chờ phê duyệt.">Pending</div><div class="value">{{ s.pending_count }}</div></div>
 </div>

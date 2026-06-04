@@ -1,6 +1,13 @@
 {% if rows %}
 <table class="tbl">
-  <thead><tr><th>Symbol</th><th>Qty</th><th>Avg</th><th>Price</th><th>Value</th><th>uP&L</th></tr></thead>
+  <thead><tr>
+    <th title="Mã coin.">Symbol</th>
+    <th title="Khối lượng đang nắm giữ.">Qty</th>
+    <th title="Giá vốn trung bình (đã gồm phí mua).">Avg</th>
+    <th title="Giá thị trường hiện tại.">Price</th>
+    <th title="Giá trị thị trường = khối lượng × giá hiện tại.">Value</th>
+    <th title="Lãi/lỗ tạm tính = (giá hiện tại − avg) × KL, và %% so với giá vốn.">uP&L</th>
+  </tr></thead>
   <tbody>
     {% for r in rows %}
     <tr>

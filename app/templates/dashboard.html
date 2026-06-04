@@ -70,39 +70,61 @@
       <div id="preview-output"></div>
     </div>
 
-    <div class="panel" style="margin-top:16px">
-      <h2>Performance</h2>
-      <div hx-get="/partials/performance" hx-trigger="load, every 20s, refresh from:body" hx-swap="innerHTML"></div>
-    </div>
+    <!-- Tab navigation (plain-JS controlled; see app.js showTab) -->
+    <nav class="tabs">
+      <button class="tab" data-tab="overview">Tổng quan</button>
+      <button class="tab" data-tab="trading">Giao dịch</button>
+      <button class="tab" data-tab="strategy">Chiến lược</button>
+      <button class="tab" data-tab="logs">Nhật ký</button>
+    </nav>
 
-    <div class="grid" style="margin-top:16px">
-      <div class="panel">
+    <!-- TAB: Tổng quan (Overview) -->
+    <div data-tab-panel="overview">
+      <div class="panel" style="margin-top:16px">
+        <h2>Hiệu suất (Performance)</h2>
+        <div hx-get="/partials/performance" hx-trigger="load, every 20s, refresh from:body" hx-swap="innerHTML"></div>
+      </div>
+      <div class="panel" style="margin-top:16px">
         <h2>Agent Scanner</h2>
         <div class="scroll" hx-get="/partials/scanner" hx-trigger="load, every 30s, refresh from:body" hx-swap="innerHTML"></div>
       </div>
-      <div class="panel">
-        <h2>KSS Sessions</h2>
-        <div class="scroll" hx-get="/partials/kss" hx-trigger="load, every 10s, refresh from:body" hx-swap="innerHTML"></div>
+    </div>
+
+    <!-- TAB: Giao dịch (Trading) -->
+    <div data-tab-panel="trading">
+      <div class="grid" style="margin-top:16px">
+        <div class="panel">
+          <h2>KSS Sessions</h2>
+          <div class="scroll" hx-get="/partials/kss" hx-trigger="load, every 10s, refresh from:body" hx-swap="innerHTML"></div>
+        </div>
+        <div class="panel">
+          <h2>Hàng chờ duyệt (Pending)</h2>
+          <div class="scroll" hx-get="/partials/pending" hx-trigger="load, every 10s, refresh from:body" hx-swap="innerHTML"></div>
+        </div>
+        <div class="panel">
+          <h2>Vị thế (Positions)</h2>
+          <div class="scroll" hx-get="/partials/positions" hx-trigger="load, every 15s, refresh from:body" hx-swap="innerHTML"></div>
+        </div>
+        <div class="panel">
+          <h2>Lịch sử giao dịch (Trades)</h2>
+          <div class="scroll" hx-get="/partials/trades" hx-trigger="load, every 15s, refresh from:body" hx-swap="innerHTML"></div>
+        </div>
       </div>
-      <div class="panel">
-        <h2>Pending approval queue</h2>
-        <div class="scroll" hx-get="/partials/pending" hx-trigger="load, every 10s, refresh from:body" hx-swap="innerHTML"></div>
-      </div>
-      <div class="panel">
-        <h2>Positions</h2>
-        <div class="scroll" hx-get="/partials/positions" hx-trigger="load, every 15s, refresh from:body" hx-swap="innerHTML"></div>
-      </div>
-      <div class="panel">
-        <h2>Trade history</h2>
-        <div class="scroll" hx-get="/partials/trades" hx-trigger="load, every 15s, refresh from:body" hx-swap="innerHTML"></div>
-      </div>
-      <div class="panel">
-        <h2>AI Audit Log</h2>
-        <div class="scroll" hx-get="/partials/audit" hx-trigger="load, every 15s, refresh from:body" hx-swap="innerHTML"></div>
-      </div>
-      <div class="panel" id="params-panel">
+    </div>
+
+    <!-- TAB: Chiến lược (Strategy / Params) -->
+    <div data-tab-panel="strategy">
+      <div class="panel" style="margin-top:16px" id="params-panel">
         <h2>Hyperopt &amp; ML Params</h2>
         {% include "partials/params.html" %}
+      </div>
+    </div>
+
+    <!-- TAB: Nhật ký (Logs) -->
+    <div data-tab-panel="logs">
+      <div class="panel" style="margin-top:16px">
+        <h2>AI Audit Log</h2>
+        <div class="scroll" hx-get="/partials/audit" hx-trigger="load, every 15s, refresh from:body" hx-swap="innerHTML"></div>
       </div>
     </div>
   </main>

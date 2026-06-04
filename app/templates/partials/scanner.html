@@ -1,5 +1,5 @@
 <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-  <span class="muted">gates: win ≥ {{ "%.0f"|format(min_win_rate) }}% · consensus ≥ {{ "%.0f"|format(min_confidence) }}% · ≤ {{ deadline_days }}d</span>
+  <span class="muted" title="Cổng vào lệnh — một cặp phải vượt CẢ BA: win-rate ≥ ngưỡng, consensus ≥ ngưỡng, và thời gian dự kiến tới TP ≤ số ngày deadline.">gates: win ≥ {{ "%.0f"|format(min_win_rate) }}% · consensus ≥ {{ "%.0f"|format(min_confidence) }}% · ≤ {{ deadline_days }}d</span>
   <span class="row-actions">
     <button class="sm" data-action="scan">Run scan</button>
     <button class="sm {{ 'ok' if auto else 'ghost' }}" data-action="toggleAuto">Auto-trade: {{ 'ON' if auto else 'OFF' }}</button>
@@ -8,7 +8,13 @@
 </div>
 {% if rows %}
 <table class="tbl">
-  <thead><tr><th>Sym</th><th>Consensus</th><th>Win%</th><th>~Days</th><th>Decision</th></tr></thead>
+  <thead><tr>
+    <th title="Mã coin (base symbol), ghép với quote của sàn dữ liệu (vd kraken → USD).">Sym</th>
+    <th title="Mức đồng thuận của các agent = tổng hợp có trọng số các phiếu (quant + backtest + ML). Càng cao = nhiều agent cùng đồng ý vào lệnh.">Consensus</th>
+    <th title="Tỉ lệ thắng backtest, tính out-of-sample (walk-forward). Xanh nếu ≥ ngưỡng MIN_WIN_RATE.">Win%</th>
+    <th title="Số ngày dự kiến để đạt take-profit (ước lượng từ backtest).">~Days</th>
+    <th title="Quyết định cuối: trade = đủ điều kiện mở session; skip = chưa đạt cổng.">Decision</th>
+  </tr></thead>
   <tbody>
     {% for c in rows %}
     <tr>

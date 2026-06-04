@@ -81,6 +81,37 @@ button { white-space: nowrap; }
 #preview-output { overflow-x: auto; margin-top: 10px; }
 [x-cloak] { display: none !important; }
 
+/* --- Tab navigation --- */
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 16px 0 4px; border-bottom: 1px solid var(--line); }
+.tab {
+  background: transparent; color: var(--muted); border: 1px solid transparent;
+  border-bottom: 0; border-radius: 8px 8px 0 0; padding: 8px 16px; font-size: 13px;
+  font-weight: 500; cursor: pointer;
+}
+.tab:hover { color: var(--fg); }
+.tab.active {
+  color: var(--fg); background: var(--panel);
+  border-color: var(--line); border-bottom: 1px solid var(--panel); margin-bottom: -1px;
+}
+
+/* --- Hover tooltips ---
+   Two mechanisms by context:
+   - [data-tip]: styled CSS tooltip for the top KPI strip (not inside an
+     overflow-clipped panel, so ::after can show).
+   - title="": native tooltip for table headers inside .scroll/.panel (which
+     clip overflow); never gets cut off. th[title] gets a dotted hint. */
+[data-tip] { position: relative; cursor: help; border-bottom: 1px dotted var(--muted); }
+[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute; left: 0; top: 130%; z-index: 50;
+  width: max-content; max-width: 280px; white-space: normal;
+  background: #000; color: var(--fg); border: 1px solid var(--line); border-radius: 6px;
+  padding: 7px 9px; font-size: 12px; font-weight: 400; line-height: 1.45;
+  text-transform: none; letter-spacing: normal;
+  box-shadow: 0 4px 14px rgba(0,0,0,.5);
+}
+.tbl th[title], .muted[title] { cursor: help; text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
+
 /* Phone / narrow viewports */
 @media (max-width: 600px) {
   header { padding: 10px 12px; }

@@ -94,6 +94,15 @@ const actions = {
     await api("POST", "/api/autoapprove", { enabled: !s.enabled });
     refreshAll();
   },
+  async setAutoApproveMax() {
+    const inp = document.getElementById("aa-max-input");
+    const v = num(inp && inp.value);
+    if (v == null || v <= 0) { alert("Enter a positive max notional (USD)."); return; }
+    // Preserve the current enabled flag; only change the threshold.
+    const s = await api("GET", "/api/autoapprove");
+    await api("POST", "/api/autoapprove", { enabled: s.enabled, max_notional: v });
+    refreshAll();
+  },
   async toggleScheduler() {
     const state = await api("GET", "/api/scheduler");
     if (!state.enabled &&
@@ -193,6 +202,21 @@ document.addEventListener("click", (e) => {
     fn(btn.dataset.id).catch(() => {});
   }
 });
+
+// --- Tab navigation (plain JS, CSP-safe — Alpine only handles modals) ----
+function showTab(name) {
+  document.querySelectorAll("[data-tab]").forEach((b) => {
+    b.classList.toggle("active", b.dataset.tab === name);
+  });
+  document.querySelectorAll("[data-tab-panel]").forEach((p) => {
+    p.style.display = p.dataset.tabPanel === name ? "" : "none";
+  });
+}
+document.addEventListener("click", (e) => {
+  const tabBtn = e.target.closest("[data-tab]");
+  if (tabBtn) showTab(tabBtn.dataset.tab);
+});
+document.addEventListener("DOMContentLoaded", () => showTab("overview"));
 
 // --- forms --------------------------------------------------------------
 

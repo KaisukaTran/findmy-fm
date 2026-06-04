@@ -1,6 +1,14 @@
 {% if rows %}
 <table class="tbl">
-  <thead><tr><th>Time</th><th>Sym</th><th>Side</th><th>Qty</th><th>Price</th><th>Fee</th><th>P&L</th></tr></thead>
+  <thead><tr>
+    <th title="Thời điểm khớp lệnh (giờ:phút:giây, UTC).">Time</th>
+    <th title="Mã coin.">Sym</th>
+    <th title="Hướng: BUY (mua) / SELL (bán).">Side</th>
+    <th title="Khối lượng khớp.">Qty</th>
+    <th title="Giá khớp thực tế (đã gồm slippage mô phỏng).">Price</th>
+    <th title="Phí giao dịch = notional × taker_fee_pct (mặc định 0.1%).">Fee</th>
+    <th title="Lãi/lỗ đã chốt của lệnh bán = tiền bán − giá vốn − phí.">P&L</th>
+  </tr></thead>
   <tbody>
     {% for r in rows %}
     <tr>

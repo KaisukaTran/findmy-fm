@@ -154,5 +154,22 @@ class Settings(BaseSettings):
     autoapprove_sources: list[str] = Field(default=["kss"], description="Only auto-approve orders from these sources.")
     autoapprove_require_no_risk: bool = Field(default=False, description="If true, never auto-approve orders carrying a risk note.")
 
+    # --- OPUS orchestrator mode (advanced, independent full-auto; see docs/opus-orchestrator-plan.md) ---
+    # OFF by default. Opus is advisory inside a deterministic sandbox; every order still
+    # flows through the approval queue + circuit breaker + kill switch (paper-only).
+    opus_mode: bool = Field(default=False, description="Master switch for OPUS orchestrator mode (persisted in runtime_config).")
+    opus_allocation_usd: float = Field(default=2000.0, description="Capital envelope carved out for OPUS mode. KPI denominator; rule-based mode sees equity minus this.")
+    opus_interval_min: int = Field(default=5, description="Minutes between OPUS decision ticks.")
+    opus_daily_cost_cap_usd: float = Field(default=5.0, description="Hard ceiling on Opus API spend per day; exceeded → OPUS pauses new decisions.")
+    opus_kpi_target_pct: float = Field(default=1.0, description="Net-profit KPI target on invested capital per rolling 24h (%).")
+    opus_model: str = Field(default="claude-opus-4-8", description="Claude model id for the OPUS orchestrator brain.")
+    opus_max_tokens: int = Field(default=2048, description="Max output tokens per OPUS decision call.")
+    opus_price_in_per_mtok: float = Field(default=15.0, description="Opus input price (USD per million tokens) for cost metering.")
+    opus_price_out_per_mtok: float = Field(default=75.0, description="Opus output price (USD per million tokens) for cost metering.")
+    opus_cost_multiplier: float = Field(default=2.0, description="Multiplier applied to raw Opus cost before counting it against net profit (requirement #5).")
+    opus_ride_hard_sl_pct: float = Field(default=10.0, description="Hard stop-loss for a 'ride' position so a reversing winner can't become an unbounded loss.")
+    opus_max_trade_notional: float = Field(default=200.0, description="Per-trade notional cap for OPUS discretionary orders.")
+    opus_shadow: bool = Field(default=True, description="Shadow mode: Opus intents are logged but NOT executed. Flip off to let the sandbox route orders.")
+
 
 settings = Settings()

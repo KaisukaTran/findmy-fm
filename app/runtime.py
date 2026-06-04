@@ -27,6 +27,7 @@ KEY_FULL_AUTO = "full_auto"
 KEY_FROZEN = "breaker_frozen"
 KEY_FROZEN_REASON = "breaker_frozen_reason"
 KEY_FROZEN_AT = "breaker_frozen_at"  # ISO timestamp string
+KEY_OPUS_MODE = "opus_mode"
 
 # ---------------------------------------------------------------------------
 # Generic KV helpers
@@ -87,12 +88,27 @@ def full_auto_off(db: Session) -> dict:
     return state(db)
 
 
+def opus_mode_on(db: Session) -> dict:
+    """Enable OPUS orchestrator mode (independent of full_auto). Persisted."""
+    settings.opus_mode = True
+    set_bool(db, KEY_OPUS_MODE, True)
+    return state(db)
+
+
+def opus_mode_off(db: Session) -> dict:
+    """Disable OPUS orchestrator mode. Persisted."""
+    settings.opus_mode = False
+    set_bool(db, KEY_OPUS_MODE, False)
+    return state(db)
+
+
 def state(db: Session) -> dict:
     """Return a snapshot of the current automation and breaker state."""
     return {
         "full_auto": settings.full_auto,
         "auto_trade": settings.auto_trade,
         "autoapprove": settings.autoapprove_enabled,
+        "opus_mode": settings.opus_mode,
         "frozen": is_frozen(db),
         "frozen_reason": get(db, KEY_FROZEN_REASON),
         "frozen_at": get(db, KEY_FROZEN_AT),
@@ -139,3 +155,4 @@ def sync_from_db(db: Session) -> None:
         settings.full_auto = True
         settings.auto_trade = True
         settings.autoapprove_enabled = True
+    settings.opus_mode = get_bool(db, KEY_OPUS_MODE, default=settings.opus_mode)

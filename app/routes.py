@@ -32,6 +32,7 @@ from app import (
 from app.config import settings
 from app.db import get_db
 from app.kss import service as kss_service
+from app.orchestrator import service as opus_service
 from app.models import SESSION_ACTIVE, AgentVoteRecord, AuditLog, Candidate, KssSession, ScanRun
 from app.security import require_api_key
 
@@ -279,6 +280,54 @@ async def set_full_auto(body: FullAutoBody, db: Session = Depends(get_db)):
     return {**runtime.state(db), "scheduler_running": scheduler.is_running()}
 
 
+class OpusBody(BaseModel):
+    enabled: bool
+
+
+@api_router.get("/api/opus")
+def get_opus(db: Session = Depends(get_db)):
+    """OPUS orchestrator mode state: switch, capital envelope, spend, KPI."""
+    return opus_service.state(db)
+
+
+@api_router.post("/api/opus", dependencies=[Depends(require_api_key)])
+def set_opus(body: OpusBody, db: Session = Depends(get_db)):
+    """Enable/disable OPUS mode (persisted) and start/stop its independent decision loop."""
+    from app.orchestrator import loop as opus_loop
+
+    if body.enabled:
+        runtime.opus_mode_on(db)
+        opus_loop.start()
+    else:
+        runtime.opus_mode_off(db)
+        opus_loop.stop()
+    return {**opus_service.state(db), "loop_running": opus_loop.is_running()}
+
+
+@api_router.get("/api/opus/metrics")
+def opus_metrics(hours: int = 48, db: Session = Depends(get_db)):
+    """Hourly OPUS net-profit series + the current KPI/cost state (drives the chart)."""
+    from app.orchestrator import ledger as opus_ledger
+
+    rows = opus_ledger.metrics_series(db, hours=hours)
+    return {
+        **opus_service.state(db),
+        "target_per_hour": opus_ledger.target_per_hour(),
+        "series": [
+            {
+                "hour": r.hour_ts.isoformat(),
+                "net_pnl": r.net_pnl,
+                "gross_pnl": r.gross_pnl,
+                "opus_cost_billed": r.opus_cost_billed,
+                "net_pct": r.net_pct,
+                "trades": r.trades,
+                "win_trades": r.win_trades,
+            }
+            for r in rows
+        ],
+    }
+
+
 @api_router.get("/api/breaker")
 def get_breaker(db: Session = Depends(get_db)):
     """Circuit-breaker status with live metrics and configured thresholds."""
@@ -469,6 +518,26 @@ def partial_pending(request: Request, db: Session = Depends(get_db)):
 def partial_status(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         "partials/status.html", {"request": request, "a": _automation_state(db)}
+    )
+
+
+@ui_router.get("/partials/opus", response_class=HTMLResponse)
+def partial_opus(request: Request, db: Session = Depends(get_db)):
+    from app.orchestrator import ledger as opus_ledger
+
+    # Read-only: the OPUS loop tick owns rollup writes (avoids SQLite write contention
+    # with the scheduler when this partial is polled).
+    rows = opus_ledger.metrics_series(db, hours=48)
+    labels = [r.hour_ts.isoformat() for r in rows]
+    nets = [r.net_pnl for r in rows]
+    return templates.TemplateResponse(
+        "partials/opus.html",
+        {
+            "request": request,
+            "o": opus_service.state(db),
+            "pnl_svg": charts.opus_hourly_pnl_svg(labels, nets),
+            "cum_svg": charts.opus_cumulative_vs_target_svg(nets, opus_ledger.target_per_hour()),
+        },
     )
 
 

@@ -44,11 +44,18 @@ async def lifespan(app: FastAPI):
         scheduler.start()
     from app import notify
     notify.start()
+    if settings.opus_mode:
+        from app.orchestrator import loop as opus_loop
+
+        opus_loop.start()
     try:
         yield
     finally:
         scheduler.stop()
         notify.stop()
+        from app.orchestrator import loop as opus_loop
+
+        opus_loop.stop()
 
 
 def create_app() -> FastAPI:

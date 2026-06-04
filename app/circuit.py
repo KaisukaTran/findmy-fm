@@ -17,7 +17,7 @@ from app.config import settings
 from app.models import Fill
 
 # Reviewers that must be blocked when the breaker is frozen.
-AUTO_REVIEWERS: frozenset[str] = frozenset({"auto-trader", "auto-approver", "scheduler"})
+AUTO_REVIEWERS: frozenset[str] = frozenset({"auto-trader", "auto-approver", "scheduler", "opus"})
 
 
 def _consecutive_losses(db: Session) -> int:

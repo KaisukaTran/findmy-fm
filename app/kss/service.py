@@ -165,6 +165,74 @@ def start_session(db: Session, session_id: int) -> dict:
     }
 
 
+def adopt_position_into_kss(
+    db: Session,
+    symbol: str,
+    held_qty: float,
+    avg_price: float,
+    current_price: float,
+    *,
+    note: str = "opus-rescue",
+) -> KssSession:
+    """
+    Wrap an ALREADY-HELD position into an ACTIVE KSS session (OPUS 3h rescue, docs §5).
+
+    Reuses the frozen pyramid math: seed wave 0 as *filled* with the held qty/avg (no new
+    buy), then let on_fill() queue the next DCA wave and persist state. From here the normal
+    KSS rules (DCA ladder, SL/trailing, TP, deadline) govern the losing trade.
+    """
+    from app.config import settings
+
+    held_notional = max(held_qty * avg_price, 0.0)
+    row = create_session(
+        db,
+        symbol=symbol,
+        entry_price=avg_price,
+        distance_pct=settings.scan_distance_pct,
+        max_waves=settings.scan_max_waves,
+        # room for the held lot plus a bounded DCA-down budget
+        isolated_fund=held_notional + settings.scan_fund,
+        tp_pct=settings.scan_tp_pct,
+        timeout_x_min=float(settings.deadline_days * 1440),
+        gap_y_min=0.0,
+        deadline_days=settings.deadline_days,
+        note=note,
+    )
+
+    py = _to_pyramid(row)
+    py.start()  # marks ACTIVE + appends wave 0 as "sent" (we do NOT queue this buy)
+    result = py.on_fill(0, held_qty, avg_price, current_market_price=current_price)
+    _save_state(row, py)
+    row.deadline_at = datetime.utcnow() + timedelta(days=row.deadline_days)
+    row.last_fill_at = datetime.utcnow()
+
+    db.add(
+        KssWave(
+            session_id=row.id, wave_num=0, quantity=held_qty,
+            target_price=avg_price, status=WAVE_FILLED,
+            filled_qty=held_qty, filled_price=avg_price, filled_at=datetime.utcnow(),
+        )
+    )
+    # If the strategy wants the next DCA wave, queue it like a normal fill would.
+    if result.get("action") == "next_wave":
+        order_dict = result["order"]
+        nwn = int(order_dict["source_ref"].split(":")[-1])
+        pending, _ = _queue(db, order_dict)
+        db.add(
+            KssWave(
+                session_id=row.id, wave_num=nwn, quantity=order_dict["quantity"],
+                target_price=order_dict["price"], status=WAVE_SENT, pending_order_id=pending.id,
+            )
+        )
+    elif result.get("action") == "tp_triggered":
+        _queue(db, result["order"])
+
+    db.commit()
+    audit.log(db, "opus", "kss_rescue", entity=f"kss:{row.id}", symbol=symbol,
+              held_qty=held_qty, avg=avg_price)
+    return row
+
+
 def handle_fill_event(
     db: Session, source_ref: str, filled_qty: float, filled_price: float
 ) -> dict | None:

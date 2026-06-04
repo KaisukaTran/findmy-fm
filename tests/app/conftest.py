@@ -25,6 +25,7 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_TMP_DIR}/test.db"
 os.environ["REQUIRE_AUTH"] = "false"
 
 from app import models  # noqa: E402,F401  (register models on Base)
+from app.orchestrator import models as _opus_models  # noqa: E402,F401  (register OPUS tables)
 from app.db import Base, SessionLocal, engine  # noqa: E402
 
 
@@ -43,6 +44,7 @@ _MUTABLE_SETTINGS = (
     "auto_trade", "autoapprove_enabled", "autoapprove_max_notional",
     "full_auto", "scheduler_enabled", "scan_interval_min",
     "guardian_enabled", "telegram_enabled",
+    "opus_mode", "opus_shadow", "opus_allocation_usd", "opus_daily_cost_cap_usd",
 )
 
 

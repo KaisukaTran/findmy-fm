@@ -74,6 +74,7 @@
     <nav class="tabs">
       <button class="tab" data-tab="overview">Tổng quan</button>
       <button class="tab" data-tab="trading">Giao dịch</button>
+      <button class="tab" data-tab="opus">OPUS</button>
       <button class="tab" data-tab="strategy">Chiến lược</button>
       <button class="tab" data-tab="logs">Nhật ký</button>
     </nav>
@@ -109,6 +110,14 @@
           <h2>Lịch sử giao dịch (Trades)</h2>
           <div class="scroll" hx-get="/partials/trades" hx-trigger="load, every 15s, refresh from:body" hx-swap="innerHTML"></div>
         </div>
+      </div>
+    </div>
+
+    <!-- TAB: OPUS orchestrator mode -->
+    <div data-tab-panel="opus">
+      <div class="panel" style="margin-top:16px">
+        <h2>OPUS orchestrator (Opus tự điều phối · paper)</h2>
+        <div hx-get="/partials/opus" hx-trigger="load, every 10s, refresh from:body" hx-swap="innerHTML"></div>
       </div>
     </div>
 

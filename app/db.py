@@ -47,7 +47,13 @@ def _ensure_sqlite_dir(database_url: str) -> None:
 _ensure_sqlite_dir(settings.database_url)
 
 # check_same_thread=False is required for SQLite under the async server's thread pool.
-_connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
+# timeout makes a writer wait for the lock (busy_timeout) instead of failing immediately —
+# the OPUS loop and the rule-based scheduler both write, so brief contention is expected.
+_connect_args = (
+    {"check_same_thread": False, "timeout": 30.0}
+    if settings.database_url.startswith("sqlite")
+    else {}
+)
 
 engine = create_engine(settings.database_url, connect_args=_connect_args, future=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
@@ -80,6 +86,7 @@ def init_db() -> None:
     """Create all tables, then apply additive column migrations. Imports models so
     they register on Base.metadata."""
     from app import models  # noqa: F401  (registers models on Base)
+    from app.orchestrator import models as _opus_models  # noqa: F401  (OPUS tables)
 
     Base.metadata.create_all(bind=engine)
     _ensure_columns()

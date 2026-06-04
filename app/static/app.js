@@ -119,6 +119,13 @@ const actions = {
     await api("POST", "/api/full-auto", { enabled: !state.full_auto });
     refreshAll();
   },
+  async toggleOpus() {
+    const s = await api("GET", "/api/opus");
+    if (!s.mode &&
+        !confirm("Enable OPUS orchestrator mode? Opus will orchestrate trades on its own capital envelope (paper).")) return;
+    await api("POST", "/api/opus", { enabled: !s.mode });
+    refreshAll();
+  },
   async resetBreaker() {
     if (!confirm("Manually reset the circuit-breaker? The system will resume trading.")) return;
     await api("POST", "/api/breaker/reset");

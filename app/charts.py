@@ -110,6 +110,79 @@ def winloss_bars_svg(wins: int, losses: int, w: int = 220, h: int = 90) -> str:
     )
 
 
+def opus_hourly_pnl_svg(labels: list[str], net_values: list[float], w: int = 520, h: int = 150) -> str:
+    """Net P/L per auto-running hour: green/red bars around a zero baseline (requirement #2)."""
+    if not net_values:
+        return '<p class="muted">Chưa có dữ liệu giờ nào.</p>'
+    hi = max(net_values + [0.0])
+    lo = min(net_values + [0.0])
+    span = (hi - lo) or 1.0
+    x0, x1, y0, y1 = 8, w - 60, 12, h - 20
+    n = len(net_values)
+    bw = (x1 - x0) / max(n, 1)
+
+    def py(v: float) -> float:
+        return y1 - (v - lo) / span * (y1 - y0)
+
+    zero_y = py(0.0)
+    parts = [f'<svg width="100%" height="{h}" viewBox="0 0 {w} {h}" role="img">']
+    # value ticks (top/zero/bottom)
+    for gy, gval in ((y0, hi), (zero_y, 0.0), (y1, lo)):
+        parts.append(f'<line x1="{x0}" y1="{gy:.1f}" x2="{x1}" y2="{gy:.1f}" stroke="{_LINE}" stroke-width="0.5"/>')
+        parts.append(f'<text x="{x1+4}" y="{gy+3:.1f}" fill="{_MUTED}" font-size="10">${gval:,.2f}</text>')
+    for i, v in enumerate(net_values):
+        bx = x0 + i * bw
+        top = py(max(v, 0.0))
+        bot = py(min(v, 0.0))
+        col = _GREEN if v >= 0 else _RED
+        parts.append(f'<rect x="{bx+1:.1f}" y="{top:.1f}" width="{max(bw-2,1):.1f}" height="{max(bot-top,0.5):.1f}" fill="{col}" rx="1"/>')
+    if labels and len(labels) == n:
+        for i in (0, n // 2, n - 1):
+            anchor = "start" if i == 0 else ("end" if i == n - 1 else "middle")
+            parts.append(f'<text x="{x0+i*bw+bw/2:.1f}" y="{h-5}" fill="{_MUTED}" font-size="10" text-anchor="{anchor}">{_time_label(labels[i])}</text>')
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def opus_cumulative_vs_target_svg(
+    net_values: list[float], target_per_hour: float, w: int = 520, h: int = 150
+) -> str:
+    """Cumulative net profit (line) vs the linear KPI target (dashed) — pace at a glance."""
+    if not net_values:
+        return '<p class="muted">Chưa có dữ liệu lũy kế.</p>'
+    cum, s = [], 0.0
+    for v in net_values:
+        s += v
+        cum.append(s)
+    n = len(cum)
+    target = [(i + 1) * target_per_hour for i in range(n)]
+    allv = cum + target + [0.0]
+    lo, hi = min(allv), max(allv)
+    span = (hi - lo) or 1.0
+    x0, x1, y0, y1 = 8, w - 60, 12, h - 20
+    xstep = (x1 - x0) / max(n - 1, 1)
+
+    def px(i):
+        return x0 + i * xstep
+
+    def py(v):
+        return y1 - (v - lo) / span * (y1 - y0)
+
+    cum_pts = " ".join(f"{px(i):.1f},{py(v):.1f}" for i, v in enumerate(cum))
+    tgt_pts = " ".join(f"{px(i):.1f},{py(v):.1f}" for i, v in enumerate(target))
+    color = _GREEN if cum[-1] >= 0 else _RED
+    parts = [f'<svg width="100%" height="{h}" viewBox="0 0 {w} {h}" role="img">']
+    for gy, gval in ((y0, hi), (py(0.0), 0.0), (y1, lo)):
+        parts.append(f'<line x1="{x0}" y1="{gy:.1f}" x2="{x1}" y2="{gy:.1f}" stroke="{_LINE}" stroke-width="0.5"/>')
+        parts.append(f'<text x="{x1+4}" y="{gy+3:.1f}" fill="{_MUTED}" font-size="10">${gval:,.2f}</text>')
+    parts.append(f'<polyline fill="none" stroke="{_MUTED}" stroke-width="1.2" stroke-dasharray="5 3" points="{tgt_pts}"/>')
+    parts.append(f'<polyline fill="none" stroke="{color}" stroke-width="2" points="{cum_pts}"/>')
+    parts.append(f'<text x="{x0+2}" y="{y0+10}" fill="{_MUTED}" font-size="10">— mục tiêu · </text>')
+    parts.append(f'<text x="{x0+70}" y="{y0+10}" fill="{color}" font-size="10">lũy kế net</text>')
+    parts.append("</svg>")
+    return "".join(parts)
+
+
 def pyramid_ladder_svg(status: dict, w: int = 240, h: int = 120) -> str:
     """Horizontal lines: wave targets (red), avg (yellow), TP (green), current (blue)."""
     waves = status.get("waves") or []

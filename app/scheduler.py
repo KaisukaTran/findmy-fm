@@ -1,0 +1,90 @@
+"""
+Background scheduler — drives autonomous operation.
+
+Each cycle: close overdue sessions → check TP on open sessions → scan the
+universe (auto-opens sessions in full-auto) → auto-fill KSS orders whose limit
+the market reached (full-auto only). Off by default; toggled via settings /
+the /api/scheduler endpoint. Everything it does is audit-logged downstream.
+
+`run_cycle(db)` is the synchronous unit of work (unit-testable); the async loop
+just calls it on an interval.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+
+from sqlalchemy.orm import Session
+
+from app import audit, orders, scanner
+from app.config import settings
+from app.db import SessionLocal
+from app.kss import service
+
+logger = logging.getLogger(__name__)
+
+_task: asyncio.Task | None = None
+
+
+def run_cycle(db: Session) -> dict:
+    """One scheduler cycle. Returns a small summary (counts), not data dumps."""
+    closed = service.sweep_deadlines(db)
+    tp = service.manage_open_sessions(db)
+    scan = scanner.run_scan(db)
+    filled = orders.auto_fill_due_orders(db) if settings.auto_trade else []
+    audit.log(db, "scheduler", "cycle", deadlines_closed=len(closed),
+              tp_queued=len(tp), candidates=len(scan["candidates"]), auto_filled=len(filled))
+    db.commit()
+    return {
+        "deadlines_closed": closed,
+        "tp_queued": tp,
+        "scan_id": scan["scan_id"],
+        "auto_filled": filled,
+    }
+
+
+def _cycle_once() -> None:
+    db = SessionLocal()
+    try:
+        run_cycle(db)
+    finally:
+        db.close()
+
+
+async def _loop() -> None:
+    logger.info("scheduler started (every %s min)", settings.scan_interval_min)
+    while True:
+        try:
+            # Offload the blocking, network-heavy cycle to a thread so the event
+            # loop (and the API) stays responsive.
+            await asyncio.to_thread(_cycle_once)
+        except Exception:  # a bad cycle must not kill the loop
+            logger.exception("scheduler cycle failed")
+        await asyncio.sleep(max(settings.scan_interval_min, 1) * 60)
+
+
+def start() -> bool:
+    """Start the background loop if not already running. Returns True if started."""
+    global _task
+    if _task and not _task.done():
+        return False
+    settings.scheduler_enabled = True
+    _task = asyncio.create_task(_loop())
+    return True
+
+
+def stop() -> bool:
+    """Stop the background loop. Returns True if a running task was cancelled."""
+    global _task
+    settings.scheduler_enabled = False
+    if _task and not _task.done():
+        _task.cancel()
+        _task = None
+        return True
+    _task = None
+    return False
+
+
+def is_running() -> bool:
+    return bool(_task and not _task.done())

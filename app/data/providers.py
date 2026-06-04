@@ -57,6 +57,7 @@ class DataProvider(Protocol):
     def get_prices(self, symbols: list[str]) -> dict[str, float]: ...
     def get_ohlcv(self, symbol: str, timeframe: str = "1d", limit: int = 200) -> list[Candle]: ...
     def top_symbols(self, n: int = 10) -> list[str]: ...
+    def all_symbols(self, min_quote_volume: float = 0.0) -> list[str]: ...
     def get_exchange_info(self, symbol: str) -> dict: ...
 
 
@@ -109,6 +110,25 @@ class CcxtProvider:
             rows.append((pair[: -len(suffix)], float(vol)))
         rows.sort(key=lambda r: r[1], reverse=True)
         return [sym for sym, _ in rows[:n]]
+
+    def all_symbols(self, min_quote_volume: float = 0.0) -> list[str]:
+        """All base symbols for this quote whose quote volume clears the floor, by volume desc."""
+        try:
+            tickers = self._ex.fetch_tickers()
+        except Exception as exc:
+            logger.warning("%s fetch_tickers failed: %s", self.exchange_id, exc)
+            return []
+        rows: list[tuple[str, float]] = []
+        suffix = f"/{self.quote}"
+        for pair, t in tickers.items():
+            if not pair.endswith(suffix):
+                continue
+            vol = float(t.get("quoteVolume") or 0.0)
+            if vol < min_quote_volume:
+                continue
+            rows.append((pair[: -len(suffix)], vol))
+        rows.sort(key=lambda r: r[1], reverse=True)
+        return [sym for sym, _ in rows]
 
     def get_exchange_info(self, symbol: str) -> dict:
         try:

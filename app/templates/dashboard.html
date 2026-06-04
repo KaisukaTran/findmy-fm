@@ -69,6 +69,11 @@
       <div id="preview-output"></div>
     </div>
 
+    <div class="panel" style="margin-top:16px">
+      <h2>Performance</h2>
+      <div hx-get="/partials/performance" hx-trigger="load, every 20s, refresh from:body" hx-swap="innerHTML"></div>
+    </div>
+
     <div class="grid" style="margin-top:16px">
       <div class="panel">
         <h2>Agent Scanner</h2>

@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app import orders, portfolio, scanner
+from app import charts, orders, portfolio, scanner, scheduler
 from app.config import settings
 from app.db import get_db
 from app.kss import service as kss_service
@@ -28,6 +28,7 @@ templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 # Display filters: money = ##,###.## (thousands + 2dp); qty keeps crypto precision.
 templates.env.filters["money"] = lambda v: f"{float(v or 0):,.2f}"
 templates.env.filters["qty"] = lambda v: f"{float(v or 0):,.6f}"
+templates.env.filters["ladder"] = charts.pyramid_ladder_svg  # session dict -> SVG
 
 api_router = APIRouter()
 ui_router = APIRouter()
@@ -117,6 +118,11 @@ class AutoTradeBody(BaseModel):
     enabled: bool
 
 
+class SchedulerBody(BaseModel):
+    enabled: bool
+    interval_min: int | None = Field(None, ge=1, le=1440)
+
+
 def _latest_candidates(db: Session) -> list[dict]:
     scan = db.query(ScanRun).order_by(ScanRun.id.desc()).first()
     if not scan:
@@ -153,6 +159,11 @@ def get_audit(limit: int = 100, db: Session = Depends(get_db)):
     return [r.to_dict() for r in rows]
 
 
+@api_router.get("/api/performance")
+def get_performance(db: Session = Depends(get_db)):
+    return portfolio.performance_view(db)
+
+
 @api_router.get("/api/autotrade")
 def autotrade_state():
     return {
@@ -168,6 +179,23 @@ def set_autotrade(body: AutoTradeBody):
     """Toggle full-auto for this process. Persist via env/.env for restarts."""
     settings.auto_trade = body.enabled
     return autotrade_state()
+
+
+@api_router.get("/api/scheduler")
+def scheduler_state():
+    return {"enabled": scheduler.is_running(), "interval_min": settings.scan_interval_min}
+
+
+@api_router.post("/api/scheduler", dependencies=[Depends(require_api_key)])
+async def set_scheduler(body: SchedulerBody):
+    """Start/stop the background scan+manage loop for this process (runs on the event loop)."""
+    if body.interval_min:
+        settings.scan_interval_min = body.interval_min
+    if body.enabled:
+        scheduler.start()
+    else:
+        scheduler.stop()
+    return scheduler_state()
 
 
 # --- dashboard (HTMX) ---------------------------------------------------
@@ -227,9 +255,25 @@ def partial_scanner(request: Request, db: Session = Depends(get_db)):
             "request": request,
             "rows": _latest_candidates(db),
             "auto": settings.auto_trade,
+            "sched": scheduler.is_running(),
+            "interval": settings.scan_interval_min,
             "min_win_rate": settings.min_win_rate,
             "min_confidence": settings.min_confidence,
             "deadline_days": settings.deadline_days,
+        },
+    )
+
+
+@ui_router.get("/partials/performance", response_class=HTMLResponse)
+def partial_performance(request: Request, db: Session = Depends(get_db)):
+    p = portfolio.performance_view(db)
+    return templates.TemplateResponse(
+        "partials/performance.html",
+        {
+            "request": request,
+            "p": p,
+            "equity_svg": charts.equity_curve_svg(p["equity_curve"]),
+            "winloss_svg": charts.winloss_bars_svg(p["wins"], p["losses"]),
         },
     )
 

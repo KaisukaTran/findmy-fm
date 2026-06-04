@@ -72,6 +72,13 @@ const actions = {
     await api("POST", "/api/autotrade", { enabled: !state.auto_trade });
     refreshAll();
   },
+  async toggleScheduler() {
+    const state = await api("GET", "/api/scheduler");
+    if (!state.enabled &&
+        !confirm("Start the background scheduler? It will scan & manage sessions on an interval.")) return;
+    await api("POST", "/api/scheduler", { enabled: !state.enabled });
+    refreshAll();
+  },
 };
 
 document.addEventListener("click", (e) => {

@@ -96,37 +96,49 @@ def estimate_win_rate(
     tp_pct: float,
     deadline_days: float,
     step: int = 1,
+    split: float = 0.0,
 ) -> dict:
     """
-    Roll an entry across the history and measure how often TP is reached within
-    the deadline. Only trials with enough look-ahead (TP hit, or a full deadline
-    window available) are counted, so the win-rate is not biased by truncation.
+    Walk-forward win-rate: roll an entry across history and measure how often TP
+    is reached within the deadline. With `split` > 0 the first `split` fraction of
+    history is treated as in-sample and metrics are computed only on the remaining
+    **out-of-sample** tail — a more honest, regime-current estimate that reduces
+    overfitting (supports the loss-minimizing posture).
 
-    Returns {win_rate (0-100), trials, wins, avg_days_to_tp}.
+    A win = TP within deadline; a loss = deadline reached without TP. Incomplete
+    trials (not enough look-ahead) are excluded so the rates aren't truncation-biased.
+
+    Returns {win_rate, loss_rate, trials, wins, losses, avg_days_to_tp, bar_days}.
     """
-    wins = 0
-    trials = 0
-    days_sum = 0.0
     if not candles:
-        return {"win_rate": 0.0, "trials": 0, "wins": 0, "avg_days_to_tp": None}
+        return {"win_rate": 0.0, "loss_rate": 0.0, "trials": 0, "wins": 0,
+                "losses": 0, "avg_days_to_tp": None, "bar_days": 0.0}
 
     span_days = (candles[-1]["ts"] - candles[0]["ts"]) / _MS_PER_DAY / max(len(candles) - 1, 1)
-    for start in range(0, len(candles) - 1, max(step, 1)):
+    start_at = int(len(candles) * split) if 0 < split < 1 else 0
+
+    wins = losses = trials = 0
+    days_sum = 0.0
+    for start in range(start_at, len(candles) - 1, max(step, 1)):
         res = simulate_kss(candles, start, distance_pct, max_waves, tp_pct, deadline_days)
-        # Skip incomplete trials: neither a win nor a full deadline window observed.
         if not res.tp_hit and not res.hit_deadline:
-            continue
+            continue  # incomplete look-ahead
         trials += 1
         if res.tp_hit:
             wins += 1
             days_sum += res.days_to_tp or 0.0
+        else:
+            losses += 1
 
     win_rate = (wins / trials * 100) if trials else 0.0
+    loss_rate = (losses / trials * 100) if trials else 0.0
     avg_days = (days_sum / wins) if wins else None
     return {
         "win_rate": round(win_rate, 2),
+        "loss_rate": round(loss_rate, 2),
         "trials": trials,
         "wins": wins,
+        "losses": losses,
         "avg_days_to_tp": round(avg_days, 2) if avg_days is not None else None,
         "bar_days": round(span_days, 4),
     }

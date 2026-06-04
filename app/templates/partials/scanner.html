@@ -3,6 +3,7 @@
   <span class="row-actions">
     <button class="sm" data-action="scan">Run scan</button>
     <button class="sm {{ 'ok' if auto else 'ghost' }}" data-action="toggleAuto">Auto-trade: {{ 'ON' if auto else 'OFF' }}</button>
+    <button class="sm {{ 'ok' if sched else 'ghost' }}" data-action="toggleScheduler">Scheduler: {{ ('ON ('~interval~'m)') if sched else 'OFF' }}</button>
   </span>
 </div>
 {% if rows %}

@@ -74,3 +74,51 @@ def summary_view(db: Session) -> dict:
         "cash": cash,
         "total_equity": cash + total_market_value,
     }
+
+
+def performance_view(db: Session) -> dict:
+    """
+    Realized-equity curve + win/loss + max drawdown, derived from fills.
+
+    Equity is account_equity + cumulative realized P&L stamped at each fill (a
+    "realized equity" curve), with a final point including current unrealized P&L.
+    Win/loss counts SELL fills by realized P&L sign.
+    """
+    fills = db.query(Fill).order_by(Fill.executed_at.asc()).all()
+    equity = settings.account_equity
+    curve = [equity]
+    realized = 0.0
+    wins = losses = 0
+    for f in fills:
+        realized += f.realized_pnl
+        curve.append(equity + realized)
+        if f.side == "SELL":
+            if f.realized_pnl > 0:
+                wins += 1
+            elif f.realized_pnl < 0:
+                losses += 1
+
+    summary = summary_view(db)
+    final_equity = summary["total_equity"]
+    curve.append(final_equity)
+
+    # max drawdown (%) over the curve
+    peak = curve[0]
+    max_dd = 0.0
+    for v in curve:
+        peak = max(peak, v)
+        if peak > 0:
+            max_dd = max(max_dd, (peak - v) / peak * 100)
+
+    closed = wins + losses
+    return {
+        "equity_curve": curve,
+        "realized_pnl": realized,
+        "unrealized_pnl": summary["unrealized_pnl"],
+        "total_equity": final_equity,
+        "wins": wins,
+        "losses": losses,
+        "win_rate": round(wins / closed * 100, 2) if closed else 0.0,
+        "loss_rate": round(losses / closed * 100, 2) if closed else 0.0,
+        "max_drawdown_pct": round(max_dd, 2),
+    }

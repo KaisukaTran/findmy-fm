@@ -69,6 +69,11 @@ class Settings(BaseSettings):
         default=["BTC", "ETH", "SOL"], description="Symbols always evaluated by the scanner."
     )
     scan_top_n: int = Field(default=10, description="Also auto-scan the top-N symbols by volume.")
+    min_quote_volume: float = Field(
+        default=1_000_000.0,
+        description="Scan ALL pairs whose quote volume is above this floor (liquidity filter).",
+    )
+    scan_max_symbols: int = Field(default=50, description="Hard cap on symbols evaluated per scan.")
     backtest_lookback_days: int = Field(default=180, description="History window for win-rate estimate.")
     backtest_timeframe: str = Field(default="1d", description="Candle timeframe for backtest.")
 
@@ -79,12 +84,24 @@ class Settings(BaseSettings):
         default=False,
         description="Full-auto: auto-approve qualifying KSS orders. Off = semi-auto (human approves).",
     )
+    scheduler_enabled: bool = Field(
+        default=False, description="Run the background scan/manage loop. Off by default."
+    )
+    scan_interval_min: int = Field(default=15, description="Minutes between scheduler cycles.")
 
     # Default KSS parameters used when the scanner proposes a session
     scan_distance_pct: float = Field(default=2.0, description="Distance %% per wave for proposed sessions.")
     scan_tp_pct: float = Field(default=3.0, description="Take-profit %% for proposed sessions.")
     scan_max_waves: int = Field(default=10, description="Max waves for proposed sessions.")
     scan_fund: float = Field(default=1000.0, description="Isolated fund per proposed session (USD).")
+
+    # --- Loss-minimizing / cost-aware gates (capital preservation) ---
+    max_loss_rate: float = Field(default=20.0, description="Max backtested loss-rate %% to qualify.")
+    min_net_edge: float = Field(default=0.5, description="Min TP%% above round-trip cost to trade (micro-trade guard).")
+    walk_forward_split: float = Field(default=0.5, description="Fraction of history used in-sample; metric is out-of-sample.")
+    max_concurrent_sessions: int = Field(default=5, description="Cap on simultaneously active sessions.")
+    max_deployed_pct: float = Field(default=50.0, description="Cap total isolated funds as %% of equity.")
+    scan_min_notional: float = Field(default=10.0, description="Skip dust micro-trades below this USD notional/wave.")
 
 
 settings = Settings()

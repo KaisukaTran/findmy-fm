@@ -1,0 +1,12 @@
+<div class="cards" style="margin-bottom:10px">
+  <div class="card"><div class="label">Equity</div><div class="value">${{ p.total_equity | money }}</div></div>
+  <div class="card"><div class="label">Realized P&L</div>
+    <div class="value {{ 'pos' if p.realized_pnl >= 0 else 'neg' }}">${{ p.realized_pnl | money }}</div></div>
+  <div class="card"><div class="label">Win-rate</div><div class="value">{{ "%.0f"|format(p.win_rate) }}%</div></div>
+  <div class="card"><div class="label">Loss-rate</div>
+    <div class="value {{ 'neg' if p.loss_rate > 0 else '' }}">{{ "%.0f"|format(p.loss_rate) }}%</div></div>
+  <div class="card"><div class="label">Max drawdown</div>
+    <div class="value {{ 'neg' if p.max_drawdown_pct > 0 else '' }}">{{ "%.1f"|format(p.max_drawdown_pct) }}%</div></div>
+</div>
+<div style="margin-bottom:8px">{{ equity_svg | safe }}</div>
+<div>{{ winloss_svg | safe }}</div>

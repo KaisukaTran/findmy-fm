@@ -5,6 +5,10 @@ description: Canonical specification of the KSS Pyramid DCA strategy — wave fo
 
 # KSS Pyramid DCA — Canonical Spec
 
+> **FROZEN.** `app/kss/pyramid.py` math must never change. Build features AROUND
+> it. `tests/app/test_kss_invariants.py` locks the formulas/states/source_refs —
+> if it fails, restore pyramid.py.
+
 Core dataclass: `app/kss/pyramid.py::PyramidSession` (preserved verbatim from original).
 Persistence/lifecycle authority: `app/kss/service.py` (DB-backed, no in-memory manager dict).
 

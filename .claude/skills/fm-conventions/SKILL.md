@@ -5,6 +5,10 @@ description: Coding conventions, file layout, and commit format for the FINDMY-F
 
 # FINDMY-FM Conventions (lean rebuild)
 
+> Default working discipline: **[[context-engineering]]** (Karpathy). Read only
+> what the step needs, compress tool output to verdict + `path:line`, subagents
+> return summaries not dumps, small verifiable diffs.
+
 ## Layout (single package, single DB)
 ```
 app/

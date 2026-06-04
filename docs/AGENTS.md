@@ -72,6 +72,26 @@ pytest tests/app -c tests/app/pytest.ini      # incl. providers/backtest/agents/
 ruff check app tests/app
 ```
 
+## v3 — autonomy, loss-minimizing, charts
+
+- **KSS frozen** (`#2`): `tests/app/test_kss_invariants.py` locks the pyramid math.
+  Build around `app/kss/pyramid.py`, never edit it.
+- **Scheduler** (`#1`, `app/scheduler.py`): background loop (off by default,
+  `GET|POST /api/scheduler`, UI toggle) — each cycle runs
+  `sweep_deadlines → manage_open_sessions (TP) → run_scan → auto_fill_due_orders`
+  (full-auto only). Network-heavy cycle runs in a thread so the API stays responsive.
+- **Loss-minimizing / cost-aware** (`#3,#4`, `app/costengine.py` + backtest):
+  win-rate is **walk-forward / out-of-sample**; extra gates `loss_rate ≤ max_loss_rate`,
+  `net_edge = TP − round-trip cost ≥ min_net_edge` (rejects unprofitable micro-trades);
+  caps `max_concurrent_sessions`, `max_deployed_pct`, `scan_min_notional`.
+- **All-pairs universe** (`#5`, `providers.all_symbols`): scan every pair above
+  `min_quote_volume`, capped at `scan_max_symbols`.
+- **Charts** (`#6`, `app/charts.py`): server-rendered **SVG** (zero JS, CSP-perfect):
+  equity curve, win/loss bar, per-session pyramid ladder; `GET /api/performance`
+  reports loss-rate + max drawdown.
+- **Context engineering** (`#7`): `.claude/skills/context-engineering` is the default
+  dev discipline (Karpathy: Write→Select→Compress→Isolate).
+
 ## Safety
 
 Full-auto is off by default and only toggles with the API key (UI confirms).

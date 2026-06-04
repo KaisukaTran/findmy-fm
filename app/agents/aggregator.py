@@ -38,17 +38,25 @@ def decide(
     min_confidence: float,
     min_win_rate: float,
     deadline_days: float,
+    loss_rate: float = 0.0,
+    max_loss_rate: float = 100.0,
+    net_edge: float = 1.0,
+    min_net_edge: float = 0.0,
 ) -> dict:
     """
-    Decide trade vs skip. A pair must clear ALL gates:
-      consensus ≥ min_confidence, win_rate ≥ min_win_rate,
-      and an estimated time-to-TP within the deadline.
+    Decide trade vs skip. Capital-preservation posture — a pair must clear ALL gates:
+      consensus ≥ min_confidence, win_rate ≥ min_win_rate, time-to-TP ≤ deadline,
+      loss_rate ≤ max_loss_rate, and net edge (TP − round-trip cost) ≥ min_net_edge.
     """
     reasons: list[str] = []
     if consensus_pct < min_confidence:
         reasons.append(f"consensus {consensus_pct:.1f}% < {min_confidence:.1f}%")
     if win_rate < min_win_rate:
         reasons.append(f"win-rate {win_rate:.1f}% < {min_win_rate:.1f}%")
+    if loss_rate > max_loss_rate:
+        reasons.append(f"loss-rate {loss_rate:.1f}% > {max_loss_rate:.1f}%")
+    if net_edge < min_net_edge:
+        reasons.append(f"net edge {net_edge:.2f}% < {min_net_edge:.2f}% (cost too high)")
     if avg_days_to_tp is None:
         reasons.append("no estimated time-to-TP")
     elif avg_days_to_tp > deadline_days:
@@ -59,6 +67,8 @@ def decide(
         "decision": decision,
         "consensus_pct": consensus_pct,
         "win_rate": win_rate,
+        "loss_rate": loss_rate,
+        "net_edge": net_edge,
         "avg_days_to_tp": avg_days_to_tp,
         "reasons": reasons or ["all gates passed"],
     }

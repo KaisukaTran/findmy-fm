@@ -23,13 +23,13 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from app import audit, orders
+from app import audit, costengine, orders
 from app.agents import SIGNAL_AGENTS, BacktestAgent, aggregate, decide
 from app.backtest import estimate_win_rate
 from app.config import settings
 from app.data.providers import data_provider
 from app.kss import service
-from app.models import AgentVoteRecord, Candidate, ScanRun
+from app.models import SESSION_ACTIVE, AgentVoteRecord, Candidate, KssSession, ScanRun
 
 logger = logging.getLogger(__name__)
 
@@ -37,15 +37,15 @@ _MIN_CANDLES = 30
 
 
 def _universe(provider) -> list[str]:
-    """Watchlist first, then any top-N-by-volume symbols not already present."""
+    """Watchlist first, then ALL pairs above the liquidity floor, capped for safety."""
     symbols = list(settings.watchlist)
     try:
-        for s in provider.top_symbols(settings.scan_top_n):
+        for s in provider.all_symbols(settings.min_quote_volume):
             if s not in symbols:
                 symbols.append(s)
     except Exception as exc:  # provider hiccup shouldn't kill the watchlist scan
-        logger.warning("top_symbols failed: %s", exc)
-    return symbols
+        logger.warning("all_symbols failed: %s", exc)
+    return symbols[: settings.scan_max_symbols]
 
 
 def _thresholds() -> dict:
@@ -79,9 +79,10 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
         if len(candles) < _MIN_CANDLES:
             continue
 
+        # Walk-forward: metric on the out-of-sample tail (regime-current, less overfit).
         wr = estimate_win_rate(
             candles, settings.scan_distance_pct, settings.scan_max_waves,
-            settings.scan_tp_pct, settings.deadline_days,
+            settings.scan_tp_pct, settings.deadline_days, split=settings.walk_forward_split,
         )
         ctx = {"win_rate": wr["win_rate"], "trials": wr["trials"],
                "avg_days_to_tp": wr["avg_days_to_tp"]}
@@ -93,24 +94,51 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
                                    score=v.score, confidence=v.confidence, reason=v.reason))
 
         consensus = aggregate(votes)
-        d = decide(consensus, wr["win_rate"], wr["avg_days_to_tp"], **_thresholds())
+        net_edge = costengine.net_edge_pct(settings.scan_tp_pct)
+        d = decide(
+            consensus, wr["win_rate"], wr["avg_days_to_tp"],
+            loss_rate=wr["loss_rate"], net_edge=net_edge,
+            max_loss_rate=settings.max_loss_rate, min_net_edge=settings.min_net_edge,
+            **_thresholds(),
+        )
 
         cand = Candidate(
             scan_id=scan.id, symbol=symbol, consensus_pct=consensus,
             win_rate=wr["win_rate"], est_days_to_tp=wr["avg_days_to_tp"],
-            decision=d["decision"], reason="; ".join(d["reasons"]),
+            decision=d["decision"],
+            reason="; ".join(d["reasons"]) + f" | loss={wr['loss_rate']:.0f}% edge={net_edge:.2f}%",
         )
         db.add(cand)
         db.flush()
         audit.log(db, "scanner", "candidate", entity=symbol, decision=d["decision"],
-                  consensus=consensus, win_rate=wr["win_rate"], days=wr["avg_days_to_tp"])
+                  consensus=consensus, win_rate=wr["win_rate"], loss_rate=wr["loss_rate"],
+                  net_edge=net_edge, days=wr["avg_days_to_tp"])
 
         if d["decision"] == "trade":
-            cand.session_id = _open_session(db, symbol, candles[-1]["close"], mode)
+            ok, why = _can_open(db)
+            if ok:
+                cand.session_id = _open_session(db, symbol, candles[-1]["close"], mode)
+            else:
+                cand.reason += f" | capped: {why}"
+                audit.log(db, "scanner", "skipped_cap", entity=symbol, reason=why)
         candidates.append(cand)
 
     db.commit()
     return {"scan_id": scan.id, "mode": mode, "candidates": [c.to_dict() for c in candidates]}
+
+
+def _can_open(db: Session) -> tuple[bool, str]:
+    """Capital-preservation caps: concurrent sessions, deployed capital, min notional."""
+    active = db.query(KssSession).filter(KssSession.status == SESSION_ACTIVE).all()
+    if len(active) >= settings.max_concurrent_sessions:
+        return False, f"max concurrent {settings.max_concurrent_sessions}"
+    deployed = sum(s.isolated_fund for s in active)
+    cap = settings.account_equity * settings.max_deployed_pct / 100
+    if deployed + settings.scan_fund > cap:
+        return False, f"deployed cap {settings.max_deployed_pct:.0f}% of equity"
+    if not costengine.notional_ok(settings.scan_fund):
+        return False, "below min notional"
+    return True, ""
 
 
 def _open_session(db: Session, symbol: str, entry: float, mode: str) -> int:

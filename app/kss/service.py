@@ -217,6 +217,37 @@ def stop_session(db: Session, session_id: int, reason: str = "manual") -> dict:
     return {"message": f"Session {session_id} stopped", "reason": reason}
 
 
+def manage_open_sessions(db: Session) -> list[int]:
+    """
+    Check every ACTIVE session against the live price and queue a TP sell when the
+    take-profit threshold is reached. Used by the background scheduler. Returns the
+    session ids that triggered TP. The TP sell still goes through the approval queue.
+    """
+    from app.market import get_current_prices
+
+    active = db.query(KssSession).filter(KssSession.status == SESSION_ACTIVE).all()
+    if not active:
+        return []
+    prices = get_current_prices(list({s.symbol for s in active}))
+    triggered: list[int] = []
+    for row in active:
+        price = prices.get(row.symbol)
+        if not price:
+            continue
+        py = _to_pyramid(row)
+        if py.total_filled_qty <= 0:
+            continue
+        res = py.check_tp(price)
+        if res:
+            _queue(db, res["order"])
+            _save_state(row, py)
+            audit.log(db, "scheduler", "tp_queued", entity=f"kss:{row.id}",
+                      symbol=row.symbol, price=price)
+            triggered.append(row.id)
+    db.commit()
+    return triggered
+
+
 def sweep_deadlines(db: Session, now: datetime | None = None) -> list[int]:
     """
     Force-close ACTIVE sessions past their ≤30-day deadline without TP.

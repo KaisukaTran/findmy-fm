@@ -26,6 +26,9 @@ class _FakeProvider:
     def top_symbols(self, n=10):
         return []
 
+    def all_symbols(self, min_quote_volume=0.0):
+        return ["BTC"]
+
     def get_prices(self, symbols):
         return dict.fromkeys(symbols, 180.0)
 

@@ -51,6 +51,12 @@ def test_top_symbols_filters_quote_and_sorts():
     assert top == ["BTC", "ETH"]  # DOGE/USDT excluded for a USD-quote exchange
 
 
+def test_all_symbols_volume_floor():
+    p = _provider()
+    assert p.all_symbols(0) == ["BTC", "ETH"]          # by volume desc, USD quote only
+    assert p.all_symbols(6e8) == ["BTC"]               # ETH (5e8) filtered out by floor
+
+
 def test_exchange_info():
     info = _provider().get_exchange_info("BTC")
     assert info["minQty"] == 0.0001 and info["minNotional"] == 5.0

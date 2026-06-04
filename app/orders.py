@@ -109,6 +109,37 @@ def reject_order(
     return order
 
 
+def auto_fill_due_orders(db: Session) -> list[int]:
+    """
+    Full-auto: auto-approve pending KSS-sourced orders whose limit the market has
+    reached (BUY: price ≤ target, SELL: price ≥ target, MARKET: always due). Only
+    touches `source="kss"` orders — manual orders always require human approval.
+    Returns the approved order ids.
+    """
+    pend = (
+        db.query(PendingOrder)
+        .filter(PendingOrder.status == PENDING, PendingOrder.source == "kss")
+        .all()
+    )
+    if not pend:
+        return []
+    prices = get_current_prices(list({o.symbol for o in pend}))
+    approved: list[int] = []
+    for o in pend:
+        price = prices.get(o.symbol)
+        if price is None:
+            continue
+        due = (
+            o.order_type == "MARKET"
+            or (o.side == "BUY" and o.price > 0 and price <= o.price)
+            or (o.side == "SELL" and o.price > 0 and price >= o.price)
+        )
+        if due:
+            approve_order(db, o.id, reviewer="auto-trader")
+            approved.append(o.id)
+    return approved
+
+
 def approve_order(db: Session, order_id: int, reviewer: str | None = None) -> Fill:
     """Approve and paper-execute a pending order; fire KSS fill hook if applicable."""
     order = _get_pending(db, order_id)

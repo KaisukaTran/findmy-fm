@@ -23,4 +23,15 @@
     <span class="badge breaker-armed">ARMED</span>
     {% endif %}
   </span>
+  <span class="sep">·</span>
+  <span class="statusbar-guardian">
+    <span class="badge {{ 'guardian-on' if a.guardian else 'guardian-off' }}">GUARDIAN {{ 'ON' if a.guardian else 'OFF' }}</span>
+    <button class="sm {{ 'danger' if a.guardian else 'ok' }}" data-action="toggleGuardian">{{ 'Disable' if a.guardian else 'Enable' }}</button>
+  </span>
+  <span class="sep">·</span>
+  <span class="statusbar-telegram">
+    <span class="badge {{ 'telegram-on' if a.telegram else 'telegram-off' }}">TELEGRAM {{ 'ON' if a.telegram else 'OFF' }}</span>
+    <button class="sm {{ 'danger' if a.telegram else 'ok' }}" data-action="toggleTelegram">{{ 'Disable' if a.telegram else 'Enable' }}</button>
+    <button class="sm ghost" data-action="telegramTest">Test</button>
+  </span>
 </span>

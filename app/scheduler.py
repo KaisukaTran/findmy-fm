@@ -44,19 +44,45 @@ def run_cycle(db: Session) -> dict:
     global _last_cycle_at, _last_summary
     from datetime import datetime
 
-    from app import circuit
+    from app import circuit, guardian, notify
+    from app.models import PENDING, PendingOrder
     closed = service.sweep_deadlines(db)
     tp = service.manage_open_sessions(db)
     scan = scanner.run_scan(db)
     breaker = circuit.evaluate(db)
     frozen = breaker["frozen"]
+
+    # Guardian review: veto any auto-eligible orders the LLM deems unsafe.
+    guardian_vetoes = 0
+    if not frozen and guardian.enabled():
+        _eligible_sources = list(set(settings.autoapprove_sources) | {"kss"})
+        pend = (
+            db.query(PendingOrder)
+            .filter(
+                PendingOrder.status == PENDING,
+                PendingOrder.auto_veto == False,  # noqa: E712
+                PendingOrder.source.in_(_eligible_sources),
+            )
+            .all()
+        )
+        if pend:
+            vetoes = guardian.review(pend)
+            for oid, reason in vetoes.items():
+                order = db.get(PendingOrder, oid)
+                if order is not None:
+                    order.auto_veto = True
+                    order.auto_veto_reason = reason
+                    audit.log(db, "guardian", "veto", entity=f"order:{oid}", reason=reason)
+                    notify.send(f"Guardian vetoed order {oid} ({order.symbol}): {reason}")
+                    guardian_vetoes += 1
+
     # Defense-in-depth: short-circuit the auto branches when frozen. The callees
     # also self-guard, but gating here makes the breaker's intent explicit.
     filled = orders.auto_fill_due_orders(db) if settings.auto_trade and not frozen else []
     auto_approved = [] if frozen else orders.auto_approve_by_policy(db)  # self-guards on autoapprove_enabled
     audit.log(db, "scheduler", "cycle", deadlines_closed=len(closed), tp_queued=len(tp),
               candidates=len(scan["candidates"]), auto_filled=len(filled),
-              auto_approved=len(auto_approved), frozen=frozen)
+              auto_approved=len(auto_approved), frozen=frozen, guardian_vetoes=guardian_vetoes)
     db.commit()
     summary = {
         "deadlines_closed": closed,
@@ -65,6 +91,7 @@ def run_cycle(db: Session) -> dict:
         "auto_filled": filled,
         "auto_approved": auto_approved,
         "frozen": frozen,
+        "guardian_vetoes": guardian_vetoes,
     }
     _last_cycle_at = datetime.utcnow().isoformat()
     _last_summary = {k: (len(v) if isinstance(v, list) else v) for k, v in summary.items()}

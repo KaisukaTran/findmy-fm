@@ -29,7 +29,7 @@ from app.backtest import estimate_win_rate
 from app.config import settings
 from app.data.providers import data_provider
 from app.kss import service
-from app.models import SESSION_ACTIVE, AgentVoteRecord, Candidate, KssSession, ScanRun
+from app.models import SESSION_ACTIVE, AgentVoteRecord, Candidate, KssSession, PendingOrder, ScanRun
 
 logger = logging.getLogger(__name__)
 
@@ -162,9 +162,23 @@ def _open_session(db: Session, symbol: str, entry: float, mode: str) -> int:
 
     if mode == "auto":
         if not runtime.is_frozen(db):
-            orders.approve_order(db, started["pending_order_id"], reviewer="auto-trader")
-            audit.log(db, "auto-trader", "auto_approve", entity=f"order:{started['pending_order_id']}",
-                      symbol=symbol, session=row.id)
+            oid = started["pending_order_id"]
+            _vetoed = False
+            from app import guardian  # lazy — avoid import-time cost
+            if guardian.enabled():
+                pending_order = db.get(PendingOrder, oid)
+                if pending_order is not None:
+                    vetoes = guardian.review([pending_order])
+                    if oid in vetoes:
+                        pending_order.auto_veto = True
+                        pending_order.auto_veto_reason = vetoes[oid]
+                        audit.log(db, "scanner", "guardian_veto", entity=f"order:{oid}",
+                                  symbol=symbol, session=row.id)
+                        _vetoed = True
+            if not _vetoed:
+                orders.approve_order(db, oid, reviewer="auto-trader")
+                audit.log(db, "auto-trader", "auto_approve", entity=f"order:{oid}",
+                          symbol=symbol, session=row.id)
         else:
             audit.log(db, "scanner", "auto_skip_frozen",
                       entity=f"order:{started['pending_order_id']}", symbol=symbol, session=row.id)

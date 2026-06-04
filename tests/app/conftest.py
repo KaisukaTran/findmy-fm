@@ -36,6 +36,27 @@ def _schema():
     Base.metadata.drop_all(bind=engine)
 
 
+# Runtime-mutable flags on the global `settings` singleton. Endpoints and the
+# runtime/circuit/notify layers flip these in-process, so a test that toggles one
+# (e.g. via runtime.full_auto_on) would otherwise leak state into later tests.
+_MUTABLE_SETTINGS = (
+    "auto_trade", "autoapprove_enabled", "autoapprove_max_notional",
+    "full_auto", "scheduler_enabled", "scan_interval_min",
+    "guardian_enabled", "telegram_enabled",
+)
+
+
+@pytest.fixture(autouse=True)
+def _settings_guard():
+    """Snapshot and restore the mutable automation settings around every test."""
+    from app.config import settings
+
+    saved = {name: getattr(settings, name) for name in _MUTABLE_SETTINGS}
+    yield
+    for name, value in saved.items():
+        setattr(settings, name, value)
+
+
 @pytest.fixture
 def db():
     """A DB session bound to the temporary test database."""

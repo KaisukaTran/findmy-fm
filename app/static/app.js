@@ -115,6 +115,28 @@ const actions = {
     await api("POST", "/api/breaker/reset");
     refreshAll();
   },
+  async toggleGuardian() {
+    const state = await api("GET", "/api/guardian");
+    if (!state.enabled &&
+        !confirm("Enable AI Guardian? It will veto orders that fail its risk checks.")) return;
+    if (state.enabled &&
+        !confirm("Disable AI Guardian? Orders will no longer be screened by the Guardian.")) return;
+    await api("POST", "/api/guardian", { enabled: !state.enabled });
+    refreshAll();
+  },
+  async toggleTelegram() {
+    const state = await api("GET", "/api/telegram");
+    if (!state.enabled &&
+        !confirm("Enable Telegram poller? The bot will receive and relay trade alerts.")) return;
+    if (state.enabled &&
+        !confirm("Disable Telegram poller?")) return;
+    await api("POST", "/api/telegram", { enabled: !state.enabled });
+    refreshAll();
+  },
+  async telegramTest() {
+    const r = await api("POST", "/api/telegram/test");
+    alert(r.sent ? "Test alert sent successfully." : "Test alert failed — check Telegram config.");
+  },
 };
 
 document.addEventListener("click", (e) => {

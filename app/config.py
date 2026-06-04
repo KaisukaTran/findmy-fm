@@ -115,6 +115,19 @@ class Settings(BaseSettings):
     max_consecutive_losses: int = Field(default=4, description="Circuit breaker: freeze auto after this many losing SELL fills in a row.")
     breaker_cooldown_min: int = Field(default=60, description="Minutes the breaker stays frozen before it may auto-rearm.")
 
+    # --- AI Guardian (Phase B): LLM veto layer over auto-approvals ---
+    guardian_enabled: bool = Field(default=False, description="Run the Claude veto layer before auto-approving. Needs anthropic_api_key.")
+    anthropic_api_key: SecretStr = Field(default=SecretStr(""), description="Anthropic API key for the AI Guardian. Empty = guardian no-op.")
+    guardian_model: str = Field(default="claude-haiku-4-5-20251001", description="Claude model id used by the Guardian (cheap by default).")
+    guardian_max_tokens: int = Field(default=1024, description="Max output tokens per Guardian review call.")
+    guardian_fail_open: bool = Field(default=True, description="On Guardian error/timeout, allow auto-approval (fail-open) rather than block.")
+
+    # --- Telegram remote-kill (Phase B): alerts + /pause /resume /status /freeze /reset ---
+    telegram_enabled: bool = Field(default=False, description="Enable the Telegram notifier + command poller. Needs token + chat id.")
+    telegram_bot_token: SecretStr = Field(default=SecretStr(""), description="Telegram bot token (from @BotFather).")
+    telegram_chat_id: str = Field(default="", description="Only this chat id may send commands and receive alerts.")
+    telegram_poll_interval: int = Field(default=5, description="Seconds between Telegram getUpdates polls.")
+
     # --- Pending-queue auto-approval policy (AI clears safe orders) ---
     autoapprove_enabled: bool = Field(default=False, description="Let the AI auto-approve pending orders matching the rule.")
     autoapprove_max_notional: float = Field(default=50.0, description="Auto-approve only orders with notional ≤ this USD value.")

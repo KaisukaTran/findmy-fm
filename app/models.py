@@ -73,6 +73,11 @@ class PendingOrder(Base):
     reviewer: Mapped[str | None] = mapped_column(String(64), nullable=True)
     reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # AI Guardian (Phase B): a veto blocks AUTO approval only — the order stays
+    # pending so a human can still approve it. Reason is the model's rationale.
+    auto_veto: Mapped[bool] = mapped_column(default=False, nullable=False)
+    auto_veto_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -92,6 +97,8 @@ class PendingOrder(Base):
             "status": self.status,
             "reviewer": self.reviewer,
             "reject_reason": self.reject_reason,
+            "auto_veto": self.auto_veto,
+            "auto_veto_reason": self.auto_veto_reason,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "decided_at": self.decided_at.isoformat() if self.decided_at else None,
         }

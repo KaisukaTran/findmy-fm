@@ -19,7 +19,7 @@
       <td class="{{ 'pos' if o.side == 'BUY' else 'neg' }}">{{ o.side }}</td>
       <td>{{ o.quantity | qty }}</td>
       <td>{{ (o.price | money) if o.price else "mkt" }}</td>
-      <td class="muted">{{ o.source }}{% if o.risk_note %} ⚠{% endif %}</td>
+      <td class="muted">{{ o.source }}{% if o.risk_note %} ⚠{% endif %}{% if o.get('auto_veto') %} <span class="badge veto" title="{{ o.get('auto_veto_reason') or '' }}">VETOED</span>{% endif %}</td>
       <td class="row-actions">
         <button class="ok sm" data-action="approve" data-id="{{ o.id }}">Approve</button>
         <button class="danger sm" data-action="reject" data-id="{{ o.id }}">Reject</button>

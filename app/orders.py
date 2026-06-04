@@ -149,6 +149,8 @@ def auto_approve_by_policy(db: Session) -> list[int]:
     market = get_current_prices(list({o.symbol for o in pend}))
     approved: list[int] = []
     for o in pend:
+        if o.auto_veto:
+            continue
         if o.source not in settings.autoapprove_sources:
             continue
         if settings.autoapprove_require_no_risk and o.risk_note:
@@ -181,6 +183,8 @@ def auto_fill_due_orders(db: Session) -> list[int]:
     prices = get_current_prices(list({o.symbol for o in pend}))
     approved: list[int] = []
     for o in pend:
+        if o.auto_veto:
+            continue
         price = prices.get(o.symbol)
         if price is None:
             continue

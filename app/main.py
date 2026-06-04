@@ -42,10 +42,13 @@ async def lifespan(app: FastAPI):
 
     if settings.scheduler_enabled:
         scheduler.start()
+    from app import notify
+    notify.start()
     try:
         yield
     finally:
         scheduler.stop()
+        notify.stop()
 
 
 def create_app() -> FastAPI:

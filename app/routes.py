@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app import charts, circuit, orders, portfolio, runtime, scanner, scheduler
+from app import charts, circuit, guardian, notify, orders, portfolio, runtime, scanner, scheduler
 from app.config import settings
 from app.db import get_db
 from app.kss import service as kss_service
@@ -220,6 +220,8 @@ def _automation_state(db: Session) -> dict:
         "autoapprove": settings.autoapprove_enabled,
         "frozen": runtime.is_frozen(db),
         "open_sessions": active,
+        "guardian": guardian.enabled(),
+        "telegram": notify.is_running(),
     }
 
 
@@ -298,6 +300,67 @@ async def set_scheduler(body: SchedulerBody):
     else:
         scheduler.stop()
     return scheduler_state()
+
+
+# --- Guardian endpoints -------------------------------------------------
+
+
+class GuardianBody(BaseModel):
+    enabled: bool
+
+
+def _guardian_state() -> dict:
+    return {
+        "enabled": settings.guardian_enabled,
+        "model": settings.guardian_model,
+        "active": guardian.enabled(),
+    }
+
+
+@api_router.get("/api/guardian")
+def get_guardian():
+    return _guardian_state()
+
+
+@api_router.post("/api/guardian", dependencies=[Depends(require_api_key)])
+def set_guardian(body: GuardianBody):
+    settings.guardian_enabled = body.enabled
+    return _guardian_state()
+
+
+# --- Telegram endpoints -------------------------------------------------
+
+
+class TelegramBody(BaseModel):
+    enabled: bool
+
+
+def _telegram_state() -> dict:
+    return {
+        "enabled": settings.telegram_enabled,
+        "running": notify.is_running(),
+        "configured": notify.enabled(),
+    }
+
+
+@api_router.get("/api/telegram")
+def get_telegram():
+    return _telegram_state()
+
+
+@api_router.post("/api/telegram", dependencies=[Depends(require_api_key)])
+def set_telegram(body: TelegramBody):
+    settings.telegram_enabled = body.enabled
+    if body.enabled:
+        notify.start()
+    else:
+        notify.stop()
+    return _telegram_state()
+
+
+@api_router.post("/api/telegram/test", dependencies=[Depends(require_api_key)])
+def test_telegram():
+    return {"sent": notify.send("FINDMY-FM test alert")}
 
 
 # --- dashboard (HTMX) ---------------------------------------------------

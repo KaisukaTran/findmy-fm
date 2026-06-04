@@ -78,6 +78,11 @@ def evaluate(db: Session) -> dict:
         runtime.freeze(db, reason_str)
         audit.log(db, "circuit", "freeze", detail={"reasons": reasons, **m})
         db.commit()
+        try:
+            from app import notify  # lazy — circuit must not import notify at module top
+            notify.send(f"Circuit breaker FROZEN: {reason_str}")
+        except Exception:
+            pass  # notify failure must never break evaluate
 
     elif currently_frozen and not reasons:
         # Attempt auto-rearm only after cooldown has elapsed.

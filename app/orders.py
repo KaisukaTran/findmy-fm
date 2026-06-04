@@ -109,6 +109,55 @@ def reject_order(
     return order
 
 
+def approve_all(db: Session, reviewer: str | None = "dashboard") -> list[int]:
+    """Approve (paper-execute) every currently pending order. Returns approved ids."""
+    ids = [o.id for o in db.query(PendingOrder).filter(PendingOrder.status == PENDING).all()]
+    done = []
+    for oid in ids:
+        try:
+            approve_order(db, oid, reviewer=reviewer)
+            done.append(oid)
+        except ValueError:  # e.g. no price available — skip, keep going
+            continue
+    return done
+
+
+def reject_all(db: Session, reason: str = "", reviewer: str | None = "dashboard") -> list[int]:
+    """Reject every currently pending order. Returns rejected ids."""
+    ids = [o.id for o in db.query(PendingOrder).filter(PendingOrder.status == PENDING).all()]
+    for oid in ids:
+        reject_order(db, oid, reason=reason, reviewer=reviewer)
+    return ids
+
+
+def auto_approve_by_policy(db: Session) -> list[int]:
+    """
+    AI auto-approval: approve pending orders matching the configured rule —
+    source in `autoapprove_sources` AND notional ≤ `autoapprove_max_notional`
+    (notional = qty × price, using live price for market orders). Optionally skip
+    orders carrying a risk note. Disabled unless `autoapprove_enabled`.
+    """
+    if not settings.autoapprove_enabled:
+        return []
+    pend = db.query(PendingOrder).filter(PendingOrder.status == PENDING).all()
+    if not pend:
+        return []
+    market = get_current_prices(list({o.symbol for o in pend}))
+    approved: list[int] = []
+    for o in pend:
+        if o.source not in settings.autoapprove_sources:
+            continue
+        if settings.autoapprove_require_no_risk and o.risk_note:
+            continue
+        ref_price = o.price if o.price > 0 else (market.get(o.symbol) or 0.0)
+        notional = o.quantity * ref_price
+        if ref_price <= 0 or notional > settings.autoapprove_max_notional:
+            continue
+        approve_order(db, o.id, reviewer="auto-approver")
+        approved.append(o.id)
+    return approved
+
+
 def auto_fill_due_orders(db: Session) -> list[int]:
     """
     Full-auto: auto-approve pending KSS-sourced orders whose limit the market has

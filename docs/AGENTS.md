@@ -92,6 +92,19 @@ ruff check app tests/app
 - **Context engineering** (`#7`): `.claude/skills/context-engineering` is the default
   dev discipline (Karpathy: Write→Select→Compress→Isolate).
 
+## v3.1 — chart, queue auto-approval, status badge
+
+- **Performance chart** (`app/charts.py::equity_curve_svg`): gridlines + right-edge value
+  ticks + a real **time axis** (from `performance_view.equity_times`) + area fill. Still SVG.
+- **Queue** (`app/orders.py`): `approve_all` / `reject_all` (bulk) and `auto_approve_by_policy`
+  — auto-approve pending orders where `source ∈ AUTOAPPROVE_SOURCES` AND notional ≤
+  `AUTOAPPROVE_MAX_NOTIONAL`. Endpoints `/api/pending/approve-all|reject-all|auto`,
+  `GET|POST /api/autoapprove`. Dashboard pending panel: Approve all · Reject all ·
+  Auto-process · Rule ON/OFF. Runs each scheduler cycle when enabled. Still goes through
+  `approve_order` (risk + audit); off by default.
+- **Status badge** (header): `GET /partials/status` / `GET /api/automation` — pulsing green dot
+  + Auto-trade / Scheduler(interval) / Auto-approve / open sessions / last cycle time.
+
 ## Safety
 
 Full-auto is off by default and only toggles with the API key (UI confirms).

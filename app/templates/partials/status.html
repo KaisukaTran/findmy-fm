@@ -1,0 +1,12 @@
+{% set live = a.auto_trade or a.scheduler_running %}
+<span class="statusbar">
+  <span class="dot {{ 'on' if live else '' }}"></span>
+  <span class="{{ 'pos' if a.auto_trade else 'muted' }}">Auto-trade {{ 'ON' if a.auto_trade else 'OFF' }}</span>
+  <span class="sep">·</span>
+  <span class="{{ 'pos' if a.scheduler_running else 'muted' }}">Scheduler {{ ('ON ('~a.interval_min~'m)') if a.scheduler_running else 'OFF' }}</span>
+  <span class="sep">·</span>
+  <span class="{{ 'pos' if a.autoapprove else 'muted' }}">Auto-approve {{ 'ON' if a.autoapprove else 'OFF' }}</span>
+  <span class="sep">·</span>
+  <span class="muted">{{ a.open_sessions }} open</span>
+  {% if a.last_cycle_at %}<span class="sep">·</span><span class="muted">last {{ a.last_cycle_at[11:19] }}</span>{% endif %}
+</span>

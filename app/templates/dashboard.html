@@ -12,6 +12,7 @@
 <body x-data="ui">
   <header>
     <h1>FINDMY-FM <span class="muted">· KSS Pyramid DCA</span></h1>
+    <div hx-get="/partials/status" hx-trigger="load, every 5s, refresh from:body" hx-swap="innerHTML"></div>
     <div class="actions">
       <button class="ghost" @click="toggleOrder">+ Order</button>
       <button class="ghost" @click="toggleKss">+ KSS Session</button>

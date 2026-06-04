@@ -51,6 +51,16 @@ input, select {
 .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .muted { color: var(--muted); }
 button { white-space: nowrap; }
+/* automation status badge */
+.statusbar { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; flex-wrap: wrap; }
+.statusbar .sep { color: var(--line); }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); display: inline-block; }
+.dot.on { background: var(--green); box-shadow: 0 0 0 0 rgba(46,160,67,.6); animation: pulse 1.6s infinite; }
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(46,160,67,.5); }
+  70% { box-shadow: 0 0 0 7px rgba(46,160,67,0); }
+  100% { box-shadow: 0 0 0 0 rgba(46,160,67,0); }
+}
 /* preview table is injected by JS — keep it scrollable inside the modal */
 #preview-output { overflow-x: auto; margin-top: 10px; }
 [x-cloak] { display: none !important; }

@@ -7,6 +7,8 @@ Kept out of the route layer so routes stay thin.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -86,12 +88,16 @@ def performance_view(db: Session) -> dict:
     """
     fills = db.query(Fill).order_by(Fill.executed_at.asc()).all()
     equity = settings.account_equity
+    now_iso = datetime.utcnow().isoformat()
+    start_iso = fills[0].executed_at.isoformat() if fills else now_iso
     curve = [equity]
+    times = [start_iso]
     realized = 0.0
     wins = losses = 0
     for f in fills:
         realized += f.realized_pnl
         curve.append(equity + realized)
+        times.append(f.executed_at.isoformat() if f.executed_at else now_iso)
         if f.side == "SELL":
             if f.realized_pnl > 0:
                 wins += 1
@@ -101,6 +107,7 @@ def performance_view(db: Session) -> dict:
     summary = summary_view(db)
     final_equity = summary["total_equity"]
     curve.append(final_equity)
+    times.append(now_iso)
 
     # max drawdown (%) over the curve
     peak = curve[0]
@@ -113,6 +120,7 @@ def performance_view(db: Session) -> dict:
     closed = wins + losses
     return {
         "equity_curve": curve,
+        "equity_times": times,
         "realized_pnl": realized,
         "unrealized_pnl": summary["unrealized_pnl"],
         "total_equity": final_equity,

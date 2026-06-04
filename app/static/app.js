@@ -72,6 +72,28 @@ const actions = {
     await api("POST", "/api/autotrade", { enabled: !state.auto_trade });
     refreshAll();
   },
+  async approveAll() {
+    if (!confirm("Approve and execute ALL pending orders?")) return;
+    await api("POST", "/api/pending/approve-all");
+    refreshAll();
+  },
+  async rejectAll() {
+    if (!confirm("Reject ALL pending orders?")) return;
+    await api("POST", "/api/pending/reject-all", { reason: "bulk reject" });
+    refreshAll();
+  },
+  async autoProcess() {
+    const r = await api("POST", "/api/pending/auto");
+    if (!r.auto_approved.length) alert("No pending order matched the auto-approve rule.");
+    refreshAll();
+  },
+  async toggleAutoApprove() {
+    const s = await api("GET", "/api/autoapprove");
+    if (!s.enabled &&
+        !confirm("Enable auto-approval rule? Small KSS orders will be approved automatically.")) return;
+    await api("POST", "/api/autoapprove", { enabled: !s.enabled });
+    refreshAll();
+  },
   async toggleScheduler() {
     const state = await api("GET", "/api/scheduler");
     if (!state.enabled &&

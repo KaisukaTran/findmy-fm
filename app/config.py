@@ -103,5 +103,11 @@ class Settings(BaseSettings):
     max_deployed_pct: float = Field(default=50.0, description="Cap total isolated funds as %% of equity.")
     scan_min_notional: float = Field(default=10.0, description="Skip dust micro-trades below this USD notional/wave.")
 
+    # --- Pending-queue auto-approval policy (AI clears safe orders) ---
+    autoapprove_enabled: bool = Field(default=False, description="Let the AI auto-approve pending orders matching the rule.")
+    autoapprove_max_notional: float = Field(default=50.0, description="Auto-approve only orders with notional ≤ this USD value.")
+    autoapprove_sources: list[str] = Field(default=["kss"], description="Only auto-approve orders from these sources.")
+    autoapprove_require_no_risk: bool = Field(default=False, description="If true, never auto-approve orders carrying a risk note.")
+
 
 settings = Settings()

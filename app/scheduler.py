@@ -25,23 +25,43 @@ from app.kss import service
 logger = logging.getLogger(__name__)
 
 _task: asyncio.Task | None = None
+_last_cycle_at: str | None = None
+_last_summary: dict = {}
+
+
+def status() -> dict:
+    """Lightweight scheduler status for the header badge / /api/automation."""
+    return {
+        "scheduler_running": is_running(),
+        "interval_min": settings.scan_interval_min,
+        "last_cycle_at": _last_cycle_at,
+        "last_summary": _last_summary,
+    }
 
 
 def run_cycle(db: Session) -> dict:
     """One scheduler cycle. Returns a small summary (counts), not data dumps."""
+    global _last_cycle_at, _last_summary
+    from datetime import datetime
     closed = service.sweep_deadlines(db)
     tp = service.manage_open_sessions(db)
     scan = scanner.run_scan(db)
     filled = orders.auto_fill_due_orders(db) if settings.auto_trade else []
-    audit.log(db, "scheduler", "cycle", deadlines_closed=len(closed),
-              tp_queued=len(tp), candidates=len(scan["candidates"]), auto_filled=len(filled))
+    auto_approved = orders.auto_approve_by_policy(db)  # self-guards on autoapprove_enabled
+    audit.log(db, "scheduler", "cycle", deadlines_closed=len(closed), tp_queued=len(tp),
+              candidates=len(scan["candidates"]), auto_filled=len(filled),
+              auto_approved=len(auto_approved))
     db.commit()
-    return {
+    summary = {
         "deadlines_closed": closed,
         "tp_queued": tp,
         "scan_id": scan["scan_id"],
         "auto_filled": filled,
+        "auto_approved": auto_approved,
     }
+    _last_cycle_at = datetime.utcnow().isoformat()
+    _last_summary = {k: (len(v) if isinstance(v, list) else v) for k, v in summary.items()}
+    return summary
 
 
 def _cycle_once() -> None:

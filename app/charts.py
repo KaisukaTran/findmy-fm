@@ -11,6 +11,7 @@ from __future__ import annotations
 import html
 
 _BLUE, _GREEN, _RED, _YELLOW, _MUTED = "#2f81f7", "#2ea043", "#e5534b", "#d29922", "#8b98a5"
+_LINE = "#2a333d"
 
 
 def _points(values: list[float], w: float, h: float, pad: float = 4.0) -> str:
@@ -40,19 +41,56 @@ def sparkline_svg(values: list[float], w: int = 140, h: int = 34, stroke: str = 
     )
 
 
-def equity_curve_svg(values: list[float], w: int = 520, h: int = 160) -> str:
+def _time_label(iso: str) -> str:
+    """ISO timestamp -> short axis label (HH:MM, or MM-DD if no time part)."""
+    if "T" in iso:
+        return iso[11:16]
+    return iso[5:10] or iso[:10]
+
+
+def equity_curve_svg(
+    values: list[float], times: list[str] | None = None, w: int = 520, h: int = 180
+) -> str:
+    """Professional equity curve: gridlines, right-edge value ticks, time axis, area fill."""
     if not values:
         return '<p class="muted">No equity history yet.</p>'
     lo, hi = min(values), max(values)
+    span = (hi - lo) or 1.0
+    x0, x1, y0, y1 = 8, w - 66, 12, h - 22  # plot rect (room for ticks + time axis)
+    n = len(values)
+    xstep = (x1 - x0) / max(n - 1, 1)
+
+    def px(i):
+        return x0 + i * xstep
+
+    def py(v):
+        return y1 - (v - lo) / span * (y1 - y0)
+
+    pts = " ".join(f"{px(i):.1f},{py(v):.1f}" for i, v in enumerate(values))
     color = _GREEN if values[-1] >= values[0] else _RED
-    return (
-        f'<svg width="100%" height="{h}" viewBox="0 0 {w} {h}" preserveAspectRatio="none" role="img">'
-        f'<line x1="4" y1="{h-4}" x2="{w-4}" y2="{h-4}" stroke="{_MUTED}" stroke-width="0.5"/>'
-        f'<polyline fill="none" stroke="{color}" stroke-width="2" points="{_points(values, w, h)}"/>'
-        f'<text x="6" y="14" fill="{_MUTED}" font-size="11">${hi:,.2f}</text>'
-        f'<text x="6" y="{h-8}" fill="{_MUTED}" font-size="11">${lo:,.2f}</text>'
-        f"</svg>"
-    )
+
+    parts = [f'<svg width="100%" height="{h}" viewBox="0 0 {w} {h}" role="img">']
+    # horizontal gridlines + value ticks (top→bottom = hi→lo)
+    for i in range(5):
+        gy = y0 + i * (y1 - y0) / 4
+        gval = hi - i * span / 4
+        parts.append(f'<line x1="{x0}" y1="{gy:.1f}" x2="{x1}" y2="{gy:.1f}" '
+                     f'stroke="{_LINE}" stroke-width="0.5"/>')
+        parts.append(f'<text x="{x1+4}" y="{gy+3:.1f}" fill="{_MUTED}" font-size="10">'
+                     f'${gval:,.2f}</text>')
+    # area fill under the line
+    parts.append(f'<polygon fill="{color}" fill-opacity="0.08" '
+                 f'points="{px(0):.1f},{y1:.1f} {pts} {px(n-1):.1f},{y1:.1f}"/>')
+    # the equity line
+    parts.append(f'<polyline fill="none" stroke="{color}" stroke-width="2" points="{pts}"/>')
+    # time axis labels (start / middle / end)
+    if times and len(times) == n:
+        for i in (0, n // 2, n - 1):
+            anchor = "start" if i == 0 else ("end" if i == n - 1 else "middle")
+            parts.append(f'<text x="{px(i):.1f}" y="{h-6}" fill="{_MUTED}" font-size="10" '
+                         f'text-anchor="{anchor}">{_time_label(times[i])}</text>')
+    parts.append("</svg>")
+    return "".join(parts)
 
 
 def winloss_bars_svg(wins: int, losses: int, w: int = 220, h: int = 90) -> str:

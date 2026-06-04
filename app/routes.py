@@ -20,7 +20,7 @@ from app import charts, orders, portfolio, scanner, scheduler
 from app.config import settings
 from app.db import get_db
 from app.kss import service as kss_service
-from app.models import AgentVoteRecord, AuditLog, Candidate, ScanRun
+from app.models import SESSION_ACTIVE, AgentVoteRecord, AuditLog, Candidate, KssSession, ScanRun
 from app.security import require_api_key
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -114,6 +114,43 @@ def reject(order_id: int, body: RejectBody, db: Session = Depends(get_db)):
     return {"message": "rejected", "order": order.to_dict()}
 
 
+@api_router.post("/api/pending/approve-all", dependencies=[Depends(require_api_key)])
+def approve_all(db: Session = Depends(get_db)):
+    return {"approved": orders.approve_all(db)}
+
+
+@api_router.post("/api/pending/reject-all", dependencies=[Depends(require_api_key)])
+def reject_all(body: RejectBody, db: Session = Depends(get_db)):
+    return {"rejected": orders.reject_all(db, reason=body.reason)}
+
+
+@api_router.post("/api/pending/auto", dependencies=[Depends(require_api_key)])
+def auto_process(db: Session = Depends(get_db)):
+    """Run the auto-approval rule now (no-op unless autoapprove_enabled)."""
+    return {"auto_approved": orders.auto_approve_by_policy(db)}
+
+
+def _autoapprove_state() -> dict:
+    return {
+        "enabled": settings.autoapprove_enabled,
+        "max_notional": settings.autoapprove_max_notional,
+        "sources": settings.autoapprove_sources,
+    }
+
+
+@api_router.get("/api/autoapprove")
+def autoapprove_state():
+    return _autoapprove_state()
+
+
+@api_router.post("/api/autoapprove", dependencies=[Depends(require_api_key)])
+def set_autoapprove(body: AutoApproveBody):
+    settings.autoapprove_enabled = body.enabled
+    if body.max_notional is not None:
+        settings.autoapprove_max_notional = body.max_notional
+    return _autoapprove_state()
+
+
 class AutoTradeBody(BaseModel):
     enabled: bool
 
@@ -121,6 +158,11 @@ class AutoTradeBody(BaseModel):
 class SchedulerBody(BaseModel):
     enabled: bool
     interval_min: int | None = Field(None, ge=1, le=1440)
+
+
+class AutoApproveBody(BaseModel):
+    enabled: bool
+    max_notional: float | None = Field(None, gt=0)
 
 
 def _latest_candidates(db: Session) -> list[dict]:
@@ -162,6 +204,22 @@ def get_audit(limit: int = 100, db: Session = Depends(get_db)):
 @api_router.get("/api/performance")
 def get_performance(db: Session = Depends(get_db)):
     return portfolio.performance_view(db)
+
+
+def _automation_state(db: Session) -> dict:
+    st = scheduler.status()
+    active = db.query(KssSession).filter(KssSession.status == SESSION_ACTIVE).count()
+    return {
+        **st,
+        "auto_trade": settings.auto_trade,
+        "autoapprove": settings.autoapprove_enabled,
+        "open_sessions": active,
+    }
+
+
+@api_router.get("/api/automation")
+def get_automation(db: Session = Depends(get_db)):
+    return _automation_state(db)
 
 
 @api_router.get("/api/autotrade")
@@ -231,7 +289,20 @@ def partial_trades(request: Request, db: Session = Depends(get_db)):
 def partial_pending(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         "partials/pending.html",
-        {"request": request, "rows": [o.to_dict() for o in orders.list_pending(db)]},
+        {
+            "request": request,
+            "rows": [o.to_dict() for o in orders.list_pending(db)],
+            "aa_enabled": settings.autoapprove_enabled,
+            "aa_max": settings.autoapprove_max_notional,
+            "aa_sources": ",".join(settings.autoapprove_sources),
+        },
+    )
+
+
+@ui_router.get("/partials/status", response_class=HTMLResponse)
+def partial_status(request: Request, db: Session = Depends(get_db)):
+    return templates.TemplateResponse(
+        "partials/status.html", {"request": request, "a": _automation_state(db)}
     )
 
 
@@ -272,7 +343,7 @@ def partial_performance(request: Request, db: Session = Depends(get_db)):
         {
             "request": request,
             "p": p,
-            "equity_svg": charts.equity_curve_svg(p["equity_curve"]),
+            "equity_svg": charts.equity_curve_svg(p["equity_curve"], p["equity_times"]),
             "winloss_svg": charts.winloss_bars_svg(p["wins"], p["losses"]),
         },
     )

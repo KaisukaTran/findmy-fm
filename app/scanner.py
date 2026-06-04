@@ -138,15 +138,19 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
                   net_edge=net_edge, days=wr["avg_days_to_tp"])
 
         if d["decision"] == "trade":
-            ok, why = _can_open(db)
-            if ok:
-                cand.session_id = _open_session(
-                    db, symbol, candles[-1]["close"], mode,
-                    distance_pct=distance_pct, tp_pct=tp_pct, max_waves=max_waves,
-                )
+            if _in_stop_cooldown(db, symbol):
+                cand.reason += " | skipped: stop-loss cooldown"
+                audit.log(db, "scanner", "skipped_cooldown", entity=symbol)
             else:
-                cand.reason += f" | capped: {why}"
-                audit.log(db, "scanner", "skipped_cap", entity=symbol, reason=why)
+                ok, why = _can_open(db)
+                if ok:
+                    cand.session_id = _open_session(
+                        db, symbol, candles[-1]["close"], mode,
+                        distance_pct=distance_pct, tp_pct=tp_pct, max_waves=max_waves,
+                    )
+                else:
+                    cand.reason += f" | capped: {why}"
+                    audit.log(db, "scanner", "skipped_cap", entity=symbol, reason=why)
         candidates.append(cand)
 
     db.commit()
@@ -165,6 +169,23 @@ def _can_open(db: Session) -> tuple[bool, str]:
     if not costengine.notional_ok(settings.scan_fund):
         return False, "below min notional"
     return True, ""
+
+
+def _in_stop_cooldown(db: Session, symbol: str) -> bool:
+    """True if `symbol` was stopped-out within the last `stop_cooldown_min` minutes."""
+    if settings.stop_cooldown_min <= 0:
+        return False
+    ts = runtime.get(db, f"stop_cooldown:{symbol}")
+    if not ts:
+        return False
+    from datetime import datetime
+
+    try:
+        stopped_at = datetime.fromisoformat(ts)
+    except ValueError:
+        return False
+    elapsed_min = (datetime.utcnow() - stopped_at).total_seconds() / 60.0
+    return elapsed_min < settings.stop_cooldown_min
 
 
 def _open_session(

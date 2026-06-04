@@ -15,25 +15,25 @@ def _clear_market_cache():
     market.clear_cache()
 
 
-class _FakeExchange:
-    def fetch_ticker(self, pair):
-        return {"last": {"BTC/USDT": 65000.0, "ETH/USDT": 3500.0}[pair]}
+class _FakeProvider:
+    """Stands in for app.data.providers.CcxtProvider (counts price fetches)."""
 
-    def market(self, pair):
-        return {
-            "limits": {"amount": {"min": 0.00001, "max": 9000.0}, "cost": {"min": 10.0}},
-            "precision": {"amount": 0.00001},
-        }
+    def __init__(self, calls):
+        self._calls = calls
+
+    def get_prices(self, symbols):
+        self._calls["n"] += 1
+        prices = {"BTC": 65000.0, "ETH": 3500.0}
+        return {s: prices[s] for s in symbols if s in prices}
+
+    def get_exchange_info(self, symbol):
+        return {"symbol": symbol, "minQty": 0.00001, "maxQty": 9000.0,
+                "stepSize": 0.00001, "minNotional": 10.0}
 
 
 def test_get_current_prices_cached(monkeypatch):
     calls = {"n": 0}
-
-    def fake_ex():
-        calls["n"] += 1
-        return _FakeExchange()
-
-    monkeypatch.setattr(market, "_exchange", fake_ex)
+    monkeypatch.setattr(market, "live_provider", lambda: _FakeProvider(calls))
     p1 = market.get_current_prices(["BTC", "ETH"])
     assert p1["BTC"] == 65000.0 and p1["ETH"] == 3500.0
     # second call within TTL serves from cache, no new exchange call
@@ -46,7 +46,7 @@ def test_get_exchange_info_defaults_on_failure(monkeypatch):
     def boom():
         raise RuntimeError("offline")
 
-    monkeypatch.setattr(market, "_exchange", boom)
+    monkeypatch.setattr(market, "live_provider", boom)
     info = market.get_exchange_info("BTC")
     assert info["symbol"] == "BTC" and info["minQty"] == 0.00001
 

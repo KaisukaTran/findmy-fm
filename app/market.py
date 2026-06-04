@@ -1,9 +1,10 @@
 """
 Market data for FINDMY-FM (lean rebuild).
 
-Fetches public spot prices and lot-size info from Binance via ccxt, with a small
-in-process TTL cache to avoid rate limits. No API key required (public data only).
-All network failures degrade gracefully to cached/last-known or safe-default values.
+Thin TTL-caching layer over the pluggable ccxt provider (`app.data.providers`),
+so prices and lot-size info come from the configured `live_exchange` — not a
+hardcoded venue. No API key required (public data only). All network failures
+degrade gracefully to cached/last-known or safe-default values.
 """
 
 from __future__ import annotations
@@ -11,9 +12,8 @@ from __future__ import annotations
 import logging
 import time
 
-import ccxt
-
 from app.config import settings
+from app.data.providers import live_provider
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +30,6 @@ _price_cache_ts: float = 0.0
 _exchange_info_cache: dict[str, dict] = {}
 
 
-def _exchange() -> ccxt.binance:
-    return ccxt.binance()
-
-
 def get_current_prices(symbols: list[str]) -> dict[str, float]:
     """Return {symbol: usd_price} for the given base symbols, using a TTL cache."""
     global _price_cache_ts
@@ -46,17 +42,10 @@ def get_current_prices(symbols: list[str]) -> dict[str, float]:
     if not missing:
         return cached
 
-    fetched: dict[str, float] = {}
     try:
-        ex = _exchange()
-        for symbol in missing:
-            try:
-                ticker = ex.fetch_ticker(f"{symbol}/USDT")
-                fetched[symbol] = float(ticker["last"])
-            except Exception:  # one bad symbol shouldn't fail the batch
-                continue
+        fetched = live_provider().get_prices(missing)
     except Exception as exc:  # whole exchange unavailable
-        logger.warning("Binance price fetch failed: %s", exc)
+        logger.warning("%s price fetch failed: %s", settings.live_exchange, exc)
         return cached
 
     if fetched:
@@ -70,22 +59,12 @@ def get_exchange_info(symbol: str) -> dict:
     if symbol in _exchange_info_cache:
         return _exchange_info_cache[symbol]
     try:
-        market = _exchange().market(f"{symbol}/USDT")
-        limits = market.get("limits", {})
-        amount = limits.get("amount", {})
-        cost = limits.get("cost", {})
-        info = {
-            "symbol": symbol,
-            "minQty": amount.get("min") or 0.00001,
-            "maxQty": amount.get("max") or 10000.0,
-            "stepSize": market.get("precision", {}).get("amount") or 0.00001,
-            "minNotional": cost.get("min") or 10.0,
-        }
-        _exchange_info_cache[symbol] = info
-        return info
+        info = live_provider().get_exchange_info(symbol)
     except Exception as exc:
-        logger.warning("Binance exchange info failed for %s: %s", symbol, exc)
+        logger.warning("%s exchange info failed for %s: %s", settings.live_exchange, symbol, exc)
         return {**_DEFAULT_INFO, "symbol": symbol}
+    _exchange_info_cache[symbol] = info
+    return info
 
 
 def get_unrealized_pnl(

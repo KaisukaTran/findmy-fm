@@ -55,10 +55,16 @@ class Settings(BaseSettings):
     # --- Paper execution simulation ---
     taker_fee_pct: float = Field(default=0.1, description="Taker fee % applied per fill.")
     slippage_pct: float = Field(default=0.05, description="Simulated slippage % on market fills.")
+    binance_max_fee_pct: float = Field(
+        default=0.1,
+        description="Binance's highest standard spot taker fee %. The take-profit floor is "
+        "2x this — a session's tp_pct is raised to it so TP never fires on a gain that "
+        "wouldn't even clear a round-trip's worth of the highest fee.",
+    )
 
     # --- Market data ---
     price_cache_ttl: int = Field(default=60, description="Seconds to cache live prices.")
-    live_exchange: str = Field(default="binance", description="ccxt exchange id for live prices.")
+    live_exchange: str = Field(default="kraken", description="ccxt exchange id for live prices (public, no key — e.g. kraken/okx/bybit; binance.com is geo/network-blocked here).")
     data_exchange: str = Field(
         default="kraken",
         description="ccxt exchange id for backtest/scan history (public, no key — e.g. kraken/coinbase).",
@@ -110,6 +116,11 @@ class Settings(BaseSettings):
     )
     sl_pct: float = Field(default=8.0, description="KSS session stop-loss %% below avg price (0 = disabled).")
     trailing_pct: float = Field(default=3.0, description="KSS trailing-stop %% below peak once in profit (0 = disabled).")
+    stop_cooldown_min: float = Field(
+        default=240.0,
+        description="Minutes after a stop-loss/trailing exit before the scanner may re-open "
+        "the same symbol (avoids immediate re-entry into a falling market). 0 = disabled.",
+    )
     max_drawdown_pct: float = Field(default=15.0, description="Circuit breaker: freeze auto when equity drawdown %% exceeds this.")
     daily_loss_hard_pct: float = Field(default=5.0, description="Circuit breaker: freeze auto when today's realized loss %% exceeds this.")
     max_consecutive_losses: int = Field(default=4, description="Circuit breaker: freeze auto after this many losing SELL fills in a row.")

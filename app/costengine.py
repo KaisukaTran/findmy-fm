@@ -28,6 +28,18 @@ def covers_costs(tp_pct: float, min_net_edge: float | None = None) -> bool:
     return net_edge_pct(tp_pct) >= margin
 
 
+def min_profit_pct() -> float:
+    """
+    Minimum worthwhile take-profit %, in percent of notional.
+
+    A round trip pays a buy fee and a sell fee, so 2x the highest Binance spot
+    fee is the floor below which a "profit" would not even clear the fees. A
+    session's tp_pct is raised to this floor so the (frozen) TP trigger never
+    fires on a gain smaller than it.
+    """
+    return 2 * settings.binance_max_fee_pct
+
+
 def notional_ok(notional: float) -> bool:
     """Reject dust micro-trades below the configured minimum notional."""
     return notional >= settings.scan_min_notional

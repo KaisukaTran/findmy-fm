@@ -110,8 +110,19 @@ def create_session(db: Session, **params: Any) -> KssSession:
     """Validate params (via PyramidSession) and persist a PENDING session."""
     from app.config import settings
 
+    from app import costengine
+
     note = params.pop("note", None)
     deadline_days = params.pop("deadline_days", settings.deadline_days)
+    # Cost floor: never take profit on a gain that wouldn't clear 2x the highest
+    # Binance fee. Raise tp_pct to the floor (the frozen TP math is left untouched).
+    floor = costengine.min_profit_pct()
+    if params.get("tp_pct", 0.0) < floor:
+        logger.info(
+            "tp_pct %.4f below profit floor %.4f%% — raising to floor",
+            params.get("tp_pct"), floor,
+        )
+        params["tp_pct"] = floor
     PyramidSession(**params)  # raises ValueError on invalid params (strategy fields only)
     row = KssSession(status=SESSION_PENDING, note=note, deadline_days=deadline_days, **params)
     db.add(row)
@@ -181,6 +192,12 @@ def handle_fill_event(
     # Stop-loss / trailing-stop sells terminate the session as STOPPED.
     if parts[2] in {"sl", "trailing", "deadline"}:
         row.status = SESSION_STOPPED
+        # Record a re-entry cooldown after a risk exit (not a calendar deadline),
+        # so the scanner doesn't immediately re-open the same falling symbol.
+        if parts[2] in {"sl", "trailing"}:
+            from app import runtime
+
+            runtime.set(db, f"stop_cooldown:{row.symbol}", datetime.utcnow().isoformat())
         db.commit()
         return {"action": parts[2], "message": f"Session {session_id} stopped ({parts[2]})"}
 

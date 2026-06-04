@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app import charts, orders, portfolio, scanner, scheduler
+from app import charts, circuit, orders, portfolio, runtime, scanner, scheduler
 from app.config import settings
 from app.db import get_db
 from app.kss import service as kss_service
@@ -155,6 +155,10 @@ class AutoTradeBody(BaseModel):
     enabled: bool
 
 
+class FullAutoBody(BaseModel):
+    enabled: bool
+
+
 class SchedulerBody(BaseModel):
     enabled: bool
     interval_min: int | None = Field(None, ge=1, le=1440)
@@ -211,8 +215,10 @@ def _automation_state(db: Session) -> dict:
     active = db.query(KssSession).filter(KssSession.status == SESSION_ACTIVE).count()
     return {
         **st,
+        "full_auto": settings.full_auto,
         "auto_trade": settings.auto_trade,
         "autoapprove": settings.autoapprove_enabled,
+        "frozen": runtime.is_frozen(db),
         "open_sessions": active,
     }
 
@@ -237,6 +243,44 @@ def set_autotrade(body: AutoTradeBody):
     """Toggle full-auto for this process. Persist via env/.env for restarts."""
     settings.auto_trade = body.enabled
     return autotrade_state()
+
+
+@api_router.get("/api/full-auto")
+def get_full_auto(db: Session = Depends(get_db)):
+    """Current full-auto master-switch + scheduler state."""
+    return {**runtime.state(db), "scheduler_running": scheduler.is_running()}
+
+
+@api_router.post("/api/full-auto", dependencies=[Depends(require_api_key)])
+async def set_full_auto(body: FullAutoBody, db: Session = Depends(get_db)):
+    """Enable or disable the full-auto master switch (persisted across restarts)."""
+    if body.enabled:
+        runtime.full_auto_on(db)
+        scheduler.start()
+    else:
+        runtime.full_auto_off(db)
+        scheduler.stop()
+    return {**runtime.state(db), "scheduler_running": scheduler.is_running()}
+
+
+@api_router.get("/api/breaker")
+def get_breaker(db: Session = Depends(get_db)):
+    """Circuit-breaker status with live metrics and configured thresholds."""
+    return {
+        **runtime.state(db),
+        **circuit.metrics(db),
+        "thresholds": {
+            "max_drawdown_pct": settings.max_drawdown_pct,
+            "daily_loss_hard_pct": settings.daily_loss_hard_pct,
+            "max_consecutive_losses": settings.max_consecutive_losses,
+        },
+    }
+
+
+@api_router.post("/api/breaker/reset", dependencies=[Depends(require_api_key)])
+def reset_breaker(db: Session = Depends(get_db)):
+    """Manually unfreeze the circuit-breaker (bypasses cooldown)."""
+    return circuit.reset(db)
 
 
 @api_router.get("/api/scheduler")

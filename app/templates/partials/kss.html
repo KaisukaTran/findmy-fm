@@ -5,7 +5,7 @@
 </div>
 {% if sessions %}
 <table class="tbl">
-  <thead><tr><th>#</th><th>Sym</th><th>Status</th><th>Wave</th><th>Avg</th><th>uP&L</th><th>Ladder</th><th></th></tr></thead>
+  <thead><tr><th>#</th><th>Sym</th><th>Status</th><th>Wave</th><th>Avg</th><th>uP&L</th><th>SL%</th><th>Trail%</th><th>Ladder</th><th></th></tr></thead>
   <tbody>
     {% for s in sessions %}
     <tr>
@@ -15,6 +15,8 @@
       <td>{{ s.filled_waves_count }}/{{ s.max_waves }}</td>
       <td>{{ s.avg_price | money }}</td>
       <td class="{{ 'pos' if s.unrealized_pnl >= 0 else 'neg' }}">{{ s.unrealized_pnl | money }}</td>
+      <td class="muted">{{ s.get('sl_pct', '—') }}</td>
+      <td class="muted">{{ s.get('trailing_pct', '—') }}</td>
       <td style="width:120px">{{ s | ladder | safe }}</td>
       <td class="row-actions">
         {% if s.status == 'pending' %}

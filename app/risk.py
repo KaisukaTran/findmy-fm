@@ -16,6 +16,7 @@ from datetime import datetime, time
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app import portfolio
 from app.config import settings
 from app.market import get_exchange_info
 from app.models import Fill, Position
@@ -51,9 +52,10 @@ def validate_order_qty(symbol: str, quantity: float) -> tuple[bool, str]:
 # --- risk checks --------------------------------------------------------
 
 
-def account_equity() -> float:
-    """Notional account equity used for percentage limits."""
-    return settings.account_equity
+def account_equity(db: Session) -> float:
+    """Live mark-to-market equity; falls back to config value if the book is empty."""
+    live = portfolio.equity(db)
+    return live if live > 0 else settings.account_equity
 
 
 def current_exposure(symbol: str, db: Session) -> tuple[float, float]:
@@ -61,7 +63,7 @@ def current_exposure(symbol: str, db: Session) -> tuple[float, float]:
     pos = db.query(Position).filter(Position.symbol == symbol).one_or_none()
     if not pos or pos.quantity <= 0:
         return 0.0, 0.0
-    equity = account_equity()
+    equity = account_equity(db)
     exposure_pct = (pos.total_cost / equity * 100) if equity > 0 else 0.0
     return pos.quantity, exposure_pct
 
@@ -81,7 +83,7 @@ def daily_loss(db: Session) -> float:
 
 def check_position_size(symbol: str, qty: float, price: float, db: Session) -> str | None:
     """Return a violation string if adding qty@price would breach the position limit."""
-    equity = account_equity()
+    equity = account_equity(db)
     if equity <= 0:
         return None
     _, _ = current_exposure(symbol, db)
@@ -96,7 +98,7 @@ def check_position_size(symbol: str, qty: float, price: float, db: Session) -> s
 
 def check_daily_loss(db: Session) -> str | None:
     """Return a violation string if today's realized loss exceeds the daily limit."""
-    equity = account_equity()
+    equity = account_equity(db)
     if equity <= 0:
         return None
     loss_pct = daily_loss(db) / equity * 100

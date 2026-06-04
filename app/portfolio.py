@@ -49,6 +49,18 @@ def trades_view(db: Session, limit: int = 50) -> list[dict]:
     return [f.to_dict() for f in fills]
 
 
+def equity(db: Session) -> float:
+    """Live mark-to-market equity = cash + open market value."""
+    positions = positions_view(db)
+    total_market_value = sum(p["market_value"] for p in positions)
+    total_invested = sum(p["total_cost"] for p in positions)
+    realized_pnl = float(
+        db.query(func.coalesce(func.sum(Fill.realized_pnl), 0.0)).scalar() or 0.0
+    )
+    cash = settings.account_equity - total_invested + realized_pnl
+    return cash + total_market_value
+
+
 def summary_view(db: Session) -> dict:
     """Portfolio summary: equity, realized/unrealized P&L, counts."""
     positions = positions_view(db)

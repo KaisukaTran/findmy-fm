@@ -13,10 +13,19 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import settings
+
+# Columns added after a table first shipped. create_all() never ALTERs an
+# existing table, so we add any missing columns by hand (idempotent). Each entry
+# is (table, column, SQL column definition).
+_ADDED_COLUMNS: list[tuple[str, str, str]] = [
+    ("kss_sessions", "sl_pct", "FLOAT NOT NULL DEFAULT 0.0"),
+    ("kss_sessions", "trailing_pct", "FLOAT NOT NULL DEFAULT 0.0"),
+    ("kss_sessions", "peak_price", "FLOAT NOT NULL DEFAULT 0.0"),
+]
 
 
 class Base(DeclarativeBase):
@@ -51,8 +60,24 @@ def get_db() -> Iterator[Session]:
         db.close()
 
 
+def _ensure_columns() -> None:
+    """Add any missing columns to existing tables (idempotent lightweight migration)."""
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    for table, column, ddl in _ADDED_COLUMNS:
+        if table not in existing_tables:
+            continue  # create_all already built it with the column
+        cols = {c["name"] for c in inspector.get_columns(table)}
+        if column in cols:
+            continue
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+
+
 def init_db() -> None:
-    """Create all tables. Imports models so they register on Base.metadata."""
+    """Create all tables, then apply additive column migrations. Imports models so
+    they register on Base.metadata."""
     from app import models  # noqa: F401  (registers models on Base)
 
     Base.metadata.create_all(bind=engine)
+    _ensure_columns()

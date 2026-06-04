@@ -21,6 +21,7 @@ from app.models import (
     SESSION_ACTIVE,
     SESSION_COMPLETED,
     SESSION_PENDING,
+    SESSION_STOPPED,
     WAVE_FILLED,
     WAVE_SENT,
     KssSession,
@@ -45,6 +46,8 @@ def _to_pyramid(row: KssSession) -> PyramidSession:
         timeout_x_min=row.timeout_x_min,
         gap_y_min=row.gap_y_min,
     )
+    from app.config import settings
+
     py.id = row.id
     py.status = PyramidSessionStatus(row.status)
     py.current_wave = row.current_wave
@@ -54,6 +57,9 @@ def _to_pyramid(row: KssSession) -> PyramidSession:
     py.start_time = row.started_at
     py.last_fill_time = row.last_fill_at
     py.created_at = row.created_at
+    py.sl_pct = row.sl_pct if row.sl_pct > 0 else settings.sl_pct
+    py.trailing_pct = row.trailing_pct if row.trailing_pct > 0 else settings.trailing_pct
+    py.peak_price = row.peak_price
     py.waves = [
         WaveInfo(
             wave_num=w.wave_num,
@@ -79,6 +85,7 @@ def _save_state(row: KssSession, py: PyramidSession) -> None:
     row.total_cost = py.total_cost
     row.started_at = py.start_time
     row.last_fill_at = py.last_fill_time
+    row.peak_price = py.peak_price
 
 
 def _get_row(db: Session, session_id: int) -> KssSession:
@@ -171,6 +178,12 @@ def handle_fill_event(
         db.commit()
         return {"action": "completed", "message": f"Session {session_id} completed (TP filled)"}
 
+    # Stop-loss / trailing-stop sells terminate the session as STOPPED.
+    if parts[2] in {"sl", "trailing", "deadline"}:
+        row.status = SESSION_STOPPED
+        db.commit()
+        return {"action": parts[2], "message": f"Session {session_id} stopped ({parts[2]})"}
+
     wave_num = int(parts[3])
 
     # Mark the filled wave row.
@@ -244,6 +257,20 @@ def manage_open_sessions(db: Session) -> list[int]:
             audit.log(db, "scheduler", "tp_queued", entity=f"kss:{row.id}",
                       symbol=row.symbol, price=price)
             triggered.append(row.id)
+        else:
+            # check_stop also updates peak_price; always save so the high-water
+            # mark is persisted even when neither exit triggers.
+            res = py.check_stop(price)
+            if res:
+                _queue(db, res["order"])
+                _save_state(row, py)
+                audit.log(
+                    db, "scheduler", "stop_queued", entity=f"kss:{row.id}",
+                    symbol=row.symbol, price=price, kind=res["action"],
+                )
+                triggered.append(row.id)
+            else:
+                _save_state(row, py)
     db.commit()
     return triggered
 

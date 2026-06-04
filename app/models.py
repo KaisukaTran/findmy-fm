@@ -190,6 +190,13 @@ class KssSession(Base):
     timeout_x_min: Mapped[float] = mapped_column(Float, nullable=False)
     gap_y_min: Mapped[float] = mapped_column(Float, nullable=False)
 
+    # Risk exits (Phase A). 0.0 = fall back to the settings default (sl_pct /
+    # trailing_pct); a positive per-session value overrides it. peak_price is the
+    # high-water mark used by the trailing stop.
+    sl_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    trailing_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    peak_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
     status: Mapped[str] = mapped_column(String(16), nullable=False, default=SESSION_PENDING)
     current_wave: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     avg_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
@@ -320,4 +327,30 @@ class AuditLog(Base):
             "id": self.id, "actor": self.actor, "action": self.action,
             "entity": self.entity, "detail": self.detail,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class RuntimeConfig(Base):
+    """
+    Persisted key/value runtime state (survives restarts).
+
+    Holds the full-auto master switch and the circuit-breaker freeze state so
+    automation flags are no longer lost when the process restarts (unlike the
+    in-memory `settings` singleton). Values are stored as strings; callers in
+    `app.runtime` cast as needed.
+    """
+
+    __tablename__ = "runtime_config"
+
+    key: Mapped[str] = mapped_column(String(48), primary_key=True)
+    value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "key": self.key,
+            "value": self.value,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

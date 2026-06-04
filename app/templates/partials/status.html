@@ -9,4 +9,18 @@
   <span class="sep">·</span>
   <span class="muted">{{ a.open_sessions }} open</span>
   {% if a.last_cycle_at %}<span class="sep">·</span><span class="muted">last {{ a.last_cycle_at[11:19] }}</span>{% endif %}
+  <span class="sep">·</span>
+  <span class="statusbar-full-auto">
+    <span class="badge {{ 'full-auto-on' if a.full_auto else 'full-auto-off' }}">FULL-AUTO {{ 'ON' if a.full_auto else 'OFF' }}</span>
+    <button class="sm {{ 'danger' if a.full_auto else 'ok' }}" data-action="toggleFullAuto">{{ 'Disable' if a.full_auto else 'Enable' }}</button>
+  </span>
+  <span class="sep">·</span>
+  <span class="statusbar-breaker">
+    {% if a.frozen %}
+    <span class="badge breaker-frozen">FROZEN</span>
+    <button class="sm ghost" data-action="resetBreaker">Reset breaker</button>
+    {% else %}
+    <span class="badge breaker-armed">ARMED</span>
+    {% endif %}
+  </span>
 </span>

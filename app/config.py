@@ -103,6 +103,18 @@ class Settings(BaseSettings):
     max_deployed_pct: float = Field(default=50.0, description="Cap total isolated funds as %% of equity.")
     scan_min_notional: float = Field(default=10.0, description="Skip dust micro-trades below this USD notional/wave.")
 
+    # --- Full-auto master switch + circuit breaker (Phase A) ---
+    full_auto: bool = Field(
+        default=False,
+        description="Master switch: when on, scheduler + auto_trade + autoapprove run as one. Persisted via runtime_config.",
+    )
+    sl_pct: float = Field(default=8.0, description="KSS session stop-loss %% below avg price (0 = disabled).")
+    trailing_pct: float = Field(default=3.0, description="KSS trailing-stop %% below peak once in profit (0 = disabled).")
+    max_drawdown_pct: float = Field(default=15.0, description="Circuit breaker: freeze auto when equity drawdown %% exceeds this.")
+    daily_loss_hard_pct: float = Field(default=5.0, description="Circuit breaker: freeze auto when today's realized loss %% exceeds this.")
+    max_consecutive_losses: int = Field(default=4, description="Circuit breaker: freeze auto after this many losing SELL fills in a row.")
+    breaker_cooldown_min: int = Field(default=60, description="Minutes the breaker stays frozen before it may auto-rearm.")
+
     # --- Pending-queue auto-approval policy (AI clears safe orders) ---
     autoapprove_enabled: bool = Field(default=False, description="Let the AI auto-approve pending orders matching the rule.")
     autoapprove_max_notional: float = Field(default=50.0, description="Auto-approve only orders with notional ≤ this USD value.")

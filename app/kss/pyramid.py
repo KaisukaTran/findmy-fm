@@ -104,6 +104,11 @@ class PyramidSession:
     total_filled_qty: float = 0.0
     total_cost: float = 0.0
 
+    # Risk exits (0.0 = disabled / fall back to settings defaults resolved by service)
+    sl_pct: float = 0.0
+    trailing_pct: float = 0.0
+    peak_price: float = 0.0
+
     # Timestamps
     start_time: datetime | None = None
     last_fill_time: datetime | None = None
@@ -390,6 +395,73 @@ class PyramidSession:
             }
 
         return None
+
+    def check_stop(self, current_price: float) -> dict[str, Any] | None:
+        """
+        Check stop-loss and trailing-stop exit conditions.
+
+        Updates self.peak_price on every call (high-water mark tracking).
+        Returns the same ``{"action": ..., "order": {...}}`` shape as check_tp,
+        or None when nothing triggers.  Stop-loss takes precedence over
+        trailing-stop when both conditions are satisfied simultaneously.
+        """
+        if self.total_filled_qty <= 0:
+            return None
+
+        sl = self.sl_pct
+        trail = self.trailing_pct
+
+        # Update high-water mark unconditionally so callers can persist it.
+        self.peak_price = max(self.peak_price, current_price)
+
+        if sl <= 0 and trail <= 0:
+            return None
+
+        triggered_action: str | None = None
+
+        # Hard stop-loss: price dropped below avg by sl%.
+        if sl > 0 and current_price <= self.avg_price * (1 - sl / 100):
+            triggered_action = "stop_loss"
+
+        # Trailing stop (only when no hard SL trigger): position must be in
+        # profit (peak > avg) and current price fell trail% from the peak.
+        if triggered_action is None and trail > 0:
+            if self.peak_price > self.avg_price and current_price <= self.peak_price * (1 - trail / 100):
+                triggered_action = "trailing_stop"
+
+        if triggered_action is None:
+            return None
+
+        suffix = "sl" if triggered_action == "stop_loss" else "trailing"
+        logger.info(
+            f"Pyramid {self.id} {triggered_action}: market {current_price} "
+            f"(avg={self.avg_price:.4f}, peak={self.peak_price:.4f}, "
+            f"sl%={sl}, trail%={trail})"
+        )
+
+        stop_order = {
+            "symbol": self.symbol,
+            "side": "SELL",
+            "quantity": self.total_filled_qty,
+            "price": 0,  # Market order
+            "order_type": "MARKET",
+            "source": "kss",
+            "source_ref": f"pyramid:{self.id}:{suffix}",
+            "strategy_name": f"Pyramid_{self.symbol}",
+            "note": (
+                f"Pyramid {triggered_action}: sell {self.total_filled_qty} @ market "
+                f"(avg={self.avg_price:.4f})"
+            ),
+        }
+
+        return {
+            "action": triggered_action,
+            "order": stop_order,
+            "message": (
+                f"{triggered_action} triggered at {current_price}, "
+                f"selling {self.total_filled_qty}"
+            ),
+        }
 
     def _check_timeout(self) -> bool:
         """Check if timeout condition is met."""

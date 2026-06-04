@@ -23,7 +23,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from app import audit, costengine, orders
+from app import audit, costengine, orders, runtime
 from app.agents import SIGNAL_AGENTS, BacktestAgent, aggregate, decide
 from app.backtest import estimate_win_rate
 from app.config import settings
@@ -161,7 +161,11 @@ def _open_session(db: Session, symbol: str, entry: float, mode: str) -> int:
     audit.log(db, "scanner", "session_open", entity=f"kss:{row.id}", symbol=symbol, mode=mode)
 
     if mode == "auto":
-        orders.approve_order(db, started["pending_order_id"], reviewer="auto-trader")
-        audit.log(db, "auto-trader", "auto_approve", entity=f"order:{started['pending_order_id']}",
-                  symbol=symbol, session=row.id)
+        if not runtime.is_frozen(db):
+            orders.approve_order(db, started["pending_order_id"], reviewer="auto-trader")
+            audit.log(db, "auto-trader", "auto_approve", entity=f"order:{started['pending_order_id']}",
+                      symbol=symbol, session=row.id)
+        else:
+            audit.log(db, "scanner", "auto_skip_frozen",
+                      entity=f"order:{started['pending_order_id']}", symbol=symbol, session=row.id)
     return row.id

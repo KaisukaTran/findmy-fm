@@ -101,6 +101,20 @@ const actions = {
     await api("POST", "/api/scheduler", { enabled: !state.enabled });
     refreshAll();
   },
+  async toggleFullAuto() {
+    const state = await api("GET", "/api/full-auto");
+    if (!state.full_auto &&
+        !confirm("Enable FULL-AUTO master switch? This starts the scheduler and enables auto-trade + auto-approve.")) return;
+    if (state.full_auto &&
+        !confirm("Disable FULL-AUTO? This will stop the scheduler and disable autonomous trading.")) return;
+    await api("POST", "/api/full-auto", { enabled: !state.full_auto });
+    refreshAll();
+  },
+  async resetBreaker() {
+    if (!confirm("Manually reset the circuit-breaker? The system will resume trading.")) return;
+    await api("POST", "/api/breaker/reset");
+    refreshAll();
+  },
 };
 
 document.addEventListener("click", (e) => {

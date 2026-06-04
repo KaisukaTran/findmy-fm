@@ -18,6 +18,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
+from app import runtime
 from app.config import settings
 from app.market import get_current_prices
 from app.models import (
@@ -136,7 +137,10 @@ def auto_approve_by_policy(db: Session) -> list[int]:
     source in `autoapprove_sources` AND notional ≤ `autoapprove_max_notional`
     (notional = qty × price, using live price for market orders). Optionally skip
     orders carrying a risk note. Disabled unless `autoapprove_enabled`.
+    No-ops when the circuit-breaker is frozen.
     """
+    if runtime.is_frozen(db):
+        return []
     if not settings.autoapprove_enabled:
         return []
     pend = db.query(PendingOrder).filter(PendingOrder.status == PENDING).all()
@@ -163,8 +167,10 @@ def auto_fill_due_orders(db: Session) -> list[int]:
     Full-auto: auto-approve pending KSS-sourced orders whose limit the market has
     reached (BUY: price ≤ target, SELL: price ≥ target, MARKET: always due). Only
     touches `source="kss"` orders — manual orders always require human approval.
-    Returns the approved order ids.
+    Returns the approved order ids. No-ops when the circuit-breaker is frozen.
     """
+    if runtime.is_frozen(db):
+        return []
     pend = (
         db.query(PendingOrder)
         .filter(PendingOrder.status == PENDING, PendingOrder.source == "kss")
@@ -190,7 +196,14 @@ def auto_fill_due_orders(db: Session) -> list[int]:
 
 
 def approve_order(db: Session, order_id: int, reviewer: str | None = None) -> Fill:
-    """Approve and paper-execute a pending order; fire KSS fill hook if applicable."""
+    """Approve and paper-execute a pending order; fire KSS fill hook if applicable.
+
+    Auto reviewers are blocked when the circuit-breaker freeze is active.
+    Human reviewer 'dashboard' is never blocked.
+    """
+    from app.circuit import AUTO_REVIEWERS  # lazy — circuit imports portfolio which is fine
+    if reviewer in AUTO_REVIEWERS and runtime.is_frozen(db):
+        raise ValueError(f"automation frozen — {reviewer} blocked")
     order = _get_pending(db, order_id)
     order.status = APPROVED
     order.reviewer = reviewer

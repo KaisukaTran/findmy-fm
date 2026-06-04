@@ -30,8 +30,15 @@ _STATIC_DIR = Path(__file__).parent / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    from app import scheduler
+    from app import runtime, scheduler
     from app.config import settings
+    from app.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        runtime.sync_from_db(db)
+    finally:
+        db.close()
 
     if settings.scheduler_enabled:
         scheduler.start()

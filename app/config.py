@@ -128,6 +128,15 @@ class Settings(BaseSettings):
     telegram_chat_id: str = Field(default="", description="Only this chat id may send commands and receive alerts.")
     telegram_poll_interval: int = Field(default=5, description="Seconds between Telegram getUpdates polls.")
 
+    # --- Phase C: per-pair hyperopt + ML win-rate (off by default) ---
+    hyperopt_enabled: bool = Field(default=False, description="Tune KSS params per pair (grid search; falls back to global scan_* when off).")
+    hyperopt_trials: int = Field(default=50, description="Param combinations evaluated per pair (out-of-sample objective).")
+    hyperopt_interval_hours: int = Field(default=24, description="Hours between background hyperopt runs.")
+    ml_enabled: bool = Field(default=False, description="Augment agent votes with a learned win-rate model.")
+    ml_min_samples: int = Field(default=200, description="Min training samples before the ML model is used.")
+    ml_weight: float = Field(default=0.25, description="Aggregator weight for the ML agent vote.")
+    ml_retrain_hours: int = Field(default=24, description="Hours between background ML retrains.")
+
     # --- Pending-queue auto-approval policy (AI clears safe orders) ---
     autoapprove_enabled: bool = Field(default=False, description="Let the AI auto-approve pending orders matching the rule.")
     autoapprove_max_notional: float = Field(default=50.0, description="Auto-approve only orders with notional ≤ this USD value.")

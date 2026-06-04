@@ -361,3 +361,51 @@ class RuntimeConfig(Base):
             "value": self.value,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class PairParams(Base):
+    """Best per-symbol KSS parameters found by the Phase C hyperopt search.
+
+    The scanner reads these (falling back to the global scan_* config) when it
+    opens a session, so each market trades its own tuned distance/tp/waves.
+    """
+
+    __tablename__ = "pair_params"
+
+    symbol: Mapped[str] = mapped_column(String(20), primary_key=True)
+    distance_pct: Mapped[float] = mapped_column(Float, nullable=False)
+    tp_pct: Mapped[float] = mapped_column(Float, nullable=False)
+    max_waves: Mapped[int] = mapped_column(Integer, nullable=False)
+    score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # objective value
+    trials: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "symbol": self.symbol, "distance_pct": self.distance_pct, "tp_pct": self.tp_pct,
+            "max_waves": self.max_waves, "score": self.score, "trials": self.trials,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class MlModel(Base):
+    """A trained win-rate model (Phase C). Serialized as JSON in `params_json`
+    (pure-Python logistic model — no numpy/sklearn dependency)."""
+
+    __tablename__ = "ml_models"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    params_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # weights/bias/feature spec
+    metric: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # val accuracy/AUC
+    n_samples: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    trained_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "version": self.version, "metric": self.metric,
+            "n_samples": self.n_samples,
+            "trained_at": self.trained_at.isoformat() if self.trained_at else None,
+        }

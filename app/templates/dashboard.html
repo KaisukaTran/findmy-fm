@@ -100,6 +100,10 @@
         <h2>AI Audit Log</h2>
         <div class="scroll" hx-get="/partials/audit" hx-trigger="load, every 15s, refresh from:body" hx-swap="innerHTML"></div>
       </div>
+      <div class="panel" id="params-panel">
+        <h2>Hyperopt &amp; ML Params</h2>
+        {% include "partials/params.html" %}
+      </div>
     </div>
   </main>
 </body>

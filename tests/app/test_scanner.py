@@ -55,7 +55,7 @@ def test_scan_persists_audit_and_creates_pending_session(db, scan_env):
     scanner.run_scan(db, mode="semi")
 
     assert db.query(models.ScanRun).count() == 1
-    assert db.query(models.AgentVoteRecord).filter_by(symbol="BTC").count() == 5  # 4 signal + backtest
+    assert db.query(models.AgentVoteRecord).filter_by(symbol="BTC").count() == 6  # 5 signal (incl. ml) + backtest
 
     cand = db.query(models.Candidate).filter_by(symbol="BTC").one()
     assert cand.decision == "trade" and cand.session_id is not None

@@ -16,7 +16,19 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app import charts, circuit, guardian, notify, orders, portfolio, runtime, scanner, scheduler
+from app import (
+    charts,
+    circuit,
+    guardian,
+    hyperopt,
+    ml,
+    notify,
+    orders,
+    portfolio,
+    runtime,
+    scanner,
+    scheduler,
+)
 from app.config import settings
 from app.db import get_db
 from app.kss import service as kss_service
@@ -222,6 +234,8 @@ def _automation_state(db: Session) -> dict:
         "open_sessions": active,
         "guardian": guardian.enabled(),
         "telegram": notify.is_running(),
+        "hyperopt": settings.hyperopt_enabled,
+        "ml": settings.ml_enabled,
     }
 
 
@@ -361,6 +375,51 @@ def set_telegram(body: TelegramBody):
 @api_router.post("/api/telegram/test", dependencies=[Depends(require_api_key)])
 def test_telegram():
     return {"sent": notify.send("FINDMY-FM test alert")}
+
+
+# --- Phase C: hyperopt + ML endpoints -----------------------------------
+
+
+class EnableBody(BaseModel):
+    enabled: bool
+
+
+@api_router.get("/api/params")
+def get_params(db: Session = Depends(get_db)):
+    from app.models import PairParams
+
+    rows = db.query(PairParams).order_by(PairParams.score.desc()).all()
+    return [r.to_dict() for r in rows]
+
+
+@api_router.post("/api/hyperopt", dependencies=[Depends(require_api_key)])
+def set_hyperopt(body: EnableBody):
+    settings.hyperopt_enabled = body.enabled
+    return {"enabled": settings.hyperopt_enabled}
+
+
+@api_router.post("/api/hyperopt/run", dependencies=[Depends(require_api_key)])
+def run_hyperopt(db: Session = Depends(get_db)):
+    tuned = [hyperopt.run_for(db, s) for s in settings.watchlist]
+    return {"tuned": [t.to_dict() for t in tuned if t is not None]}
+
+
+@api_router.get("/api/ml")
+def get_ml(db: Session = Depends(get_db)):
+    m = ml.load_latest(db)
+    return {"enabled": settings.ml_enabled, "model": m.to_dict() if m else None}
+
+
+@api_router.post("/api/ml", dependencies=[Depends(require_api_key)])
+def set_ml(body: EnableBody):
+    settings.ml_enabled = body.enabled
+    return {"enabled": settings.ml_enabled}
+
+
+@api_router.post("/api/ml/retrain", dependencies=[Depends(require_api_key)])
+def retrain_ml(db: Session = Depends(get_db)):
+    m = ml.train(db)
+    return {"trained": m.to_dict() if m else None}
 
 
 # --- dashboard (HTMX) ---------------------------------------------------

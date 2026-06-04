@@ -23,7 +23,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from app import audit, costengine, orders, runtime
+from app import audit, costengine, hyperopt, ml, orders, runtime
 from app.agents import SIGNAL_AGENTS, BacktestAgent, aggregate, decide
 from app.backtest import estimate_win_rate
 from app.config import settings
@@ -56,12 +56,28 @@ def _thresholds() -> dict:
     }
 
 
+def _effective_params(db: Session, symbol: str) -> tuple[float, float, int]:
+    """Return (distance_pct, tp_pct, max_waves) for a symbol.
+
+    Uses hyperopt-tuned values when hyperopt_enabled and a row exists;
+    falls back to global scan_* defaults in all other cases.
+    """
+    if settings.hyperopt_enabled:
+        row = hyperopt.best_params(db, symbol)
+        if row is not None:
+            return row.distance_pct, row.tp_pct, row.max_waves
+    return settings.scan_distance_pct, settings.scan_tp_pct, settings.scan_max_waves
+
+
 def run_scan(db: Session, mode: str | None = None) -> dict:
     """Run one full scan; returns {scan_id, mode, candidates:[...]}."""
     provider = data_provider()
     mode = mode or ("auto" if settings.auto_trade else "semi")
 
     service.sweep_deadlines(db)  # housekeeping: close anything past its deadline
+
+    # Load ML model once for the whole scan; None when ml disabled.
+    ml_model = ml.load_latest(db) if settings.ml_enabled else None
 
     universe = _universe(provider)
     scan = ScanRun(mode=mode, universe_size=len(universe), params=json.dumps(_thresholds()))
@@ -79,13 +95,18 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
         if len(candles) < _MIN_CANDLES:
             continue
 
+        distance_pct, tp_pct, max_waves = _effective_params(db, symbol)
+
         # Walk-forward: metric on the out-of-sample tail (regime-current, less overfit).
         wr = estimate_win_rate(
-            candles, settings.scan_distance_pct, settings.scan_max_waves,
-            settings.scan_tp_pct, settings.deadline_days, split=settings.walk_forward_split,
+            candles, distance_pct, max_waves,
+            tp_pct, settings.deadline_days, split=settings.walk_forward_split,
         )
-        ctx = {"win_rate": wr["win_rate"], "trials": wr["trials"],
-               "avg_days_to_tp": wr["avg_days_to_tp"]}
+        ctx = {
+            "win_rate": wr["win_rate"], "trials": wr["trials"],
+            "avg_days_to_tp": wr["avg_days_to_tp"],
+            "ml_model": ml_model,
+        }
 
         votes = [a.evaluate(symbol, candles, ctx) for a in SIGNAL_AGENTS]
         votes.append(backtest_agent.evaluate(symbol, candles, ctx))
@@ -94,7 +115,7 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
                                    score=v.score, confidence=v.confidence, reason=v.reason))
 
         consensus = aggregate(votes)
-        net_edge = costengine.net_edge_pct(settings.scan_tp_pct)
+        net_edge = costengine.net_edge_pct(tp_pct)
         d = decide(
             consensus, wr["win_rate"], wr["avg_days_to_tp"],
             loss_rate=wr["loss_rate"], net_edge=net_edge,
@@ -102,11 +123,13 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
             **_thresholds(),
         )
 
+        params_tag = f"d={distance_pct}/tp={tp_pct}/w={max_waves}"
         cand = Candidate(
             scan_id=scan.id, symbol=symbol, consensus_pct=consensus,
             win_rate=wr["win_rate"], est_days_to_tp=wr["avg_days_to_tp"],
             decision=d["decision"],
-            reason="; ".join(d["reasons"]) + f" | loss={wr['loss_rate']:.0f}% edge={net_edge:.2f}%",
+            reason="; ".join(d["reasons"])
+                   + f" | loss={wr['loss_rate']:.0f}% edge={net_edge:.2f}% | params {params_tag}",
         )
         db.add(cand)
         db.flush()
@@ -117,7 +140,10 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
         if d["decision"] == "trade":
             ok, why = _can_open(db)
             if ok:
-                cand.session_id = _open_session(db, symbol, candles[-1]["close"], mode)
+                cand.session_id = _open_session(
+                    db, symbol, candles[-1]["close"], mode,
+                    distance_pct=distance_pct, tp_pct=tp_pct, max_waves=max_waves,
+                )
             else:
                 cand.reason += f" | capped: {why}"
                 audit.log(db, "scanner", "skipped_cap", entity=symbol, reason=why)
@@ -141,16 +167,25 @@ def _can_open(db: Session) -> tuple[bool, str]:
     return True, ""
 
 
-def _open_session(db: Session, symbol: str, entry: float, mode: str) -> int:
-    """Open a KSS session from scan defaults; auto-approve wave 0 in full-auto."""
+def _open_session(
+    db: Session,
+    symbol: str,
+    entry: float,
+    mode: str,
+    *,
+    distance_pct: float = settings.scan_distance_pct,
+    tp_pct: float = settings.scan_tp_pct,
+    max_waves: int = settings.scan_max_waves,
+) -> int:
+    """Open a KSS session using effective (possibly hyperopt-tuned) params."""
     row = service.create_session(
         db,
         symbol=symbol,
         entry_price=entry,
-        distance_pct=settings.scan_distance_pct,
-        max_waves=settings.scan_max_waves,
+        distance_pct=distance_pct,
+        max_waves=max_waves,
         isolated_fund=settings.scan_fund,
-        tp_pct=settings.scan_tp_pct,
+        tp_pct=tp_pct,
         # Deadline (not the intra-fill timeout) governs the hold; keep timeout long.
         timeout_x_min=float(settings.deadline_days * 1440),
         gap_y_min=0.0,

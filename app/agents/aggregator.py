@@ -15,6 +15,7 @@ DEFAULT_WEIGHTS = {
     "trend": 0.15,
     "volatility": 0.15,
     "liquidity": 0.10,
+    "ml": 0.25,
 }
 
 

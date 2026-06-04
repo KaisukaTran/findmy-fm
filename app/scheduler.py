@@ -39,6 +39,38 @@ def status() -> dict:
     }
 
 
+def _run_periodic(db: Session) -> tuple[int, bool]:
+    """Phase C: time-gated per-pair hyperopt + ML retrain. Never raises."""
+    from datetime import datetime
+
+    hyperopt_runs = 0
+    ml_trained = False
+    try:
+        from app import hyperopt, ml, runtime
+        now = datetime.utcnow()
+
+        def _due(key: str, hours: float) -> bool:
+            last = runtime.get(db, key)
+            if not last:
+                return True
+            try:
+                return (now - datetime.fromisoformat(last)).total_seconds() >= hours * 3600
+            except ValueError:
+                return True
+
+        if settings.hyperopt_enabled and _due("hyperopt_last_at", settings.hyperopt_interval_hours):
+            for sym in settings.watchlist:
+                if hyperopt.run_for(db, sym) is not None:
+                    hyperopt_runs += 1
+            runtime.set(db, "hyperopt_last_at", now.isoformat())
+        if settings.ml_enabled and _due("ml_last_at", settings.ml_retrain_hours):
+            ml_trained = ml.train(db) is not None
+            runtime.set(db, "ml_last_at", now.isoformat())
+    except Exception:  # periodic tuning must never kill the cycle
+        logger.exception("phase-c periodic tasks failed")
+    return hyperopt_runs, ml_trained
+
+
 def run_cycle(db: Session) -> dict:
     """One scheduler cycle. Returns a small summary (counts), not data dumps."""
     global _last_cycle_at, _last_summary
@@ -76,13 +108,17 @@ def run_cycle(db: Session) -> dict:
                     notify.send(f"Guardian vetoed order {oid} ({order.symbol}): {reason}")
                     guardian_vetoes += 1
 
+    # Phase C: periodic per-pair hyperopt + ML retrain (time-gated, never blocks).
+    hyperopt_runs, ml_trained = _run_periodic(db)
+
     # Defense-in-depth: short-circuit the auto branches when frozen. The callees
     # also self-guard, but gating here makes the breaker's intent explicit.
     filled = orders.auto_fill_due_orders(db) if settings.auto_trade and not frozen else []
     auto_approved = [] if frozen else orders.auto_approve_by_policy(db)  # self-guards on autoapprove_enabled
     audit.log(db, "scheduler", "cycle", deadlines_closed=len(closed), tp_queued=len(tp),
               candidates=len(scan["candidates"]), auto_filled=len(filled),
-              auto_approved=len(auto_approved), frozen=frozen, guardian_vetoes=guardian_vetoes)
+              auto_approved=len(auto_approved), frozen=frozen, guardian_vetoes=guardian_vetoes,
+              hyperopt_runs=hyperopt_runs, ml_trained=ml_trained)
     db.commit()
     summary = {
         "deadlines_closed": closed,
@@ -92,6 +128,8 @@ def run_cycle(db: Session) -> dict:
         "auto_approved": auto_approved,
         "frozen": frozen,
         "guardian_vetoes": guardian_vetoes,
+        "hyperopt_runs": hyperopt_runs,
+        "ml_trained": ml_trained,
     }
     _last_cycle_at = datetime.utcnow().isoformat()
     _last_summary = {k: (len(v) if isinstance(v, list) else v) for k, v in summary.items()}

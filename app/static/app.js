@@ -137,6 +137,51 @@ const actions = {
     const r = await api("POST", "/api/telegram/test");
     alert(r.sent ? "Test alert sent successfully." : "Test alert failed — check Telegram config.");
   },
+  async toggleHyperopt() {
+    const state = await api("GET", "/api/hyperopt");
+    if (!state.enabled &&
+        !confirm("Enable Hyperopt? The system will tune KSS parameters using Optuna.")) return;
+    if (state.enabled &&
+        !confirm("Disable Hyperopt? Parameter tuning will stop.")) return;
+    await api("POST", "/api/hyperopt", { enabled: !state.enabled });
+    refreshAll();
+  },
+  async toggleMl() {
+    const state = await api("GET", "/api/ml");
+    if (!state.enabled &&
+        !confirm("Enable ML? A model will be trained to predict entry quality.")) return;
+    if (state.enabled &&
+        !confirm("Disable ML? Model-based filtering will be turned off.")) return;
+    await api("POST", "/api/ml", { enabled: !state.enabled });
+    refreshAll();
+  },
+  async hyperoptRun() {
+    const btn = document.querySelector("[data-action='hyperoptRun']");
+    if (btn) btn.disabled = true;
+    try {
+      const r = await api("POST", "/api/hyperopt/run");
+      const n = Array.isArray(r) ? r.length : (r.count ?? "?");
+      alert("Hyperopt complete — " + n + " symbol(s) tuned.");
+      loadParams();
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  },
+  async mlRetrain() {
+    const btn = document.querySelector("[data-action='mlRetrain']");
+    if (btn) btn.disabled = true;
+    try {
+      const r = await api("POST", "/api/ml/retrain");
+      if (r && r.model) {
+        alert("Model trained: v" + r.model.version + " · metric " + r.model.metric + " · " + r.model.n_samples + " samples.");
+      } else {
+        alert("Retrain returned no model — not enough data yet.");
+      }
+      loadParams();
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  },
 };
 
 document.addEventListener("click", (e) => {
@@ -232,6 +277,64 @@ function connectWs() {
   sock.onclose = () => setTimeout(connectWs, 5000); // auto-reconnect
 }
 connectWs();
+
+// --- Phase C: params panel (client-side fetch — no /partials/params route) ----
+// All other panels use hx-get to /partials/* HTML routes. The params panel is
+// the sole exception: no server route exists and Python cannot be edited, so
+// we fetch /api/params + /api/ml JSON here and render rows in JS on load.
+
+function renderMlStatus(data) {
+  const el = document.getElementById("ml-status");
+  if (!el) return;
+  const m = data && data.model;
+  if (!m) {
+    el.textContent = "ML model: none trained yet.";
+    return;
+  }
+  el.innerHTML =
+    "ML model: <b>" + (m.id || "—") + "</b>" +
+    " · v" + (m.version || "?") +
+    " · metric <b>" + (m.metric ?? "—") + "</b>" +
+    " · " + (m.n_samples ?? "?") + " samples" +
+    " · trained " + (m.trained_at ? m.trained_at.slice(0, 19).replace("T", " ") : "—");
+}
+
+function renderParamsRows(rows) {
+  const tbody = document.getElementById("params-tbody");
+  if (!tbody) return;
+  if (!rows || !rows.length) {
+    tbody.innerHTML = "<tr><td colspan='7' class='muted'>No tuned params yet — run Hyperopt first.</td></tr>";
+    return;
+  }
+  tbody.innerHTML = rows.map((r) =>
+    "<tr>" +
+    "<td>" + r.symbol + "</td>" +
+    "<td>" + (r.distance_pct != null ? r.distance_pct.toFixed(2) : "—") + "</td>" +
+    "<td>" + (r.tp_pct != null ? r.tp_pct.toFixed(2) : "—") + "</td>" +
+    "<td>" + (r.max_waves ?? "—") + "</td>" +
+    "<td>" + (r.score != null ? r.score.toFixed(4) : "—") + "</td>" +
+    "<td>" + (r.trials ?? "—") + "</td>" +
+    "<td class='muted'>" + (r.updated_at ? r.updated_at.slice(0, 16).replace("T", " ") : "—") + "</td>" +
+    "</tr>"
+  ).join("");
+}
+
+async function loadParams() {
+  try {
+    const [rows, mlData] = await Promise.all([
+      api("GET", "/api/params"),
+      api("GET", "/api/ml"),
+    ]);
+    renderParamsRows(rows);
+    renderMlStatus(mlData);
+  } catch (_) {
+    // errors already alerted by api()
+  }
+}
+
+// Initialise on first load; also refresh when the global refresh event fires.
+document.addEventListener("DOMContentLoaded", loadParams);
+document.body.addEventListener("refresh", loadParams);
 
 // --- Alpine (CSP build): modal visibility only -------------------------
 

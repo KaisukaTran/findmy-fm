@@ -25,6 +25,9 @@ from app.security import require_api_key
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+# Display filters: money = ##,###.## (thousands + 2dp); qty keeps crypto precision.
+templates.env.filters["money"] = lambda v: f"{float(v or 0):,.2f}"
+templates.env.filters["qty"] = lambda v: f"{float(v or 0):,.6f}"
 
 api_router = APIRouter()
 ui_router = APIRouter()

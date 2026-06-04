@@ -5,12 +5,12 @@
     {% for r in rows %}
     <tr>
       <td>{{ r.symbol }}</td>
-      <td>{{ "%.6f"|format(r.quantity) }}</td>
-      <td>{{ "%.2f"|format(r.avg_entry_price) }}</td>
-      <td>{{ "%.2f"|format(r.current_price) }}</td>
-      <td>${{ "%.2f"|format(r.market_value) }}</td>
+      <td>{{ r.quantity | qty }}</td>
+      <td>{{ r.avg_entry_price | money }}</td>
+      <td>{{ r.current_price | money }}</td>
+      <td>${{ r.market_value | money }}</td>
       <td class="{{ 'pos' if r.unrealized_pnl >= 0 else 'neg' }}">
-        ${{ "%.2f"|format(r.unrealized_pnl) }} ({{ "%.1f"|format(r.unrealized_pnl_pct) }}%)
+        ${{ r.unrealized_pnl | money }} ({{ "%.1f"|format(r.unrealized_pnl_pct) }}%)
       </td>
     </tr>
     {% endfor %}

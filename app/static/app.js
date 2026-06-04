@@ -131,19 +131,25 @@ document.addEventListener("submit", async (e) => {
   }
 });
 
+// ##,###.## money formatting; qty keeps crypto precision.
+const money = (v) =>
+  Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const qtyFmt = (v) =>
+  Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 6 });
+
 function renderPreview(r) {
   const el = document.getElementById("preview-output");
   if (!el) return;
   const rows = r.waves
     .map(
       (w) =>
-        `<tr><td>${w.wave_num}</td><td>${w.target_price}</td><td>${w.quantity}</td>` +
-        `<td>${w.avg_price_after}</td><td>${w.tp_price_after}</td></tr>`
+        `<tr><td>${w.wave_num}</td><td>${money(w.target_price)}</td><td>${qtyFmt(w.quantity)}</td>` +
+        `<td>${money(w.avg_price_after)}</td><td>${money(w.tp_price_after)}</td></tr>`
     )
     .join("");
   el.innerHTML =
-    `<p>Total cost ≈ <b>${r.total_cost}</b> · range ${r.price_range_pct}% · ` +
-    `final avg ${r.final_avg_price}</p>` +
+    `<p>Total cost ≈ <b>$${money(r.total_cost)}</b> · range ${r.price_range_pct}% · ` +
+    `final avg $${money(r.final_avg_price)}</p>` +
     `<table class="tbl"><thead><tr><th>#</th><th>Price</th><th>Qty</th>` +
     `<th>Avg after</th><th>TP after</th></tr></thead><tbody>${rows}</tbody></table>`;
 }

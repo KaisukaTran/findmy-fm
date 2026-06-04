@@ -1,11 +1,11 @@
 <div class="cards">
-  <div class="card"><div class="label">Total equity</div><div class="value">${{ "%.2f"|format(s.total_equity) }}</div></div>
-  <div class="card"><div class="label">Cash</div><div class="value">${{ "%.2f"|format(s.cash) }}</div></div>
-  <div class="card"><div class="label">Market value</div><div class="value">${{ "%.2f"|format(s.total_market_value) }}</div></div>
+  <div class="card"><div class="label">Total equity</div><div class="value">${{ s.total_equity | money }}</div></div>
+  <div class="card"><div class="label">Cash</div><div class="value">${{ s.cash | money }}</div></div>
+  <div class="card"><div class="label">Market value</div><div class="value">${{ s.total_market_value | money }}</div></div>
   <div class="card"><div class="label">Realized P&L</div>
-    <div class="value {{ 'pos' if s.realized_pnl >= 0 else 'neg' }}">${{ "%.2f"|format(s.realized_pnl) }}</div></div>
+    <div class="value {{ 'pos' if s.realized_pnl >= 0 else 'neg' }}">${{ s.realized_pnl | money }}</div></div>
   <div class="card"><div class="label">Unrealized P&L</div>
-    <div class="value {{ 'pos' if s.unrealized_pnl >= 0 else 'neg' }}">${{ "%.2f"|format(s.unrealized_pnl) }}</div></div>
+    <div class="value {{ 'pos' if s.unrealized_pnl >= 0 else 'neg' }}">${{ s.unrealized_pnl | money }}</div></div>
   <div class="card"><div class="label">Trades</div><div class="value">{{ s.total_trades }}</div></div>
   <div class="card"><div class="label">Pending</div><div class="value">{{ s.pending_count }}</div></div>
 </div>

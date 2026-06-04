@@ -7,10 +7,10 @@
       <td class="muted">{{ (r.executed_at or "")[11:19] }}</td>
       <td>{{ r.symbol }}</td>
       <td class="{{ 'pos' if r.side == 'BUY' else 'neg' }}">{{ r.side }}</td>
-      <td>{{ "%.6f"|format(r.quantity) }}</td>
-      <td>{{ "%.2f"|format(r.price) }}</td>
+      <td>{{ r.quantity | qty }}</td>
+      <td>{{ r.price | money }}</td>
       <td>{{ "%.4f"|format(r.fee) }}</td>
-      <td class="{{ 'pos' if r.realized_pnl >= 0 else 'neg' }}">{{ "%.2f"|format(r.realized_pnl) }}</td>
+      <td class="{{ 'pos' if r.realized_pnl >= 0 else 'neg' }}">{{ r.realized_pnl | money }}</td>
     </tr>
     {% endfor %}
   </tbody>

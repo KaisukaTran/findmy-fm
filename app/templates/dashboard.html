@@ -75,6 +75,7 @@
       <button class="tab" data-tab="overview">Tổng quan</button>
       <button class="tab" data-tab="trading">Giao dịch</button>
       <button class="tab" data-tab="opus">OPUS</button>
+      <button class="tab" data-tab="losses">Phân tích lỗ</button>
       <button class="tab" data-tab="strategy">Chiến lược</button>
       <button class="tab" data-tab="logs">Nhật ký</button>
     </nav>
@@ -121,12 +122,22 @@
       </div>
     </div>
 
+    <!-- TAB: Phân tích lỗ (Loss analysis — for strategy improvement) -->
+    <div data-tab-panel="losses">
+      <div class="panel" style="margin-top:16px">
+        <h2>Phân tích lỗ — nguyên nhân / thời gian / giá trị / cặp</h2>
+        <div hx-get="/partials/losses" hx-trigger="load, every 30s, refresh from:body" hx-swap="innerHTML"></div>
+      </div>
+    </div>
+
     <!-- TAB: Chiến lược (Strategy / Params) -->
     <div data-tab-panel="strategy">
       <div class="grid" style="margin-top:16px">
         <div class="panel">
           <h2>Cấu hình KSS (tổng)</h2>
-          <div hx-get="/partials/kss-settings" hx-trigger="load, refresh from:body" hx-swap="innerHTML"></div>
+          <!-- load once only: a global refresh must NOT reload the form while the user is
+               editing (it would clobber unsaved input). Saving keeps the typed values. -->
+          <div hx-get="/partials/kss-settings" hx-trigger="load" hx-swap="innerHTML"></div>
         </div>
         <div class="panel" id="params-panel">
           <h2>Hyperopt &amp; ML Params</h2>

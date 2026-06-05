@@ -1,0 +1,48 @@
+{% set cause_badge = {'OPUS':'ml-on','KSS-SL':'veto','KSS-Trail':'hyperopt-on','KSS-TP?':'breaker-frozen','Khác':''} %}
+<div class="cards" style="margin-bottom:12px">
+  <div class="card"><div class="label" data-tip="Tổng lỗ đã chốt từ mọi lệnh bán có realized < 0.">Tổng lỗ đã chốt</div>
+    <div class="value neg">${{ L.total | money }}</div></div>
+  <div class="card"><div class="label" data-tip="Số lệnh bán bị lỗ.">Số lệnh lỗ</div><div class="value">{{ L.count }}</div></div>
+  {% for tag, c in L.by_cause.items() %}
+  <div class="card"><div class="label"><span class="badge {{ cause_badge.get(tag,'') }}">{{ tag }}</span></div>
+    <div class="value neg" style="font-size:15px">${{ c.total | money }} <span class="muted" style="font-size:12px">· {{ c.count }} lệnh</span></div></div>
+  {% endfor %}
+</div>
+
+{% if L.by_pair %}
+<h3 style="margin:6px 0 4px;font-size:13px;color:var(--muted)">Cặp lỗ nhiều nhất</h3>
+<div class="scroll" style="margin-bottom:14px"><table class="tbl">
+  <thead><tr><th>Cặp</th><th>Số lệnh lỗ</th><th>Tổng lỗ</th></tr></thead>
+  <tbody>
+    {% for sym, p in L.by_pair %}
+    <tr><td>{{ sym }}</td><td>{{ p.count }}</td><td class="neg">${{ p.total | money }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+<h3 style="margin:6px 0 4px;font-size:13px;color:var(--muted)">Nhật ký từng lệnh lỗ</h3>
+{% if L.rows %}
+<div class="scroll"><table class="tbl">
+  <thead><tr>
+    <th title="Thời điểm khớp (giờ VN).">Thời gian</th>
+    <th>Cặp</th>
+    <th title="Giá trị lệnh = KL × giá.">Giá trị $</th>
+    <th title="Lãi/lỗ đã chốt (âm).">Lỗ $</th>
+    <th title="Phí giao dịch của lệnh này.">Phí $</th>
+    <th title="Nguyên nhân suy ra từ nguồn lệnh — di chuột vào để xem chi tiết.">Nguyên nhân</th>
+  </tr></thead>
+  <tbody>
+    {% for r in L.rows %}
+    <tr>
+      <td class="muted">{{ r.time }}</td>
+      <td>{{ r.symbol }}</td>
+      <td class="muted">${{ r.value | money }}</td>
+      <td class="neg">${{ r.loss | money }}</td>
+      <td class="muted">{{ "%.4f"|format(r.fee) }}</td>
+      <td><span class="badge {{ cause_badge.get(r.tag,'') }}" title="{{ r.reason }} | {{ r.source_ref }}">{{ r.tag }}</span></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table></div>
+{% else %}<p class="pos">Chưa có lệnh lỗ nào. 🎉</p>{% endif %}

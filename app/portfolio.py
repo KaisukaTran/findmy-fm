@@ -73,6 +73,75 @@ def positions_view(db: Session) -> list[dict]:
     return rows
 
 
+_LOSS_CAUSES = {
+    "OPUS": "OPUS đóng vị thế lỗ (hard-stop hoặc quyết định của Opus)",
+    "KSS-SL": "Cắt lỗ KSS: giá ≤ avg×(1−SL%)",
+    "KSS-Trail": "Trailing KSS: giá rớt quá ngưỡng từ đỉnh sau khi đã có lãi",
+    "KSS-TP?": "‘Chốt lời’ KSS nhưng LỖ — avg tổng của coin cao hơn giá TP của session "
+               "(nhiều session cùng coin chung một vị thế tổng). Cần xem lại.",
+    "Khác": "Không rõ nguồn / lệnh thủ công",
+}
+
+
+def _loss_tag(source_ref: str | None) -> str:
+    if not source_ref:
+        return "Khác"
+    if source_ref.startswith("opus:"):
+        return "OPUS"
+    if source_ref.endswith(":sl"):
+        return "KSS-SL"
+    if source_ref.endswith(":trailing"):
+        return "KSS-Trail"
+    if source_ref.endswith(":tp"):
+        return "KSS-TP?"
+    return "Khác"
+
+
+def loss_analysis(db: Session, limit: int = 300) -> dict:
+    """Every losing fill with its cause, plus breakdowns by cause and by pair (for strategy
+    improvement). Read-only; loss = realized_pnl < 0."""
+    from app import timefmt
+
+    losses = (
+        db.query(Fill)
+        .filter(Fill.realized_pnl < 0)
+        .order_by(Fill.executed_at.desc())
+        .limit(limit)
+        .all()
+    )
+    rows, by_cause, by_pair = [], {}, {}
+    for f in losses:
+        tag = _loss_tag(f.source_ref)
+        loss = float(f.realized_pnl or 0.0)
+        rows.append({
+            "time": timefmt.local_dt(f.executed_at),
+            "symbol": f.symbol,
+            "side": f.side,
+            "quantity": f.quantity,
+            "value": f.quantity * f.price,
+            "loss": loss,
+            "fee": float(f.fee or 0.0),
+            "tag": tag,
+            "reason": _LOSS_CAUSES.get(tag, tag),
+            "source_ref": f.source_ref or "",
+        })
+        c = by_cause.setdefault(tag, {"count": 0, "total": 0.0})
+        c["count"] += 1
+        c["total"] += loss
+        p = by_pair.setdefault(f.symbol, {"count": 0, "total": 0.0})
+        p["count"] += 1
+        p["total"] += loss
+    total = sum(r["loss"] for r in rows)
+    by_pair_sorted = sorted(by_pair.items(), key=lambda kv: kv[1]["total"])  # worst first
+    return {
+        "rows": rows,
+        "count": len(rows),
+        "total": total,
+        "by_cause": by_cause,
+        "by_pair": by_pair_sorted[:10],
+    }
+
+
 def trades_view(db: Session, limit: int = 50) -> list[dict]:
     """Most recent fills (trade history), tagged with their provenance (OPUS/KSS/…)."""
     fills = db.query(Fill).order_by(Fill.executed_at.desc()).limit(limit).all()

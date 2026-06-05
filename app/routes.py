@@ -572,6 +572,19 @@ def partial_status(request: Request, db: Session = Depends(get_db)):
     )
 
 
+@api_router.get("/api/losses")
+def api_losses(db: Session = Depends(get_db)):
+    """Loss analysis (every losing fill + breakdowns) as JSON."""
+    return portfolio.loss_analysis(db)
+
+
+@ui_router.get("/partials/losses", response_class=HTMLResponse)
+def partial_losses(request: Request, db: Session = Depends(get_db)):
+    return templates.TemplateResponse(
+        "partials/losses.html", {"request": request, "L": portfolio.loss_analysis(db)}
+    )
+
+
 @ui_router.get("/partials/kss-settings", response_class=HTMLResponse)
 def partial_kss_settings(request: Request, db: Session = Depends(get_db)):
     k = runtime.kss_settings(db)

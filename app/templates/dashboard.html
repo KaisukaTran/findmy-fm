@@ -123,9 +123,15 @@
 
     <!-- TAB: Chiến lược (Strategy / Params) -->
     <div data-tab-panel="strategy">
-      <div class="panel" style="margin-top:16px" id="params-panel">
-        <h2>Hyperopt &amp; ML Params</h2>
-        {% include "partials/params.html" %}
+      <div class="grid" style="margin-top:16px">
+        <div class="panel">
+          <h2>Cấu hình KSS (tổng)</h2>
+          <div hx-get="/partials/kss-settings" hx-trigger="load, refresh from:body" hx-swap="innerHTML"></div>
+        </div>
+        <div class="panel" id="params-panel">
+          <h2>Hyperopt &amp; ML Params</h2>
+          {% include "partials/params.html" %}
+        </div>
       </div>
     </div>
 

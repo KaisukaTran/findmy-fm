@@ -1,0 +1,33 @@
+<p class="muted" style="margin:0 0 10px">Cấu hình tổng cho chiến lược KSS — áp dụng cho các session <b>mới</b>.
+  Lưu bền qua restart. (Session đang chạy giữ tham số cũ, trừ SL/Trailing đọc động.)</p>
+
+<form id="kss-settings-form">
+  <label title="Khoảng cách giá giữa các sóng DCA. Giá sóng n = entry×(1−d%)^n.">Distance %
+    <input name="scan_distance_pct" type="number" step="0.1" min="0.1" value="{{ '%.2f'|format(k.scan_distance_pct) }}" required></label>
+  <label title="Chốt lời: bán toàn bộ khi giá ≥ avg×(1+TP%).">TP %
+    <input name="scan_tp_pct" type="number" step="0.1" min="0.1" value="{{ '%.2f'|format(k.scan_tp_pct) }}" required></label>
+  <label title="Số sóng DCA tối đa mỗi session.">Số sóng (max)
+    <input name="scan_max_waves" type="number" step="1" min="1" value="{{ k.scan_max_waves }}" required></label>
+  <label title="Vốn cô lập mỗi session (USD).">Vốn/session $
+    <input name="scan_fund" type="number" step="10" min="1" value="{{ '%.0f'|format(k.scan_fund) }}" required></label>
+  <label title="Cắt lỗ: bán toàn bộ khi giá ≤ avg×(1−SL%). 0 = tắt.">SL %
+    <input name="sl_pct" type="number" step="0.1" min="0" value="{{ '%.2f'|format(k.sl_pct) }}" required></label>
+  <label title="Trailing stop: khi có lãi, bán nếu giá ≤ đỉnh×(1−Trail%). 0 = tắt.">Trailing %
+    <input name="trailing_pct" type="number" step="0.1" min="0" value="{{ '%.2f'|format(k.trailing_pct) }}" required></label>
+  <label title="Số ngày tối đa chờ TP trước khi đóng session.">Deadline (ngày)
+    <input name="deadline_days" type="number" step="1" min="1" value="{{ k.deadline_days }}" required></label>
+  <button type="submit" class="ok">Lưu cấu hình KSS</button>
+</form>
+
+<div style="margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)">
+  <div class="muted" style="font-size:12px">Kiểm tra tính nhất quán:</div>
+  <div style="margin-top:4px">Thang DCA chạm tới <b>−{{ '%.1f'|format(depth_pct) }}%</b> so với giá vào (sóng cuối =
+    entry×(1−{{ '%.1f'|format(k.scan_distance_pct) }}%)^{{ k.scan_max_waves }}).</div>
+  <div style="margin-top:2px">SL hiện <b>{{ '%.1f'|format(k.sl_pct) }}%</b> (so với avg).
+    {% if k.sl_pct > 0 and k.sl_pct < depth_pct * 0.6 %}
+    <span class="neg">⚠ SL khá nông so với độ sâu thang — nhiều sóng sâu có thể bị SL cắt trước khi kịp khớp. Cân nhắc tăng SL, giảm số sóng, hoặc giảm distance.</span>
+    {% else %}
+    <span class="pos">✓ Cân đối hợp lý.</span>
+    {% endif %}
+  </div>
+</div>

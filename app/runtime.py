@@ -32,6 +32,18 @@ KEY_OPUS_SHADOW = "opus_shadow"
 KEY_AUTOAPPROVE_ENABLED = "autoapprove_enabled"
 KEY_AUTOAPPROVE_MAX = "autoapprove_max_notional"
 
+# Master KSS strategy knobs the dashboard edits (persisted as kss:<field>). Each maps to a
+# settings field; the cast keeps them typed when restored from the string-valued KV store.
+KSS_SETTING_FIELDS: dict[str, type] = {
+    "scan_distance_pct": float,
+    "scan_tp_pct": float,
+    "scan_max_waves": int,
+    "scan_fund": float,
+    "sl_pct": float,
+    "trailing_pct": float,
+    "deadline_days": int,
+}
+
 # ---------------------------------------------------------------------------
 # Generic KV helpers
 # ---------------------------------------------------------------------------
@@ -114,6 +126,25 @@ def set_autoapprove(db: Session, *, enabled: bool, max_notional: float | None) -
         set(db, KEY_AUTOAPPROVE_MAX, max_notional)
 
 
+def kss_settings(db: Session) -> dict:  # noqa: ARG001 (db kept for a uniform signature)
+    """Current master KSS knobs from the live settings singleton."""
+    return {k: getattr(settings, k) for k in KSS_SETTING_FIELDS}
+
+
+def set_kss_settings(db: Session, values: dict) -> dict:
+    """Update + persist the master KSS knobs (applied to NEW sessions). Returns the new set."""
+    for key, cast in KSS_SETTING_FIELDS.items():
+        if values.get(key) is None:
+            continue
+        try:
+            val = cast(values[key])
+        except (TypeError, ValueError):
+            continue
+        setattr(settings, key, val)
+        set(db, f"kss:{key}", val)
+    return kss_settings(db)
+
+
 def opus_shadow_set(db: Session, shadow: bool) -> dict:
     """Set OPUS shadow mode (True = log intents but don't execute). Persisted."""
     settings.opus_shadow = shadow
@@ -185,3 +216,11 @@ def sync_from_db(db: Session) -> None:
             settings.autoapprove_max_notional = float(aa_max)
         except ValueError:
             pass
+    # Master KSS knobs (persisted dashboard edits).
+    for key, cast in KSS_SETTING_FIELDS.items():
+        raw = get(db, f"kss:{key}")
+        if raw is not None:
+            try:
+                setattr(settings, key, cast(raw))
+            except (TypeError, ValueError):
+                pass

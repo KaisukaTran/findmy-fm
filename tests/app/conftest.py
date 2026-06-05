@@ -45,6 +45,8 @@ _MUTABLE_SETTINGS = (
     "full_auto", "scheduler_enabled", "scan_interval_min",
     "guardian_enabled", "telegram_enabled",
     "opus_mode", "opus_shadow", "opus_allocation_usd", "opus_daily_cost_cap_usd",
+    "scan_distance_pct", "scan_tp_pct", "scan_max_waves", "scan_fund",
+    "sl_pct", "trailing_pct", "deadline_days",
 )
 
 

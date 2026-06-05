@@ -283,6 +283,27 @@ async def set_full_auto(body: FullAutoBody, db: Session = Depends(get_db)):
     return {**runtime.state(db), "scheduler_running": scheduler.is_running()}
 
 
+class KssSettingsBody(BaseModel):
+    scan_distance_pct: float | None = Field(None, gt=0, le=50)
+    scan_tp_pct: float | None = Field(None, gt=0, le=100)
+    scan_max_waves: int | None = Field(None, ge=1, le=50)
+    scan_fund: float | None = Field(None, gt=0)
+    sl_pct: float | None = Field(None, ge=0, le=100)
+    trailing_pct: float | None = Field(None, ge=0, le=100)
+    deadline_days: int | None = Field(None, ge=1, le=365)
+
+
+@api_router.get("/api/kss-settings")
+def get_kss_settings(db: Session = Depends(get_db)):
+    return runtime.kss_settings(db)
+
+
+@api_router.post("/api/kss-settings", dependencies=[Depends(require_api_key)])
+def set_kss_settings(body: KssSettingsBody, db: Session = Depends(get_db)):
+    """Update the master KSS knobs (applied to NEW sessions). Persisted across restarts."""
+    return runtime.set_kss_settings(db, body.model_dump(exclude_none=True))
+
+
 class OpusBody(BaseModel):
     enabled: bool
 
@@ -548,6 +569,17 @@ def partial_pending(request: Request, db: Session = Depends(get_db)):
 def partial_status(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         "partials/status.html", {"request": request, "a": _automation_state(db)}
+    )
+
+
+@ui_router.get("/partials/kss-settings", response_class=HTMLResponse)
+def partial_kss_settings(request: Request, db: Session = Depends(get_db)):
+    k = runtime.kss_settings(db)
+    # Ladder depth at the last wave = how far below entry the deepest DCA buy sits.
+    depth_pct = (1 - (1 - k["scan_distance_pct"] / 100) ** k["scan_max_waves"]) * 100
+    return templates.TemplateResponse(
+        "partials/kss_settings.html",
+        {"request": request, "k": k, "depth_pct": depth_pct},
     )
 
 

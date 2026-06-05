@@ -289,6 +289,20 @@ document.addEventListener("submit", async (e) => {
       tp_pct: Number(f.get("tp_pct")),
     });
     refreshAll();
+  } else if (form.id === "kss-settings-form") {
+    e.preventDefault();
+    const f = new FormData(form);
+    await api("POST", "/api/kss-settings", {
+      scan_distance_pct: num(f.get("scan_distance_pct")),
+      scan_tp_pct: num(f.get("scan_tp_pct")),
+      scan_max_waves: num(f.get("scan_max_waves")),
+      scan_fund: num(f.get("scan_fund")),
+      sl_pct: num(f.get("sl_pct")),
+      trailing_pct: num(f.get("trailing_pct")),
+      deadline_days: num(f.get("deadline_days")),
+    });
+    alert("Đã lưu cấu hình KSS — áp dụng cho session mới.");
+    refreshAll();
   } else if (form.id === "preview-form") {
     e.preventDefault();
     const f = new FormData(form);

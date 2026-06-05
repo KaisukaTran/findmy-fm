@@ -291,8 +291,11 @@ def get_opus(db: Session = Depends(get_db)):
 
 
 @api_router.post("/api/opus", dependencies=[Depends(require_api_key)])
-def set_opus(body: OpusBody, db: Session = Depends(get_db)):
-    """Enable/disable OPUS mode (persisted) and start/stop its independent decision loop."""
+async def set_opus(body: OpusBody, db: Session = Depends(get_db)):
+    """Enable/disable OPUS mode (persisted) and start/stop its independent decision loop.
+
+    Must be async: the loop uses asyncio.create_task, which needs the running event loop.
+    """
     from app.orchestrator import loop as opus_loop
 
     if body.enabled:

@@ -56,6 +56,24 @@ def test_state_shape(db, monkeypatch):
     assert s["kpi_target_pct"] == settings.opus_kpi_target_pct
 
 
+def test_toggle_opus_endpoint_starts_loop(monkeypatch):
+    """POST /api/opus must run async so loop.start()'s create_task has an event loop."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.orchestrator import loop as opus_loop
+
+    calls = {"start": 0, "stop": 0}
+    monkeypatch.setattr(opus_loop, "start", lambda: calls.__setitem__("start", calls["start"] + 1))
+    monkeypatch.setattr(opus_loop, "stop", lambda: calls.__setitem__("stop", calls["stop"] + 1))
+    with TestClient(app) as c:
+        r = c.post("/api/opus", json={"enabled": True})
+        assert r.status_code == 200 and r.json()["mode"] is True
+        assert calls["start"] == 1
+        r = c.post("/api/opus", json={"enabled": False})
+        assert r.status_code == 200 and calls["stop"] == 1
+
+
 def test_cost_cap_and_spend(db, monkeypatch):
     monkeypatch.setattr(settings, "opus_daily_cost_cap_usd", 5.0)
     db.add(om.OpusCostLedger(input_tokens=1000, output_tokens=500, raw_cost=2.0, billed_cost=4.0))

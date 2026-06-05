@@ -3,12 +3,14 @@
 from app import charts, orders, portfolio
 
 
-def test_equity_curve_svg():
+def test_equity_curve_svg(monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "tz_offset_hours", 0)  # pin UTC for a stable assertion
     times = ["2026-06-04T09:00:00", "2026-06-04T10:30:00", "2026-06-04T12:00:00"]
     svg = charts.equity_curve_svg([10000.0, 10120.0, 10080.0], times)
     assert svg.startswith("<svg") and "polyline" in svg
     assert "polygon" in svg          # area fill
-    assert "09:00" in svg and "12:00" in svg  # time axis labels
+    assert "09:00" in svg and "12:00" in svg  # time axis labels (display zone)
     assert "10,120.00" in svg        # value tick (##,###.##)
     assert charts.equity_curve_svg([]).startswith("<p")  # empty -> placeholder
 

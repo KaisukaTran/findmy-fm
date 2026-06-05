@@ -28,6 +28,7 @@ from app import (
     runtime,
     scanner,
     scheduler,
+    timefmt,
 )
 from app.config import settings
 from app.db import get_db
@@ -42,6 +43,9 @@ templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 templates.env.filters["money"] = lambda v: f"{float(v or 0):,.2f}"
 templates.env.filters["qty"] = lambda v: f"{float(v or 0):,.6f}"
 templates.env.filters["ladder"] = charts.pyramid_ladder_svg  # session dict -> SVG
+# Display timezone: stored UTC -> local (Vietnam GMT+7) HH:MM:SS / full datetime.
+templates.env.filters["hms"] = timefmt.local_hms
+templates.env.filters["localdt"] = timefmt.local_dt
 
 api_router = APIRouter()
 ui_router = APIRouter()

@@ -42,10 +42,13 @@ def sparkline_svg(values: list[float], w: int = 140, h: int = 34, stroke: str = 
 
 
 def _time_label(iso: str) -> str:
-    """ISO timestamp -> short axis label (HH:MM, or MM-DD if no time part)."""
-    if "T" in iso:
-        return iso[11:16]
-    return iso[5:10] or iso[:10]
+    """ISO timestamp -> short axis label in the display zone (HH:MM, or MM-DD if date-only)."""
+    from app.timefmt import to_local
+
+    dt = to_local(iso)
+    if dt is None:
+        return (iso or "")[:10]
+    return dt.strftime("%H:%M") if "T" in iso else dt.strftime("%m-%d")
 
 
 def equity_curve_svg(

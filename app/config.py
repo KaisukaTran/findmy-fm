@@ -64,6 +64,11 @@ class Settings(BaseSettings):
 
     # --- Market data ---
     price_cache_ttl: int = Field(default=60, description="Seconds to cache live prices.")
+    tz_offset_hours: int = Field(
+        default=7,
+        description="Display timezone offset from UTC (Vietnam = +7). Storage stays UTC; this "
+        "only shifts timestamps shown in the dashboard/charts.",
+    )
     live_exchange: str = Field(default="kraken", description="ccxt exchange id for live prices (public, no key — e.g. kraken/okx/bybit; binance.com is geo/network-blocked here).")
     data_exchange: str = Field(
         default="kraken",

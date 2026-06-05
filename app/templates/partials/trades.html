@@ -1,7 +1,7 @@
 {% if rows %}
 <table class="tbl">
   <thead><tr>
-    <th title="Thời điểm khớp lệnh (giờ:phút:giây, UTC).">Time</th>
+    <th title="Thời điểm khớp lệnh (giờ:phút:giây, giờ VN GMT+7).">Time</th>
     <th title="Mã coin.">Sym</th>
     <th title="Hướng: BUY (mua) / SELL (bán).">Side</th>
     <th title="Khối lượng khớp.">Qty</th>
@@ -12,7 +12,7 @@
   <tbody>
     {% for r in rows %}
     <tr>
-      <td class="muted">{{ (r.executed_at or "")[11:19] }}</td>
+      <td class="muted">{{ r.executed_at | hms }}</td>
       <td>{{ r.symbol }}</td>
       <td class="{{ 'pos' if r.side == 'BUY' else 'neg' }}">{{ r.side }}</td>
       <td>{{ r.quantity | qty }}</td>

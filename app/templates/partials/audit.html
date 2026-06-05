@@ -4,7 +4,7 @@
   <tbody>
     {% for a in rows %}
     <tr>
-      <td class="muted">{{ (a.created_at or "")[11:19] }}</td>
+      <td class="muted">{{ a.created_at | hms }}</td>
       <td>{{ a.actor }}</td>
       <td>{{ a.action }}</td>
       <td class="muted">{{ a.entity or "" }}</td>

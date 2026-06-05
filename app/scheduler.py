@@ -94,6 +94,9 @@ def run_cycle(db: Session) -> dict:
                 PendingOrder.status == PENDING,
                 PendingOrder.auto_veto == False,  # noqa: E712
                 PendingOrder.source.in_(_eligible_sources),
+                # Guardian only screens NEW risk (BUYs). Exits (SELLs) reduce risk and must
+                # never be vetoed — vetoing a take-profit/stop traps capital (drawdown).
+                PendingOrder.side == "BUY",
             )
             .all()
         )

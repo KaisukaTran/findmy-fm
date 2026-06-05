@@ -116,6 +116,11 @@ class Settings(BaseSettings):
     )
     sl_pct: float = Field(default=8.0, description="KSS session stop-loss %% below avg price (0 = disabled).")
     trailing_pct: float = Field(default=3.0, description="KSS trailing-stop %% below peak once in profit (0 = disabled).")
+    max_sessions_per_symbol: int = Field(
+        default=2,
+        description="Cap concurrent ACTIVE KSS sessions per symbol (limits single-coin "
+        "concentration / drawdown). 0 = unlimited.",
+    )
     stop_cooldown_min: float = Field(
         default=240.0,
         description="Minutes after a stop-loss/trailing exit before the scanner may re-open "

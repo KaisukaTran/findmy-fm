@@ -304,6 +304,13 @@ def set_opus(body: OpusBody, db: Session = Depends(get_db)):
     return {**opus_service.state(db), "loop_running": opus_loop.is_running()}
 
 
+@api_router.post("/api/opus/shadow", dependencies=[Depends(require_api_key)])
+def set_opus_shadow(body: OpusBody, db: Session = Depends(get_db)):
+    """Toggle OPUS shadow mode (True = log intents only; False = execute on paper)."""
+    runtime.opus_shadow_set(db, body.enabled)
+    return opus_service.state(db)
+
+
 @api_router.get("/api/opus/metrics")
 def opus_metrics(hours: int = 48, db: Session = Depends(get_db)):
     """Hourly OPUS net-profit series + the current KPI/cost state (drives the chart)."""

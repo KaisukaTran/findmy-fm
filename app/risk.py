@@ -107,8 +107,18 @@ def check_daily_loss(db: Session) -> str | None:
     return None
 
 
-def check_all_risks(symbol: str, qty: float, price: float, db: Session) -> tuple[bool, list[str]]:
-    """Run all pre-queue risk checks. Returns (passed, [violations])."""
+def check_all_risks(
+    symbol: str, qty: float, price: float, db: Session, side: str = "BUY"
+) -> tuple[bool, list[str]]:
+    """
+    Run all pre-queue risk checks. Returns (passed, [violations]).
+
+    These are ENTRY gates (they cap new exposure / halt on a loss spiral). A SELL *reduces*
+    exposure, so it is never blocked — applying an "exceeds max position size" check to an
+    exit would deadlock an oversized position (can't sell because it's too big → stays big).
+    """
+    if side.upper() == "SELL":
+        return True, []
     violations: list[str] = []
     if v := check_position_size(symbol, qty, price, db):
         violations.append(v)

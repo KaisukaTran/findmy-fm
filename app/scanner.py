@@ -141,6 +141,9 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
             if _in_stop_cooldown(db, symbol):
                 cand.reason += " | skipped: stop-loss cooldown"
                 audit.log(db, "scanner", "skipped_cooldown", entity=symbol)
+            elif _symbol_at_cap(db, symbol):
+                cand.reason += " | skipped: per-symbol session cap"
+                audit.log(db, "scanner", "skipped_concentration", entity=symbol)
             else:
                 ok, why = _can_open(db)
                 if ok:
@@ -186,6 +189,18 @@ def _in_stop_cooldown(db: Session, symbol: str) -> bool:
         return False
     elapsed_min = (datetime.utcnow() - stopped_at).total_seconds() / 60.0
     return elapsed_min < settings.stop_cooldown_min
+
+
+def _symbol_at_cap(db: Session, symbol: str) -> bool:
+    """True if `symbol` already has the max concurrent ACTIVE sessions (concentration cap)."""
+    if settings.max_sessions_per_symbol <= 0:
+        return False
+    n = (
+        db.query(KssSession)
+        .filter(KssSession.symbol == symbol, KssSession.status == SESSION_ACTIVE)
+        .count()
+    )
+    return n >= settings.max_sessions_per_symbol
 
 
 def _open_session(

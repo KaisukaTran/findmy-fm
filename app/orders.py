@@ -64,7 +64,7 @@ def queue_order(
         raise ValueError("Quantity must be positive")
 
     ref_price = price if price > 0 else (get_current_prices([symbol]).get(symbol) or 0.0)
-    _, violations = check_all_risks(symbol, quantity, ref_price, db)
+    _, violations = check_all_risks(symbol, quantity, ref_price, db, side=side)
     risk_note = "; ".join(violations) if violations else None
 
     order = PendingOrder(
@@ -183,7 +183,9 @@ def auto_fill_due_orders(db: Session) -> list[int]:
     prices = get_current_prices(list({o.symbol for o in pend}))
     approved: list[int] = []
     for o in pend:
-        if o.auto_veto:
+        # Exit SELLs reduce risk — never let a (possibly stale) veto trap them; only a
+        # vetoed BUY (new risk) is held back.
+        if o.auto_veto and o.side == "BUY":
             continue
         price = prices.get(o.symbol)
         if price is None:
@@ -283,16 +285,18 @@ def _update_position(
         pos.total_cost += qty * price + fee
         pos.quantity = new_qty
         pos.avg_entry_price = pos.total_cost / new_qty if new_qty > 0 else 0.0
-    else:  # SELL
-        sell_qty = min(qty, pos.quantity) if pos.quantity > 0 else qty
-        cost_basis = pos.avg_entry_price * sell_qty
-        proceeds = price * sell_qty - fee
-        realized = proceeds - cost_basis
-        pos.realized_pnl += realized
-        pos.quantity = max(0.0, pos.quantity - sell_qty)
-        pos.total_cost = max(0.0, pos.total_cost - cost_basis)
-        if pos.quantity == 0:
-            pos.avg_entry_price = 0.0
+    else:  # SELL — never sell more than is held; an empty position books NO proceeds
+        # (a stale/duplicate exit hitting a flat position must not invent phantom profit).
+        sell_qty = min(qty, max(pos.quantity, 0.0))
+        if sell_qty > 0:
+            cost_basis = pos.avg_entry_price * sell_qty
+            proceeds = price * sell_qty - fee
+            realized = proceeds - cost_basis
+            pos.realized_pnl += realized
+            pos.quantity = max(0.0, pos.quantity - sell_qty)
+            pos.total_cost = max(0.0, pos.total_cost - cost_basis)
+            if pos.quantity == 0:
+                pos.avg_entry_price = 0.0
     pos.updated_at = datetime.utcnow()
     db.flush()
     return realized

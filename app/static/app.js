@@ -126,6 +126,14 @@ const actions = {
     await api("POST", "/api/opus", { enabled: !s.mode });
     refreshAll();
   },
+  async toggleOpusShadow() {
+    const s = await api("GET", "/api/opus");
+    // shadow ON → confirm before letting Opus place (paper) orders.
+    if (s.shadow &&
+        !confirm("Turn OFF shadow? Opus will then PLACE paper orders (still inside the sandbox + caps).")) return;
+    await api("POST", "/api/opus/shadow", { enabled: !s.shadow });
+    refreshAll();
+  },
   async resetBreaker() {
     if (!confirm("Manually reset the circuit-breaker? The system will resume trading.")) return;
     await api("POST", "/api/breaker/reset");

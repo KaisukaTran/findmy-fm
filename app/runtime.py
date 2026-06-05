@@ -28,6 +28,7 @@ KEY_FROZEN = "breaker_frozen"
 KEY_FROZEN_REASON = "breaker_frozen_reason"
 KEY_FROZEN_AT = "breaker_frozen_at"  # ISO timestamp string
 KEY_OPUS_MODE = "opus_mode"
+KEY_OPUS_SHADOW = "opus_shadow"
 
 # ---------------------------------------------------------------------------
 # Generic KV helpers
@@ -102,6 +103,13 @@ def opus_mode_off(db: Session) -> dict:
     return state(db)
 
 
+def opus_shadow_set(db: Session, shadow: bool) -> dict:
+    """Set OPUS shadow mode (True = log intents but don't execute). Persisted."""
+    settings.opus_shadow = shadow
+    set_bool(db, KEY_OPUS_SHADOW, shadow)
+    return state(db)
+
+
 def state(db: Session) -> dict:
     """Return a snapshot of the current automation and breaker state."""
     return {
@@ -156,3 +164,4 @@ def sync_from_db(db: Session) -> None:
         settings.auto_trade = True
         settings.autoapprove_enabled = True
     settings.opus_mode = get_bool(db, KEY_OPUS_MODE, default=settings.opus_mode)
+    settings.opus_shadow = get_bool(db, KEY_OPUS_SHADOW, default=settings.opus_shadow)

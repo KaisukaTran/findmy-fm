@@ -112,16 +112,23 @@ def summary_view(db: Session) -> dict:
     )
 
     cash = settings.account_equity - total_invested + realized_pnl
+    total_equity = cash + total_market_value
+    base = settings.account_equity or 1.0  # % of starting capital for P&L
+    eq = total_equity or 1.0
     return {
         "total_trades": int(total_trades),
         "pending_count": int(pending_count),
         "positions_count": len(positions),
         "realized_pnl": realized_pnl,
+        "realized_pct": realized_pnl / base * 100,
         "unrealized_pnl": unrealized_pnl,
+        "unrealized_pct": (unrealized_pnl / total_invested * 100) if total_invested else 0.0,
         "total_invested": total_invested,
         "total_market_value": total_market_value,
+        "market_value_pct": total_market_value / eq * 100,
         "cash": cash,
-        "total_equity": cash + total_market_value,
+        "cash_pct": cash / eq * 100,
+        "total_equity": total_equity,
     }
 
 

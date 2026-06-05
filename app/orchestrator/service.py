@@ -95,6 +95,30 @@ def kpi_24h_pct(db: Session) -> float:
     return net_pnl_24h(db) / alloc * 100.0
 
 
+def realized_pnl(db: Session) -> float:
+    """Total realized P&L of OPUS-closed positions."""
+    total = (
+        db.query(func.coalesce(func.sum(OpusPosition.realized_pnl), 0.0)).scalar()
+    )
+    return float(total or 0.0)
+
+
+def unrealized_pnl(db: Session) -> float:
+    """Mark-to-market P&L of currently OPUS-managed (watch/ride) positions."""
+    from app.market import get_current_prices
+
+    rows = managed_positions(db)
+    if not rows:
+        return 0.0
+    prices = get_current_prices(sorted({p.symbol for p in rows}))
+    total = 0.0
+    for p in rows:
+        px = prices.get(p.symbol)
+        if px:
+            total += (px - (p.avg_price or p.entry_price or 0.0)) * (p.qty or 0.0)
+    return total
+
+
 def cost_cap_reached(db: Session) -> bool:
     return spend_today(db) >= settings.opus_daily_cost_cap_usd
 
@@ -135,12 +159,19 @@ def state(db: Session) -> dict:
     alloc = allocation()
     dep = deployed(db)
     spent = spend_today(db)
+    rpnl = realized_pnl(db)
+    upnl = unrealized_pnl(db)
+    total_pnl = rpnl + upnl - spent  # net of billed Opus cost
     return {
         "mode": settings.opus_mode,
         "shadow": settings.opus_shadow,
         "allocation_usd": alloc,
         "deployed_usd": dep,
         "free_usd": max(0.0, alloc - dep),
+        "realized_pnl": rpnl,
+        "unrealized_pnl": upnl,
+        "total_pnl": total_pnl,
+        "pnl_pct": (total_pnl / alloc * 100) if alloc > 0 else 0.0,
         "open_positions": len(managed_positions(db)),
         "spend_today_usd": spent,
         "daily_cost_cap_usd": settings.opus_daily_cost_cap_usd,

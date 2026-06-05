@@ -515,11 +515,22 @@ def partial_trades(request: Request, db: Session = Depends(get_db)):
 
 @ui_router.get("/partials/pending", response_class=HTMLResponse)
 def partial_pending(request: Request, db: Session = Depends(get_db)):
+    pend = orders.list_pending(db)
+    prices = portfolio.get_current_prices(list({o.symbol for o in pend})) if pend else {}
+    rows = []
+    for o in pend:
+        d = o.to_dict()
+        ref = o.price if o.price > 0 else (prices.get(o.symbol) or 0.0)
+        d["notional"] = o.quantity * ref
+        # auto-clears in the background when ≤ threshold & eligible source; else manual.
+        d["auto"] = (o.source in settings.autoapprove_sources
+                     and ref > 0 and d["notional"] <= settings.autoapprove_max_notional)
+        rows.append(d)
     return templates.TemplateResponse(
         "partials/pending.html",
         {
             "request": request,
-            "rows": [o.to_dict() for o in orders.list_pending(db)],
+            "rows": rows,
             "aa_enabled": settings.autoapprove_enabled,
             "aa_max": settings.autoapprove_max_notional,
             "aa_sources": ",".join(settings.autoapprove_sources),

@@ -20,6 +20,7 @@
     <th title="Khối lượng đặt.">Qty</th>
     <th title="Giá đặt; 'mkt' = lệnh thị trường (khớp theo giá hiện tại).">Price</th>
     <th title="Nguồn tạo lệnh (vd kss = từ chiến lược KSS). ⚠ = có ghi chú rủi ro; VETOED = bị AI Guardian chặn.">Source</th>
+    <th title="AUTO = notional ≤ ngưỡng, hệ thống tự duyệt khi tới giá (không cần bấm). TAY = lệnh lớn, cần bạn duyệt.">Tự duyệt</th>
     <th></th>
   </tr></thead>
   <tbody>
@@ -30,6 +31,7 @@
       <td>{{ o.quantity | qty }}</td>
       <td>{{ (o.price | money) if o.price else "mkt" }}</td>
       <td class="muted">{{ o.source }}{% if o.risk_note %} ⚠{% endif %}{% if o.get('auto_veto') %} <span class="badge veto" title="{{ o.get('auto_veto_reason') or '' }}">VETOED</span>{% endif %}</td>
+      <td>{% if o.auto %}<span class="badge active" title="≈${{ o.notional | money }} ≤ ngưỡng — tự duyệt">AUTO</span>{% else %}<span class="badge" style="border-color:#f0883e;color:#f0883e" title="≈${{ o.notional | money }} > ngưỡng — cần duyệt tay">TAY</span>{% endif %}</td>
       <td class="row-actions">
         <button class="ok sm" data-action="approve" data-id="{{ o.id }}">Approve</button>
         <button class="danger sm" data-action="reject" data-id="{{ o.id }}">Reject</button>

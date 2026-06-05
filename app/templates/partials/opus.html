@@ -10,10 +10,12 @@
 </div>
 
 <div class="cards">
-  <div class="card"><div class="label" data-tip="Vốn cấp riêng cho OPUS mode. Đây là mẫu số của KPI 1%/24h. Tách rời khỏi vốn của full-auto thường.">Allocation</div><div class="value">${{ o.allocation_usd | money }}</div></div>
-  <div class="card"><div class="label" data-tip="Vốn đang nằm trong các vị thế OPUS đang mở = Σ (khối lượng × giá vốn).">Deployed</div><div class="value">${{ o.deployed_usd | money }}</div></div>
-  <div class="card"><div class="label" data-tip="Vốn OPUS còn trống = allocation − deployed.">Free</div><div class="value">${{ o.free_usd | money }}</div></div>
-  <div class="card"><div class="label" data-tip="Số vị thế Opus đang quản lý (watch/ride/rescue).">Positions</div><div class="value">{{ o.open_positions }}</div></div>
+  <div class="card"><div class="label" data-tip="Vốn cấp riêng cho OPUS. Đây là mẫu số của KPI 1%/24h. Tách rời khỏi vốn full-auto thường.">Vốn cấp</div><div class="value">${{ o.allocation_usd | money }}</div></div>
+  <div class="card"><div class="label" data-tip="Tổng lãi/lỗ OPUS = đã chốt + tạm tính − chi phí Opus hôm nay (×2). %% so với vốn cấp.">Lãi/Lỗ OPUS</div>
+    <div class="value {{ 'pos' if o.total_pnl >= 0 else 'neg' }}">${{ o.total_pnl | money }} <span style="font-size:12px">({{ "%+.2f"|format(o.pnl_pct) }}%)</span></div></div>
+  <div class="card"><div class="label" data-tip="Vốn đang nằm trong các vị thế OPUS đang mở = Σ (KL × giá vốn).">Đang đầu tư</div><div class="value">${{ o.deployed_usd | money }}</div></div>
+  <div class="card"><div class="label" data-tip="Vốn OPUS còn trống = vốn cấp − đang đầu tư.">Khả dụng</div><div class="value">${{ o.free_usd | money }}</div></div>
+  <div class="card"><div class="label" data-tip="Số vị thế Opus đang quản lý (watch/ride).">Vị thế</div><div class="value">{{ o.open_positions }}</div></div>
   <div class="card"><div class="label" data-tip="Chi phí gọi Opus hôm nay đã nhân ×2 (theo quy tắc tính chi phí trước lợi nhuận). Vượt trần thì tạm dừng.">Opus cost today</div>
     <div class="value {{ 'neg' if o.cost_cap_reached else '' }}">${{ o.spend_today_usd | money }} / ${{ o.daily_cost_cap_usd | money }}</div></div>
   <div class="card"><div class="label" data-tip="Lợi nhuận RÒNG 24h gần nhất / allocation. Ròng = lãi gộp − phí trade − 2×chi phí Opus. Mục tiêu ≥ 1%.">KPI 24h (net)</div>

@@ -26,7 +26,7 @@ main { padding: 16px 24px; max-width: 1680px; margin: 0 auto; }
 /* horizontal-scroll wrapper so wide tables never spill out of a panel */
 .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
-.tbl th, .tbl td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.tbl th, .tbl td { text-align: left; padding: 5px 7px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .tbl th { color: var(--muted); font-weight: 500; }
 .pos { color: var(--green); } .neg { color: var(--red); }
 .badge { padding: 1px 7px; border-radius: 999px; font-size: 11px; border: 1px solid var(--line); }

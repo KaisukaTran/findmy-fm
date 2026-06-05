@@ -90,7 +90,10 @@ const actions = {
   },
   async autoProcess() {
     const r = await api("POST", "/api/pending/auto");
-    if (!r.auto_approved.length) alert("No pending order matched the auto-approve rule.");
+    const n = r.auto_approved.length;
+    alert(n
+      ? `Đã tự duyệt ${n} lệnh (đã tới giá, ≤ ngưỡng).`
+      : "Chưa có lệnh nào TỚI GIÁ để duyệt. Các lệnh 'AUTO ⏳' đang chờ giá chạm limit (DCA mua đáy) — chúng sẽ TỰ duyệt khi tới giá, không cần bấm. Lệnh 'TAY' (lớn) cần bạn duyệt thủ công.");
     refreshAll();
   },
   async toggleAutoApprove() {

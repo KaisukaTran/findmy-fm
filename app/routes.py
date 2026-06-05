@@ -521,10 +521,16 @@ def partial_pending(request: Request, db: Session = Depends(get_db)):
     for o in pend:
         d = o.to_dict()
         ref = o.price if o.price > 0 else (prices.get(o.symbol) or 0.0)
+        mkt = prices.get(o.symbol) or 0.0
         d["notional"] = o.quantity * ref
-        # auto-clears in the background when ≤ threshold & eligible source; else manual.
+        # eligible to auto-clear by size+source; "due" = its limit price is reached now.
         d["auto"] = (o.source in settings.autoapprove_sources
                      and ref > 0 and d["notional"] <= settings.autoapprove_max_notional)
+        d["due"] = (
+            o.order_type == "MARKET"
+            or (o.side == "BUY" and o.price > 0 and 0 < mkt <= o.price)
+            or (o.side == "SELL" and o.price > 0 and mkt >= o.price)
+        )
         rows.append(d)
     return templates.TemplateResponse(
         "partials/pending.html",

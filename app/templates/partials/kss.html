@@ -6,28 +6,20 @@
 {% if sessions %}
 <table class="tbl">
   <thead><tr>
-    <th title="ID phiên KSS.">#</th>
-    <th title="Mã coin của phiên.">Sym</th>
-    <th title="Trạng thái: pending → active → (tp_triggered | stopped | timeout) → completed.">Status</th>
-    <th title="Số sóng đã khớp / tối đa. Mỗi sóng là một lần DCA mua thêm khi giá giảm.">Wave</th>
-    <th title="Giá vốn trung bình = tổng chi phí ÷ tổng KL đã khớp. DCA kéo giá này xuống.">Avg</th>
+    <th title="Mã coin của phiên (số sau là ID).">Coin</th>
+    <th title="Trạng thái: pending → active → (tp_triggered | stopped | timeout) → completed.">Trạng thái</th>
+    <th title="Số sóng đã khớp / tối đa. Mỗi sóng là một lần DCA mua thêm khi giá giảm.">Sóng</th>
     <th title="Lãi/lỗ tạm tính = (giá hiện tại − avg) × KL đã khớp.">uP&L</th>
-    <th title="Stop-loss: bán toàn bộ khi giá ≤ avg×(1 − SL%/100). Mặc định 8%.">SL%</th>
-    <th title="Trailing stop: khi đã có lãi, bán nếu giá ≤ đỉnh×(1 − Trail%/100). Mặc định 3%.">Trail%</th>
-    <th title="Mở biểu đồ giá rõ ràng: giá mua, hiện tại, sóng kế, TP, SL.">Giá</th>
+    <th title="Mở biểu đồ giá rõ ràng: giá mua, hiện tại, sóng kế, TP, SL. (Avg/SL/Trail xem ở đây)">Chi tiết</th>
     <th></th>
   </tr></thead>
   <tbody>
     {% for s in sessions %}
     <tr>
-      <td>{{ s.id }}</td>
-      <td>{{ s.symbol }}</td>
+      <td>{{ s.symbol }} <span class="muted" style="font-size:11px">#{{ s.id }}</span></td>
       <td><span class="badge {{ s.status }}">{{ s.status }}</span></td>
       <td>{{ s.filled_waves_count }}/{{ s.max_waves }}</td>
-      <td>{{ s.avg_price | money }}</td>
       <td class="{{ 'pos' if s.unrealized_pnl >= 0 else 'neg' }}">{{ s.unrealized_pnl | money }}</td>
-      <td class="muted">{{ s.get('sl_pct', '—') }}</td>
-      <td class="muted">{{ s.get('trailing_pct', '—') }}</td>
       <td><button class="sm ghost" data-action="viewLadder" data-id="{{ s.id }}">Xem</button></td>
       <td class="row-actions">
         {% if s.status == 'pending' %}

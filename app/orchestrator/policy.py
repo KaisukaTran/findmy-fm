@@ -35,6 +35,13 @@ def _open(db: Session, intent: dict, allowed: set[str], result: dict) -> None:
     if not symbol or symbol not in allowed:
         result["rejected"].append({"intent": intent, "reason": "symbol not a current candidate"})
         return
+    # K-1 strategy exclusivity: never open a coin KSS already runs (no blended cost basis).
+    from app.models import SESSION_ACTIVE, KssSession
+    if db.query(KssSession).filter(
+        KssSession.symbol == symbol, KssSession.status == SESSION_ACTIVE
+    ).count() > 0:
+        result["rejected"].append({"intent": intent, "reason": "coin has an active KSS session"})
+        return
     if not isinstance(notional, (int, float)) or notional <= 0:
         result["rejected"].append({"intent": intent, "reason": "missing/invalid notional"})
         return

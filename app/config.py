@@ -122,9 +122,10 @@ class Settings(BaseSettings):
     sl_pct: float = Field(default=8.0, description="KSS session stop-loss %% below avg price (0 = disabled).")
     trailing_pct: float = Field(default=3.0, description="KSS trailing-stop %% below peak once in profit (0 = disabled).")
     max_sessions_per_symbol: int = Field(
-        default=2,
-        description="Cap concurrent ACTIVE KSS sessions per symbol (limits single-coin "
-        "concentration / drawdown). 0 = unlimited.",
+        default=1,
+        description="Cap concurrent ACTIVE KSS sessions per symbol. 1 (K-1) keeps one owner "
+        "per coin so the session avg == the symbol Position avg (no blended cost basis → no "
+        "'take-profit that realizes a loss'). 0 = unlimited.",
     )
     stop_cooldown_min: float = Field(
         default=240.0,

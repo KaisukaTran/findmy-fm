@@ -144,6 +144,9 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
             elif _symbol_at_cap(db, symbol):
                 cand.reason += " | skipped: per-symbol session cap"
                 audit.log(db, "scanner", "skipped_concentration", entity=symbol)
+            elif _owned_by_opus(db, symbol):
+                cand.reason += " | skipped: OPUS đang giữ coin này"
+                audit.log(db, "scanner", "skipped_opus_owned", entity=symbol)
             else:
                 ok, why = _can_open(db)
                 if ok:
@@ -201,6 +204,19 @@ def _symbol_at_cap(db: Session, symbol: str) -> bool:
         .count()
     )
     return n >= settings.max_sessions_per_symbol
+
+
+def _owned_by_opus(db: Session, symbol: str) -> bool:
+    """True if OPUS currently manages `symbol` (watch/ride) — K-1 strategy exclusivity, so
+    KSS and OPUS never blend cost bases on the same coin. (Rescue is a handoff, not ownership.)"""
+    from app.orchestrator.models import OPUS_RIDE, OPUS_WATCH, OpusPosition
+
+    return (
+        db.query(OpusPosition)
+        .filter(OpusPosition.symbol == symbol, OpusPosition.state.in_((OPUS_WATCH, OPUS_RIDE)))
+        .count()
+        > 0
+    )
 
 
 def _open_session(

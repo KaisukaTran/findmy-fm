@@ -186,6 +186,60 @@ def opus_cumulative_vs_target_svg(
     return "".join(parts)
 
 
+_ORANGE = "#f0883e"
+
+
+def price_ladder_svg(status: dict, w: int = 460, h: int = 300) -> str:
+    """
+    Large, labelled price ladder for the click-to-view modal: horizontal reference lines
+    for buy(avg), current, next DCA wave, take-profit and stop-loss, plus the wave rungs.
+    """
+    avg = status.get("avg_price") or status.get("entry_price") or 0.0
+    markers = [
+        ("Giá mua TB", status.get("avg_price") or status.get("entry_price") or 0.0, _YELLOW),
+        ("Giá hiện tại", status.get("current_price") or 0.0, _BLUE),
+        ("Sóng kế tiếp", status.get("next_wave_price") or 0.0, _ORANGE),
+        ("Chốt lời (TP)", status.get("estimated_tp_price") or 0.0, _GREEN),
+        ("Cắt lỗ (SL)", status.get("sl_price") or 0.0, _RED),
+    ]
+    markers = [(name, float(p), col) for name, p, col in markers if p and p > 0]
+    if not markers:
+        return '<p class="muted">Chưa có dữ liệu giá.</p>'
+    waves = [wv for wv in (status.get("waves") or []) if wv.get("target_price")]
+    allp = [p for _, p, _ in markers] + [wv["target_price"] for wv in waves]
+    lo, hi = min(allp), max(allp)
+    pad_v = (hi - lo) * 0.08 or hi * 0.02 or 1.0
+    lo -= pad_v
+    hi += pad_v
+    span = (hi - lo) or 1.0
+    x0, x1, y0, y1 = 10, w - 170, 14, h - 14
+
+    def y(p: float) -> float:
+        return y1 - (p - lo) / span * (y1 - y0)
+
+    parts = [f'<svg width="100%" height="{h}" viewBox="0 0 {w} {h}" role="img">']
+    # wave rungs (context): filled green, pending grey
+    for wv in waves:
+        col = _GREEN if wv.get("status") == "filled" else _MUTED
+        yy = y(wv["target_price"])
+        parts.append(f'<line x1="{x0}" y1="{yy:.1f}" x2="{x1}" y2="{yy:.1f}" stroke="{col}" '
+                     f'stroke-width="1" stroke-opacity="0.45"/>')
+    # the 5 key reference lines + labels (sorted high→low so labels stack cleanly)
+    for name, price, col in sorted(markers, key=lambda m: m[1], reverse=True):
+        yy = y(price)
+        pct = (price - avg) / avg * 100 if avg > 0 else 0.0
+        parts.append(f'<line x1="{x0}" y1="{yy:.1f}" x2="{x1}" y2="{yy:.1f}" stroke="{col}" stroke-width="2"/>')
+        parts.append(f'<circle cx="{x1:.1f}" cy="{yy:.1f}" r="3.5" fill="{col}"/>')
+        parts.append(
+            f'<text x="{x1+8}" y="{yy-2:.1f}" fill="{col}" font-size="12" font-weight="600">'
+            f'{html.escape(name)}</text>'
+            f'<text x="{x1+8}" y="{yy+11:.1f}" fill="{_MUTED}" font-size="11">'
+            f'{price:,.6g} ({pct:+.1f}%)</text>'
+        )
+    parts.append("</svg>")
+    return "".join(parts)
+
+
 def pyramid_ladder_svg(status: dict, w: int = 240, h: int = 120) -> str:
     """Horizontal lines: wave targets (red), avg (yellow), TP (green), current (blue)."""
     waves = status.get("waves") or []

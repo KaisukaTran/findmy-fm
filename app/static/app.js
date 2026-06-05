@@ -31,6 +31,12 @@ function refreshAll() {
   document.body.dispatchEvent(new CustomEvent("refresh"));
 }
 
+async function openLadder(url) {
+  const res = await fetch(url, { headers: apiHeaders() });
+  document.getElementById("ladder-body").innerHTML = await res.text();
+  document.getElementById("ladder-modal").style.display = "flex";
+}
+
 // --- mutation handlers (event delegation) -------------------------------
 
 const actions = {
@@ -134,6 +140,15 @@ const actions = {
     await api("POST", "/api/opus/shadow", { enabled: !s.shadow });
     refreshAll();
   },
+  async viewLadder(id) {
+    await openLadder(`/partials/ladder?session=${id}`);
+  },
+  async viewLadderSymbol(sym) {
+    await openLadder(`/partials/ladder?symbol=${encodeURIComponent(sym)}`);
+  },
+  closeLadder() {
+    document.getElementById("ladder-modal").style.display = "none";
+  },
   async resetBreaker() {
     if (!confirm("Manually reset the circuit-breaker? The system will resume trading.")) return;
     await api("POST", "/api/breaker/reset");
@@ -232,6 +247,12 @@ document.addEventListener("click", (e) => {
   if (tabBtn) showTab(tabBtn.dataset.tab);
 });
 document.addEventListener("DOMContentLoaded", () => showTab("overview"));
+
+// Close the ladder modal when clicking the dark backdrop (outside the box).
+document.addEventListener("click", (e) => {
+  const m = document.getElementById("ladder-modal");
+  if (m && e.target === m) m.style.display = "none";
+});
 
 // --- forms --------------------------------------------------------------
 

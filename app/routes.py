@@ -534,6 +534,37 @@ def partial_status(request: Request, db: Session = Depends(get_db)):
     )
 
 
+@ui_router.get("/partials/ladder", response_class=HTMLResponse)
+def partial_ladder(
+    request: Request,
+    session: int | None = None,
+    symbol: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """Big labelled price ladder for the click-to-view modal — by session id or by symbol
+    (symbol resolves to that coin's active KSS session)."""
+    sid = session
+    if sid is None and symbol:
+        active = kss_service.list_sessions(db, status=SESSION_ACTIVE, symbol=symbol)
+        sid = active[0]["id"] if active else None
+    if sid is None:
+        return templates.TemplateResponse(
+            "partials/ladder.html",
+            {"request": request, "o": None,
+             "msg": f"{symbol or ''} chưa có session KSS đang chạy."},
+        )
+    try:
+        st = kss_service.ladder_status(db, sid)
+    except ValueError:
+        return templates.TemplateResponse(
+            "partials/ladder.html", {"request": request, "o": None, "msg": "Session không tồn tại."}
+        )
+    return templates.TemplateResponse(
+        "partials/ladder.html",
+        {"request": request, "o": st, "ladder_svg": charts.price_ladder_svg(st)},
+    )
+
+
 @ui_router.get("/partials/opus", response_class=HTMLResponse)
 def partial_opus(request: Request, db: Session = Depends(get_db)):
     from app.orchestrator import ledger as opus_ledger

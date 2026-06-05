@@ -454,6 +454,27 @@ def get_status(db: Session, session_id: int) -> dict:
     return _to_pyramid(_get_row(db, session_id)).get_status()
 
 
+def ladder_status(db: Session, session_id: int) -> dict:
+    """get_status() enriched with the prices the ladder view shows: SL, trailing, next wave."""
+    py = _to_pyramid(_get_row(db, session_id))
+    st = py.get_status()
+    avg = st["avg_price"] or st["entry_price"] or 0.0
+    st["sl_pct_eff"] = py.sl_pct
+    st["trailing_pct_eff"] = py.trailing_pct
+    st["sl_price"] = avg * (1 - py.sl_pct / 100.0) if avg > 0 and py.sl_pct > 0 else 0.0
+    st["trailing_price"] = (
+        py.peak_price * (1 - py.trailing_pct / 100.0)
+        if py.peak_price > 0 and py.trailing_pct > 0
+        else 0.0
+    )
+    pend = sorted(
+        (w for w in st["waves"] if w.get("status") in ("pending", "sent")),
+        key=lambda w: w.get("wave_num", 0),
+    )
+    st["next_wave_price"] = pend[0]["target_price"] if pend else 0.0
+    return st
+
+
 def list_sessions(
     db: Session, status: str | None = None, symbol: str | None = None, limit: int = 100
 ) -> list[dict]:

@@ -8,6 +8,7 @@
     <th title="Giá trị thị trường = khối lượng × giá hiện tại.">Value</th>
     <th title="Lãi/lỗ tạm tính = (giá hiện tại − avg) × KL, và %% so với giá vốn.">uP&L</th>
     <th title="Ai đang quản lý coin này: OPUS (Opus tự điều phối) hoặc KSS (full-auto theo chiến lược). Có thể cả hai.">Src</th>
+    <th title="Mở biểu đồ giá: mua, hiện tại, sóng kế, TP, SL.">Giá</th>
   </tr></thead>
   <tbody>
     {% for r in rows %}
@@ -24,6 +25,7 @@
         {% for s in r.sources %}<span class="badge {{ 'ml-on' if s == 'OPUS' else 'active' }}">{{ s }}</span> {% endfor %}
         {% if not r.sources %}<span class="muted">—</span>{% endif %}
       </td>
+      <td><button class="sm ghost" data-action="viewLadderSymbol" data-id="{{ r.symbol }}">Xem</button></td>
     </tr>
     {% endfor %}
   </tbody>

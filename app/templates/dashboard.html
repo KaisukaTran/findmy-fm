@@ -137,5 +137,13 @@
       </div>
     </div>
   </main>
+
+  <!-- Click-to-view price ladder modal (plain JS — works on HTMX-swapped rows) -->
+  <div id="ladder-modal" class="overlay" style="display:none">
+    <div class="overlay-box">
+      <button class="sm ghost" data-action="closeLadder" style="float:right">✕</button>
+      <div id="ladder-body"></div>
+    </div>
+  </div>
 </body>
 </html>

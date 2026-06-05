@@ -14,7 +14,7 @@
     <th title="Lãi/lỗ tạm tính = (giá hiện tại − avg) × KL đã khớp.">uP&L</th>
     <th title="Stop-loss: bán toàn bộ khi giá ≤ avg×(1 − SL%/100). Mặc định 8%.">SL%</th>
     <th title="Trailing stop: khi đã có lãi, bán nếu giá ≤ đỉnh×(1 − Trail%/100). Mặc định 3%.">Trail%</th>
-    <th title="Bậc thang sóng: giá sóng n = entry×(1 − distance%/100)^n; KL sóng n = (n+1)×pip_size.">Ladder</th>
+    <th title="Mở biểu đồ giá rõ ràng: giá mua, hiện tại, sóng kế, TP, SL.">Giá</th>
     <th></th>
   </tr></thead>
   <tbody>
@@ -28,7 +28,7 @@
       <td class="{{ 'pos' if s.unrealized_pnl >= 0 else 'neg' }}">{{ s.unrealized_pnl | money }}</td>
       <td class="muted">{{ s.get('sl_pct', '—') }}</td>
       <td class="muted">{{ s.get('trailing_pct', '—') }}</td>
-      <td style="width:120px">{{ s | ladder | safe }}</td>
+      <td><button class="sm ghost" data-action="viewLadder" data-id="{{ s.id }}">Xem</button></td>
       <td class="row-actions">
         {% if s.status == 'pending' %}
         <button class="ok sm" data-action="kssStart" data-id="{{ s.id }}">Start</button>

@@ -81,6 +81,10 @@ button { white-space: nowrap; }
 #preview-output { overflow-x: auto; margin-top: 10px; }
 [x-cloak] { display: none !important; }
 
+/* Click-to-view overlay modal (price ladder) */
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.overlay-box { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; width: min(560px, 92vw); max-height: 90vh; overflow: auto; }
+
 /* --- Tab navigation --- */
 .tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 16px 0 4px; border-bottom: 1px solid var(--line); }
 .tab {

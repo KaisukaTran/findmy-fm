@@ -64,7 +64,9 @@ const actions = {
   },
   async kssCheckTp(id) {
     const r = await api("POST", `/api/kss/sessions/${id}/check-tp`);
-    alert(r.tp_triggered ? "TP triggered — sell queued" : "TP not reached");
+    alert(r.tp_deferred
+      ? "TP đạt theo avg session nhưng DƯỚI giá vốn tổng + 2× phí — đã HOÃN (K-2), tránh chốt lời mà lỗ."
+      : (r.tp_triggered ? "TP đạt — đã đưa lệnh bán vào hàng chờ." : "Chưa đạt TP."));
     refreshAll();
   },
   async scan() {

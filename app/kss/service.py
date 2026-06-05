@@ -225,7 +225,10 @@ def adopt_position_into_kss(
             )
         )
     elif result.get("action") == "tp_triggered":
-        _queue(db, result["order"])
+        if _tp_clears_cost(db, row.symbol, current_price):
+            _queue(db, result["order"])
+        else:
+            row.status = SESSION_ACTIVE  # K-2 defer on adoption
 
     db.commit()
     audit.log(db, "opus", "kss_rescue", entity=f"kss:{row.id}", symbol=symbol,
@@ -298,7 +301,13 @@ def handle_fill_event(
             )
         )
     elif result.get("action") == "tp_triggered":
-        _queue(db, result["order"])  # market SELL through the approval queue
+        from app.market import get_current_prices
+        mkt = get_current_prices([row.symbol]).get(row.symbol) or 0.0
+        if mkt and not _tp_clears_cost(db, row.symbol, mkt):
+            row.status = SESSION_ACTIVE  # K-2 defer (on_fill had set TP_TRIGGERED)
+            audit.log(db, "kss", "tp_deferred", entity=f"kss:{row.id}", symbol=row.symbol, price=mkt)
+        else:
+            _queue(db, result["order"])  # market SELL through the approval queue
 
     db.commit()
     return result
@@ -315,11 +324,31 @@ def stop_session(db: Session, session_id: int, reason: str = "manual") -> dict:
     return {"message": f"Session {session_id} stopped", "reason": reason}
 
 
+def _tp_clears_cost(db: Session, symbol: str, price: float) -> bool:
+    """
+    K-2 safety net: a take-profit may execute ONLY if `price` clears the TRUE aggregate
+    cost basis of the coin's Position plus 2x the highest fee (costengine.min_profit_pct).
+    Guards against any residual blended basis (legacy multi-session coins, manual orders)
+    realizing a 'profit' that is actually a loss on the real book.
+    """
+    from app import costengine
+    from app.models import Position
+
+    pos = db.query(Position).filter(Position.symbol == symbol).one_or_none()
+    if pos is None or pos.quantity <= 0 or pos.avg_entry_price <= 0:
+        return True  # no aggregate basis to compare against → don't block
+    floor = costengine.min_profit_pct() / 100.0  # 2 x binance_max_fee_pct
+    return price >= pos.avg_entry_price * (1 + floor)
+
+
 def manage_open_sessions(db: Session) -> list[int]:
     """
     Check every ACTIVE session against the live price and queue a TP sell when the
     take-profit threshold is reached. Used by the background scheduler. Returns the
     session ids that triggered TP. The TP sell still goes through the approval queue.
+
+    K-2: a TP that would realize below the true aggregate cost basis (+2x fee) is DEFERRED
+    (session stays ACTIVE) instead of selling at a loss.
     """
     from app.market import get_current_prices
 
@@ -336,6 +365,12 @@ def manage_open_sessions(db: Session) -> list[int]:
         if py.total_filled_qty <= 0:
             continue
         res = py.check_tp(price)
+        if res and not _tp_clears_cost(db, row.symbol, price):
+            # K-2 defer: market hit the session TP but it would realize below true cost+fees.
+            py.status = PyramidSessionStatus.ACTIVE
+            audit.log(db, "scheduler", "tp_deferred", entity=f"kss:{row.id}",
+                      symbol=row.symbol, price=price)
+            res = None  # fall through to the stop-loss check below
         if res:
             _queue(db, res["order"])
             _save_state(row, py)
@@ -439,7 +474,14 @@ def check_tp(db: Session, session_id: int, current_price: float | None = None) -
         "avg_price": py.avg_price,
         "tp_price": py.estimated_tp_price,
     }
-    if result:
+    if result and not _tp_clears_cost(db, row.symbol, current_price):
+        # K-2 defer: would realize below true cost basis + fees.
+        py.status = PyramidSessionStatus.ACTIVE
+        _save_state(row, py)
+        db.commit()
+        payload["tp_triggered"] = False
+        payload["tp_deferred"] = True
+    elif result:
         _queue(db, result["order"])
         _save_state(row, py)
         db.commit()

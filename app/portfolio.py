@@ -17,12 +17,41 @@ from app.market import get_current_prices
 from app.models import Fill, PendingOrder, Position
 
 
+def order_source(source_ref: str | None) -> str:
+    """Provenance tag for a fill/order from its source_ref (OPUS / KSS / manual / auto)."""
+    if not source_ref:
+        return "manual"
+    if source_ref.startswith("opus:"):
+        return "OPUS"
+    if source_ref.startswith("pyramid:"):
+        return "KSS"
+    return "auto"
+
+
+def _symbol_owners(db: Session) -> dict[str, list[str]]:
+    """Map each symbol to who currently manages it: OPUS (watch/ride) and/or KSS (active)."""
+    from app.models import SESSION_ACTIVE, KssSession  # local import (avoid heavy coupling)
+    from app.orchestrator.models import OPUS_RIDE, OPUS_WATCH, OpusPosition
+
+    owners: dict[str, list[str]] = {}
+    for (sym,) in db.query(OpusPosition.symbol).filter(
+        OpusPosition.state.in_((OPUS_WATCH, OPUS_RIDE))
+    ).distinct():
+        owners.setdefault(sym, []).append("OPUS")
+    for (sym,) in db.query(KssSession.symbol).filter(
+        KssSession.status == SESSION_ACTIVE
+    ).distinct():
+        owners.setdefault(sym, []).append("KSS")
+    return owners
+
+
 def positions_view(db: Session) -> list[dict]:
     """Open positions enriched with live price, market value and unrealized P&L."""
     positions = db.query(Position).filter(Position.quantity > 0).all()
     if not positions:
         return []
     prices = get_current_prices([p.symbol for p in positions])
+    owners = _symbol_owners(db)
     rows = []
     for p in positions:
         price = prices.get(p.symbol, 0.0)
@@ -38,15 +67,21 @@ def positions_view(db: Session) -> list[dict]:
                 "market_value": market_value,
                 "unrealized_pnl": unrealized,
                 "unrealized_pnl_pct": (unrealized / p.total_cost * 100) if p.total_cost else 0.0,
+                "sources": owners.get(p.symbol, []),  # ["OPUS"], ["KSS"], or both
             }
         )
     return rows
 
 
 def trades_view(db: Session, limit: int = 50) -> list[dict]:
-    """Most recent fills (trade history)."""
+    """Most recent fills (trade history), tagged with their provenance (OPUS/KSS/…)."""
     fills = db.query(Fill).order_by(Fill.executed_at.desc()).limit(limit).all()
-    return [f.to_dict() for f in fills]
+    out = []
+    for f in fills:
+        d = f.to_dict()
+        d["source"] = order_source(f.source_ref)
+        out.append(d)
+    return out
 
 
 def equity(db: Session) -> float:

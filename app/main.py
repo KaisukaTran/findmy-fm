@@ -10,19 +10,31 @@ assets, the dashboard, and the JSON + KSS APIs.
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
+from app.config import settings
 from app.db import init_db
 from app.kss.routes import router as kss_router
 from app.routes import api_router, ui_router
 from app.security import install_security
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+
+def _local_time(timestamp: float | None = None) -> time.struct_time:
+    """Log %(asctime)s in the configured display zone (Vietnam GMT+7) regardless of the host TZ."""
+    base = datetime.utcfromtimestamp(timestamp) if timestamp is not None else datetime.utcnow()
+    return (base + timedelta(hours=settings.tz_offset_hours)).timetuple()
+
+
+logging.Formatter.converter = staticmethod(_local_time)
 
 _STATIC_DIR = Path(__file__).parent / "static"
 

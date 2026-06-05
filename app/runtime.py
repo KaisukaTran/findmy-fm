@@ -29,6 +29,8 @@ KEY_FROZEN_REASON = "breaker_frozen_reason"
 KEY_FROZEN_AT = "breaker_frozen_at"  # ISO timestamp string
 KEY_OPUS_MODE = "opus_mode"
 KEY_OPUS_SHADOW = "opus_shadow"
+KEY_AUTOAPPROVE_ENABLED = "autoapprove_enabled"
+KEY_AUTOAPPROVE_MAX = "autoapprove_max_notional"
 
 # ---------------------------------------------------------------------------
 # Generic KV helpers
@@ -103,6 +105,15 @@ def opus_mode_off(db: Session) -> dict:
     return state(db)
 
 
+def set_autoapprove(db: Session, *, enabled: bool, max_notional: float | None) -> None:
+    """Persist the auto-approval rule (enabled + max notional) so it survives restarts."""
+    settings.autoapprove_enabled = enabled
+    set_bool(db, KEY_AUTOAPPROVE_ENABLED, enabled)
+    if max_notional is not None:
+        settings.autoapprove_max_notional = max_notional
+        set(db, KEY_AUTOAPPROVE_MAX, max_notional)
+
+
 def opus_shadow_set(db: Session, shadow: bool) -> dict:
     """Set OPUS shadow mode (True = log intents but don't execute). Persisted."""
     settings.opus_shadow = shadow
@@ -165,3 +176,12 @@ def sync_from_db(db: Session) -> None:
         settings.autoapprove_enabled = True
     settings.opus_mode = get_bool(db, KEY_OPUS_MODE, default=settings.opus_mode)
     settings.opus_shadow = get_bool(db, KEY_OPUS_SHADOW, default=settings.opus_shadow)
+    # Auto-approval rule (persisted so a dashboard change survives a restart).
+    if get(db, KEY_AUTOAPPROVE_ENABLED) is not None:
+        settings.autoapprove_enabled = get_bool(db, KEY_AUTOAPPROVE_ENABLED)
+    aa_max = get(db, KEY_AUTOAPPROVE_MAX)
+    if aa_max is not None:
+        try:
+            settings.autoapprove_max_notional = float(aa_max)
+        except ValueError:
+            pass

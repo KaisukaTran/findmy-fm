@@ -161,10 +161,9 @@ def autoapprove_state():
 
 
 @api_router.post("/api/autoapprove", dependencies=[Depends(require_api_key)])
-def set_autoapprove(body: AutoApproveBody):
-    settings.autoapprove_enabled = body.enabled
-    if body.max_notional is not None:
-        settings.autoapprove_max_notional = body.max_notional
+def set_autoapprove(body: AutoApproveBody, db: Session = Depends(get_db)):
+    """Update the auto-approval rule. Persisted in runtime_config so it survives restarts."""
+    runtime.set_autoapprove(db, enabled=body.enabled, max_notional=body.max_notional)
     return _autoapprove_state()
 
 

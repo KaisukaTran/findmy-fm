@@ -159,6 +159,18 @@ def auto_approve_by_policy(db: Session) -> list[int]:
         notional = o.quantity * ref_price
         if ref_price <= 0 or notional > settings.autoapprove_max_notional:
             continue
+        # Respect the LIMIT price — never auto-approve a wave whose target isn't reached.
+        # (A KSS dip-buy must wait for the actual dip; approving it early defeats the DCA
+        #  ladder and overpays. MARKET orders — TP/stop exits — are always due.)
+        mkt = market.get(o.symbol) or 0.0
+        if o.order_type == "MARKET":
+            due = True
+        elif o.side == "BUY":
+            due = o.price > 0 and 0 < mkt <= o.price
+        else:  # SELL
+            due = o.price > 0 and mkt >= o.price
+        if not due:
+            continue
         approve_order(db, o.id, reviewer="auto-approver")
         approved.append(o.id)
     return approved

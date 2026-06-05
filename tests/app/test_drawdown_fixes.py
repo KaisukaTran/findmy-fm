@@ -96,6 +96,41 @@ def test_sell_clamped_to_held_qty(db):
     assert pos.quantity == 0.0
 
 
+# --- auto-approve respects LIMIT prices (no premature DCA) -------------
+
+
+def test_autoapprove_skips_not_due_limit_buy(db, monkeypatch):
+    monkeypatch.setattr(settings, "autoapprove_enabled", True)
+    monkeypatch.setattr(settings, "autoapprove_max_notional", 600.0)
+    monkeypatch.setattr(settings, "autoapprove_sources", ["kss"])
+    monkeypatch.setattr("app.orders.get_current_prices", lambda syms: {"BTC": 100.0})
+    # dip-buy LIMIT at 90 while market is 100 → NOT due → must stay pending
+    o = PendingOrder(symbol="BTC", side="BUY", order_type="LIMIT", quantity=1.0, price=90.0,
+                     source="kss", status=PENDING)
+    db.add(o)
+    db.commit()
+    assert orders.auto_approve_by_policy(db) == []
+    assert o.status == PENDING
+
+
+def test_autoapprove_takes_due_limit_and_market(db, monkeypatch):
+    monkeypatch.setattr(settings, "autoapprove_enabled", True)
+    monkeypatch.setattr(settings, "autoapprove_max_notional", 600.0)
+    monkeypatch.setattr(settings, "autoapprove_sources", ["kss"])
+    monkeypatch.setattr("app.orders.get_current_prices", lambda syms: {"BTC": 100.0})
+    from app.models import Position
+    db.add(Position(symbol="BTC", quantity=5.0, avg_entry_price=80.0, total_cost=400.0))
+    # due BUY LIMIT (market 100 <= limit 105) + a MARKET sell (always due)
+    due_buy = PendingOrder(symbol="BTC", side="BUY", order_type="LIMIT", quantity=0.1, price=105.0,
+                           source="kss", status=PENDING)
+    mkt_sell = PendingOrder(symbol="BTC", side="SELL", order_type="MARKET", quantity=0.1, price=0.0,
+                            source="kss", status=PENDING)
+    db.add_all([due_buy, mkt_sell])
+    db.commit()
+    approved = orders.auto_approve_by_policy(db)
+    assert due_buy.id in approved and mkt_sell.id in approved
+
+
 # --- shadow toggle persistence -----------------------------------------
 
 

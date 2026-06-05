@@ -25,6 +25,8 @@ def test_auto_approve_policy(db, monkeypatch):
     monkeypatch.setattr(settings, "autoapprove_enabled", True)
     monkeypatch.setattr(settings, "autoapprove_max_notional", 50.0)
     monkeypatch.setattr(settings, "autoapprove_sources", ["kss"])
+    # market at/below the limit so the BUY LIMIT orders are "due" (price reached)
+    monkeypatch.setattr("app.orders.get_current_prices", lambda syms: dict.fromkeys(syms, 100.0))
 
     small_kss, _ = orders.queue_order(db, symbol="BTC", side="BUY", quantity=0.0001, price=100,
                                       source="kss", source_ref="pyramid:1:wave:0")

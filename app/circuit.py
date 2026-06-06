@@ -73,6 +73,12 @@ def evaluate(db: Session) -> dict:
 
     currently_frozen = runtime.is_frozen(db)
 
+    # A consecutive-loss STREAK is historical: while frozen no new trades happen, so the
+    # streak can never clear → it must NOT block auto-rearm, or a loss-streak freeze
+    # deadlocks forever. The cooldown time-out is the streak's reset. Only CURRENT-state
+    # reasons (drawdown, daily-loss) keep the breaker frozen past the cooldown.
+    blocking = [r for r in reasons if "consecutive_losses" not in r]
+
     if reasons and not currently_frozen:
         reason_str = "; ".join(reasons)
         runtime.freeze(db, reason_str)
@@ -84,8 +90,9 @@ def evaluate(db: Session) -> dict:
         except Exception:
             pass  # notify failure must never break evaluate
 
-    elif currently_frozen and not reasons:
-        # Attempt auto-rearm only after cooldown has elapsed.
+    elif currently_frozen and not blocking:
+        # Attempt auto-rearm only after cooldown has elapsed (a stale loss-streak alone no
+        # longer blocks it).
         frozen_at_raw = runtime.get(db, runtime.KEY_FROZEN_AT)
         if frozen_at_raw:
             try:

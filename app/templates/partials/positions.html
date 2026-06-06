@@ -5,7 +5,8 @@
     <th title="Khối lượng đang nắm giữ.">Qty</th>
     <th title="Giá vốn trung bình (đã gồm phí mua).">Avg</th>
     <th title="Giá thị trường hiện tại.">Price</th>
-    <th title="Lãi/lỗ tạm tính = (giá hiện tại − avg) × KL, và %% so với giá vốn. (Giá trị TT xem ở 'Giá')">uP&L</th>
+    <th title="Giá trị thị trường = KL × giá hiện tại, và %% so với TỔNG vốn (equity).">Giá trị</th>
+    <th title="Lãi/lỗ tạm tính = (giá hiện tại − avg) × KL, và %% so với giá vốn.">uP&L</th>
     <th title="Ai đang quản lý coin này: OPUS (Opus tự điều phối) hoặc KSS (full-auto theo chiến lược). Có thể cả hai.">Src</th>
     <th title="Mở biểu đồ giá: mua, hiện tại, sóng kế, TP, SL.">Giá</th>
   </tr></thead>
@@ -16,6 +17,7 @@
       <td>{{ r.quantity | qty }}</td>
       <td>{{ r.avg_entry_price | money }}</td>
       <td>{{ r.current_price | money }}</td>
+      <td>${{ r.market_value | money }} <span class="muted" style="font-size:11px">{{ "%.1f"|format(r.market_value_pct) }}%</span></td>
       <td class="{{ 'pos' if r.unrealized_pnl >= 0 else 'neg' }}">
         ${{ r.unrealized_pnl | money }} ({{ "%.1f"|format(r.unrealized_pnl_pct) }}%)
       </td>

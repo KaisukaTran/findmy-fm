@@ -80,6 +80,7 @@ def run_cycle(db: Session) -> dict:
     from app.models import PENDING, PendingOrder
     closed = service.sweep_deadlines(db)
     tp = service.manage_open_sessions(db)
+    service.manage_orphan_positions(db)  # TP/SL leftover positions no session/OPUS covers
     scan = scanner.run_scan(db)
     breaker = circuit.evaluate(db)
     frozen = breaker["frozen"]

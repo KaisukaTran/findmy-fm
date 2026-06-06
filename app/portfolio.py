@@ -52,6 +52,12 @@ def positions_view(db: Session) -> list[dict]:
         return []
     prices = get_current_prices([p.symbol for p in positions])
     owners = _symbol_owners(db)
+    # Total equity (computed inline — calling equity() here would recurse into positions_view).
+    total_mv = sum(p.quantity * prices.get(p.symbol, 0.0) for p in positions)
+    total_invested = sum(p.total_cost for p in positions)
+    realized = float(db.query(func.coalesce(func.sum(Fill.realized_pnl), 0.0)).scalar() or 0.0)
+    equity = (settings.account_equity - total_invested + realized) + total_mv
+    eq = equity or 1.0
     rows = []
     for p in positions:
         price = prices.get(p.symbol, 0.0)
@@ -65,6 +71,7 @@ def positions_view(db: Session) -> list[dict]:
                 "total_cost": p.total_cost,
                 "current_price": price,
                 "market_value": market_value,
+                "market_value_pct": market_value / eq * 100,  # % of total equity
                 "unrealized_pnl": unrealized,
                 "unrealized_pnl_pct": (unrealized / p.total_cost * 100) if p.total_cost else 0.0,
                 "sources": owners.get(p.symbol, []),  # ["OPUS"], ["KSS"], or both

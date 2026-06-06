@@ -403,6 +403,55 @@ def manage_open_sessions(db: Session) -> list[int]:
     return triggered
 
 
+def manage_orphan_positions(db: Session) -> list[str]:
+    """
+    TP/SL-manage HELD positions that no active KSS session or OPUS position covers — leftover
+    quantity from sessions that already closed (the session sold its own qty but the
+    symbol-level Position kept a remainder). Without this they ride forever with no exit
+    (e.g. a coin sitting at +25% but never taking profit).
+
+    Sells at market when unrealized ≥ scan_tp_pct (and clears cost+fee, K-2) or ≤ −sl_pct.
+    """
+    from app.config import settings
+    from app.market import get_current_prices
+    from app.models import Position
+    from app.orchestrator.models import OPUS_RIDE, OPUS_WATCH, OpusPosition
+
+    positions = db.query(Position).filter(Position.quantity > 0).all()
+    if not positions:
+        return []
+    kss_syms = {s.symbol for s in db.query(KssSession).filter(KssSession.status == SESSION_ACTIVE)}
+    opus_syms = {p.symbol for p in db.query(OpusPosition).filter(
+        OpusPosition.state.in_((OPUS_WATCH, OPUS_RIDE)))}
+    managed = kss_syms | opus_syms
+
+    orphans = [p for p in positions if p.symbol not in managed and p.avg_entry_price > 0]
+    if not orphans:
+        return []
+    prices = get_current_prices([p.symbol for p in orphans])
+    swept: list[str] = []
+    for p in orphans:
+        px = prices.get(p.symbol)
+        if not px:
+            continue
+        upnl_pct = (px - p.avg_entry_price) / p.avg_entry_price * 100
+        tag = None
+        if upnl_pct >= settings.scan_tp_pct and _tp_clears_cost(db, p.symbol, px):
+            tag = "tp"
+        elif settings.sl_pct > 0 and upnl_pct <= -settings.sl_pct:
+            tag = "sl"
+        if not tag:
+            continue
+        orders.queue_order(db, symbol=p.symbol, side="SELL", quantity=p.quantity, price=0.0,
+                           order_type="MARKET", source="kss", source_ref=f"orphan:{tag}",
+                           strategy_name="Orphan", note=f"orphan {tag} @ {upnl_pct:.1f}%")
+        audit.log(db, "scheduler", f"orphan_{tag}", entity=p.symbol, symbol=p.symbol,
+                  price=px, upnl_pct=round(upnl_pct, 2))
+        swept.append(p.symbol)
+    db.commit()
+    return swept
+
+
 def sweep_deadlines(db: Session, now: datetime | None = None) -> list[int]:
     """
     Force-close ACTIVE sessions past their ≤30-day deadline without TP.

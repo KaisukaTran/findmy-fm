@@ -73,6 +73,12 @@ def render(row: AuditLog) -> dict:
     elif act == "trailing_deferred":
         cat, sev, icon = RISK, "warn", "⏸️"
         msg = f"Hoãn trailing {s} @ {_money(d.get('price'))} — chỉ chốt khi có lãi (K-trail)"
+    elif act == "orphan_tp":
+        cat, sev, icon = TRADE, "good", "💰"
+        msg = f"Chốt lời vị thế lẻ {s} (+{d.get('upnl_pct', 0)}%) — không còn session quản"
+    elif act == "orphan_sl":
+        cat, sev, icon = RISK, "danger", "🛑"
+        msg = f"Cắt lỗ vị thế lẻ {s} ({d.get('upnl_pct', 0)}%)"
     elif act == "auto_approve":
         cat, sev, icon = TRADE, "good", "✅"
         msg = f"Tự duyệt lệnh {row.entity or ''}"

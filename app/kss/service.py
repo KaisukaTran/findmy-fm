@@ -381,7 +381,15 @@ def manage_open_sessions(db: Session) -> list[int]:
             # check_stop also updates peak_price; always save so the high-water
             # mark is persisted even when neither exit triggers.
             res = py.check_stop(price)
-            if res:
+            if (res and res.get("action") == "trailing_stop"
+                    and not _tp_clears_cost(db, row.symbol, price)):
+                # K-trail: a trailing stop must only LOCK PROFIT, never sell below the true
+                # cost basis + fees. Defer — the hard stop-loss (sl_pct) still cuts genuine
+                # losers; the position rides so DCA can pull avg down toward TP.
+                audit.log(db, "scheduler", "trailing_deferred", entity=f"kss:{row.id}",
+                          symbol=row.symbol, price=price)
+                _save_state(row, py)  # persist the peak high-water mark
+            elif res:
                 _queue(db, res["order"])
                 _save_state(row, py)
                 audit.log(

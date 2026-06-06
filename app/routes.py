@@ -692,9 +692,10 @@ def partial_performance(request: Request, db: Session = Depends(get_db)):
 
 @ui_router.get("/partials/audit", response_class=HTMLResponse)
 def partial_audit(request: Request, db: Session = Depends(get_db)):
-    rows = db.query(AuditLog).order_by(AuditLog.id.desc()).limit(40).all()
+    from app import auditview
+
     return templates.TemplateResponse(
-        "partials/audit.html", {"request": request, "rows": [r.to_dict() for r in rows]}
+        "partials/audit.html", {"request": request, "rows": auditview.audit_view(db, limit=300)}
     )
 
 

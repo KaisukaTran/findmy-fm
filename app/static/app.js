@@ -31,6 +31,18 @@ function refreshAll() {
   document.body.dispatchEvent(new CustomEvent("refresh"));
 }
 
+// Symbol filter for the audit feed lives on row classes (inside the swapped partial), so
+// re-apply it after every poll/swap. The category filter is pure CSS on #audit-wrap.
+function applyAuditSymbol() {
+  const sym = window._auditSym || "";
+  document.querySelectorAll(".audit-row").forEach((r) => {
+    r.classList.toggle("audit-sym-hidden", sym !== "" && r.dataset.symbol !== sym);
+  });
+}
+document.addEventListener("DOMContentLoaded", () => {
+  document.body.addEventListener("htmx:afterSwap", applyAuditSymbol);
+});
+
 async function openLadder(url) {
   const res = await fetch(url, { headers: apiHeaders() });
   document.getElementById("ladder-body").innerHTML = await res.text();
@@ -153,6 +165,25 @@ const actions = {
   },
   closeLadder() {
     document.getElementById("ladder-modal").style.display = "none";
+  },
+  auditFilter(mode) {
+    const w = document.getElementById("audit-wrap");
+    if (w) w.className = "af-" + (mode || "important");
+    document.querySelectorAll("[data-action='auditFilter']").forEach((b) =>
+      b.classList.toggle("ghost", b.dataset.id !== mode));
+    applyAuditSymbol();
+  },
+  auditFilterSymbol(sym) {
+    window._auditSym = sym || "";
+    const f = document.getElementById("audit-sym-filter");
+    if (f) { f.style.display = ""; document.getElementById("audit-sym-label").textContent = sym; }
+    applyAuditSymbol();
+  },
+  auditClearSymbol() {
+    window._auditSym = "";
+    const f = document.getElementById("audit-sym-filter");
+    if (f) f.style.display = "none";
+    applyAuditSymbol();
   },
   async resetBreaker() {
     if (!confirm("Manually reset the circuit-breaker? The system will resume trading.")) return;

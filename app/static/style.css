@@ -81,6 +81,20 @@ button { white-space: nowrap; }
 #preview-output { overflow-x: auto; margin-top: 10px; }
 [x-cloak] { display: none !important; }
 
+/* Audit "Nhật ký" feed: category filter via the wrapper class (survives the poll). */
+.audit-filters { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; font-size: 12px; }
+.af-important .cat-system { display: none; }
+.af-trade  .audit-row:not(.cat-trade)  { display: none; }
+.af-risk   .audit-row:not(.cat-risk)   { display: none; }
+.af-opus   .audit-row:not(.cat-opus)   { display: none; }
+.af-system .audit-row:not(.cat-system) { display: none; }
+/* .af-all shows everything */
+.audit-sym-hidden { display: none !important; }
+.audit-warn { color: #f0883e; }
+.audit-tbl td { padding: 4px 7px; vertical-align: top; }
+.audit-row.sev-danger td:nth-child(3) { font-weight: 600; }
+.audit-sym { padding: 1px 6px; font-size: 11px; }
+
 /* Click-to-view overlay modal (price ladder) */
 .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 100; }
 .overlay-box { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; width: min(560px, 92vw); max-height: 90vh; overflow: auto; }

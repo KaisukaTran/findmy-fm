@@ -146,11 +146,25 @@
       </div>
     </div>
 
-    <!-- TAB: Nhật ký (Logs) -->
+    <!-- TAB: Nhật ký (Logs) — meaningful, categorised feed -->
     <div data-tab-panel="logs">
       <div class="panel" style="margin-top:16px">
-        <h2>AI Audit Log</h2>
-        <div class="scroll" hx-get="/partials/audit" hx-trigger="load, every 15s, refresh from:body" hx-swap="innerHTML"></div>
+        <h2>Nhật ký hoạt động</h2>
+        <!-- #audit-wrap is OUTSIDE the hx-swap, so the category filter (a CSS class on it)
+             survives the 15s poll. -->
+        <div id="audit-wrap" class="af-important">
+          <div class="audit-filters">
+            <button class="sm" data-action="auditFilter" data-id="important">Quan trọng</button>
+            <button class="sm ghost" data-action="auditFilter" data-id="trade">🟢 Giao dịch</button>
+            <button class="sm ghost" data-action="auditFilter" data-id="risk">🛑 Rủi ro</button>
+            <button class="sm ghost" data-action="auditFilter" data-id="opus">🤖 OPUS</button>
+            <button class="sm ghost" data-action="auditFilter" data-id="system">⚙️ Hệ thống</button>
+            <button class="sm ghost" data-action="auditFilter" data-id="all">Tất cả</button>
+            <span id="audit-sym-filter" style="display:none">· coin: <b id="audit-sym-label"></b>
+              <button class="sm ghost" data-action="auditClearSymbol">✕ bỏ lọc</button></span>
+          </div>
+          <div class="scroll" hx-get="/partials/audit" hx-trigger="load, every 15s, refresh from:body" hx-swap="innerHTML"></div>
+        </div>
       </div>
     </div>
   </main>

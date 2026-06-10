@@ -27,6 +27,7 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("kss_sessions", "peak_price", "FLOAT NOT NULL DEFAULT 0.0"),
     ("pending_orders", "auto_veto", "BOOLEAN NOT NULL DEFAULT 0"),
     ("pending_orders", "auto_veto_reason", "TEXT"),
+    ("pending_orders", "auto_veto_at", "DATETIME"),
 ]
 
 

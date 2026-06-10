@@ -143,6 +143,7 @@ class Settings(BaseSettings):
     guardian_model: str = Field(default="claude-haiku-4-5-20251001", description="Claude model id used by the Guardian (cheap by default).")
     guardian_max_tokens: int = Field(default=1024, description="Max output tokens per Guardian review call.")
     guardian_fail_open: bool = Field(default=True, description="On Guardian error/timeout, allow auto-approval (fail-open) rather than block.")
+    guardian_veto_ttl_min: int = Field(default=30, description="Minutes a Guardian veto holds before it expires and the order is re-reviewed. Prevents a transient veto from permanently deadlocking a KSS DCA wave. 0 = vetoes never expire.")
 
     # --- Telegram remote-kill (Phase B): alerts + /pause /resume /status /freeze /reset ---
     telegram_enabled: bool = Field(default=False, description="Enable the Telegram notifier + command poller. Needs token + chat id.")

@@ -74,7 +74,7 @@ def _run_periodic(db: Session) -> tuple[int, bool]:
 def run_cycle(db: Session) -> dict:
     """One scheduler cycle. Returns a small summary (counts), not data dumps."""
     global _last_cycle_at, _last_summary
-    from datetime import datetime
+    from datetime import datetime, timedelta
 
     from app import circuit, guardian, notify
     from app.models import PENDING, PendingOrder
@@ -84,6 +84,33 @@ def run_cycle(db: Session) -> dict:
     scan = scanner.run_scan(db)
     breaker = circuit.evaluate(db)
     frozen = breaker["frozen"]
+
+    # Veto TTL: expire stale Guardian vetoes so a transient veto can't permanently
+    # deadlock a KSS DCA wave whose limit price has since been reached. Cleared orders
+    # become auto-eligible again and are re-reviewed below (if the Guardian is on) — if
+    # still unsafe they get re-vetoed with a fresh timestamp. Runs unconditionally
+    # (even when frozen / Guardian off) so a stuck veto always drains. Legacy rows with
+    # no timestamp are treated as already expired.
+    veto_expired = 0
+    ttl = settings.guardian_veto_ttl_min
+    if ttl > 0:
+        cutoff = datetime.utcnow() - timedelta(minutes=ttl)
+        stale = (
+            db.query(PendingOrder)
+            .filter(
+                PendingOrder.status == PENDING,
+                PendingOrder.auto_veto == True,  # noqa: E712
+                (PendingOrder.auto_veto_at == None) | (PendingOrder.auto_veto_at < cutoff),  # noqa: E711
+            )
+            .all()
+        )
+        for order in stale:
+            order.auto_veto = False
+            order.auto_veto_reason = None
+            order.auto_veto_at = None
+            audit.log(db, "guardian", "veto_expired", entity=f"order:{order.id}",
+                      symbol=order.symbol)
+            veto_expired += 1
 
     # Guardian review: veto any auto-eligible orders the LLM deems unsafe.
     guardian_vetoes = 0
@@ -108,6 +135,7 @@ def run_cycle(db: Session) -> dict:
                 if order is not None:
                     order.auto_veto = True
                     order.auto_veto_reason = reason
+                    order.auto_veto_at = datetime.utcnow()
                     audit.log(db, "guardian", "veto", entity=f"order:{oid}", reason=reason)
                     notify.send(f"Guardian vetoed order {oid} ({order.symbol}): {reason}")
                     guardian_vetoes += 1
@@ -122,7 +150,7 @@ def run_cycle(db: Session) -> dict:
     audit.log(db, "scheduler", "cycle", deadlines_closed=len(closed), tp_queued=len(tp),
               candidates=len(scan["candidates"]), auto_filled=len(filled),
               auto_approved=len(auto_approved), frozen=frozen, guardian_vetoes=guardian_vetoes,
-              hyperopt_runs=hyperopt_runs, ml_trained=ml_trained)
+              veto_expired=veto_expired, hyperopt_runs=hyperopt_runs, ml_trained=ml_trained)
     db.commit()
     summary = {
         "deadlines_closed": closed,
@@ -132,6 +160,7 @@ def run_cycle(db: Session) -> dict:
         "auto_approved": auto_approved,
         "frozen": frozen,
         "guardian_vetoes": guardian_vetoes,
+        "veto_expired": veto_expired,
         "hyperopt_runs": hyperopt_runs,
         "ml_trained": ml_trained,
     }

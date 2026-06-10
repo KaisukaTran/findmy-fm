@@ -582,7 +582,10 @@ def list_sessions(
         q = q.filter(KssSession.status == status)
     if symbol:
         q = q.filter(KssSession.symbol == symbol)
-    rows = q.order_by(KssSession.created_at.desc()).limit(limit).all()
+    from sqlalchemy import case
+    # ACTIVE sessions first, then most-recent — so live sessions are always at the top.
+    active_first = case((KssSession.status == SESSION_ACTIVE, 0), else_=1)
+    rows = q.order_by(active_first, KssSession.created_at.desc()).limit(limit).all()
     return [_to_pyramid(r).get_status() for r in rows]
 
 

@@ -42,6 +42,8 @@ KSS_SETTING_FIELDS: dict[str, type] = {
     "sl_pct": float,
     "trailing_pct": float,
     "deadline_days": int,
+    "max_concurrent_sessions": int,
+    "max_deployed_pct": float,
 }
 
 # ---------------------------------------------------------------------------

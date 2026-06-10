@@ -9,13 +9,17 @@
   <label title="Số sóng DCA tối đa mỗi session.">Số sóng (max)
     <input name="scan_max_waves" type="number" step="1" min="1" value="{{ k.scan_max_waves }}" required></label>
   <label title="Vốn cô lập mỗi session (USD).">Vốn/session $
-    <input name="scan_fund" type="number" step="10" min="1" value="{{ '%.0f'|format(k.scan_fund) }}" required></label>
+    <input name="scan_fund" type="number" step="any" min="1" value="{{ '%.0f'|format(k.scan_fund) }}" required></label>
   <label title="Cắt lỗ: bán toàn bộ khi giá ≤ avg×(1−SL%). 0 = tắt.">SL %
     <input name="sl_pct" type="number" step="0.1" min="0" value="{{ '%.2f'|format(k.sl_pct) }}" required></label>
   <label title="Trailing stop: khi có lãi, bán nếu giá ≤ đỉnh×(1−Trail%). 0 = tắt.">Trailing %
     <input name="trailing_pct" type="number" step="0.1" min="0" value="{{ '%.2f'|format(k.trailing_pct) }}" required></label>
   <label title="Số ngày tối đa chờ TP trước khi đóng session.">Deadline (ngày)
     <input name="deadline_days" type="number" step="1" min="1" value="{{ k.deadline_days }}" required></label>
+  <label title="Số session KSS tối đa chạy song song. Tăng để mở thêm coin khi còn vốn.">Số session tối đa
+    <input name="max_concurrent_sessions" type="number" step="1" min="1" value="{{ k.max_concurrent_sessions }}" required></label>
+  <label title="Trần % vốn được triển khai (Σ quỹ session ≤ % × equity). Tăng để dùng nhiều vốn hơn.">Trần vốn %
+    <input name="max_deployed_pct" type="number" step="any" min="1" max="100" value="{{ '%.0f'|format(k.max_deployed_pct) }}" required></label>
   <button type="submit" class="ok">Lưu cấu hình KSS</button>
 </form>
 

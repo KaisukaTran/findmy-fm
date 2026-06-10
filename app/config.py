@@ -110,7 +110,7 @@ class Settings(BaseSettings):
     max_loss_rate: float = Field(default=20.0, description="Max backtested loss-rate %% to qualify.")
     min_net_edge: float = Field(default=0.5, description="Min TP%% above round-trip cost to trade (micro-trade guard).")
     walk_forward_split: float = Field(default=0.5, description="Fraction of history used in-sample; metric is out-of-sample.")
-    max_concurrent_sessions: int = Field(default=5, description="Cap on simultaneously active sessions.")
+    max_concurrent_sessions: int = Field(default=10, description="Cap on simultaneously active sessions.")
     max_deployed_pct: float = Field(default=50.0, description="Cap total isolated funds as %% of equity.")
     scan_min_notional: float = Field(default=10.0, description="Skip dust micro-trades below this USD notional/wave.")
 

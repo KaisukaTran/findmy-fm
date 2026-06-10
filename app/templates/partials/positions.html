@@ -9,6 +9,7 @@
     <th title="Lãi/lỗ tạm tính = (giá hiện tại − avg) × KL, và %% so với giá vốn.">uP&L</th>
     <th title="Ai đang quản lý coin này: OPUS (Opus tự điều phối) hoặc KSS (full-auto theo chiến lược). Có thể cả hai.">Src</th>
     <th title="Mở biểu đồ giá: mua, hiện tại, sóng kế, TP, SL.">Giá</th>
+    <th title="Bán toàn bộ vị thế ngay (can thiệp thủ công, dừng cả session KSS của coin).">Đóng</th>
   </tr></thead>
   <tbody>
     {% for r in rows %}
@@ -26,6 +27,7 @@
         {% if not r.sources %}<span class="muted">—</span>{% endif %}
       </td>
       <td><button class="sm ghost" data-action="viewLadderSymbol" data-id="{{ r.symbol }}">Xem</button></td>
+      <td><button class="sm danger" data-action="closePosition" data-id="{{ r.symbol }}" title="Bán toàn bộ {{ r.symbol }} ngay (can thiệp thủ công)">Đóng</button></td>
     </tr>
     {% endfor %}
   </tbody>

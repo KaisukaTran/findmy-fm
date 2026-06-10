@@ -283,6 +283,33 @@ async def set_full_auto(body: FullAutoBody, db: Session = Depends(get_db)):
     return {**runtime.state(db), "scheduler_running": scheduler.is_running()}
 
 
+class CloseBody(BaseModel):
+    symbol: str
+
+
+@api_router.post("/api/positions/close", dependencies=[Depends(require_api_key)])
+def close_position(body: CloseBody, db: Session = Depends(get_db)):
+    """User override: stop any active KSS session for the coin, then market-sell the whole
+    held position (last-resort manual exit)."""
+    from app.models import SESSION_ACTIVE, KssSession, Position
+
+    for s in db.query(KssSession).filter(
+        KssSession.symbol == body.symbol, KssSession.status == SESSION_ACTIVE
+    ).all():
+        try:
+            kss_service.stop_session(db, s.id, reason="user close-all")
+        except ValueError:
+            pass
+    p = db.query(Position).filter(Position.symbol == body.symbol).one_or_none()
+    if p is None or p.quantity <= 0:
+        return {"closed": False, "reason": "no position"}
+    order, _ = orders.queue_order(db, symbol=body.symbol, side="SELL", quantity=p.quantity,
+                                  price=0.0, order_type="MARKET", source="manual",
+                                  source_ref="manual:close", note="user close-all")
+    fill = orders.approve_order(db, order.id, reviewer="dashboard")
+    return {"closed": True, "realized": fill.realized_pnl, "qty": fill.quantity}
+
+
 class KssSettingsBody(BaseModel):
     scan_distance_pct: float | None = Field(None, gt=0, le=50)
     scan_tp_pct: float | None = Field(None, gt=0, le=100)
@@ -291,6 +318,8 @@ class KssSettingsBody(BaseModel):
     sl_pct: float | None = Field(None, ge=0, le=100)
     trailing_pct: float | None = Field(None, ge=0, le=100)
     deadline_days: int | None = Field(None, ge=1, le=365)
+    max_concurrent_sessions: int | None = Field(None, ge=1, le=100)
+    max_deployed_pct: float | None = Field(None, gt=0, le=100)
 
 
 @api_router.get("/api/kss-settings")

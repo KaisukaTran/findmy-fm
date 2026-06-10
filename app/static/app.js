@@ -160,6 +160,12 @@ const actions = {
   async viewLadder(id) {
     await openLadder(`/partials/ladder?session=${id}`);
   },
+  async closePosition(sym) {
+    if (!confirm(`Đóng TOÀN BỘ vị thế ${sym} (bán market) và dừng session KSS của coin này?`)) return;
+    const r = await api("POST", "/api/positions/close", { symbol: sym });
+    alert(r.closed ? `Đã bán ${sym}: ${r.qty} (PnL $${(r.realized || 0).toFixed(2)})` : "Không có vị thế để đóng.");
+    refreshAll();
+  },
   async viewLadderSymbol(sym) {
     await openLadder(`/partials/ladder?symbol=${encodeURIComponent(sym)}`);
   },
@@ -333,6 +339,8 @@ document.addEventListener("submit", async (e) => {
       sl_pct: num(f.get("sl_pct")),
       trailing_pct: num(f.get("trailing_pct")),
       deadline_days: num(f.get("deadline_days")),
+      max_concurrent_sessions: num(f.get("max_concurrent_sessions")),
+      max_deployed_pct: num(f.get("max_deployed_pct")),
     });
     alert("Đã lưu cấu hình KSS — áp dụng cho session mới.");
     refreshAll();

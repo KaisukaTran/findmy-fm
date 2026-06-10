@@ -94,6 +94,17 @@ def render(row: AuditLog) -> dict:
         msg = (f"OPUS ra quyết định: {d.get('intents', 0)} ý định"
                f" · cost ${_money(d.get('billed_cost'))}"
                + (" · SHADOW" if d.get("shadow") else ""))
+    elif a == "grok" and act == "decide":
+        cat, sev, icon = OPUS, "info", "🛰️"
+        msg = f"GROK ra quyết định: {d.get('intents', 0)} ý định · cost ${_money(d.get('billed_cost'))}"
+    elif a == "grok" and act.startswith("decide_"):
+        cat, sev, icon = OPUS, "warn", "⚠️"
+        msg = f"GROK lỗi khi quyết định ({act})"
+    elif a == "consensus" and act == "merge":
+        cat, sev, icon = OPUS, "info", "🤝"
+        msg = (f"Đồng thuận OPUS+GROK: mở {d.get('agreed_open', 0)}/"
+               f"{max(d.get('opus_open', 0), d.get('grok_open', 0))} (cả hai đồng ý) · "
+               f"đóng {d.get('closes', 0)}")
     elif a == "opus" and act == "open":
         cat, sev, icon = TRADE, "good", "🤖"
         msg = f"OPUS mở {s} ${_money(d.get('notional'))} @ {_money(d.get('price'))}"

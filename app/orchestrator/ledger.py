@@ -24,9 +24,14 @@ def _hour_floor(ts: datetime) -> datetime:
     return datetime(ts.year, ts.month, ts.day, ts.hour)
 
 
-def raw_cost(input_tokens: int, output_tokens: int) -> float:
-    pin = settings.opus_price_in_per_mtok / 1_000_000.0
-    pout = settings.opus_price_out_per_mtok / 1_000_000.0
+def raw_cost(
+    input_tokens: int,
+    output_tokens: int,
+    price_in: float | None = None,
+    price_out: float | None = None,
+) -> float:
+    pin = (settings.opus_price_in_per_mtok if price_in is None else price_in) / 1_000_000.0
+    pout = (settings.opus_price_out_per_mtok if price_out is None else price_out) / 1_000_000.0
     return input_tokens * pin + output_tokens * pout
 
 
@@ -37,9 +42,12 @@ def record_cost(
     *,
     purpose: str = "decision",
     request_id: str | None = None,
+    price_in: float | None = None,
+    price_out: float | None = None,
 ) -> OpusCostLedger:
-    """Meter one Opus call; billed = raw × multiplier (×2). Persists + returns the row."""
-    raw = raw_cost(input_tokens, output_tokens)
+    """Meter one agent call; billed = raw × multiplier (×2). Persists + returns the row.
+    Pass price_in/out to meter a non-Opus agent (e.g. Grok) at its own price."""
+    raw = raw_cost(input_tokens, output_tokens, price_in, price_out)
     billed = raw * settings.opus_cost_multiplier
     row = OpusCostLedger(
         input_tokens=int(input_tokens),

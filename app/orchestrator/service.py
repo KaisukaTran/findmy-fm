@@ -179,4 +179,7 @@ def state(db: Session) -> dict:
         "kpi_24h_pct": kpi_24h_pct(db),
         "kpi_target_pct": settings.opus_kpi_target_pct,
         "interval_min": settings.opus_interval_min,
+        "grok_enabled": settings.grok_enabled,
+        "grok_active": bool(settings.grok_enabled and settings.xai_api_key.get_secret_value()),
+        "grok_role": settings.grok_role,
     }

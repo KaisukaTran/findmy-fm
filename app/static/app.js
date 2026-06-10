@@ -149,6 +149,13 @@ const actions = {
     await api("POST", "/api/opus", { enabled: !s.mode });
     refreshAll();
   },
+  async toggleGrok() {
+    const s = await api("GET", "/api/opus");
+    await api("POST", "/api/grok", { enabled: !s.grok_enabled });
+    if (!s.grok_enabled && !s.grok_active)
+      alert("Đã bật Grok. Cần thêm XAI_API_KEY vào .env để Grok thật sự tham gia đồng thuận.");
+    refreshAll();
+  },
   async toggleOpusShadow() {
     const s = await api("GET", "/api/opus");
     // shadow ON → confirm before letting Opus place (paper) orders.

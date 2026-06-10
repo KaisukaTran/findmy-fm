@@ -360,6 +360,13 @@ async def set_opus(body: OpusBody, db: Session = Depends(get_db)):
     return {**opus_service.state(db), "loop_running": opus_loop.is_running()}
 
 
+@api_router.post("/api/grok", dependencies=[Depends(require_api_key)])
+def set_grok(body: OpusBody, db: Session = Depends(get_db)):
+    """Toggle the Grok co-pilot (consensus with OPUS). Needs xai_api_key to be active."""
+    runtime.grok_set(db, body.enabled)
+    return opus_service.state(db)
+
+
 @api_router.post("/api/opus/shadow", dependencies=[Depends(require_api_key)])
 def set_opus_shadow(body: OpusBody, db: Session = Depends(get_db)):
     """Toggle OPUS shadow mode (True = log intents only; False = execute on paper)."""

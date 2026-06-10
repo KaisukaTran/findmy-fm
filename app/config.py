@@ -182,5 +182,16 @@ class Settings(BaseSettings):
     opus_max_trade_notional: float = Field(default=200.0, description="Per-trade notional cap for OPUS discretionary orders.")
     opus_shadow: bool = Field(default=True, description="Shadow mode: Opus intents are logged but NOT executed. Flip off to let the sandbox route orders.")
 
+    # --- Grok co-pilot (xAI) for consensus decisions with OPUS (off by default) ---
+    # When enabled WITH a key, OPUS (Claude) and Grok (xAI) each decide on the SAME snapshot;
+    # consensus = OPEN only if BOTH agree, CLOSE if EITHER wants out (fast risk, slow entry).
+    grok_enabled: bool = Field(default=False, description="Add Grok (xAI) as a second decision agent alongside OPUS (needs xai_api_key).")
+    xai_api_key: SecretStr = Field(default=SecretStr(""), description="xAI API key for the Grok co-pilot. Empty = Grok off.")
+    grok_model: str = Field(default="grok-3", description="xAI Grok model id (OpenAI-compatible chat API).")
+    grok_max_tokens: int = Field(default=2048, description="Max output tokens per Grok decision call.")
+    grok_price_in_per_mtok: float = Field(default=3.0, description="Grok input price (USD per million tokens) for cost metering.")
+    grok_price_out_per_mtok: float = Field(default=15.0, description="Grok output price (USD per million tokens).")
+    grok_role: str = Field(default="risk", description="Grok's mandate: 'risk' (skeptical second opinion) or 'peer' (equal alpha agent).")
+
 
 settings = Settings()

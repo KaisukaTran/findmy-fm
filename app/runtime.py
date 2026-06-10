@@ -29,6 +29,7 @@ KEY_FROZEN_REASON = "breaker_frozen_reason"
 KEY_FROZEN_AT = "breaker_frozen_at"  # ISO timestamp string
 KEY_OPUS_MODE = "opus_mode"
 KEY_OPUS_SHADOW = "opus_shadow"
+KEY_GROK_ENABLED = "grok_enabled"
 KEY_AUTOAPPROVE_ENABLED = "autoapprove_enabled"
 KEY_AUTOAPPROVE_MAX = "autoapprove_max_notional"
 
@@ -147,6 +148,13 @@ def set_kss_settings(db: Session, values: dict) -> dict:
     return kss_settings(db)
 
 
+def grok_set(db: Session, enabled: bool) -> dict:
+    """Enable/disable the Grok co-pilot. Persisted."""
+    settings.grok_enabled = enabled
+    set_bool(db, KEY_GROK_ENABLED, enabled)
+    return state(db)
+
+
 def opus_shadow_set(db: Session, shadow: bool) -> dict:
     """Set OPUS shadow mode (True = log intents but don't execute). Persisted."""
     settings.opus_shadow = shadow
@@ -209,6 +217,7 @@ def sync_from_db(db: Session) -> None:
         settings.autoapprove_enabled = True
     settings.opus_mode = get_bool(db, KEY_OPUS_MODE, default=settings.opus_mode)
     settings.opus_shadow = get_bool(db, KEY_OPUS_SHADOW, default=settings.opus_shadow)
+    settings.grok_enabled = get_bool(db, KEY_GROK_ENABLED, default=settings.grok_enabled)
     # Auto-approval rule (persisted so a dashboard change survives a restart).
     if get(db, KEY_AUTOAPPROVE_ENABLED) is not None:
         settings.autoapprove_enabled = get_bool(db, KEY_AUTOAPPROVE_ENABLED)

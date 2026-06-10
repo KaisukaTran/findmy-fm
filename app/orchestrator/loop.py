@@ -57,21 +57,30 @@ def tick(db: Session) -> dict:
             ledger.rollup_now(db)
             return {"skipped": "throttled", "watch": watch_summary}
 
-    # 4) Decide + route through the sandbox.
+    # 4) Decide + route through the sandbox. With Grok on, OPUS and Grok each decide on the
+    #    SAME snapshot and consensus.combine() merges them (open=both agree, close=either).
+    from app import audit
+    from app.orchestrator import consensus, grok
+
     decision = brain.decide(db)
+    billed = decision.get("billed_cost", 0.0)
+    intents = decision["intents"] if decision.get("ok") else []
+    if grok.enabled():
+        g = grok.decide(db)
+        billed += g.get("billed_cost", 0.0)
+        merged = consensus.combine(intents, g["intents"] if g.get("ok") else [])
+        audit.log(db, "consensus", "merge", **merged["stats"])
+        intents = merged["intents"]
     runtime.set(db, "opus_last_decision_at", datetime.utcnow().isoformat())
-    applied = (
-        policy.apply_intents(db, decision["intents"])
-        if decision.get("ok")
-        else {"executed": [], "rejected": []}
-    )
+    applied = policy.apply_intents(db, intents)
     ledger.rollup_now(db)
     return {
-        "intents": len(decision.get("intents", [])),
+        "intents": len(intents),
         "executed": len(applied.get("executed", [])),
         "rejected": len(applied.get("rejected", [])),
         "shadow": applied.get("shadow", settings.opus_shadow),
-        "billed_cost": decision.get("billed_cost", 0.0),
+        "billed_cost": billed,
+        "grok": grok.enabled(),
         "watch": watch_summary,
     }
 

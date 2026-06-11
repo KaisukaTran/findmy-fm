@@ -131,3 +131,12 @@ def check_tp(session_id: int, current_price: float | None = None, db: Session = 
         return service.check_tp(db, session_id, current_price)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/sessions/{session_id}/dca-next", dependencies=[Depends(require_api_key)])
+def dca_next(session_id: int, db: Session = Depends(get_db)):
+    """Manually queue the next DCA wave (bootstraps a dormant ladder after raising max_waves)."""
+    try:
+        return service.queue_next_wave(db, session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

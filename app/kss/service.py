@@ -180,8 +180,21 @@ def adopt_position_into_kss(
     Reuses the frozen pyramid math: seed wave 0 as *filled* with the held qty/avg (no new
     buy), then let on_fill() queue the next DCA wave and persist state. From here the normal
     KSS rules (DCA ladder, SL/trailing, TP, deadline) govern the losing trade.
+
+    K-1: at most one ACTIVE KSS session per symbol (one owner → session avg == the symbol
+    Position avg → no 'take-profit that realizes a loss'). If this coin already has an owner,
+    fold the rescued lot into it (`_merge_rescue`) instead of opening a parallel session.
     """
     from app.config import settings
+
+    existing = (
+        db.query(KssSession)
+        .filter(KssSession.symbol == symbol, KssSession.status == SESSION_ACTIVE)
+        .order_by(KssSession.created_at.asc())
+        .first()
+    )
+    if existing is not None:
+        return _merge_rescue(db, existing, held_qty, avg_price, current_price, note=note)
 
     held_notional = max(held_qty * avg_price, 0.0)
     row = create_session(
@@ -233,6 +246,47 @@ def adopt_position_into_kss(
     db.commit()
     audit.log(db, "opus", "kss_rescue", entity=f"kss:{row.id}", symbol=symbol,
               held_qty=held_qty, avg=avg_price)
+    return row
+
+
+def _merge_rescue(
+    db: Session, row: KssSession, held_qty: float, avg_price: float, current_price: float,
+    *, note: str,
+) -> KssSession:
+    """
+    Fold an OPUS-rescued lot into an EXISTING active session (K-1: one owner per coin).
+
+    Appends the held lot as a final filled wave so the frozen `on_fill` recomputes the
+    session avg/cost over the whole inventory. The ladder is capped at this wave so no new
+    DCA buy is queued — from here the session's TP/SL/deadline manage the combined position.
+    Avoids the parallel-session bug where two sessions split one symbol's Position (blended
+    cost basis → a 'take-profit' that realises a loss).
+    """
+    py = _to_pyramid(row)
+    wave_num = max((w.wave_num for w in py.waves), default=-1) + 1
+    py.max_waves = wave_num + 1  # cap so on_fill records the fill but queues nothing further
+    py.isolated_fund += max(held_qty * avg_price, 0.0)  # room for the merged notional
+    py.waves.append(
+        WaveInfo(wave_num=wave_num, quantity=held_qty, target_price=avg_price, status="sent")
+    )
+    py.on_fill(wave_num, held_qty, avg_price, current_market_price=current_price)
+    if py.status == PyramidSessionStatus.TP_TRIGGERED:
+        # A merge must never auto-sell; let the scheduler's K-2-guarded TP decide next tick.
+        py.status = PyramidSessionStatus.ACTIVE
+    _save_state(row, py)
+    row.max_waves = py.max_waves
+    row.isolated_fund = py.isolated_fund
+    row.last_fill_at = datetime.utcnow()
+    db.add(
+        KssWave(
+            session_id=row.id, wave_num=wave_num, quantity=held_qty,
+            target_price=avg_price, status=WAVE_FILLED,
+            filled_qty=held_qty, filled_price=avg_price, filled_at=datetime.utcnow(),
+        )
+    )
+    db.commit()
+    audit.log(db, "opus", "kss_rescue_merge", entity=f"kss:{row.id}", symbol=row.symbol,
+              held_qty=held_qty, avg=avg_price, note=note)
     return row
 
 
@@ -311,6 +365,100 @@ def handle_fill_event(
 
     db.commit()
     return result
+
+
+def queue_next_wave(db: Session, session_id: int) -> dict:
+    """
+    Manually queue the next geometric DCA wave for an ACTIVE session.
+
+    Bootstraps DCA when the wave chain has gone dormant — e.g. after extending `max_waves`
+    on a session whose ladder was already exhausted (all waves filled, nothing pending). The
+    next wave is the standard geometric rung (`generate_wave(current_wave + 1)`); once it
+    fills, the frozen `on_fill` auto-chains the rest. Goes through the approval queue.
+    """
+    row = _get_row(db, session_id)
+    if row.status != SESSION_ACTIVE:
+        raise ValueError(f"Session {session_id} not active (status={row.status})")
+    py = _to_pyramid(row)
+    next_wave_num = py.current_wave + 1
+    if next_wave_num >= py.max_waves:
+        raise ValueError(
+            f"Ladder exhausted (current_wave={py.current_wave}, max_waves={py.max_waves}); "
+            "raise max_waves first"
+        )
+    if _wave_row(db, session_id, next_wave_num) is not None:
+        raise ValueError(f"Wave {next_wave_num} already queued")
+    next_wave = py.generate_wave(next_wave_num)
+    cost = next_wave.quantity * next_wave.target_price
+    if cost > py.remaining_fund:
+        raise ValueError(
+            f"Insufficient fund for wave {next_wave_num}: need {cost:.2f}, "
+            f"have {py.remaining_fund:.2f}"
+        )
+    py.current_wave = next_wave_num
+    next_wave.status = "sent"
+    pending, risk_note = _queue(db, py._wave_to_order(next_wave))
+    _save_state(row, py)
+    db.add(
+        KssWave(
+            session_id=session_id, wave_num=next_wave_num, quantity=next_wave.quantity,
+            target_price=next_wave.target_price, status=WAVE_SENT, pending_order_id=pending.id,
+        )
+    )
+    audit.log(db, "kss", "dca_next", entity=f"kss:{session_id}", symbol=row.symbol,
+              wave=next_wave_num, price=next_wave.target_price, qty=next_wave.quantity)
+    db.commit()
+    return {
+        "message": f"Queued wave {next_wave_num} @ {next_wave.target_price}",
+        "wave_num": next_wave_num,
+        "price": next_wave.target_price,
+        "quantity": next_wave.quantity,
+        "pending_order_id": pending.id,
+        "risk_note": risk_note,
+    }
+
+
+def consolidate_sessions(db: Session, keep_id: int, merge_id: int) -> dict:
+    """
+    Merge a duplicate session's inventory into another session for the SAME symbol (K-1
+    cleanup). `keep_id` is set to own the whole symbol-level Position (one owner → session
+    avg == Position avg → no blended cost basis); `merge_id` is deleted and any OPUS rescue
+    link repointed. The exchange is untouched — both sessions' fills already live in the one
+    Position; this only fixes the session bookkeeping.
+    """
+    from app.models import Position
+    from app.orchestrator.models import OpusPosition
+
+    keep = _get_row(db, keep_id)
+    merge = _get_row(db, merge_id)
+    if keep_id == merge_id:
+        raise ValueError("keep and merge are the same session")
+    if keep.symbol != merge.symbol:
+        raise ValueError(f"symbol mismatch: {keep.symbol} != {merge.symbol}")
+    pos = db.query(Position).filter(Position.symbol == keep.symbol).one_or_none()
+    if pos is None or pos.quantity <= 0 or pos.avg_entry_price <= 0:
+        raise ValueError(f"no live Position for {keep.symbol} to consolidate")
+
+    keep.total_filled_qty = pos.quantity
+    keep.total_cost = pos.total_cost
+    keep.avg_price = pos.avg_entry_price
+    keep.isolated_fund = keep.isolated_fund + merge.isolated_fund
+    keep.last_fill_at = datetime.utcnow()
+    db.query(OpusPosition).filter(OpusPosition.kss_session_id == merge_id).update(
+        {"kss_session_id": keep_id}
+    )
+    audit.log(db, "kss", "consolidate", entity=f"kss:{keep_id}", symbol=keep.symbol,
+              merged=merge_id, qty=round(pos.quantity, 6), avg=round(pos.avg_entry_price, 8))
+    db.delete(merge)
+    db.commit()
+    return {
+        "message": f"Session {merge_id} merged into {keep_id}",
+        "symbol": keep.symbol,
+        "total_filled_qty": keep.total_filled_qty,
+        "avg_price": keep.avg_price,
+        "total_cost": keep.total_cost,
+        "isolated_fund": keep.isolated_fund,
+    }
 
 
 def stop_session(db: Session, session_id: int, reason: str = "manual") -> dict:

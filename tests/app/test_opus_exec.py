@@ -127,3 +127,36 @@ def test_ride_hard_stop_closes(db, opus_market, monkeypatch):
     watch.run(db)
     db.refresh(pos)
     assert pos.state == om.OPUS_CLOSED
+
+
+# --- K-1: one owner per coin (no duplicate lots / sessions) -------------
+
+
+def test_open_rejected_when_opus_already_holds(db, opus_market):
+    """Don't stack a second OPUS lot on a coin we already hold (root of duplicate sessions)."""
+    policy.apply_intents(db, [{"action": "open", "symbol": "BTC", "notional": 100}])
+    out = policy.apply_intents(db, [{"action": "open", "symbol": "BTC", "notional": 100}])
+    assert out["executed"] == []
+    assert "OPUS already holds" in out["rejected"][0]["reason"]
+    assert db.query(om.OpusPosition).count() == 1
+
+
+def test_second_rescue_merges_into_existing_session(db, opus_market):
+    """Two losing lots on one coin → ONE KSS session owning the combined qty (K-1), not two."""
+    from app.models import SESSION_ACTIVE, KssSession
+
+    p1 = _watch_pos(db, qty=1.0, avg=120.0, hours_ago=4)  # price 100 < avg → loser
+    p2 = _watch_pos(db, qty=2.0, avg=130.0, hours_ago=4)  # loser
+    watch.run(db)
+    db.refresh(p1)
+    db.refresh(p2)
+
+    sessions = (
+        db.query(KssSession)
+        .filter(KssSession.symbol == "BTC", KssSession.status == SESSION_ACTIVE)
+        .all()
+    )
+    assert len(sessions) == 1  # merged, not duplicated
+    assert p1.kss_session_id == sessions[0].id
+    assert p2.kss_session_id == sessions[0].id
+    assert abs(sessions[0].total_filled_qty - 3.0) < 1e-9  # 1.0 + 2.0 folded in

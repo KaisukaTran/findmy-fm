@@ -42,6 +42,13 @@ def _open(db: Session, intent: dict, allowed: set[str], result: dict) -> None:
     ).count() > 0:
         result["rejected"].append({"intent": intent, "reason": "coin has an active KSS session"})
         return
+    # One OPUS lot per coin: don't stack a second position on a symbol we already hold.
+    # Two lots → two 3h rescues → two KSS sessions blending one Position's cost basis (K-1).
+    if db.query(OpusPosition).filter(
+        OpusPosition.symbol == symbol, OpusPosition.state.in_((OPUS_WATCH, OPUS_RIDE))
+    ).count() > 0:
+        result["rejected"].append({"intent": intent, "reason": "OPUS already holds this coin"})
+        return
     if not isinstance(notional, (int, float)) or notional <= 0:
         result["rejected"].append({"intent": intent, "reason": "missing/invalid notional"})
         return

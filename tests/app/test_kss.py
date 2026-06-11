@@ -166,6 +166,57 @@ def test_service_flow_create_start_fill(db, mock_market):
     assert any(p.source_ref == f"pyramid:{row.id}:wave:1" for p in pend)
 
 
+def test_queue_next_wave_after_extending_ladder(db, mock_market):
+    """A dormant ladder (all waves filled, max reached) resumes once max_waves is raised."""
+    row = service.create_session(
+        db, symbol="BTC", entry_price=50000.0, distance_pct=2.0, max_waves=2,
+        isolated_fund=100000.0, tp_pct=3.0, timeout_x_min=30.0, gap_y_min=5.0,
+    )
+    res = service.start_session(db, row.id)
+    orders.approve_order(db, res["pending_order_id"])  # fill wave 0 → auto-queues wave 1
+    w1 = next(p for p in orders.list_pending(db) if p.source_ref == f"pyramid:{row.id}:wave:1")
+    orders.approve_order(db, w1.id)  # fill wave 1 → ladder full (max_waves=2), nothing queued
+
+    # Exhausted: manual DCA must refuse until the ladder is extended.
+    with pytest.raises(ValueError, match="Ladder exhausted"):
+        service.queue_next_wave(db, row.id)
+
+    service.adjust_session(db, row.id, max_waves=4)
+    out = service.queue_next_wave(db, row.id)
+    assert out["wave_num"] == 2
+    pend = orders.list_pending(db)
+    assert any(p.source_ref == f"pyramid:{row.id}:wave:2" for p in pend)
+    db.refresh(row)
+    assert row.current_wave == 2
+
+
+def test_consolidate_sessions_merges_into_one_owner(db, mock_market):
+    """Two active sessions on one coin → keeper owns the whole Position; the other is removed."""
+    from app.orchestrator import models as om
+
+    keep = service.create_session(
+        db, symbol="BTC", entry_price=50000.0, distance_pct=2.0, max_waves=6,
+        isolated_fund=1000.0, tp_pct=3.0, timeout_x_min=30.0, gap_y_min=5.0,
+    )
+    drop = service.create_session(
+        db, symbol="BTC", entry_price=50000.0, distance_pct=2.0, max_waves=6,
+        isolated_fund=1500.0, tp_pct=3.0, timeout_x_min=30.0, gap_y_min=5.0,
+    )
+    db.add(models.Position(symbol="BTC", quantity=3.0, avg_entry_price=48000.0, total_cost=144000.0))
+    db.add(om.OpusPosition(symbol="BTC", state=om.OPUS_RESCUE, qty=1.0, avg_price=48000.0,
+                           kss_session_id=drop.id))
+    db.commit()
+
+    out = service.consolidate_sessions(db, keep_id=keep.id, merge_id=drop.id)
+    assert out["total_filled_qty"] == 3.0 and out["avg_price"] == 48000.0
+    db.refresh(keep)
+    assert keep.total_filled_qty == 3.0 and keep.avg_price == 48000.0
+    assert keep.isolated_fund == 2500.0  # 1000 + 1500
+    assert db.get(models.KssSession, drop.id) is None  # merged session removed
+    opos = db.query(om.OpusPosition).one()
+    assert opos.kss_session_id == keep.id  # rescue link repointed
+
+
 def test_service_delete_and_summary(db, mock_market):
     row = service.create_session(
         db, symbol="ETH", entry_price=3000.0, distance_pct=1.5, max_waves=5,

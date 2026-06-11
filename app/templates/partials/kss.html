@@ -26,6 +26,8 @@
         <button class="ok sm" data-action="kssStart" data-id="{{ s.id }}">Start</button>
         {% elif s.status == 'active' %}
         <button class="ghost sm" data-action="kssCheckTp" data-id="{{ s.id }}">TP?</button>
+        <button class="ghost sm" data-action="kssDcaNext" data-id="{{ s.id }}"
+          title="Mua thêm 1 sóng DCA (rung kế theo ladder). Nới max_waves trước nếu đã đầy.">DCA+</button>
         <button class="danger sm" data-action="kssStop" data-id="{{ s.id }}">Stop</button>
         {% endif %}
         {% if s.status != 'active' %}

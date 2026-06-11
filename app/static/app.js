@@ -81,6 +81,12 @@ const actions = {
       : (r.tp_triggered ? "TP đạt — đã đưa lệnh bán vào hàng chờ." : "Chưa đạt TP."));
     refreshAll();
   },
+  async kssDcaNext(id) {
+    if (!confirm("Mua thêm 1 sóng DCA cho session " + id + "?")) return;
+    const r = await api("POST", `/api/kss/sessions/${id}/dca-next`);
+    alert(`Đã đưa sóng ${r.wave_num} vào hàng chờ: LIMIT BUY ${r.quantity} @ ${r.price}.`);
+    refreshAll();
+  },
   async scan() {
     await api("POST", "/api/scan");
     refreshAll();

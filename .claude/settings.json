@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(taskkill /PID 14660 /F /T)",
+      "PowerShell(Stop-Process -Id 14660 -Force; Start-Sleep -Milliseconds 800; $still = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue; if \\($still\\) { \"STILL LISTENING: $\\($still.OwningProcess\\)\" } else { \"port 8000 free\" })"
+    ]
+  }
+}

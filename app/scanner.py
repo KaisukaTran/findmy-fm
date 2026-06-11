@@ -88,6 +88,9 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
 
     backtest_agent = BacktestAgent()
     candidates: list[Candidate] = []
+    # Candidates that passed every deterministic gate; opened after the (optional)
+    # batched Grok review so the LLM is a single call/scan, not one call/symbol.
+    to_open: list[dict] = []
 
     for symbol in universe:
         candles = provider.get_ohlcv(symbol, settings.backtest_timeframe,
@@ -138,29 +141,78 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
                   net_edge=net_edge, days=wr["avg_days_to_tp"])
 
         if d["decision"] == "trade":
-            if _in_stop_cooldown(db, symbol):
-                cand.reason += " | skipped: stop-loss cooldown"
-                audit.log(db, "scanner", "skipped_cooldown", entity=symbol)
-            elif _symbol_at_cap(db, symbol):
-                cand.reason += " | skipped: per-symbol session cap"
-                audit.log(db, "scanner", "skipped_concentration", entity=symbol)
-            elif _owned_by_opus(db, symbol):
-                cand.reason += " | skipped: OPUS đang giữ coin này"
-                audit.log(db, "scanner", "skipped_opus_owned", entity=symbol)
+            blocked = _trade_block_reason(db, symbol)
+            if blocked:
+                cand.reason += f" | skipped: {blocked}"
             else:
-                ok, why = _can_open(db)
-                if ok:
-                    cand.session_id = _open_session(
-                        db, symbol, candles[-1]["close"], mode,
-                        distance_pct=distance_pct, tp_pct=tp_pct, max_waves=max_waves,
-                    )
-                else:
-                    cand.reason += f" | capped: {why}"
-                    audit.log(db, "scanner", "skipped_cap", entity=symbol, reason=why)
+                # Defer the actual open until after the batched Grok review.
+                to_open.append({
+                    "cand": cand, "symbol": symbol, "entry": candles[-1]["close"],
+                    "distance_pct": distance_pct, "tp_pct": tp_pct, "max_waves": max_waves,
+                    "consensus": consensus, "win_rate": wr["win_rate"],
+                    "loss_rate": wr["loss_rate"], "net_edge": net_edge,
+                })
         candidates.append(cand)
+
+    _review_and_open(db, to_open, mode)
 
     db.commit()
     return {"scan_id": scan.id, "mode": mode, "candidates": [c.to_dict() for c in candidates]}
+
+
+def _trade_block_reason(db: Session, symbol: str) -> str | None:
+    """Deterministic skip gates for a 'trade' candidate. Returns a reason string to skip,
+    or None to proceed. Audits each block."""
+    if _in_stop_cooldown(db, symbol):
+        audit.log(db, "scanner", "skipped_cooldown", entity=symbol)
+        return "stop-loss cooldown"
+    block, streak = _loss_streak_block(db, symbol)
+    if block:
+        audit.log(db, "scanner", "skipped_loss_streak", entity=symbol, streak=streak,
+                  window_days=settings.loss_streak_window_days)
+        return f"thua {streak} lần liên tiếp trong {settings.loss_streak_window_days}d"
+    if _symbol_at_cap(db, symbol):
+        audit.log(db, "scanner", "skipped_concentration", entity=symbol)
+        return "per-symbol session cap"
+    if _owned_by_opus(db, symbol):
+        audit.log(db, "scanner", "skipped_opus_owned", entity=symbol)
+        return "OPUS đang giữ coin này"
+    return None
+
+
+def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
+    """Optional batched Grok endorse/veto pass, then open a KSS session per surviving
+    candidate (still subject to the cumulative capital caps via _can_open). Grok is
+    FAIL-OPEN: a symbol absent from the verdict map is treated as endorsed."""
+    from app.orchestrator import grok  # lazy — avoid import-time coupling
+
+    reviews: dict[str, dict] = {}
+    if to_open and grok.scanner_enabled():
+        items = [{
+            "symbol": c["symbol"], "consensus": round(c["consensus"], 1),
+            "win_rate": round(c["win_rate"], 1), "loss_rate": round(c["loss_rate"], 1),
+            "net_edge": round(c["net_edge"], 2), "price": c["entry"],
+        } for c in to_open]
+        reviews = grok.review_candidates(db, items)
+
+    for c in to_open:
+        cand, symbol = c["cand"], c["symbol"]
+        verdict = reviews.get(symbol)
+        if verdict and not verdict["endorse"]:
+            cand.reason += f" | Grok veto: {verdict['reason']}"
+            audit.log(db, "grok", "scanner_veto", entity=symbol, reason=verdict["reason"])
+            continue
+        if verdict and verdict.get("reason"):
+            cand.reason += f" | Grok: {verdict['reason']}"
+        ok, why = _can_open(db)
+        if ok:
+            cand.session_id = _open_session(
+                db, symbol, c["entry"], mode,
+                distance_pct=c["distance_pct"], tp_pct=c["tp_pct"], max_waves=c["max_waves"],
+            )
+        else:
+            cand.reason += f" | capped: {why}"
+            audit.log(db, "scanner", "skipped_cap", entity=symbol, reason=why)
 
 
 def _can_open(db: Session) -> tuple[bool, str]:
@@ -192,6 +244,41 @@ def _in_stop_cooldown(db: Session, symbol: str) -> bool:
         return False
     elapsed_min = (datetime.utcnow() - stopped_at).total_seconds() / 60.0
     return elapsed_min < settings.stop_cooldown_min
+
+
+def _loss_streak_block(db: Session, symbol: str) -> tuple[bool, int]:
+    """Block a pair on a recent consecutive-loss streak.
+
+    Counts the symbol's most-recent run of losing closes (SELL fills, realized_pnl < 0)
+    within the last `loss_streak_window_days`; a winning close breaks the run. Returns
+    (block, streak). The block auto-decays: as losses age out of the window or a win
+    lands, the streak falls below K and trading resumes — no manual blocklist to clear.
+    """
+    if not settings.loss_block_enabled or settings.loss_streak_block_k <= 0:
+        return False, 0
+    from datetime import datetime, timedelta
+
+    from app.models import Fill
+
+    cutoff = datetime.utcnow() - timedelta(days=settings.loss_streak_window_days)
+    closes = (
+        db.query(Fill)
+        .filter(
+            Fill.symbol == symbol,
+            Fill.side == "SELL",
+            Fill.realized_pnl != 0,
+            Fill.executed_at >= cutoff,
+        )
+        .order_by(Fill.executed_at.desc())
+        .all()
+    )
+    streak = 0
+    for f in closes:
+        if (f.realized_pnl or 0.0) < 0:
+            streak += 1
+        else:
+            break  # a winning close breaks the most-recent streak
+    return streak >= settings.loss_streak_block_k, streak
 
 
 def _symbol_at_cap(db: Session, symbol: str) -> bool:

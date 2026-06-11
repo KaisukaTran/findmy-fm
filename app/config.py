@@ -114,6 +114,14 @@ class Settings(BaseSettings):
     max_deployed_pct: float = Field(default=50.0, description="Cap total isolated funds as %% of equity.")
     scan_min_notional: float = Field(default=10.0, description="Skip dust micro-trades below this USD notional/wave.")
 
+    # --- Loss-streak block: skip re-trading a pair on a recent losing streak ---
+    loss_block_enabled: bool = Field(default=True, description="Block new KSS sessions on a pair with a recent consecutive-loss streak.")
+    loss_streak_block_k: int = Field(default=2, description="Block a pair after this many consecutive losing closes (a win breaks the streak).")
+    loss_streak_window_days: int = Field(default=14, description="Only count closes within this sliding window (days) — the block auto-decays as old losses age out.")
+
+    # --- Grok scanner gate: a Grok (xAI) endorse/veto pass over qualified candidates ---
+    grok_scanner_enabled: bool = Field(default=False, description="Have Grok review scanner candidates that passed every deterministic gate (one batched call/scan). Needs xai_api_key. Off = no cost, deterministic behaviour unchanged.")
+
     # --- Full-auto master switch + circuit breaker (Phase A) ---
     full_auto: bool = Field(
         default=False,

@@ -30,6 +30,7 @@ KEY_FROZEN_AT = "breaker_frozen_at"  # ISO timestamp string
 KEY_OPUS_MODE = "opus_mode"
 KEY_OPUS_SHADOW = "opus_shadow"
 KEY_GROK_ENABLED = "grok_enabled"
+KEY_GROK_SCANNER = "grok_scanner_enabled"
 KEY_AUTOAPPROVE_ENABLED = "autoapprove_enabled"
 KEY_AUTOAPPROVE_MAX = "autoapprove_max_notional"
 
@@ -45,6 +46,8 @@ KSS_SETTING_FIELDS: dict[str, type] = {
     "deadline_days": int,
     "max_concurrent_sessions": int,
     "max_deployed_pct": float,
+    "loss_streak_block_k": int,
+    "loss_streak_window_days": int,
 }
 
 # ---------------------------------------------------------------------------
@@ -155,6 +158,13 @@ def grok_set(db: Session, enabled: bool) -> dict:
     return state(db)
 
 
+def grok_scanner_set(db: Session, enabled: bool) -> dict:
+    """Enable/disable the Grok scanner gate (independent of OPUS mode). Persisted."""
+    settings.grok_scanner_enabled = enabled
+    set_bool(db, KEY_GROK_SCANNER, enabled)
+    return state(db)
+
+
 def opus_shadow_set(db: Session, shadow: bool) -> dict:
     """Set OPUS shadow mode (True = log intents but don't execute). Persisted."""
     settings.opus_shadow = shadow
@@ -169,6 +179,7 @@ def state(db: Session) -> dict:
         "auto_trade": settings.auto_trade,
         "autoapprove": settings.autoapprove_enabled,
         "opus_mode": settings.opus_mode,
+        "grok_scanner": settings.grok_scanner_enabled,
         "frozen": is_frozen(db),
         "frozen_reason": get(db, KEY_FROZEN_REASON),
         "frozen_at": get(db, KEY_FROZEN_AT),
@@ -218,6 +229,7 @@ def sync_from_db(db: Session) -> None:
     settings.opus_mode = get_bool(db, KEY_OPUS_MODE, default=settings.opus_mode)
     settings.opus_shadow = get_bool(db, KEY_OPUS_SHADOW, default=settings.opus_shadow)
     settings.grok_enabled = get_bool(db, KEY_GROK_ENABLED, default=settings.grok_enabled)
+    settings.grok_scanner_enabled = get_bool(db, KEY_GROK_SCANNER, default=settings.grok_scanner_enabled)
     # Auto-approval rule (persisted so a dashboard change survives a restart).
     if get(db, KEY_AUTOAPPROVE_ENABLED) is not None:
         settings.autoapprove_enabled = get_bool(db, KEY_AUTOAPPROVE_ENABLED)

@@ -102,14 +102,6 @@ const actions = {
     await api("POST", "/api/pending/reject-all", { reason: "bulk reject" });
     refreshAll();
   },
-  async autoProcess() {
-    const r = await api("POST", "/api/pending/auto");
-    const n = r.auto_approved.length;
-    alert(n
-      ? `Đã tự duyệt ${n} lệnh (đã tới giá, ≤ ngưỡng).`
-      : "Chưa có lệnh nào TỚI GIÁ để duyệt. Các lệnh 'AUTO ⏳' đang chờ giá chạm limit (DCA mua đáy) — chúng sẽ TỰ duyệt khi tới giá, không cần bấm. Lệnh 'TAY' (lớn) cần bạn duyệt thủ công.");
-    refreshAll();
-  },
   async toggleAutoApprove() {
     const s = await api("GET", "/api/autoapprove");
     if (!s.enabled &&
@@ -154,6 +146,13 @@ const actions = {
     await api("POST", "/api/grok", { enabled: !s.grok_enabled });
     if (!s.grok_enabled && !s.grok_active)
       alert("Đã bật Grok. Cần thêm XAI_API_KEY vào .env để Grok thật sự tham gia đồng thuận.");
+    refreshAll();
+  },
+  async toggleGrokScanner() {
+    const s = await api("GET", "/api/automation");
+    await api("POST", "/api/grok-scanner", { enabled: !s.grok_scanner });
+    if (!s.grok_scanner)
+      alert("Đã bật Grok scanner. Cần XAI_API_KEY trong .env để Grok thực sự duyệt ứng viên.");
     refreshAll();
   },
   async toggleOpusShadow() {
@@ -348,6 +347,8 @@ document.addEventListener("submit", async (e) => {
       deadline_days: num(f.get("deadline_days")),
       max_concurrent_sessions: num(f.get("max_concurrent_sessions")),
       max_deployed_pct: num(f.get("max_deployed_pct")),
+      loss_streak_block_k: num(f.get("loss_streak_block_k")),
+      loss_streak_window_days: num(f.get("loss_streak_window_days")),
     });
     alert("Đã lưu cấu hình KSS — áp dụng cho session mới.");
     refreshAll();

@@ -84,3 +84,88 @@ def test_high_thresholds_skip(db, scan_env, monkeypatch):
     cand = db.query(models.Candidate).filter_by(symbol="BTC").one()
     assert cand.decision == "skip" and cand.session_id is None
     assert db.query(models.KssSession).count() == 0
+
+
+# --- loss-streak block -------------------------------------------------------
+
+from datetime import datetime, timedelta  # noqa: E402
+
+
+def _close(db, symbol, pnl, days_ago=0):
+    """Insert a closing SELL fill with the given realized PnL `days_ago` days back."""
+    db.add(models.Fill(symbol=symbol, side="SELL", quantity=1.0, price=1.0, fee=0.0,
+                        realized_pnl=pnl,
+                        executed_at=datetime.utcnow() - timedelta(days=days_ago)))
+    db.commit()
+
+
+def test_loss_streak_blocks_after_k(db, monkeypatch):
+    monkeypatch.setattr(settings, "loss_block_enabled", True)
+    monkeypatch.setattr(settings, "loss_streak_block_k", 2)
+    monkeypatch.setattr(settings, "loss_streak_window_days", 14)
+    _close(db, "ETH", -5.0, days_ago=2)
+    assert scanner._loss_streak_block(db, "ETH") == (False, 1)  # only one loss
+    _close(db, "ETH", -3.0, days_ago=1)
+    assert scanner._loss_streak_block(db, "ETH") == (True, 2)   # two in a row → block
+
+
+def test_winning_close_breaks_streak(db, monkeypatch):
+    monkeypatch.setattr(settings, "loss_block_enabled", True)
+    monkeypatch.setattr(settings, "loss_streak_block_k", 2)
+    monkeypatch.setattr(settings, "loss_streak_window_days", 14)
+    _close(db, "ETH", -5.0, days_ago=3)
+    _close(db, "ETH", -3.0, days_ago=2)
+    _close(db, "ETH", +4.0, days_ago=1)  # most-recent close is a WIN
+    block, streak = scanner._loss_streak_block(db, "ETH")
+    assert block is False and streak == 0
+
+
+def test_loss_streak_decays_outside_window(db, monkeypatch):
+    monkeypatch.setattr(settings, "loss_block_enabled", True)
+    monkeypatch.setattr(settings, "loss_streak_block_k", 2)
+    monkeypatch.setattr(settings, "loss_streak_window_days", 14)
+    _close(db, "ETH", -5.0, days_ago=40)  # both losses are older than the 14d window
+    _close(db, "ETH", -3.0, days_ago=30)
+    assert scanner._loss_streak_block(db, "ETH") == (False, 0)
+
+
+def test_scan_skips_pair_on_loss_streak(db, scan_env, monkeypatch):
+    monkeypatch.setattr(settings, "loss_block_enabled", True)
+    monkeypatch.setattr(settings, "loss_streak_block_k", 2)
+    _close(db, "BTC", -5.0, days_ago=2)
+    _close(db, "BTC", -3.0, days_ago=1)
+    scanner.run_scan(db, mode="semi")
+    cand = db.query(models.Candidate).filter_by(symbol="BTC").one()
+    assert cand.session_id is None and "thua 2 lần liên tiếp" in cand.reason
+    assert db.query(models.AuditLog).filter_by(action="skipped_loss_streak").count() == 1
+
+
+# --- Grok scanner gate -------------------------------------------------------
+
+
+def test_grok_veto_blocks_open(db, scan_env, monkeypatch):
+    monkeypatch.setattr("app.orchestrator.grok.scanner_enabled", lambda: True)
+    monkeypatch.setattr("app.orchestrator.grok.review_candidates",
+                        lambda _db, items: {"BTC": {"endorse": False, "reason": "momentum xấu"}})
+    scanner.run_scan(db, mode="semi")
+    cand = db.query(models.Candidate).filter_by(symbol="BTC").one()
+    assert cand.session_id is None and "Grok veto" in cand.reason
+    assert db.query(models.AuditLog).filter_by(action="scanner_veto").count() == 1
+
+
+def test_grok_endorse_opens_with_reason(db, scan_env, monkeypatch):
+    monkeypatch.setattr("app.orchestrator.grok.scanner_enabled", lambda: True)
+    monkeypatch.setattr("app.orchestrator.grok.review_candidates",
+                        lambda _db, items: {"BTC": {"endorse": True, "reason": "dip sâu, edge ok"}})
+    scanner.run_scan(db, mode="semi")
+    cand = db.query(models.Candidate).filter_by(symbol="BTC").one()
+    assert cand.session_id is not None and "Grok: dip sâu" in cand.reason
+
+
+def test_grok_failure_is_fail_open(db, scan_env, monkeypatch):
+    # review_candidates returns {} on any error → symbol absent → treated as endorsed.
+    monkeypatch.setattr("app.orchestrator.grok.scanner_enabled", lambda: True)
+    monkeypatch.setattr("app.orchestrator.grok.review_candidates", lambda _db, items: {})
+    scanner.run_scan(db, mode="semi")
+    cand = db.query(models.Candidate).filter_by(symbol="BTC").one()
+    assert cand.session_id is not None  # opened despite no Grok verdict

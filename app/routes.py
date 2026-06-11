@@ -240,6 +240,7 @@ def _automation_state(db: Session) -> dict:
         "telegram": notify.is_running(),
         "hyperopt": settings.hyperopt_enabled,
         "ml": settings.ml_enabled,
+        "grok_scanner": settings.grok_scanner_enabled,
     }
 
 
@@ -320,6 +321,8 @@ class KssSettingsBody(BaseModel):
     deadline_days: int | None = Field(None, ge=1, le=365)
     max_concurrent_sessions: int | None = Field(None, ge=1, le=100)
     max_deployed_pct: float | None = Field(None, gt=0, le=100)
+    loss_streak_block_k: int | None = Field(None, ge=1, le=20)
+    loss_streak_window_days: int | None = Field(None, ge=1, le=365)
 
 
 @api_router.get("/api/kss-settings")
@@ -365,6 +368,14 @@ def set_grok(body: OpusBody, db: Session = Depends(get_db)):
     """Toggle the Grok co-pilot (consensus with OPUS). Needs xai_api_key to be active."""
     runtime.grok_set(db, body.enabled)
     return opus_service.state(db)
+
+
+@api_router.post("/api/grok-scanner", dependencies=[Depends(require_api_key)])
+def set_grok_scanner(body: OpusBody, db: Session = Depends(get_db)):
+    """Toggle the Grok scanner gate (endorse/veto over qualified candidates). Independent of
+    OPUS mode; needs xai_api_key to actually run."""
+    runtime.grok_scanner_set(db, body.enabled)
+    return runtime.state(db)
 
 
 @api_router.post("/api/opus/shadow", dependencies=[Depends(require_api_key)])
@@ -626,9 +637,14 @@ def partial_kss_settings(request: Request, db: Session = Depends(get_db)):
     k = runtime.kss_settings(db)
     # Ladder depth at the last wave = how far below entry the deepest DCA buy sits.
     depth_pct = (1 - (1 - k["scan_distance_pct"] / 100) ** k["scan_max_waves"]) * 100
+    from app.orchestrator import grok
+    grok_scanner = {
+        "enabled": settings.grok_scanner_enabled,
+        "active": grok.scanner_enabled(),  # enabled AND xai key present
+    }
     return templates.TemplateResponse(
         "partials/kss_settings.html",
-        {"request": request, "k": k, "depth_pct": depth_pct},
+        {"request": request, "k": k, "depth_pct": depth_pct, "gs": grok_scanner},
     )
 
 

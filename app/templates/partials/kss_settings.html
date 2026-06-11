@@ -20,8 +20,23 @@
     <input name="max_concurrent_sessions" type="number" step="1" min="1" value="{{ k.max_concurrent_sessions }}" required></label>
   <label title="Trần % vốn được triển khai (Σ quỹ session ≤ % × equity). Tăng để dùng nhiều vốn hơn.">Trần vốn %
     <input name="max_deployed_pct" type="number" step="any" min="1" max="100" value="{{ '%.0f'|format(k.max_deployed_pct) }}" required></label>
+  <label title="Chặn mở session mới cho coin đã thua K lần ĐÓNG LỆNH liên tiếp (một lần lãi sẽ phá chuỗi). Tăng để khó bị chặn hơn.">Chặn sau K lần thua
+    <input name="loss_streak_block_k" type="number" step="1" min="1" max="20" value="{{ k.loss_streak_block_k }}" required></label>
+  <label title="Chỉ tính các lần đóng lệnh trong N ngày gần nhất — lỗ cũ trôi ra ngoài cửa sổ thì coin tự được giao dịch lại.">Cửa sổ lỗ (ngày)
+    <input name="loss_streak_window_days" type="number" step="1" min="1" max="365" value="{{ k.loss_streak_window_days }}" required></label>
   <button type="submit" class="ok">Lưu cấu hình KSS</button>
 </form>
+
+<div style="margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+    <span class="muted" style="font-size:12px">Cổng Grok cho scanner</span>
+    <span class="row-actions">
+      <span class="badge {{ 'guardian-on' if gs.active else 'full-auto-off' }}" title="Grok (xAI) duyệt lần cuối các coin đã qua mọi gate quyết định: endorse (mở) / veto (bỏ) kèm lý do. 1 call/scan. Cần xai_api_key.">GROK SCANNER {{ 'ON' if gs.active else ('ENABLED (thiếu key)' if gs.enabled else 'OFF') }}</span>
+      <button class="sm {{ 'danger' if gs.enabled else 'ok' }}" data-action="toggleGrokScanner">{{ 'Tắt' if gs.enabled else 'Bật' }} Grok scanner</button>
+    </span>
+  </div>
+  <div class="muted" style="font-size:12px;margin-top:6px">Khi bật, Grok cho lý do cụ thể vì sao chọn/bỏ từng coin (xem panel scanner & Nhật ký). Lỗi API → bỏ qua, dùng quyết định deterministic (không chặn lệnh).</div>
+</div>
 
 <div style="margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)">
   <div class="muted" style="font-size:12px">Kiểm tra tính nhất quán:</div>

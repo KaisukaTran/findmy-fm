@@ -74,12 +74,26 @@ class CcxtProvider:
         return f"{symbol}/{self.quote}"
 
     def get_prices(self, symbols: list[str]) -> dict[str, float]:
+        """Batch-fetch prices via ``fetch_tickers`` (one call) when the exchange supports it;
+        fall back to per-symbol ``fetch_ticker`` when the batched call fails (B9)."""
+        if not symbols:
+            return {}
+        pairs = [self.pair(s) for s in symbols]
         out: dict[str, float] = {}
-        for symbol in symbols:
-            try:
-                out[symbol] = float(self._ex.fetch_ticker(self.pair(symbol))["last"])
-            except Exception:  # one bad symbol shouldn't fail the batch
-                continue
+        try:
+            tickers = self._ex.fetch_tickers(pairs)
+            for symbol, pair in zip(symbols, pairs):
+                t = tickers.get(pair) or {}
+                last = t.get("last")
+                if last is not None:
+                    out[symbol] = float(last)
+        except Exception:
+            # Exchange doesn't support batched fetch_tickers — fall back per-symbol.
+            for symbol in symbols:
+                try:
+                    out[symbol] = float(self._ex.fetch_ticker(self.pair(symbol))["last"])
+                except Exception:
+                    continue
         return out
 
     def get_ohlcv(self, symbol: str, timeframe: str = "1d", limit: int = 200) -> list[Candle]:

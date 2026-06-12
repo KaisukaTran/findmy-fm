@@ -51,20 +51,24 @@ def sma(values: list[float], n: int) -> float:
 
 
 def rsi(values: list[float], n: int = 14) -> float:
-    """Classic RSI; returns 50 (neutral) when there isn't enough data."""
+    """Wilder-smoothed RSI (RMA); returns 50 (neutral) when there isn't enough data.
+
+    Matches the Wilder convention used by ``app.ta.indicators.rsi`` and pandas-ta Tier 2
+    so both tiers report consistent values for the same candles (B10).
+    """
     if len(values) <= n:
         return 50.0
-    gains, losses = 0.0, 0.0
-    for i in range(len(values) - n, len(values)):
-        delta = values[i] - values[i - 1]
-        if delta >= 0:
-            gains += delta
-        else:
-            losses -= delta
-    if losses == 0:
+    changes = [values[i] - values[i - 1] for i in range(1, len(values))]
+    if len(changes) < n:
+        return 50.0
+    avg_gain = sum(max(c, 0.0) for c in changes[:n]) / n
+    avg_loss = sum(max(-c, 0.0) for c in changes[:n]) / n
+    for c in changes[n:]:
+        avg_gain = (avg_gain * (n - 1) + max(c, 0.0)) / n
+        avg_loss = (avg_loss * (n - 1) + max(-c, 0.0)) / n
+    if avg_loss == 0.0:
         return 100.0
-    rs = (gains / n) / (losses / n)
-    return 100 - 100 / (1 + rs)
+    return 100 - 100 / (1 + avg_gain / avg_loss)
 
 
 def returns(values: list[float]) -> list[float]:

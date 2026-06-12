@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
@@ -36,14 +37,36 @@ logger = logging.getLogger(__name__)
 
 _MIN_CANDLES = 30
 
+# Bars per day for each supported timeframe — used to convert the lookback_days setting
+# into the correct bar ``limit`` regardless of the active timeframe.
+_BARS_PER_DAY: dict[str, float] = {
+    "1m": 1440.0, "3m": 480.0, "5m": 288.0, "15m": 96.0, "30m": 48.0,
+    "1h": 24.0, "2h": 12.0, "4h": 6.0, "6h": 4.0, "8h": 3.0, "12h": 2.0,
+    "1d": 1.0, "3d": 1 / 3, "1w": 1 / 7,
+}
+
+
+def _days_to_bars(days: int, timeframe: str) -> int:
+    """Convert a lookback in calendar days to the nearest whole number of bars.
+
+    Falls back to 1 bar/day for unknown timeframes, which is safe (returns *days*
+    unchanged) and avoids silently under-fetching on new timeframe strings.
+    """
+    bars_per_day = _BARS_PER_DAY.get(timeframe, 1.0)
+    return max(_MIN_CANDLES, round(days * bars_per_day))
+
+
+_UNIVERSE_TTL_HOURS = 24  # B7: how long the cached exchange symbol list stays fresh
+
 
 def _universe(db: Session, provider) -> list[str]:
     """Watchlist first, then ALL pairs above the liquidity floor, capped for safety.
 
-    The exchange symbol list is cached in runtime_config so a transient provider hiccup
-    (fetch_tickers failure → empty list) reuses the last good universe instead of silently
-    collapsing the scan to just the 3-symbol watchlist. The degradation is audit-logged so it
-    surfaces in the Nhật ký feed rather than looking like a config change.
+    The exchange symbol list is cached in runtime_config with a timestamp so a transient
+    provider hiccup reuses the last *fresh* universe instead of silently collapsing the scan
+    to the watchlist alone.  The cache is only written when the symbol list actually changes
+    (avoids per-scan DB churn) and expires after ``_UNIVERSE_TTL_HOURS`` hours so it never
+    drifts stale forever.  Degradation is audit-logged so it surfaces in the Nhật ký feed.
     """
     symbols = list(settings.watchlist)
     fetched: list[str] = []
@@ -53,14 +76,42 @@ def _universe(db: Session, provider) -> list[str]:
         logger.warning("all_symbols failed: %s", exc)
 
     if fetched:
-        runtime.set(db, "scanner_last_universe", json.dumps(fetched))
-    else:
-        # Provider returned nothing — reuse the last good list so a transient outage doesn't
-        # shrink the scan to the watchlist alone.
-        cached = runtime.get(db, "scanner_last_universe")
-        if cached:
+        # Write only when the symbol list has changed — avoids per-scan DB churn (B7).
+        cached_raw = runtime.get(db, "scanner_last_universe")
+        existing: list[str] = []
+        if cached_raw:
             try:
-                fetched = [s for s in json.loads(cached) if s not in symbols]
+                payload = json.loads(cached_raw)
+                existing = payload.get("symbols", []) if isinstance(payload, dict) else payload
+            except (ValueError, TypeError):
+                pass
+        if existing != fetched:
+            runtime.set(db, "scanner_last_universe",
+                        json.dumps({"ts": datetime.now(timezone.utc).isoformat(), "symbols": fetched}))
+    else:
+        # Provider returned nothing — try the cache but honour the TTL (B7).
+        cached_raw = runtime.get(db, "scanner_last_universe")
+        if cached_raw:
+            try:
+                payload = json.loads(cached_raw)
+                if isinstance(payload, dict):
+                    cached_syms = payload.get("symbols", [])
+                    cached_ts_str = payload.get("ts")
+                    if cached_ts_str:
+                        cached_ts = datetime.fromisoformat(cached_ts_str)
+                        # Make aware if stored without tzinfo (legacy rows).
+                        if cached_ts.tzinfo is None:
+                            cached_ts = cached_ts.replace(tzinfo=timezone.utc)
+                        age_h = (datetime.now(timezone.utc) - cached_ts).total_seconds() / 3600
+                        if age_h <= _UNIVERSE_TTL_HOURS:
+                            fetched = [s for s in cached_syms if s not in symbols]
+                        else:
+                            logger.warning("universe cache expired (%.0fh old) — watchlist only", age_h)
+                    else:
+                        fetched = [s for s in cached_syms if s not in symbols]
+                else:
+                    # Legacy plain-list value — migrate transparently.
+                    fetched = [s for s in payload if s not in symbols]
             except (ValueError, TypeError):
                 fetched = []
         audit.log(db, "scanner", "universe_degraded", entity="scan",
@@ -112,11 +163,13 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
     # Candidates that passed every deterministic gate; opened after the (optional)
     # batched Grok review so the LLM is a single call/scan, not one call/symbol.
     to_open: list[dict] = []
+    _skipped_thin: list[str] = []  # B6: symbols skipped for insufficient candles
 
     for symbol in universe:
-        candles = provider.get_ohlcv(symbol, settings.backtest_timeframe,
-                                     settings.backtest_lookback_days)
+        limit = _days_to_bars(settings.backtest_lookback_days, settings.backtest_timeframe)
+        candles = provider.get_ohlcv(symbol, settings.backtest_timeframe, limit)
         if len(candles) < _MIN_CANDLES:
+            _skipped_thin.append(symbol)
             continue
 
         distance_pct, tp_pct, max_waves = _effective_params(db, symbol)
@@ -130,7 +183,8 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
             spacing_days=settings.backtest_trial_spacing_days,
         )
         ctx = {
-            "win_rate": wr["win_rate"], "trials": wr["trials"],
+            "win_rate": wr["win_rate"], "win_rate_lb": wr["win_rate_lb"],
+            "trials": wr["trials"],
             "avg_days_to_tp": wr["avg_days_to_tp"],
             "ml_model": ml_model,
         }
@@ -189,6 +243,11 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
                 })
         candidates.append(cand)
 
+    # B6: one compact audit entry per scan listing all thin/failed symbols together.
+    if _skipped_thin:
+        audit.log(db, "scanner", "skipped_thin_data", entity=f"run:{scan.id}",
+                  count=len(_skipped_thin), symbols=",".join(_skipped_thin[:20]))
+
     _review_and_open(db, to_open, mode)
 
     db.commit()
@@ -230,13 +289,20 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
 
     reviews: dict[str, dict] = {}
     if to_open and grok.scanner_enabled():
-        items = [{
-            "symbol": c["symbol"], "consensus": round(c["consensus"], 1),
-            "win_rate": round(c["win_rate"], 1), "loss_rate": round(c["loss_rate"], 1),
-            "net_edge": round(c["net_edge"], 2), "price": c["entry"],
-            "ta": c.get("ta", {}),
-        } for c in to_open]
-        reviews = grok.review_candidates(db, items)
+        # B8: skip the LLM call entirely when the concurrent/capital caps are already
+        # saturated — nothing could open even if Grok endorsed everything.
+        can, _why = _can_open(db)
+        if not can:
+            audit.log(db, "scanner", "skipped_capped_batch", entity="grok",
+                      reason=_why, symbols=len(to_open))
+        else:
+            items = [{
+                "symbol": c["symbol"], "consensus": round(c["consensus"], 1),
+                "win_rate": round(c["win_rate"], 1), "loss_rate": round(c["loss_rate"], 1),
+                "net_edge": round(c["net_edge"], 2), "price": c["entry"],
+                "ta": c.get("ta", {}),
+            } for c in to_open]
+            reviews = grok.review_candidates(db, items)
 
     for c in to_open:
         cand, symbol = c["cand"], c["symbol"]
@@ -279,13 +345,15 @@ def _in_stop_cooldown(db: Session, symbol: str) -> bool:
     ts = runtime.get(db, f"stop_cooldown:{symbol}")
     if not ts:
         return False
-    from datetime import datetime
-
     try:
         stopped_at = datetime.fromisoformat(ts)
+        # Normalise to aware UTC so the subtraction is safe regardless of whether
+        # the stored string carries tzinfo (B11: migrate away from utcnow).
+        if stopped_at.tzinfo is None:
+            stopped_at = stopped_at.replace(tzinfo=timezone.utc)
     except ValueError:
         return False
-    elapsed_min = (datetime.utcnow() - stopped_at).total_seconds() / 60.0
+    elapsed_min = (datetime.now(timezone.utc) - stopped_at).total_seconds() / 60.0
     return elapsed_min < settings.stop_cooldown_min
 
 
@@ -299,11 +367,11 @@ def _loss_streak_block(db: Session, symbol: str) -> tuple[bool, int]:
     """
     if not settings.loss_block_enabled or settings.loss_streak_block_k <= 0:
         return False, 0
-    from datetime import datetime, timedelta
+    from datetime import timedelta
 
     from app.models import Fill
 
-    cutoff = datetime.utcnow() - timedelta(days=settings.loss_streak_window_days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=settings.loss_streak_window_days)
     closes = (
         db.query(Fill)
         .filter(
@@ -355,11 +423,22 @@ def _open_session(
     entry: float,
     mode: str,
     *,
-    distance_pct: float = settings.scan_distance_pct,
-    tp_pct: float = settings.scan_tp_pct,
-    max_waves: int = settings.scan_max_waves,
+    distance_pct: float | None = None,
+    tp_pct: float | None = None,
+    max_waves: int | None = None,
 ) -> int:
-    """Open a KSS session using effective (possibly hyperopt-tuned) params."""
+    """Open a KSS session using effective (possibly hyperopt-tuned) params.
+
+    Defaults resolve from ``settings`` at call time (not at import/definition time)
+    so runtime Strategy-tab edits to ``scan_distance_pct`` / ``scan_tp_pct`` /
+    ``scan_max_waves`` are always picked up.
+    """
+    if distance_pct is None:
+        distance_pct = settings.scan_distance_pct
+    if tp_pct is None:
+        tp_pct = settings.scan_tp_pct
+    if max_waves is None:
+        max_waves = settings.scan_max_waves
     row = service.create_session(
         db,
         symbol=symbol,

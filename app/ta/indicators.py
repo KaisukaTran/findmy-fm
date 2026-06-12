@@ -65,19 +65,29 @@ def _wilder_atr_series(candles: list[Candle], n: int) -> list[float]:
 
 
 def rsi(values: list[float], n: int = 14) -> float:
-    """Classic RSI; 50 (neutral) when there isn't enough data."""
+    """Wilder-smoothed RSI (RMA); 50 (neutral) when there isn't enough data.
+
+    Uses Wilder's smoothing (alpha = 1/n) — the same method as pandas-ta Tier 2 — so
+    both tiers report consistent RSI values for the same candles in the Grok bundle (B10).
+    The seed is the simple average of the first ``n`` changes (standard Wilder convention).
+    """
     if len(values) <= n:
         return 50.0
-    gains, losses = 0.0, 0.0
-    for i in range(len(values) - n, len(values)):
-        delta = values[i] - values[i - 1]
-        if delta >= 0:
-            gains += delta
-        else:
-            losses -= delta
-    if losses == 0:
+    changes = [values[i] - values[i - 1] for i in range(1, len(values))]
+    if len(changes) < n:
+        return 50.0
+    # Seed: simple average of the first n changes (Wilder convention).
+    avg_gain = sum(max(c, 0.0) for c in changes[:n]) / n
+    avg_loss = sum(max(-c, 0.0) for c in changes[:n]) / n
+    # Wilder smoothing for the remaining changes.
+    for c in changes[n:]:
+        gain = max(c, 0.0)
+        loss = max(-c, 0.0)
+        avg_gain = (avg_gain * (n - 1) + gain) / n
+        avg_loss = (avg_loss * (n - 1) + loss) / n
+    if avg_loss == 0.0:
         return 100.0
-    rs = (gains / n) / (losses / n)
+    rs = avg_gain / avg_loss
     return 100 - 100 / (1 + rs)
 
 

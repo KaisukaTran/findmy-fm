@@ -31,8 +31,27 @@ async function api(method, url, body) {
   return res.json();
 }
 
+// --- Scoped refresh helpers (P2) ----------------------------------------
+// Fire a targeted custom event on document.body so only the relevant partials
+// re-fetch.  refreshAll() remains for WS pushes (fires every scoped event).
+
+function fireRefresh(scope) {
+  document.body.dispatchEvent(new CustomEvent(scope));
+}
+
+function refreshStatus()  { fireRefresh("refresh-status"); }
+function refreshTrading() { fireRefresh("refresh-trading"); }
+function refreshScanner() { fireRefresh("refresh-scanner"); }
+function refreshOpus()    { fireRefresh("refresh-opus"); }
+function refreshLosses()  { fireRefresh("refresh-losses"); }
+function refreshAudit()   { fireRefresh("refresh-audit"); }
+function refreshParams()  { fireRefresh("refresh-params"); }
+
 function refreshAll() {
-  document.body.dispatchEvent(new CustomEvent("refresh"));
+  // Used by WS push — refetch everything.
+  ["refresh-status","refresh-trading","refresh-scanner",
+   "refresh-opus","refresh-losses","refresh-audit","refresh-params"]
+    .forEach((ev) => document.body.dispatchEvent(new CustomEvent(ev)));
 }
 
 // Symbol filter for the audit feed lives on row classes (inside the swapped partial), so
@@ -58,66 +77,66 @@ async function openLadder(url) {
 const actions = {
   async approve(id) {
     await api("POST", `/api/pending/approve/${id}`);
-    refreshAll();
+    refreshTrading(); refreshStatus();
   },
   async reject(id) {
     const reason = prompt("Reject reason?", "") ?? "";
     await api("POST", `/api/pending/reject/${id}`, { reason });
-    refreshAll();
+    refreshTrading(); refreshStatus();
   },
   async kssStart(id) {
     await api("POST", `/api/kss/sessions/${id}/start`);
-    refreshAll();
+    refreshTrading(); refreshStatus();
   },
   async kssStop(id) {
     await api("POST", `/api/kss/sessions/${id}/stop`);
-    refreshAll();
+    refreshTrading(); refreshStatus();
   },
   async kssDelete(id) {
     if (!confirm("Delete session " + id + "?")) return;
     await api("DELETE", `/api/kss/sessions/${id}`);
-    refreshAll();
+    refreshTrading(); refreshStatus();
   },
   async kssCheckTp(id) {
     const r = await api("POST", `/api/kss/sessions/${id}/check-tp`);
     alert(r.tp_deferred
       ? "TP đạt theo avg session nhưng DƯỚI giá vốn tổng + 2× phí — đã HOÃN (K-2), tránh chốt lời mà lỗ."
       : (r.tp_triggered ? "TP đạt — đã đưa lệnh bán vào hàng chờ." : "Chưa đạt TP."));
-    refreshAll();
+    refreshTrading(); refreshStatus();
   },
   async kssDcaNext(id) {
     if (!confirm("Mua thêm 1 sóng DCA cho session " + id + "?")) return;
     const r = await api("POST", `/api/kss/sessions/${id}/dca-next`);
     alert(`Đã đưa sóng ${r.wave_num} vào hàng chờ: LIMIT BUY ${r.quantity} @ ${r.price}.`);
-    refreshAll();
+    refreshTrading(); refreshStatus();
   },
   async scan() {
     await api("POST", "/api/scan");
-    refreshAll();
+    refreshScanner(); refreshStatus();
   },
   async toggleAuto(desired) {
     const enable = desired === "on";
     if (enable &&
         !confirm("Enable FULL-AUTO trading? Qualifying sessions will be auto-approved.")) return;
     await api("POST", "/api/autotrade", { enabled: enable });
-    refreshAll();
+    refreshStatus();
   },
   async approveAll() {
     if (!confirm("Approve and execute ALL pending orders?")) return;
     await api("POST", "/api/pending/approve-all");
-    refreshAll();
+    refreshTrading(); refreshStatus();
   },
   async rejectAll() {
     if (!confirm("Reject ALL pending orders?")) return;
     await api("POST", "/api/pending/reject-all", { reason: "bulk reject" });
-    refreshAll();
+    refreshTrading(); refreshStatus();
   },
   async toggleAutoApprove(desired) {
     const enable = desired === "on";
     if (enable &&
         !confirm("Enable auto-approval rule? Small KSS orders will be approved automatically.")) return;
     await api("POST", "/api/autoapprove", { enabled: enable });
-    refreshAll();
+    refreshStatus();
   },
   async setAutoApproveMax() {
     const inp = document.getElementById("aa-max-input");
@@ -126,14 +145,14 @@ const actions = {
     // Preserve the current enabled flag; only change the threshold.
     const s = await api("GET", "/api/autoapprove");
     await api("POST", "/api/autoapprove", { enabled: s.enabled, max_notional: v });
-    refreshAll();
+    refreshStatus();
   },
   async toggleScheduler(desired) {
     const enable = desired === "on";
     if (enable &&
         !confirm("Start the background scheduler? It will scan & manage sessions on an interval.")) return;
     await api("POST", "/api/scheduler", { enabled: enable });
-    refreshAll();
+    refreshStatus();
   },
   async toggleFullAuto(desired) {
     const enable = desired === "on";
@@ -142,42 +161,42 @@ const actions = {
     if (!enable &&
         !confirm("Disable FULL-AUTO? This will stop the scheduler and disable autonomous trading.")) return;
     await api("POST", "/api/full-auto", { enabled: enable });
-    refreshAll();
+    refreshStatus();
   },
   async toggleOpus(desired) {
     const enable = desired === "on";
     if (enable &&
         !confirm("Enable OPUS orchestrator mode? Opus will orchestrate trades on its own capital envelope (paper).")) return;
     await api("POST", "/api/opus", { enabled: enable });
-    refreshAll();
+    refreshStatus(); refreshOpus();
   },
   async toggleGrok(desired) {
     const enable = desired === "on";
     await api("POST", "/api/grok", { enabled: enable });
     if (enable)
       alert("Đã bật Grok. Cần thêm XAI_API_KEY vào .env để Grok thật sự tham gia đồng thuận.");
-    refreshAll();
+    refreshStatus();
   },
   async toggleGrokScanner(desired) {
     const enable = desired === "on";
     await api("POST", "/api/grok-scanner", { enabled: enable });
     if (enable)
       alert("Đã bật Grok scanner. Cần XAI_API_KEY trong .env để Grok thực sự duyệt ứng viên.");
-    refreshAll();
+    refreshStatus(); refreshScanner();
   },
   async toggleTaLib(desired) {
     const enable = desired === "on";
     await api("POST", "/api/ta-source", { source: "lib", enabled: enable });
     if (enable)
       alert("Đã bật overlay pandas-ta. Cần `pip install pandas-ta`; thiếu thì tự lùi về chỉ báo pure-Python.");
-    refreshAll();
+    refreshStatus(); refreshScanner();
   },
   async toggleTaExternal(desired) {
     const enable = desired === "on";
     await api("POST", "/api/ta-source", { source: "external", enabled: enable });
     if (enable)
       alert("Đã bật nguồn TA ngoài (taapi.io). Cần TAAPI_API_KEY trong .env; hiện là STUB cho tới khi nối provider.");
-    refreshAll();
+    refreshStatus(); refreshScanner();
   },
   async toggleOpusShadow(desired) {
     const enable = desired === "on";
@@ -185,7 +204,7 @@ const actions = {
     if (!enable &&
         !confirm("Turn OFF shadow? Opus will then PLACE paper orders (still inside the sandbox + caps).")) return;
     await api("POST", "/api/opus/shadow", { enabled: enable });
-    refreshAll();
+    refreshStatus(); refreshOpus();
   },
   async viewLadder(id) {
     await openLadder(`/partials/ladder?session=${id}`);
@@ -194,7 +213,7 @@ const actions = {
     if (!confirm(`Đóng TOÀN BỘ vị thế ${sym} (bán market) và dừng session KSS của coin này?`)) return;
     const r = await api("POST", "/api/positions/close", { symbol: sym });
     alert(r.closed ? `Đã bán ${sym}: ${r.qty} (PnL $${(r.realized || 0).toFixed(2)})` : "Không có vị thế để đóng.");
-    refreshAll();
+    refreshTrading(); refreshLosses(); refreshStatus();
   },
   async viewLadderSymbol(sym) {
     await openLadder(`/partials/ladder?symbol=${encodeURIComponent(sym)}`);
@@ -224,7 +243,7 @@ const actions = {
   async resetBreaker() {
     if (!confirm("Manually reset the circuit-breaker? The system will resume trading.")) return;
     await api("POST", "/api/breaker/reset");
-    refreshAll();
+    refreshStatus();
   },
   async toggleGuardian(desired) {
     const enable = desired === "on";
@@ -233,7 +252,7 @@ const actions = {
     if (!enable &&
         !confirm("Disable AI Guardian? Orders will no longer be screened by the Guardian.")) return;
     await api("POST", "/api/guardian", { enabled: enable });
-    refreshAll();
+    refreshStatus();
   },
   async toggleTelegram(desired) {
     const enable = desired === "on";
@@ -242,7 +261,7 @@ const actions = {
     if (!enable &&
         !confirm("Disable Telegram poller?")) return;
     await api("POST", "/api/telegram", { enabled: enable });
-    refreshAll();
+    refreshStatus();
   },
   async telegramTest() {
     const r = await api("POST", "/api/telegram/test");
@@ -255,7 +274,7 @@ const actions = {
     if (!enable &&
         !confirm("Disable Hyperopt? Parameter tuning will stop.")) return;
     await api("POST", "/api/hyperopt", { enabled: enable });
-    refreshAll();
+    refreshStatus(); refreshParams();
   },
   async toggleMl(desired) {
     const enable = desired === "on";
@@ -264,7 +283,7 @@ const actions = {
     if (!enable &&
         !confirm("Disable ML? Model-based filtering will be turned off.")) return;
     await api("POST", "/api/ml", { enabled: enable });
-    refreshAll();
+    refreshStatus(); refreshParams();
   },
   async hyperoptRun() {
     const btn = document.querySelector("[data-action='hyperoptRun']");
@@ -273,7 +292,7 @@ const actions = {
       const r = await api("POST", "/api/hyperopt/run");
       const n = Array.isArray(r) ? r.length : (r.count ?? "?");
       alert("Hyperopt complete — " + n + " symbol(s) tuned.");
-      loadParams();
+      refreshParams();
     } finally {
       if (btn) btn.disabled = false;
     }
@@ -288,7 +307,7 @@ const actions = {
       } else {
         alert("Retrain returned no model — not enough data yet.");
       }
-      loadParams();
+      refreshParams();
     } finally {
       if (btn) btn.disabled = false;
     }
@@ -306,19 +325,48 @@ document.addEventListener("click", (e) => {
 });
 
 // --- Tab navigation (plain JS, CSP-safe — Alpine only handles modals) ----
+
+// tabActive(el): returns true when the element's tab panel is active.
+// Used in hx-trigger conditional-polling guards: every Ns [tabActive(this)].
+// Degrades to true (always-poll) if data-active is absent (no JS or missing attr).
+function tabActive(el) {
+  try {
+    const panel = el.closest("[data-tab-panel]");
+    if (!panel) return true; // outside any panel — always poll
+    return panel.dataset.active === "true";
+  } catch (_) {
+    return true; // degrade: poll as before
+  }
+}
+
 function showTab(name) {
   document.querySelectorAll("[data-tab]").forEach((b) => {
     b.classList.toggle("active", b.dataset.tab === name);
   });
   document.querySelectorAll("[data-tab-panel]").forEach((p) => {
-    p.style.display = p.dataset.tabPanel === name ? "" : "none";
+    const isActive = p.dataset.tabPanel === name;
+    p.style.display = isActive ? "" : "none";
+    p.dataset.active = isActive ? "true" : "false";
+    if (isActive) {
+      // Fire tab-shown so inactive panels that just became active trigger their
+      // first poll immediately rather than waiting up to Ns for the interval.
+      try { htmx.trigger(p, "tab-shown"); } catch (_) {}
+    }
   });
+  // U8: persist active tab in location.hash
+  try { location.hash = name; } catch (_) {}
 }
+
 document.addEventListener("click", (e) => {
   const tabBtn = e.target.closest("[data-tab]");
   if (tabBtn) showTab(tabBtn.dataset.tab);
 });
-document.addEventListener("DOMContentLoaded", () => showTab("overview"));
+document.addEventListener("DOMContentLoaded", () => {
+  // U8: restore tab from hash on load; fallback to overview.
+  const hash = location.hash.replace("#", "").trim();
+  const valid = ["overview", "trading", "opus", "losses", "strategy", "logs"];
+  showTab(valid.includes(hash) ? hash : "overview");
+});
 
 // Close the ladder modal when clicking the dark backdrop (outside the box).
 document.addEventListener("click", (e) => {
@@ -345,7 +393,7 @@ document.addEventListener("submit", async (e) => {
       order_type: f.get("order_type") || "LIMIT",
     });
     form.reset();
-    refreshAll();
+    refreshTrading(); refreshStatus();
   } else if (form.id === "kss-form") {
     e.preventDefault();
     const f = new FormData(form);
@@ -357,7 +405,7 @@ document.addEventListener("submit", async (e) => {
       isolated_fund: Number(f.get("isolated_fund")),
       tp_pct: Number(f.get("tp_pct")),
     });
-    refreshAll();
+    refreshTrading(); refreshStatus();
   } else if (form.id === "kss-settings-form") {
     e.preventDefault();
     const f = new FormData(form);
@@ -377,7 +425,7 @@ document.addEventListener("submit", async (e) => {
       min_win_rate: num(f.get("min_win_rate")),
     });
     alert("Đã lưu cấu hình KSS — áp dụng cho session mới.");
-    refreshAll();
+    refreshTrading(); refreshStatus();
   } else if (form.id === "preview-form") {
     e.preventDefault();
     const f = new FormData(form);
@@ -484,9 +532,9 @@ async function loadParams() {
   }
 }
 
-// Initialise on first load; also refresh when the global refresh event fires.
+// Initialise on first load; also refresh when the scoped refresh-params fires.
 document.addEventListener("DOMContentLoaded", loadParams);
-document.body.addEventListener("refresh", loadParams);
+document.body.addEventListener("refresh-params", loadParams);
 
 // --- Alpine (CSP build): modal visibility only -------------------------
 

@@ -12,7 +12,7 @@
 <body x-data="ui">
   <header>
     <h1>FINDMY-FM <span class="muted">· KSS Pyramid DCA</span></h1>
-    <div hx-get="/partials/status" hx-trigger="load, every 5s, refresh from:body" hx-swap="innerHTML"></div>
+    <div hx-get="/partials/status" hx-trigger="load, every 5s [document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML"></div>
     <div class="actions">
       <button class="ghost" @click="toggleOrder">+ Order</button>
       <button class="ghost" @click="toggleKss">+ KSS Session</button>
@@ -22,7 +22,7 @@
 
   <main>
     <!-- Summary cards -->
-    <div hx-get="/partials/summary" hx-trigger="load, every 15s, refresh from:body" hx-swap="innerHTML"></div>
+    <div hx-get="/partials/summary" hx-trigger="load, every 15s [document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML"></div>
 
     <!-- Create-order modal -->
     <div class="modal" x-show="orderOpen" x-cloak>
@@ -84,11 +84,11 @@
     <div data-tab-panel="overview">
       <div class="panel" style="margin-top:16px">
         <h2>Hiệu suất (Performance)</h2>
-        <div hx-get="/partials/performance" hx-trigger="load, every 20s, refresh from:body" hx-swap="innerHTML"></div>
+        <div hx-get="/partials/performance" hx-trigger="load, tab-shown from:closest [data-tab-panel], every 20s [tabActive(this) && document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML"></div>
       </div>
       <div class="panel" style="margin-top:16px">
         <h2>Agent Scanner</h2>
-        <div class="scroll" hx-get="/partials/scanner" hx-trigger="load, every 30s, refresh from:body" hx-swap="innerHTML"></div>
+        <div class="scroll" hx-get="/partials/scanner" hx-trigger="load, tab-shown from:closest [data-tab-panel], every 30s [tabActive(this) && document.visibilityState==='visible'], refresh-scanner from:body" hx-swap="innerHTML"></div>
       </div>
     </div>
 
@@ -97,19 +97,19 @@
       <div class="grid" style="margin-top:16px">
         <div class="panel">
           <h2>KSS Sessions</h2>
-          <div class="scroll" hx-get="/partials/kss" hx-trigger="load, every 10s, refresh from:body" hx-swap="innerHTML"></div>
+          <div class="scroll" hx-get="/partials/kss" hx-trigger="tab-shown from:closest [data-tab-panel], every 10s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body" hx-swap="innerHTML"></div>
         </div>
         <div class="panel">
           <h2>Hàng chờ duyệt (Pending)</h2>
-          <div class="scroll" hx-get="/partials/pending" hx-trigger="load, every 10s, refresh from:body" hx-swap="innerHTML"></div>
+          <div class="scroll" hx-get="/partials/pending" hx-trigger="tab-shown from:closest [data-tab-panel], every 10s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body" hx-swap="innerHTML"></div>
         </div>
         <div class="panel">
           <h2>Vị thế (Positions)</h2>
-          <div class="scroll" hx-get="/partials/positions" hx-trigger="load, every 15s, refresh from:body" hx-swap="innerHTML"></div>
+          <div class="scroll" hx-get="/partials/positions" hx-trigger="tab-shown from:closest [data-tab-panel], every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body" hx-swap="innerHTML"></div>
         </div>
         <div class="panel">
           <h2>Lịch sử giao dịch (Trades)</h2>
-          <div class="scroll" hx-get="/partials/trades" hx-trigger="load, every 15s, refresh from:body" hx-swap="innerHTML"></div>
+          <div class="scroll" hx-get="/partials/trades" hx-trigger="tab-shown from:closest [data-tab-panel], every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body" hx-swap="innerHTML"></div>
         </div>
       </div>
     </div>
@@ -118,7 +118,7 @@
     <div data-tab-panel="opus">
       <div class="panel" style="margin-top:16px">
         <h2>OPUS orchestrator (Opus tự điều phối · paper)</h2>
-        <div hx-get="/partials/opus" hx-trigger="load, every 10s, refresh from:body" hx-swap="innerHTML"></div>
+        <div hx-get="/partials/opus" hx-trigger="tab-shown from:closest [data-tab-panel], every 10s [tabActive(this) && document.visibilityState==='visible'], refresh-opus from:body" hx-swap="innerHTML"></div>
       </div>
     </div>
 
@@ -126,7 +126,7 @@
     <div data-tab-panel="losses">
       <div class="panel" style="margin-top:16px">
         <h2>Phân tích lỗ — nguyên nhân / thời gian / giá trị / cặp</h2>
-        <div hx-get="/partials/losses" hx-trigger="load, every 30s, refresh from:body" hx-swap="innerHTML"></div>
+        <div hx-get="/partials/losses" hx-trigger="tab-shown from:closest [data-tab-panel], every 30s [tabActive(this) && document.visibilityState==='visible'], refresh-losses from:body" hx-swap="innerHTML"></div>
       </div>
     </div>
 
@@ -163,7 +163,7 @@
             <span id="audit-sym-filter" style="display:none">· coin: <b id="audit-sym-label"></b>
               <button class="sm ghost" data-action="auditClearSymbol">✕ bỏ lọc</button></span>
           </div>
-          <div class="scroll" hx-get="/partials/audit" hx-trigger="load, every 15s, refresh from:body" hx-swap="innerHTML"></div>
+          <div class="scroll" hx-get="/partials/audit" hx-trigger="tab-shown from:closest [data-tab-panel], every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-audit from:body" hx-swap="innerHTML"></div>
         </div>
       </div>
     </div>

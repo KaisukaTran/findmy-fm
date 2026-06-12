@@ -468,3 +468,121 @@ def test_frozen_breaker_records_candidates_but_opens_no_session(
 
     # skipped_frozen audit logged.
     assert db.query(models.AuditLog).filter_by(action="skipped_frozen").count() >= 1
+
+
+# --- S5: Grok batch-cap and fail_mode tests ----------------------------------
+
+
+def _make_multi_candidate_provider(n_symbols: int, candles_fn=None):
+    """Return a provider serving `n_symbols` tradeable pairs (SYM0..SYMn-1)."""
+    if candles_fn is None:
+        candles_fn = _uptrend
+    syms = [f"SYM{i}" for i in range(n_symbols)]
+    candles = {s: candles_fn() for s in syms}
+
+    class _P:
+        exchange_id = "fake"
+        quote = "USD"
+
+        def pair(self, symbol):
+            return f"{symbol}/USD"
+
+        def get_ohlcv(self, symbol, timeframe="1d", limit=200):
+            return candles.get(symbol, [])
+
+        def top_symbols(self, n=10):
+            return []
+
+        def all_symbols(self, min_quote_volume=0.0):
+            return syms
+
+        def get_prices(self, symbols):
+            return {s: candles[s][-1]["close"] for s in symbols if s in candles}
+
+        def get_exchange_info(self, symbol):
+            return {"minQty": 0.00001, "stepSize": 0.00001, "maxQty": 10000.0}
+
+    return _P(), syms
+
+
+def test_grok_batch_capped_at_8_and_audited(db, monkeypatch):
+    """S5 item 2: when >8 candidates qualify, only the top 8 are sent to Grok and the
+    truncation is audited as 'grok_batch_truncated'."""
+    provider, syms = _make_multi_candidate_provider(12)
+
+    # Patch both data_provider (for _universe + sequential path) and _provider_factory
+    # (for the S2 parallel candle-cache workers) so no real network calls are made.
+    monkeypatch.setattr(scanner, "data_provider", lambda: provider)
+    monkeypatch.setattr(scanner, "_provider_factory", lambda _xid: provider)
+    monkeypatch.setattr("app.kss.pyramid.get_exchange_info",
+                        lambda s: {"minQty": 0.00001, "stepSize": 0.00001, "maxQty": 10000.0})
+    monkeypatch.setattr("app.kss.pyramid.get_current_prices", lambda s: dict.fromkeys(s, 1.0))
+    monkeypatch.setattr("app.orders.get_current_prices", lambda s: dict.fromkeys(s, 1.0))
+    monkeypatch.setattr(settings, "watchlist", syms)
+    monkeypatch.setattr(settings, "scan_top_n", 0)
+    monkeypatch.setattr(settings, "min_confidence", 0.0)
+    monkeypatch.setattr(settings, "min_win_rate", 0.0)
+    monkeypatch.setattr(settings, "backtest_trial_spacing_days", 0.0)
+    monkeypatch.setattr(settings, "min_trials", 0)
+    monkeypatch.setattr(settings, "min_expectancy_pct", -100.0)
+    monkeypatch.setattr(settings, "auto_trade", False)
+    monkeypatch.setattr(settings, "grok_scanner_fail_mode", "open")
+    candle_cache.clear()
+
+    captured: dict = {}
+
+    def _capture(_db, items):
+        captured["items"] = items
+        return {}
+
+    monkeypatch.setattr("app.orchestrator.grok.scanner_enabled", lambda: True)
+    monkeypatch.setattr("app.orchestrator.grok.review_candidates", _capture)
+
+    scanner.run_scan(db, mode="semi")
+
+    # Grok received at most 8 items.
+    assert len(captured.get("items", [])) == 8, (
+        f"expected 8 items sent to Grok; got {len(captured.get('items', []))}"
+    )
+
+    # Truncation audit was emitted.
+    trunc = db.query(models.AuditLog).filter_by(action="grok_batch_truncated").one()
+    import json as _json
+    detail = _json.loads(trunc.detail or "{}")
+    assert detail["kept"] == 8
+    assert detail["dropped"] >= 1
+
+
+def test_grok_fail_mode_open_missing_verdict_opens(db, scan_env, monkeypatch):
+    """S5 item 3 (a): fail_mode='open' — a symbol absent from the Grok verdict map
+    is treated as endorsed and the session opens (today's behaviour preserved)."""
+    monkeypatch.setattr(settings, "grok_scanner_fail_mode", "open")
+    monkeypatch.setattr("app.orchestrator.grok.scanner_enabled", lambda: True)
+    # Return empty dict → BTC has no verdict.
+    monkeypatch.setattr("app.orchestrator.grok.review_candidates", lambda _db, items: {})
+
+    scanner.run_scan(db, mode="semi")
+
+    cand = db.query(models.Candidate).filter_by(symbol="BTC").one()
+    # Session must have opened despite absent verdict (fail-open).
+    assert cand.session_id is not None, "fail_mode=open must open when verdict is absent"
+    # No skipped_grok_unverified audit should appear.
+    assert db.query(models.AuditLog).filter_by(action="skipped_grok_unverified").count() == 0
+
+
+def test_grok_fail_mode_closed_missing_verdict_blocks(db, scan_env, monkeypatch):
+    """S5 item 3 (b): fail_mode='closed' — a symbol without an explicit endorse verdict
+    must NOT open and must be audited as 'skipped_grok_unverified'."""
+    monkeypatch.setattr(settings, "grok_scanner_fail_mode", "closed")
+    monkeypatch.setattr("app.orchestrator.grok.scanner_enabled", lambda: True)
+    # Return empty dict → BTC has no verdict.
+    monkeypatch.setattr("app.orchestrator.grok.review_candidates", lambda _db, items: {})
+
+    scanner.run_scan(db, mode="semi")
+
+    cand = db.query(models.Candidate).filter_by(symbol="BTC").one()
+    # Session must NOT have opened.
+    assert cand.session_id is None, "fail_mode=closed must block when verdict is absent"
+    assert "grok_unverified" in (cand.reason or "")
+    # Audit must record the block.
+    assert db.query(models.AuditLog).filter_by(action="skipped_grok_unverified").count() >= 1

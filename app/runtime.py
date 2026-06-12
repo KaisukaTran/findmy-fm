@@ -37,6 +37,7 @@ KEY_TA_EXTERNAL = "ta_external_enabled"
 KEY_AUTOAPPROVE_ENABLED = "autoapprove_enabled"
 KEY_AUTOAPPROVE_MAX = "autoapprove_max_notional"
 KEY_CONSENSUS_WEIGHTS = "consensus_weights"  # S4: JSON dict of agent weights
+KEY_GROK_FAIL_MODE = "grok_scanner_fail_mode"  # S5: "open" | "closed"
 
 # Master KSS strategy knobs the dashboard edits (persisted as kss:<field>). Each maps to a
 # settings field; the cast keeps them typed when restored from the string-valued KV store.
@@ -55,6 +56,7 @@ KSS_SETTING_FIELDS: dict[str, type] = {
     "min_expectancy_pct": float,
     "min_win_rate": float,
     "min_confidence": float,  # S4: consensus threshold, now decoupled from backtest
+    "grok_scanner_fail_mode": str,  # S5: "open" | "closed"
 }
 
 # ---------------------------------------------------------------------------
@@ -144,6 +146,11 @@ def kss_settings(db: Session) -> dict:  # noqa: ARG001 (db kept for a uniform si
     return {k: getattr(settings, k) for k in KSS_SETTING_FIELDS}
 
 
+_KSS_ENUM_VALIDATORS: dict[str, set[str]] = {
+    "grok_scanner_fail_mode": {"open", "closed"},
+}
+
+
 def set_kss_settings(db: Session, values: dict) -> dict:
     """Update + persist the master KSS knobs (applied to NEW sessions). Returns the new set."""
     for key, cast in KSS_SETTING_FIELDS.items():
@@ -153,6 +160,10 @@ def set_kss_settings(db: Session, values: dict) -> dict:
             val = cast(values[key])
         except (TypeError, ValueError):
             continue
+        # Validate enum-typed fields (e.g. grok_scanner_fail_mode: open|closed).
+        allowed = _KSS_ENUM_VALIDATORS.get(key)
+        if allowed is not None and val not in allowed:
+            continue  # reject invalid enum values silently (bad input, not an error)
         setattr(settings, key, val)
         set(db, f"kss:{key}", val)
     return kss_settings(db)
@@ -311,6 +322,10 @@ def sync_from_db(db: Session) -> None:
         raw = get(db, f"kss:{key}")
         if raw is not None:
             try:
-                setattr(settings, key, cast(raw))
+                val = cast(raw)
             except (TypeError, ValueError):
-                pass
+                continue
+            allowed = _KSS_ENUM_VALIDATORS.get(key)
+            if allowed is not None and val not in allowed:
+                continue  # ignore corrupt/invalid stored enum values
+            setattr(settings, key, val)

@@ -124,6 +124,16 @@ class Settings(BaseSettings):
 
     # --- Grok scanner gate: a Grok (xAI) endorse/veto pass over qualified candidates ---
     grok_scanner_enabled: bool = Field(default=False, description="Have Grok review scanner candidates that passed every deterministic gate (one batched call/scan). Needs xai_api_key. Off = no cost, deterministic behaviour unchanged.")
+    grok_scanner_fail_mode: str = Field(
+        default="open",
+        description=(
+            "Grok scanner failure posture. 'open' (default): a symbol absent from the Grok "
+            "verdict map (parse failure / timeout / not returned / batch-cap drop) is treated "
+            "as endorsed — a Grok outage never blocks a deterministically-approved trade. "
+            "'closed': a symbol WITHOUT an explicit endorse verdict must NOT open this scan "
+            "(capital-preservation posture for full-auto). Allowed: 'open', 'closed'."
+        ),
+    )
 
     # --- TA evidence bundle: enrich the Grok gate with technical indicators ---
     # Tier 1 (pure-Python indicators) is ALWAYS on and feeds the bundle; these two flags only

@@ -516,6 +516,11 @@ document.addEventListener("submit", async (e) => {
     });
     toast("Đã lưu cấu hình KSS — áp dụng cho phiên mới.", "success");
     refreshTrading(); refreshStatus();
+  } else if (form.id === "grok-fail-mode-form") {
+    e.preventDefault();
+    const f = new FormData(form);
+    await api("POST", "/api/kss-settings", { grok_scanner_fail_mode: f.get("grok_scanner_fail_mode") });
+    toast("Đã lưu chế độ lỗi Grok.", "success");
   } else if (form.id === "consensus-weights-form") {
     e.preventDefault();
     const f = new FormData(form);

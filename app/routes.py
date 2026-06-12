@@ -328,6 +328,7 @@ class KssSettingsBody(BaseModel):
     min_expectancy_pct: float | None = Field(None, ge=-100, le=100)
     min_win_rate: float | None = Field(None, ge=0, le=100)
     min_confidence: float | None = Field(None, ge=0, le=100)  # S4: consensus threshold
+    grok_scanner_fail_mode: str | None = Field(None, pattern=r"^(open|closed)$")  # S5
 
 
 @api_router.get("/api/kss-settings")

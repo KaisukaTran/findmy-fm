@@ -42,6 +42,13 @@ _MIN_CANDLES = 30
 
 _PARALLEL_WORKERS = 4  # S2: parallel OHLCV fetch workers
 
+# S5: cap the Grok review batch so one fat scan cannot blow the token budget.
+# Candidates are sorted by expectancy descending; only the top N enter the LLM call.
+# Under fail_mode="closed" the dropped symbols (beyond the cap) also do not open this
+# scan because they have no explicit endorse verdict — same semantics as a Grok outage.
+# Under fail_mode="open" (default) the dropped symbols open exactly as today.
+_GROK_REVIEW_BATCH_MAX = 8
+
 
 def _provider_factory(exchange_id: str) -> CcxtProvider:
     """Return a *fresh* CcxtProvider for the given exchange.
@@ -409,7 +416,14 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
             audit.log(db, "scanner", "skipped_frozen", entity=c["symbol"])
         return
 
+    # S5: read the active fail mode (runtime-editable; default from settings).
+    fail_mode: str = runtime.get(db, "kss:grok_scanner_fail_mode") or settings.grok_scanner_fail_mode
+
     reviews: dict[str, dict] = {}
+    # grok_reviewed_symbols: the set that was actually sent to Grok this scan.
+    # Symbols NOT in this set have no explicit verdict (batch-cap drop or Grok disabled).
+    grok_reviewed_symbols: set[str] = set()
+
     if to_open and grok.scanner_enabled():
         # B8: skip the LLM call entirely when the concurrent/capital caps are already
         # saturated — nothing could open even if Grok endorsed everything.
@@ -418,12 +432,24 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
             audit.log(db, "scanner", "skipped_capped_batch", entity="grok",
                       reason=_why, symbols=len(to_open))
         else:
+            # S5 item 2: sort by expectancy descending and cap at _GROK_REVIEW_BATCH_MAX.
+            # SECURITY: items payload is numeric/enum-only — no free-text from market data.
+            # Fields: symbol (our own key), consensus/win_rate/loss_rate/net_edge/price
+            # (all floats from backtest), ta (numeric/enum indicator bundle from ta_bundle).
+            sorted_candidates = sorted(to_open, key=lambda c: c.get("net_edge", 0.0), reverse=True)
+            batch = sorted_candidates[:_GROK_REVIEW_BATCH_MAX]
+            dropped = sorted_candidates[_GROK_REVIEW_BATCH_MAX:]
+            if dropped:
+                audit.log(db, "scanner", "grok_batch_truncated",
+                          kept=len(batch), dropped=len(dropped),
+                          dropped_symbols=",".join(c["symbol"] for c in dropped))
+            grok_reviewed_symbols = {c["symbol"] for c in batch}
             items = [{
                 "symbol": c["symbol"], "consensus": round(c["consensus"], 1),
                 "win_rate": round(c["win_rate"], 1), "loss_rate": round(c["loss_rate"], 1),
                 "net_edge": round(c["net_edge"], 2), "price": c["entry"],
                 "ta": c.get("ta", {}),
-            } for c in to_open]
+            } for c in batch]
             reviews = grok.review_candidates(db, items)
 
     for c in to_open:
@@ -433,6 +459,22 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
             cand.reason = (cand.reason or "") + f" | Grok veto: {verdict['reason']}"
             audit.log(db, "grok", "scanner_veto", entity=symbol, reason=verdict["reason"])
             continue
+
+        # S5 item 3 — fail_mode="closed": a symbol with no explicit endorse verdict
+        # (parse failure, timeout, batch-cap drop, or Grok disabled) must NOT open.
+        # Under fail_mode="open" (default) the absent-verdict path is treated as endorsed.
+        # Interaction with batch-cap: symbols dropped beyond the top-8 have no verdict;
+        # under "closed" they are blocked; under "open" they proceed as if endorsed.
+        if fail_mode == "closed" and not (verdict and verdict.get("endorse")):
+            # Only apply the closed-mode block when the scanner gate is active; if Grok is
+            # disabled entirely, fail_mode is irrelevant (no review was attempted).
+            if grok.scanner_enabled():
+                cand.reason = (cand.reason or "") + " | skipped: grok_unverified (closed mode)"
+                audit.log(db, "scanner", "skipped_grok_unverified", entity=symbol,
+                          fail_mode="closed",
+                          in_batch=symbol in grok_reviewed_symbols)
+                continue
+
         if verdict and verdict.get("reason"):
             cand.reason = (cand.reason or "") + f" | Grok: {verdict['reason']}"
         ok, why = _can_open(db)

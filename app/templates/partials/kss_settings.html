@@ -59,6 +59,17 @@
     </span>
   </div>
   <div class="muted" style="font-size:12px;margin-top:6px">Khi bật, Grok cho lý do cụ thể vì sao chọn/bỏ từng coin (xem panel scanner & Nhật ký). Lỗi API → bỏ qua, dùng quyết định deterministic (không chặn lệnh).</div>
+  <div style="margin-top:8px">
+    <form id="grok-fail-mode-form">
+      <label title="open (mặc định): lỗi/timeout Grok → coin vẫn mở (fail-open, ưu tiên sẵn sàng). closed: coin KHÔNG có verdict rõ ràng từ Grok sẽ bị bỏ qua lần quét này (ưu tiên bảo toàn vốn khi full-auto). Batch cap (top 8) cũng áp dụng: coin bị loại vì vượt cap thì: open → vẫn mở; closed → bị chặn.">Chế độ lỗi Grok
+        <select name="grok_scanner_fail_mode" style="padding:2px 6px;border-radius:4px;border:1px solid var(--line)">
+          <option value="open" {% if k.grok_scanner_fail_mode == 'open' %}selected{% endif %}>open (fail-open)</option>
+          <option value="closed" {% if k.grok_scanner_fail_mode == 'closed' %}selected{% endif %}>closed (bảo toàn vốn)</option>
+        </select>
+      </label>
+      <button type="submit" class="sm ok" style="margin-top:4px">Lưu</button>
+    </form>
+  </div>
 </div>
 
 <div style="margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)">

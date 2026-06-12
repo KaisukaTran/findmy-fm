@@ -241,6 +241,8 @@ def _automation_state(db: Session) -> dict:
         "hyperopt": settings.hyperopt_enabled,
         "ml": settings.ml_enabled,
         "grok_scanner": settings.grok_scanner_enabled,
+        "ta_lib": settings.ta_lib_enabled,
+        "ta_external": settings.ta_external_enabled,
     }
 
 

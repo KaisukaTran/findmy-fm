@@ -36,16 +36,36 @@ logger = logging.getLogger(__name__)
 _MIN_CANDLES = 30
 
 
-def _universe(provider) -> list[str]:
-    """Watchlist first, then ALL pairs above the liquidity floor, capped for safety."""
+def _universe(db: Session, provider) -> list[str]:
+    """Watchlist first, then ALL pairs above the liquidity floor, capped for safety.
+
+    The exchange symbol list is cached in runtime_config so a transient provider hiccup
+    (fetch_tickers failure → empty list) reuses the last good universe instead of silently
+    collapsing the scan to just the 3-symbol watchlist. The degradation is audit-logged so it
+    surfaces in the Nhật ký feed rather than looking like a config change.
+    """
     symbols = list(settings.watchlist)
+    fetched: list[str] = []
     try:
-        for s in provider.all_symbols(settings.min_quote_volume):
-            if s not in symbols:
-                symbols.append(s)
-    except Exception as exc:  # provider hiccup shouldn't kill the watchlist scan
+        fetched = [s for s in provider.all_symbols(settings.min_quote_volume) if s not in symbols]
+    except Exception as exc:  # provider hiccup shouldn't kill the scan
         logger.warning("all_symbols failed: %s", exc)
-    return symbols[: settings.scan_max_symbols]
+
+    if fetched:
+        runtime.set(db, "scanner_last_universe", json.dumps(fetched))
+    else:
+        # Provider returned nothing — reuse the last good list so a transient outage doesn't
+        # shrink the scan to the watchlist alone.
+        cached = runtime.get(db, "scanner_last_universe")
+        if cached:
+            try:
+                fetched = [s for s in json.loads(cached) if s not in symbols]
+            except (ValueError, TypeError):
+                fetched = []
+        audit.log(db, "scanner", "universe_degraded", entity="scan",
+                  reused=len(fetched), source="cache" if fetched else "watchlist_only")
+
+    return (symbols + fetched)[: settings.scan_max_symbols]
 
 
 def _thresholds() -> dict:
@@ -79,7 +99,7 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
     # Load ML model once for the whole scan; None when ml disabled.
     ml_model = ml.load_latest(db) if settings.ml_enabled else None
 
-    universe = _universe(provider)
+    universe = _universe(db, provider)
     scan = ScanRun(mode=mode, universe_size=len(universe), params=json.dumps(_thresholds()))
     db.add(scan)
     db.flush()

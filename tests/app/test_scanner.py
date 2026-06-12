@@ -86,6 +86,32 @@ def test_high_thresholds_skip(db, scan_env, monkeypatch):
     assert db.query(models.KssSession).count() == 0
 
 
+# --- universe resilience -----------------------------------------------------
+
+
+def test_universe_reuses_cache_on_provider_failure(db, monkeypatch):
+    """A transient all_symbols() outage must not collapse the scan to the watchlist."""
+    monkeypatch.setattr(settings, "watchlist", ["BTC", "ETH", "SOL"])
+    monkeypatch.setattr(settings, "min_quote_volume", 0.0)
+    monkeypatch.setattr(settings, "scan_max_symbols", 50)
+
+    class _P:
+        def __init__(self, syms):
+            self.syms = syms
+
+        def all_symbols(self, min_quote_volume=0.0):
+            return self.syms
+
+    extra = [f"C{i}" for i in range(40)]
+    assert len(scanner._universe(db, _P(extra))) == 43  # 3 watchlist + 40 fetched (cached)
+
+    # provider returns nothing → reuse the cached 40, log the degradation, no collapse to 3
+    u = scanner._universe(db, _P([]))
+    assert len(u) == 43
+    deg = db.query(models.AuditLog).filter_by(action="universe_degraded").one()
+    assert '"source": "cache"' in (deg.detail or "")
+
+
 # --- loss-streak block -------------------------------------------------------
 
 from datetime import datetime, timedelta  # noqa: E402

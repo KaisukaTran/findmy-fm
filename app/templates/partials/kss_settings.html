@@ -36,7 +36,7 @@
     <span class="muted" style="font-size:12px">Cổng Grok cho scanner</span>
     <span class="row-actions">
       <span class="badge {{ 'guardian-on' if gs.active else 'full-auto-off' }}" title="Grok (xAI) duyệt lần cuối các coin đã qua mọi gate quyết định: endorse (mở) / veto (bỏ) kèm lý do. 1 call/scan. Cần xai_api_key.">GROK SCANNER {{ 'ON' if gs.active else ('ENABLED (thiếu key)' if gs.enabled else 'OFF') }}</span>
-      <button class="sm {{ 'danger' if gs.enabled else 'ok' }}" data-action="toggleGrokScanner">{{ 'Tắt' if gs.enabled else 'Bật' }} Grok scanner</button>
+      <button class="sm {{ 'danger' if gs.enabled else 'ok' }}" data-action="toggleGrokScanner" data-id="{{ 'off' if gs.enabled else 'on' }}">{{ 'Tắt' if gs.enabled else 'Bật' }} Grok scanner</button>
     </span>
   </div>
   <div class="muted" style="font-size:12px;margin-top:6px">Khi bật, Grok cho lý do cụ thể vì sao chọn/bỏ từng coin (xem panel scanner & Nhật ký). Lỗi API → bỏ qua, dùng quyết định deterministic (không chặn lệnh).</div>
@@ -47,11 +47,11 @@
   <div class="muted" style="font-size:12px;margin-top:4px">Chỉ báo pure-Python (RSI, MACD, ADX, ATR, Bollinger, Supertrend, hỗ trợ/kháng cự, HTF) <b>luôn bật</b> và được đính kèm cho từng coin trước khi Grok duyệt. Hai overlay dưới là tùy chọn, lỗi → tự lùi về pure-Python.</div>
   <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px">
     <span class="badge {{ 'guardian-on' if ta.lib else 'full-auto-off' }}" title="Tier 2: tính lại vài chỉ báo bằng pandas-ta cho chính xác hơn. Cần `pip install pandas-ta`.">pandas-ta {{ 'ON' if ta.lib else 'OFF' }}</span>
-    <button class="sm {{ 'danger' if ta.lib else 'ok' }}" data-action="toggleTaLib">{{ 'Tắt' if ta.lib else 'Bật' }} pandas-ta</button>
+    <button class="sm {{ 'danger' if ta.lib else 'ok' }}" data-action="toggleTaLib" data-id="{{ 'off' if ta.lib else 'on' }}">{{ 'Tắt' if ta.lib else 'Bật' }} pandas-ta</button>
   </div>
   <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px">
     <span class="badge {{ 'guardian-on' if ta.external_active else 'full-auto-off' }}" title="Tier 3: trộn tín hiệu TA từ taapi.io (qua mạng). STUB cho tới khi nối provider; cần TAAPI_API_KEY.">TA ngoài {{ 'ON' if ta.external_active else ('ENABLED (thiếu key)' if ta.external else 'OFF') }}</span>
-    <button class="sm {{ 'danger' if ta.external else 'ok' }}" data-action="toggleTaExternal">{{ 'Tắt' if ta.external else 'Bật' }} TA ngoài</button>
+    <button class="sm {{ 'danger' if ta.external else 'ok' }}" data-action="toggleTaExternal" data-id="{{ 'off' if ta.external else 'on' }}">{{ 'Tắt' if ta.external else 'Bật' }} TA ngoài</button>
   </div>
 </div>
 

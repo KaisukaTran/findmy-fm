@@ -12,7 +12,7 @@
   <span class="sep">·</span>
   <span class="statusbar-full-auto">
     <span class="badge {{ 'full-auto-on' if a.full_auto else 'full-auto-off' }}">FULL-AUTO {{ 'ON' if a.full_auto else 'OFF' }}</span>
-    <button class="sm {{ 'danger' if a.full_auto else 'ok' }}" data-action="toggleFullAuto">{{ 'Disable' if a.full_auto else 'Enable' }}</button>
+    <button class="sm {{ 'danger' if a.full_auto else 'ok' }}" data-action="toggleFullAuto" data-id="{{ 'off' if a.full_auto else 'on' }}">{{ 'Disable' if a.full_auto else 'Enable' }}</button>
   </span>
   <span class="sep">·</span>
   <span class="statusbar-breaker">
@@ -26,22 +26,22 @@
   <span class="sep">·</span>
   <span class="statusbar-guardian">
     <span class="badge {{ 'guardian-on' if a.guardian else 'guardian-off' }}">GUARDIAN {{ 'ON' if a.guardian else 'OFF' }}</span>
-    <button class="sm {{ 'danger' if a.guardian else 'ok' }}" data-action="toggleGuardian">{{ 'Disable' if a.guardian else 'Enable' }}</button>
+    <button class="sm {{ 'danger' if a.guardian else 'ok' }}" data-action="toggleGuardian" data-id="{{ 'off' if a.guardian else 'on' }}">{{ 'Disable' if a.guardian else 'Enable' }}</button>
   </span>
   <span class="sep">·</span>
   <span class="statusbar-telegram">
     <span class="badge {{ 'telegram-on' if a.telegram else 'telegram-off' }}">TELEGRAM {{ 'ON' if a.telegram else 'OFF' }}</span>
-    <button class="sm {{ 'danger' if a.telegram else 'ok' }}" data-action="toggleTelegram">{{ 'Disable' if a.telegram else 'Enable' }}</button>
+    <button class="sm {{ 'danger' if a.telegram else 'ok' }}" data-action="toggleTelegram" data-id="{{ 'off' if a.telegram else 'on' }}">{{ 'Disable' if a.telegram else 'Enable' }}</button>
     <button class="sm ghost" data-action="telegramTest">Test</button>
   </span>
   <span class="sep">·</span>
   <span class="statusbar-hyperopt">
     <span class="badge {{ 'hyperopt-on' if a.hyperopt else 'hyperopt-off' }}">HYPEROPT {{ 'ON' if a.hyperopt else 'OFF' }}</span>
-    <button class="sm {{ 'danger' if a.hyperopt else 'ok' }}" data-action="toggleHyperopt">{{ 'Disable' if a.hyperopt else 'Enable' }}</button>
+    <button class="sm {{ 'danger' if a.hyperopt else 'ok' }}" data-action="toggleHyperopt" data-id="{{ 'off' if a.hyperopt else 'on' }}">{{ 'Disable' if a.hyperopt else 'Enable' }}</button>
   </span>
   <span class="sep">·</span>
   <span class="statusbar-ml">
     <span class="badge {{ 'ml-on' if a.ml else 'ml-off' }}">ML {{ 'ON' if a.ml else 'OFF' }}</span>
-    <button class="sm {{ 'danger' if a.ml else 'ok' }}" data-action="toggleMl">{{ 'Disable' if a.ml else 'Enable' }}</button>
+    <button class="sm {{ 'danger' if a.ml else 'ok' }}" data-action="toggleMl" data-id="{{ 'off' if a.ml else 'on' }}">{{ 'Disable' if a.ml else 'Enable' }}</button>
   </span>
 </span>

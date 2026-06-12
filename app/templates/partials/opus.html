@@ -1,12 +1,12 @@
 <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
   <span class="statusbar-opus">
     <span class="badge {{ 'full-auto-on' if o.mode else 'full-auto-off' }}">OPUS {{ 'ON' if o.mode else 'OFF' }}</span>
-    <button class="sm {{ 'danger' if o.mode else 'ok' }}" data-action="toggleOpus">{{ 'Disable' if o.mode else 'Enable' }}</button>
+    <button class="sm {{ 'danger' if o.mode else 'ok' }}" data-action="toggleOpus" data-id="{{ 'off' if o.mode else 'on' }}">{{ 'Disable' if o.mode else 'Enable' }}</button>
     <span class="badge {{ 'hyperopt-on' if o.shadow else 'full-auto-off' }}" title="Chế độ bóng: Opus chỉ ghi lại quyết định, CHƯA đặt lệnh. Tắt để cho phép đặt lệnh paper thật.">SHADOW {{ 'ON' if o.shadow else 'OFF' }}</span>
-    <button class="sm {{ 'danger' if o.shadow else 'ok' }}" data-action="toggleOpusShadow" title="{{ 'Tắt shadow → Opus sẽ ĐẶT LỆNH (paper)' if o.shadow else 'Bật shadow → chỉ ghi, không đặt lệnh' }}">{{ 'Cho đặt lệnh' if o.shadow else 'Về shadow' }}</button>
+    <button class="sm {{ 'danger' if o.shadow else 'ok' }}" data-action="toggleOpusShadow" data-id="{{ 'off' if o.shadow else 'on' }}" title="{{ 'Tắt shadow → Opus sẽ ĐẶT LỆNH (paper)' if o.shadow else 'Bật shadow → chỉ ghi, không đặt lệnh' }}">{{ 'Cho đặt lệnh' if o.shadow else 'Về shadow' }}</button>
     {% if o.cost_cap_reached %}<span class="badge veto" title="Đã chạm trần chi phí Opus/ngày — tạm dừng ra quyết định mới.">COST CAP</span>{% endif %}
     <span class="badge {{ 'guardian-on' if o.grok_active else 'full-auto-off' }}" title="Grok (xAI) đồng quyết định với OPUS: MỞ khi cả hai đồng ý, ĐÓNG khi một trong hai muốn. Cần xai_api_key.">GROK {{ 'ON' if o.grok_active else ('ENABLED (thiếu key)' if o.grok_enabled else 'OFF') }}</span>
-    <button class="sm {{ 'danger' if o.grok_enabled else 'ok' }}" data-action="toggleGrok">{{ 'Tắt Grok' if o.grok_enabled else 'Bật Grok' }}</button>
+    <button class="sm {{ 'danger' if o.grok_enabled else 'ok' }}" data-action="toggleGrok" data-id="{{ 'off' if o.grok_enabled else 'on' }}">{{ 'Tắt Grok' if o.grok_enabled else 'Bật Grok' }}</button>
   </span>
   <span class="muted" title="Opus ra quyết định mỗi chu kỳ này (phút).">tick: {{ o.interval_min }}m</span>
 </div>

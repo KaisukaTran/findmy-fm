@@ -2,8 +2,8 @@
   <span class="muted" title="Cổng vào lệnh: kỳ vọng (E) ≥ ngưỡng là cổng CHÍNH (lợi nhuận net dương sau stop-loss + phí); kèm consensus ≥ ngưỡng, win-rate (cận dưới Wilson) ≥ ngưỡng, đủ số lần thử, và thời gian tới TP ≤ deadline.">gates: E ≥ {{ "%.1f"|format(min_expectancy_pct) }}% · win-lb ≥ {{ "%.0f"|format(min_win_rate) }}% · consensus ≥ {{ "%.0f"|format(min_confidence) }}% · ≤ {{ deadline_days }}d</span>
   <span class="row-actions">
     <button class="sm" data-action="scan">Run scan</button>
-    <button class="sm {{ 'ok' if auto else 'ghost' }}" data-action="toggleAuto">Auto-trade: {{ 'ON' if auto else 'OFF' }}</button>
-    <button class="sm {{ 'ok' if sched else 'ghost' }}" data-action="toggleScheduler">Scheduler: {{ ('ON ('~interval~'m)') if sched else 'OFF' }}</button>
+    <button class="sm {{ 'ok' if auto else 'ghost' }}" data-action="toggleAuto" data-id="{{ 'off' if auto else 'on' }}">Auto-trade: {{ 'ON' if auto else 'OFF' }}</button>
+    <button class="sm {{ 'ok' if sched else 'ghost' }}" data-action="toggleScheduler" data-id="{{ 'off' if sched else 'on' }}">Scheduler: {{ ('ON ('~interval~'m)') if sched else 'OFF' }}</button>
   </span>
 </div>
 {% if rows %}

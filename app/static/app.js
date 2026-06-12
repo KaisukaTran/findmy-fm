@@ -7,6 +7,10 @@
 
 // --- helpers ------------------------------------------------------------
 
+function esc(s) {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 function apiHeaders() {
   const h = { "Content-Type": "application/json" };
   if (window.API_KEY) h["X-API-Key"] = window.API_KEY;
@@ -91,11 +95,11 @@ const actions = {
     await api("POST", "/api/scan");
     refreshAll();
   },
-  async toggleAuto() {
-    const state = await api("GET", "/api/autotrade");
-    if (!state.auto_trade &&
+  async toggleAuto(desired) {
+    const enable = desired === "on";
+    if (enable &&
         !confirm("Enable FULL-AUTO trading? Qualifying sessions will be auto-approved.")) return;
-    await api("POST", "/api/autotrade", { enabled: !state.auto_trade });
+    await api("POST", "/api/autotrade", { enabled: enable });
     refreshAll();
   },
   async approveAll() {
@@ -108,11 +112,11 @@ const actions = {
     await api("POST", "/api/pending/reject-all", { reason: "bulk reject" });
     refreshAll();
   },
-  async toggleAutoApprove() {
-    const s = await api("GET", "/api/autoapprove");
-    if (!s.enabled &&
+  async toggleAutoApprove(desired) {
+    const enable = desired === "on";
+    if (enable &&
         !confirm("Enable auto-approval rule? Small KSS orders will be approved automatically.")) return;
-    await api("POST", "/api/autoapprove", { enabled: !s.enabled });
+    await api("POST", "/api/autoapprove", { enabled: enable });
     refreshAll();
   },
   async setAutoApproveMax() {
@@ -124,63 +128,63 @@ const actions = {
     await api("POST", "/api/autoapprove", { enabled: s.enabled, max_notional: v });
     refreshAll();
   },
-  async toggleScheduler() {
-    const state = await api("GET", "/api/scheduler");
-    if (!state.enabled &&
+  async toggleScheduler(desired) {
+    const enable = desired === "on";
+    if (enable &&
         !confirm("Start the background scheduler? It will scan & manage sessions on an interval.")) return;
-    await api("POST", "/api/scheduler", { enabled: !state.enabled });
+    await api("POST", "/api/scheduler", { enabled: enable });
     refreshAll();
   },
-  async toggleFullAuto() {
-    const state = await api("GET", "/api/full-auto");
-    if (!state.full_auto &&
+  async toggleFullAuto(desired) {
+    const enable = desired === "on";
+    if (enable &&
         !confirm("Enable FULL-AUTO master switch? This starts the scheduler and enables auto-trade + auto-approve.")) return;
-    if (state.full_auto &&
+    if (!enable &&
         !confirm("Disable FULL-AUTO? This will stop the scheduler and disable autonomous trading.")) return;
-    await api("POST", "/api/full-auto", { enabled: !state.full_auto });
+    await api("POST", "/api/full-auto", { enabled: enable });
     refreshAll();
   },
-  async toggleOpus() {
-    const s = await api("GET", "/api/opus");
-    if (!s.mode &&
+  async toggleOpus(desired) {
+    const enable = desired === "on";
+    if (enable &&
         !confirm("Enable OPUS orchestrator mode? Opus will orchestrate trades on its own capital envelope (paper).")) return;
-    await api("POST", "/api/opus", { enabled: !s.mode });
+    await api("POST", "/api/opus", { enabled: enable });
     refreshAll();
   },
-  async toggleGrok() {
-    const s = await api("GET", "/api/opus");
-    await api("POST", "/api/grok", { enabled: !s.grok_enabled });
-    if (!s.grok_enabled && !s.grok_active)
+  async toggleGrok(desired) {
+    const enable = desired === "on";
+    await api("POST", "/api/grok", { enabled: enable });
+    if (enable)
       alert("Đã bật Grok. Cần thêm XAI_API_KEY vào .env để Grok thật sự tham gia đồng thuận.");
     refreshAll();
   },
-  async toggleGrokScanner() {
-    const s = await api("GET", "/api/automation");
-    await api("POST", "/api/grok-scanner", { enabled: !s.grok_scanner });
-    if (!s.grok_scanner)
+  async toggleGrokScanner(desired) {
+    const enable = desired === "on";
+    await api("POST", "/api/grok-scanner", { enabled: enable });
+    if (enable)
       alert("Đã bật Grok scanner. Cần XAI_API_KEY trong .env để Grok thực sự duyệt ứng viên.");
     refreshAll();
   },
-  async toggleTaLib() {
-    const s = await api("GET", "/api/automation");
-    await api("POST", "/api/ta-source", { source: "lib", enabled: !s.ta_lib });
-    if (!s.ta_lib)
+  async toggleTaLib(desired) {
+    const enable = desired === "on";
+    await api("POST", "/api/ta-source", { source: "lib", enabled: enable });
+    if (enable)
       alert("Đã bật overlay pandas-ta. Cần `pip install pandas-ta`; thiếu thì tự lùi về chỉ báo pure-Python.");
     refreshAll();
   },
-  async toggleTaExternal() {
-    const s = await api("GET", "/api/automation");
-    await api("POST", "/api/ta-source", { source: "external", enabled: !s.ta_external });
-    if (!s.ta_external)
+  async toggleTaExternal(desired) {
+    const enable = desired === "on";
+    await api("POST", "/api/ta-source", { source: "external", enabled: enable });
+    if (enable)
       alert("Đã bật nguồn TA ngoài (taapi.io). Cần TAAPI_API_KEY trong .env; hiện là STUB cho tới khi nối provider.");
     refreshAll();
   },
-  async toggleOpusShadow() {
-    const s = await api("GET", "/api/opus");
-    // shadow ON → confirm before letting Opus place (paper) orders.
-    if (s.shadow &&
+  async toggleOpusShadow(desired) {
+    const enable = desired === "on";
+    // disabling shadow (enable=false) → confirm before letting Opus place (paper) orders.
+    if (!enable &&
         !confirm("Turn OFF shadow? Opus will then PLACE paper orders (still inside the sandbox + caps).")) return;
-    await api("POST", "/api/opus/shadow", { enabled: !s.shadow });
+    await api("POST", "/api/opus/shadow", { enabled: enable });
     refreshAll();
   },
   async viewLadder(id) {
@@ -222,44 +226,44 @@ const actions = {
     await api("POST", "/api/breaker/reset");
     refreshAll();
   },
-  async toggleGuardian() {
-    const state = await api("GET", "/api/guardian");
-    if (!state.enabled &&
+  async toggleGuardian(desired) {
+    const enable = desired === "on";
+    if (enable &&
         !confirm("Enable AI Guardian? It will veto orders that fail its risk checks.")) return;
-    if (state.enabled &&
+    if (!enable &&
         !confirm("Disable AI Guardian? Orders will no longer be screened by the Guardian.")) return;
-    await api("POST", "/api/guardian", { enabled: !state.enabled });
+    await api("POST", "/api/guardian", { enabled: enable });
     refreshAll();
   },
-  async toggleTelegram() {
-    const state = await api("GET", "/api/telegram");
-    if (!state.enabled &&
+  async toggleTelegram(desired) {
+    const enable = desired === "on";
+    if (enable &&
         !confirm("Enable Telegram poller? The bot will receive and relay trade alerts.")) return;
-    if (state.enabled &&
+    if (!enable &&
         !confirm("Disable Telegram poller?")) return;
-    await api("POST", "/api/telegram", { enabled: !state.enabled });
+    await api("POST", "/api/telegram", { enabled: enable });
     refreshAll();
   },
   async telegramTest() {
     const r = await api("POST", "/api/telegram/test");
     alert(r.sent ? "Test alert sent successfully." : "Test alert failed — check Telegram config.");
   },
-  async toggleHyperopt() {
-    const state = await api("GET", "/api/hyperopt");
-    if (!state.enabled &&
+  async toggleHyperopt(desired) {
+    const enable = desired === "on";
+    if (enable &&
         !confirm("Enable Hyperopt? The system will tune KSS parameters using Optuna.")) return;
-    if (state.enabled &&
+    if (!enable &&
         !confirm("Disable Hyperopt? Parameter tuning will stop.")) return;
-    await api("POST", "/api/hyperopt", { enabled: !state.enabled });
+    await api("POST", "/api/hyperopt", { enabled: enable });
     refreshAll();
   },
-  async toggleMl() {
-    const state = await api("GET", "/api/ml");
-    if (!state.enabled &&
+  async toggleMl(desired) {
+    const enable = desired === "on";
+    if (enable &&
         !confirm("Enable ML? A model will be trained to predict entry quality.")) return;
-    if (state.enabled &&
+    if (!enable &&
         !confirm("Disable ML? Model-based filtering will be turned off.")) return;
-    await api("POST", "/api/ml", { enabled: !state.enabled });
+    await api("POST", "/api/ml", { enabled: enable });
     refreshAll();
   },
   async hyperoptRun() {
@@ -297,7 +301,7 @@ document.addEventListener("click", (e) => {
   const fn = actions[btn.dataset.action];
   if (fn) {
     e.preventDefault();
-    fn(btn.dataset.id).catch(() => {});
+    Promise.resolve(fn(btn.dataset.id)).catch(() => {});
   }
 });
 
@@ -440,11 +444,11 @@ function renderMlStatus(data) {
     return;
   }
   el.innerHTML =
-    "ML model: <b>" + (m.id || "—") + "</b>" +
-    " · v" + (m.version || "?") +
-    " · metric <b>" + (m.metric ?? "—") + "</b>" +
-    " · " + (m.n_samples ?? "?") + " samples" +
-    " · trained " + (m.trained_at ? m.trained_at.slice(0, 19).replace("T", " ") : "—");
+    "ML model: <b>" + esc(m.id || "—") + "</b>" +
+    " · v" + esc(m.version || "?") +
+    " · metric <b>" + esc(m.metric ?? "—") + "</b>" +
+    " · " + esc(m.n_samples ?? "?") + " samples" +
+    " · trained " + esc(m.trained_at ? m.trained_at.slice(0, 19).replace("T", " ") : "—");
 }
 
 function renderParamsRows(rows) {
@@ -456,13 +460,13 @@ function renderParamsRows(rows) {
   }
   tbody.innerHTML = rows.map((r) =>
     "<tr>" +
-    "<td>" + r.symbol + "</td>" +
+    "<td>" + esc(r.symbol) + "</td>" +
     "<td>" + (r.distance_pct != null ? r.distance_pct.toFixed(2) : "—") + "</td>" +
     "<td>" + (r.tp_pct != null ? r.tp_pct.toFixed(2) : "—") + "</td>" +
     "<td>" + (r.max_waves ?? "—") + "</td>" +
     "<td>" + (r.score != null ? r.score.toFixed(4) : "—") + "</td>" +
     "<td>" + (r.trials ?? "—") + "</td>" +
-    "<td class='muted'>" + (r.updated_at ? r.updated_at.slice(0, 16).replace("T", " ") : "—") + "</td>" +
+    "<td class='muted'>" + esc(r.updated_at ? r.updated_at.slice(0, 16).replace("T", " ") : "—") + "</td>" +
     "</tr>"
   ).join("");
 }

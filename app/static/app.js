@@ -11,6 +11,66 @@ function esc(s) {
   return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+// --- Toast notifications (P3) -------------------------------------------
+// Container is injected once from JS — CSP-safe, no inline style or script.
+// Usage: toast(msg, 'info'|'success'|'error')  auto-dismisses after 4 s.
+
+let _toastContainer = null;
+
+function _ensureToastContainer() {
+  if (_toastContainer) return _toastContainer;
+  const root = document.body || document.documentElement;
+  const el = document.createElement("div");
+  el.id = "toast-container";
+  el.setAttribute("aria-live", "polite");
+  el.setAttribute("aria-atomic", "false");
+  root.appendChild(el);
+  _toastContainer = el;
+  return el;
+}
+
+function toast(msg, kind) {
+  const container = _ensureToastContainer();
+  const item = document.createElement("div");
+  item.className = "toast toast-" + (kind || "info");
+  item.textContent = msg;
+  container.appendChild(item);
+  // Trigger CSS enter animation on next frame.
+  requestAnimationFrame(() => item.classList.add("toast-in"));
+  setTimeout(() => {
+    item.classList.remove("toast-in");
+    item.classList.add("toast-out");
+    item.addEventListener("transitionend", () => item.remove(), { once: true });
+    // Fallback remove if transition never fires.
+    setTimeout(() => item.remove(), 600);
+  }, 4000);
+}
+
+// --- Connection chip (P3) -----------------------------------------------
+// Drives the #conn-chip element in status.html (re-injected on every poll).
+// States: conn-live  conn-error  conn-reconnecting
+
+function setChip(state) {
+  const chip = document.getElementById("conn-chip");
+  if (!chip) return;
+  chip.className = "conn-chip conn-" + state;
+  chip.title = state === "live" ? "Kết nối tốt"
+             : state === "error" ? "Lỗi tải dữ liệu"
+             : "Đang kết nối lại…";
+}
+
+// --- Modal helpers (P3) -------------------------------------------------
+
+function closeModal(prop) {
+  try {
+    const alpine = document.body._x_dataStack && document.body._x_dataStack[0];
+    if (alpine && prop in alpine) { alpine[prop] = false; return; }
+    // Fallback: Alpine.$data via public API (Alpine 3).
+    const data = window.Alpine && Alpine.$data(document.body);
+    if (data && prop in data) data[prop] = false;
+  } catch (_) {}
+}
+
 function apiHeaders() {
   const h = { "Content-Type": "application/json" };
   if (window.API_KEY) h["X-API-Key"] = window.API_KEY;
@@ -25,7 +85,7 @@ async function api(method, url, body) {
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
-    alert("Error: " + (detail.detail || res.status));
+    toast("Lỗi: " + (detail.detail || res.status), "error");
     throw new Error(res.status);
   }
   return res.json();
@@ -64,6 +124,25 @@ function applyAuditSymbol() {
 }
 document.addEventListener("DOMContentLoaded", () => {
   document.body.addEventListener("htmx:afterSwap", applyAuditSymbol);
+
+  // P3: connection chip — htmx request lifecycle.
+  // htmx:afterRequest fires for every completed request (success or error).
+  document.body.addEventListener("htmx:afterRequest", (e) => {
+    if (e.detail && e.detail.successful) setChip("live");
+  });
+  document.body.addEventListener("htmx:responseError", () => setChip("error"));
+  document.body.addEventListener("htmx:sendError", () => setChip("error"));
+
+  // P3: Esc closes any open Alpine modal.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    closeModal("orderOpen");
+    closeModal("kssOpen");
+    closeModal("previewOpen");
+    // Also close the plain JS ladder modal.
+    const m = document.getElementById("ladder-modal");
+    if (m && m.style.display !== "none") m.style.display = "none";
+  });
 });
 
 async function openLadder(url) {
@@ -99,15 +178,16 @@ const actions = {
   },
   async kssCheckTp(id) {
     const r = await api("POST", `/api/kss/sessions/${id}/check-tp`);
-    alert(r.tp_deferred
+    toast(r.tp_deferred
       ? "TP đạt theo avg session nhưng DƯỚI giá vốn tổng + 2× phí — đã HOÃN (K-2), tránh chốt lời mà lỗ."
-      : (r.tp_triggered ? "TP đạt — đã đưa lệnh bán vào hàng chờ." : "Chưa đạt TP."));
+      : (r.tp_triggered ? "TP đạt — đã đưa lệnh bán vào hàng chờ." : "Chưa đạt TP."),
+      r.tp_triggered ? "success" : "info");
     refreshTrading(); refreshStatus();
   },
   async kssDcaNext(id) {
     if (!confirm("Mua thêm 1 sóng DCA cho session " + id + "?")) return;
     const r = await api("POST", `/api/kss/sessions/${id}/dca-next`);
-    alert(`Đã đưa sóng ${r.wave_num} vào hàng chờ: LIMIT BUY ${r.quantity} @ ${r.price}.`);
+    toast(`Đã đưa sóng ${r.wave_num} vào hàng chờ: LIMIT BUY ${r.quantity} @ ${r.price}.`, "success");
     refreshTrading(); refreshStatus();
   },
   async scan() {
@@ -141,7 +221,7 @@ const actions = {
   async setAutoApproveMax() {
     const inp = document.getElementById("aa-max-input");
     const v = num(inp && inp.value);
-    if (v == null || v <= 0) { alert("Enter a positive max notional (USD)."); return; }
+    if (v == null || v <= 0) { toast("Nhập giá trị max notional dương (USD).", "error"); return; }
     // Preserve the current enabled flag; only change the threshold.
     const s = await api("GET", "/api/autoapprove");
     await api("POST", "/api/autoapprove", { enabled: s.enabled, max_notional: v });
@@ -174,28 +254,28 @@ const actions = {
     const enable = desired === "on";
     await api("POST", "/api/grok", { enabled: enable });
     if (enable)
-      alert("Đã bật Grok. Cần thêm XAI_API_KEY vào .env để Grok thật sự tham gia đồng thuận.");
+      toast("Đã bật Grok. Cần thêm XAI_API_KEY vào .env để Grok thật sự tham gia đồng thuận.", "info");
     refreshStatus();
   },
   async toggleGrokScanner(desired) {
     const enable = desired === "on";
     await api("POST", "/api/grok-scanner", { enabled: enable });
     if (enable)
-      alert("Đã bật Grok scanner. Cần XAI_API_KEY trong .env để Grok thực sự duyệt ứng viên.");
+      toast("Đã bật Grok scanner. Cần XAI_API_KEY trong .env để Grok thực sự duyệt ứng viên.", "info");
     refreshStatus(); refreshScanner();
   },
   async toggleTaLib(desired) {
     const enable = desired === "on";
     await api("POST", "/api/ta-source", { source: "lib", enabled: enable });
     if (enable)
-      alert("Đã bật overlay pandas-ta. Cần `pip install pandas-ta`; thiếu thì tự lùi về chỉ báo pure-Python.");
+      toast("Đã bật overlay pandas-ta. Cần `pip install pandas-ta`; thiếu thì tự lùi về chỉ báo pure-Python.", "info");
     refreshStatus(); refreshScanner();
   },
   async toggleTaExternal(desired) {
     const enable = desired === "on";
     await api("POST", "/api/ta-source", { source: "external", enabled: enable });
     if (enable)
-      alert("Đã bật nguồn TA ngoài (taapi.io). Cần TAAPI_API_KEY trong .env; hiện là STUB cho tới khi nối provider.");
+      toast("Đã bật nguồn TA ngoài (taapi.io). Cần TAAPI_API_KEY trong .env; hiện là STUB cho tới khi nối provider.", "info");
     refreshStatus(); refreshScanner();
   },
   async toggleOpusShadow(desired) {
@@ -212,7 +292,8 @@ const actions = {
   async closePosition(sym) {
     if (!confirm(`Đóng TOÀN BỘ vị thế ${sym} (bán market) và dừng session KSS của coin này?`)) return;
     const r = await api("POST", "/api/positions/close", { symbol: sym });
-    alert(r.closed ? `Đã bán ${sym}: ${r.qty} (PnL $${(r.realized || 0).toFixed(2)})` : "Không có vị thế để đóng.");
+    toast(r.closed ? `Đã bán ${sym}: ${r.qty} (PnL $${(r.realized || 0).toFixed(2)})` : "Không có vị thế để đóng.",
+      r.closed ? "success" : "info");
     refreshTrading(); refreshLosses(); refreshStatus();
   },
   async viewLadderSymbol(sym) {
@@ -265,7 +346,8 @@ const actions = {
   },
   async telegramTest() {
     const r = await api("POST", "/api/telegram/test");
-    alert(r.sent ? "Test alert sent successfully." : "Test alert failed — check Telegram config.");
+    toast(r.sent ? "Đã gửi test alert thành công." : "Test alert thất bại — kiểm tra cấu hình Telegram.",
+      r.sent ? "success" : "error");
   },
   async toggleHyperopt(desired) {
     const enable = desired === "on";
@@ -291,7 +373,7 @@ const actions = {
     try {
       const r = await api("POST", "/api/hyperopt/run");
       const n = Array.isArray(r) ? r.length : (r.count ?? "?");
-      alert("Hyperopt complete — " + n + " symbol(s) tuned.");
+      toast("Hyperopt hoàn tất — " + n + " symbol đã tối ưu.", "success");
       refreshParams();
     } finally {
       if (btn) btn.disabled = false;
@@ -303,9 +385,9 @@ const actions = {
     try {
       const r = await api("POST", "/api/ml/retrain");
       if (r && r.model) {
-        alert("Model trained: v" + r.model.version + " · metric " + r.model.metric + " · " + r.model.n_samples + " samples.");
+        toast("Model huấn luyện xong: v" + r.model.version + " · metric " + r.model.metric + " · " + r.model.n_samples + " mẫu.", "success");
       } else {
-        alert("Retrain returned no model — not enough data yet.");
+        toast("Retrain không có model — chưa đủ dữ liệu.", "info");
       }
       refreshParams();
     } finally {
@@ -393,6 +475,8 @@ document.addEventListener("submit", async (e) => {
       order_type: f.get("order_type") || "LIMIT",
     });
     form.reset();
+    closeModal("orderOpen");
+    toast("Lệnh đã thêm vào hàng chờ.", "success");
     refreshTrading(); refreshStatus();
   } else if (form.id === "kss-form") {
     e.preventDefault();
@@ -405,6 +489,9 @@ document.addEventListener("submit", async (e) => {
       isolated_fund: Number(f.get("isolated_fund")),
       tp_pct: Number(f.get("tp_pct")),
     });
+    form.reset();
+    closeModal("kssOpen");
+    toast("Đã tạo KSS session mới.", "success");
     refreshTrading(); refreshStatus();
   } else if (form.id === "kss-settings-form") {
     e.preventDefault();
@@ -424,7 +511,7 @@ document.addEventListener("submit", async (e) => {
       min_expectancy_pct: num(f.get("min_expectancy_pct")),
       min_win_rate: num(f.get("min_win_rate")),
     });
-    alert("Đã lưu cấu hình KSS — áp dụng cho session mới.");
+    toast("Đã lưu cấu hình KSS — áp dụng cho session mới.", "success");
     refreshTrading(); refreshStatus();
   } else if (form.id === "preview-form") {
     e.preventDefault();
@@ -469,12 +556,16 @@ function renderPreview(r) {
 function connectWs() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const sock = new WebSocket(`${proto}://${location.host}/ws`);
+  sock.onopen = () => setChip("live");
   sock.onmessage = (m) => {
     try {
       if (JSON.parse(m.data).event === "refresh") refreshAll();
     } catch (_) {}
   };
-  sock.onclose = () => setTimeout(connectWs, 5000); // auto-reconnect
+  sock.onclose = () => {
+    setChip("reconnecting");
+    setTimeout(connectWs, 5000); // auto-reconnect
+  };
 }
 connectWs();
 

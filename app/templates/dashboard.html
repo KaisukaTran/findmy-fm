@@ -12,7 +12,8 @@
 <body x-data="ui">
   <header>
     <h1>FINDMY-FM <span class="muted">· KSS Pyramid DCA</span></h1>
-    <div hx-get="/partials/status" hx-trigger="load, every 5s [document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML"></div>
+    <div hx-get="/partials/status" hx-trigger="load, every 5s [document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML" hx-indicator="#global-indicator"></div>
+    <span id="global-indicator" class="htmx-indicator loading-chip" aria-hidden="true">Đang tải…</span>
     <div class="actions">
       <button class="ghost" @click="toggleOrder">+ Order</button>
       <button class="ghost" @click="toggleKss">+ KSS Session</button>
@@ -22,11 +23,16 @@
 
   <main>
     <!-- Summary cards -->
-    <div hx-get="/partials/summary" hx-trigger="load, every 15s [document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML"></div>
+    <div hx-get="/partials/summary" hx-trigger="load, every 15s [document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML">
+      <span class="htmx-indicator loading-row">Đang tải…</span>
+    </div>
 
     <!-- Create-order modal -->
     <div class="modal" x-show="orderOpen" x-cloak>
-      <h2>Queue manual order</h2>
+      <div class="modal-header">
+        <h2>Queue manual order</h2>
+        <button type="button" class="sm ghost modal-close" @click="orderOpen=false" aria-label="Đóng">✕</button>
+      </div>
       <form id="order-form">
         <label>Symbol<input name="symbol" value="BTC" required /></label>
         <label>Side
@@ -43,7 +49,10 @@
 
     <!-- Create-KSS modal -->
     <div class="modal" x-show="kssOpen" x-cloak>
-      <h2>New KSS pyramid session</h2>
+      <div class="modal-header">
+        <h2>New KSS pyramid session</h2>
+        <button type="button" class="sm ghost modal-close" @click="kssOpen=false" aria-label="Đóng">✕</button>
+      </div>
       <form id="kss-form">
         <label>Symbol<input name="symbol" value="BTC" required /></label>
         <label>Entry price<input name="entry_price" type="number" step="any" value="50000" required /></label>
@@ -57,7 +66,10 @@
 
     <!-- Preview modal -->
     <div class="modal" x-show="previewOpen" x-cloak>
-      <h2>Preview pyramid (projection)</h2>
+      <div class="modal-header">
+        <h2>Preview pyramid (projection)</h2>
+        <button type="button" class="sm ghost modal-close" @click="previewOpen=false" aria-label="Đóng">✕</button>
+      </div>
       <form id="preview-form">
         <label>Symbol<input name="symbol" value="BTC" /></label>
         <label>Entry price<input name="entry_price" type="number" step="any" value="50000" required /></label>
@@ -97,11 +109,11 @@
       <div class="grid" style="margin-top:16px">
         <div class="panel">
           <h2>KSS Sessions</h2>
-          <div class="scroll" hx-get="/partials/kss" hx-trigger="tab-shown from:closest [data-tab-panel], every 10s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body" hx-swap="innerHTML"></div>
+          <div class="scroll" hx-get="/partials/kss" hx-trigger="tab-shown from:closest [data-tab-panel], every 10s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body" hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
         </div>
         <div class="panel">
           <h2>Hàng chờ duyệt (Pending)</h2>
-          <div class="scroll" hx-get="/partials/pending" hx-trigger="tab-shown from:closest [data-tab-panel], every 10s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body" hx-swap="innerHTML"></div>
+          <div class="scroll" hx-get="/partials/pending" hx-trigger="tab-shown from:closest [data-tab-panel], every 10s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body" hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
         </div>
         <div class="panel">
           <h2>Vị thế (Positions)</h2>

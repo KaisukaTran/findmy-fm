@@ -139,3 +139,61 @@ button { white-space: nowrap; }
   .card .value { font-size: 16px; }
   .modal form { grid-template-columns: 1fr; }
 }
+
+/* --- P3: Toast notifications ------------------------------------------ */
+#toast-container {
+  position: fixed; bottom: 20px; right: 20px; z-index: 9999;
+  display: flex; flex-direction: column; gap: 8px;
+  pointer-events: none;
+}
+.toast {
+  max-width: 340px; padding: 10px 14px; border-radius: 8px;
+  font-size: 13px; line-height: 1.4; border: 1px solid var(--line);
+  background: var(--panel); color: var(--fg);
+  opacity: 0; transform: translateY(8px);
+  transition: opacity .2s ease, transform .2s ease;
+  pointer-events: auto;
+}
+.toast.toast-in  { opacity: 1; transform: translateY(0); }
+.toast.toast-out { opacity: 0; transform: translateY(8px); }
+.toast.toast-success { border-color: var(--green); color: var(--green); }
+.toast.toast-error   { border-color: var(--red);   color: var(--red); }
+.toast.toast-info    { border-color: var(--accent); color: var(--fg); }
+
+/* --- P3: Connection chip ---------------------------------------------- */
+.conn-chip {
+  display: inline-block; width: 8px; height: 8px;
+  border-radius: 50%; margin-right: 4px; flex-shrink: 0;
+  transition: background .3s;
+}
+.conn-chip::after {
+  display: none; /* chip uses background color only — text is in title attr */
+}
+.conn-live        { background: var(--green); }
+.conn-error       { background: var(--red); animation: chip-blink .8s infinite; }
+.conn-reconnecting { background: #e3b341; animation: chip-blink 1.2s infinite; }
+@keyframes chip-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: .35; }
+}
+
+/* --- P3: htmx first-load indicator ------------------------------------ */
+/* htmx adds .htmx-request to the element when a request is in-flight,
+   and shows children with class .htmx-indicator (hidden otherwise). */
+.htmx-indicator { display: none; }
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator { display: inline; }
+.loading-row {
+  display: block; padding: 8px 0; color: var(--muted);
+  font-size: 12px; text-align: center;
+}
+.loading-chip {
+  font-size: 11px; color: var(--muted); padding: 0 6px;
+}
+
+/* --- P3: Modal header (close button row) ------------------------------ */
+.modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.modal-header h2 { margin: 0; }

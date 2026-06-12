@@ -1,4 +1,5 @@
 {% set live = a.auto_trade or a.scheduler_running %}
+<span id="conn-chip" class="conn-chip conn-live" aria-label="Trạng thái kết nối"></span>
 <span class="statusbar">
   <span class="dot {{ 'on' if live else '' }}"></span>
   <span class="{{ 'pos' if a.auto_trade else 'muted' }}">Auto-trade {{ 'ON' if a.auto_trade else 'OFF' }}</span>

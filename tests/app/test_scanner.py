@@ -221,3 +221,44 @@ def test_scanner_passes_ta_bundle_to_grok(db, scan_env, monkeypatch):
     assert {"rsi", "adx", "st", "htf", "macd_h"} <= set(ta)
     cand = db.query(models.Candidate).filter_by(symbol="BTC").one()
     assert "TA: RSI" in cand.reason
+
+
+# --- B2 & B1 tests -----------------------------------------------------------
+
+
+def test_days_to_bars_conversion():
+    """B2: _days_to_bars(365, '4h') returns ~2190, _days_to_bars(365, '1d') == 365,
+    and result never goes below _MIN_CANDLES (30) for small day counts."""
+    # 365 days * 6 bars/day (4h) = 2190
+    assert scanner._days_to_bars(365, "4h") == 2190
+    # 365 days * 1 bar/day (1d) = 365
+    assert scanner._days_to_bars(365, "1d") == 365
+    # Small day counts should floor to _MIN_CANDLES (30)
+    assert scanner._days_to_bars(1, "1d") == 30
+    assert scanner._days_to_bars(5, "1d") == 30  # 5 < 30, so floor to 30
+    assert scanner._days_to_bars(60, "1d") == 60  # 60 >= 30, so keep 60
+
+
+def test_open_session_resolves_settings_at_call_time(db, monkeypatch):
+    """B1: _open_session resolves distance/tp/max_waves from settings at CALL time
+    when those kwargs are omitted. Monkeypatch settings to sentinels and verify the
+    created KssSession row uses the patched values."""
+    from app.kss import service as kss_service
+
+    # Monkeypatch settings to sentinel values
+    monkeypatch.setattr(settings, "scan_distance_pct", 2.5)
+    monkeypatch.setattr(settings, "scan_tp_pct", 15.0)
+    monkeypatch.setattr(settings, "scan_max_waves", 7)
+    monkeypatch.setattr(settings, "scan_fund", 100.0)
+    monkeypatch.setattr(settings, "deadline_days", 30)
+
+    # Call _open_session WITHOUT passing distance_pct, tp_pct, max_waves;
+    # they should be read from settings
+    session_id = scanner._open_session(db, "TEST", entry=50.0, mode="semi")
+
+    # Fetch the created session and verify it used the settings values
+    sess = db.get(models.KssSession, session_id)
+    assert sess is not None
+    assert sess.distance_pct == 2.5
+    assert sess.tp_pct == 15.0
+    assert sess.max_waves == 7

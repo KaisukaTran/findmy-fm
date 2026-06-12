@@ -17,5 +17,6 @@ class LiquidityAgent:
             return AgentVote(self.name, 0.0, 0.1, "no data")
         avg_notional = sum(c["close"] * c["volume"] for c in window) / len(window)
         score = clamp(avg_notional / _TARGET_NOTIONAL)
-        conf = 1.0 if any(c["volume"] for c in window) else 0.3
+        any_vol = any(c["volume"] for c in window)
+        conf = min(1.0, (len(window) / 20.0) * (1.0 if any_vol else 0.3))
         return AgentVote(self.name, score, conf, f"avg notional/bar=${avg_notional:,.0f}")

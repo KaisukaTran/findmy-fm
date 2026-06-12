@@ -133,6 +133,10 @@ def _effective_params(db: Session, symbol: str) -> tuple[float, float, int]:
 
     Uses hyperopt-tuned values when hyperopt_enabled and a row exists;
     falls back to global scan_* defaults in all other cases.
+
+    Design: hyperopt tunes WATCHLIST symbols only; this function falls back to global
+    scan_* params for non-watchlist (universe) symbols by design. This keeps tuning
+    focused and allows the global defaults to govern exploration.
     """
     if settings.hyperopt_enabled:
         row = hyperopt.best_params(db, symbol)

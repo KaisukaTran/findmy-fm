@@ -226,3 +226,49 @@ def test_service_delete_and_summary(db, mock_market):
     assert s["total_sessions"] == 1
     service.delete_session(db, row.id)
     assert service.summary(db)["total_sessions"] == 0
+
+
+def test_wave_below_sl_is_not_queued(db, mock_market, monkeypatch):
+    """A DCA rung at/below the SL is a dead order (SL exits first) → it must not be queued.
+
+    distance 10% + SL 8%: after wave 0 fills ~50025 (SL floor≈46023), wave 1 = 45000 < floor.
+    (mock_market price 49000 is below the TP at avg×1.03, so on_fill yields next_wave not TP.)
+    """
+    from app.config import settings
+    monkeypatch.setattr(settings, "sl_pct", 8.0)
+    row = service.create_session(
+        db, symbol="BTC", entry_price=50000.0, distance_pct=10.0, max_waves=4,
+        isolated_fund=100000.0, tp_pct=3.0, timeout_x_min=30.0, gap_y_min=5.0,
+    )
+    res = service.start_session(db, row.id)
+    orders.approve_order(db, res["pending_order_id"])  # fill wave 0 → on_fill wants wave 1 @45000
+
+    waves = db.query(models.KssWave).filter_by(session_id=row.id).all()
+    assert [w.wave_num for w in waves] == [0]  # wave 1 (below SL) was skipped
+    assert not any(p.source_ref == f"pyramid:{row.id}:wave:1" for p in orders.list_pending(db))
+    assert db.query(models.AuditLog).filter_by(action="wave_below_sl").count() == 1
+    db.refresh(row)
+    assert row.current_wave == 0  # not advanced past the last queued rung
+
+    # Manual DCA must also refuse the dead rung with a clear error.
+    with pytest.raises(ValueError, match="dưới SL"):
+        service.queue_next_wave(db, row.id)
+
+
+def test_adjust_distance_blocked_after_fill(db, mock_market):
+    """distance_pct is entry-anchored; changing it after a fill would break ladder continuity."""
+    row = service.create_session(
+        db, symbol="BTC", entry_price=50000.0, distance_pct=2.0, max_waves=4,
+        isolated_fund=100000.0, tp_pct=3.0, timeout_x_min=30.0, gap_y_min=5.0,
+    )
+    res = service.start_session(db, row.id)
+    orders.approve_order(db, res["pending_order_id"])  # wave 0 filled
+
+    with pytest.raises(ValueError, match="distance_pct"):
+        service.adjust_session(db, row.id, distance_pct=3.0)
+
+    # Other knobs (and re-sending the same distance) are still allowed.
+    out = service.adjust_session(db, row.id, tp_pct=5.0, distance_pct=2.0)
+    assert out["changes"].get("tp_pct") == 5.0
+    db.refresh(row)
+    assert row.distance_pct == 2.0  # unchanged

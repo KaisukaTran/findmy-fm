@@ -103,14 +103,44 @@ def _wave_row(db: Session, session_id: int, wave_num: int) -> KssWave | None:
     )
 
 
+def _sl_floor_price(py: PyramidSession) -> float:
+    """Hard stop-loss trigger price (avg-anchored) for an in-flight session, or 0.0 when SL is
+    disabled. A DCA wave at/below this can never execute — the SL exits first — so queueing it
+    would make the ladder and the SL mutually contradictory. Callers skip such dead rungs."""
+    if py.sl_pct <= 0 or py.avg_price <= 0:
+        return 0.0
+    return py.avg_price * (1 - py.sl_pct / 100.0)
+
+
+def _queue_wave_if_above_sl(
+    db: Session, py: PyramidSession, session_id: int, symbol: str, order_dict: dict
+) -> bool:
+    """Queue the next DCA wave (+ its KssWave row) and return True, or skip+audit and return
+    False when the rung sits at/below the SL — a dead order the SL would pre-empt. Shared by the
+    auto-chain (handle_fill_event) and the rescue adoption so both honour the SL floor."""
+    nwn = int(order_dict["source_ref"].split(":")[-1])
+    floor = _sl_floor_price(py)
+    if floor > 0 and order_dict["price"] <= floor:
+        audit.log(db, "kss", "wave_below_sl", entity=f"kss:{session_id}", symbol=symbol,
+                  wave=nwn, price=round(order_dict["price"], 8), sl_price=round(floor, 8))
+        return False
+    pending, _ = _queue(db, order_dict)
+    db.add(
+        KssWave(
+            session_id=session_id, wave_num=nwn, quantity=order_dict["quantity"],
+            target_price=order_dict["price"], status=WAVE_SENT, pending_order_id=pending.id,
+        )
+    )
+    return True
+
+
 # --- lifecycle ----------------------------------------------------------
 
 
 def create_session(db: Session, **params: Any) -> KssSession:
     """Validate params (via PyramidSession) and persist a PENDING session."""
-    from app.config import settings
-
     from app import costengine
+    from app.config import settings
 
     note = params.pop("note", None)
     deadline_days = params.pop("deadline_days", settings.deadline_days)
@@ -226,17 +256,12 @@ def adopt_position_into_kss(
             filled_qty=held_qty, filled_price=avg_price, filled_at=datetime.utcnow(),
         )
     )
-    # If the strategy wants the next DCA wave, queue it like a normal fill would.
+    # If the strategy wants the next DCA wave, queue it like a normal fill would — unless the
+    # rung is at/below the SL (dead: the SL would exit before it could fill).
     if result.get("action") == "next_wave":
-        order_dict = result["order"]
-        nwn = int(order_dict["source_ref"].split(":")[-1])
-        pending, _ = _queue(db, order_dict)
-        db.add(
-            KssWave(
-                session_id=row.id, wave_num=nwn, quantity=order_dict["quantity"],
-                target_price=order_dict["price"], status=WAVE_SENT, pending_order_id=pending.id,
-            )
-        )
+        nwn = int(result["order"]["source_ref"].split(":")[-1])
+        if not _queue_wave_if_above_sl(db, py, row.id, symbol, result["order"]):
+            row.current_wave = nwn - 1  # frozen on_fill advanced it; nothing was queued
     elif result.get("action") == "tp_triggered":
         if _tp_clears_cost(db, row.symbol, current_price):
             _queue(db, result["order"])
@@ -341,30 +366,26 @@ def handle_fill_event(
     _save_state(row, py)
 
     if result.get("action") == "next_wave":
-        order_dict = result["order"]
-        next_wave_num = int(order_dict["source_ref"].split(":")[-1])
-        pending, _ = _queue(db, order_dict)
-        db.add(
-            KssWave(
-                session_id=session_id,
-                wave_num=next_wave_num,
-                quantity=order_dict["quantity"],
-                target_price=order_dict["price"],
-                status=WAVE_SENT,
-                pending_order_id=pending.id,
-            )
-        )
+        if not _queue_wave_if_above_sl(db, py, session_id, row.symbol, result["order"]):
+            row.current_wave = wave_num  # frozen on_fill advanced it; nothing was queued
     elif result.get("action") == "tp_triggered":
-        from app.market import get_current_prices
-        mkt = get_current_prices([row.symbol]).get(row.symbol) or 0.0
-        if mkt and not _tp_clears_cost(db, row.symbol, mkt):
-            row.status = SESSION_ACTIVE  # K-2 defer (on_fill had set TP_TRIGGERED)
-            audit.log(db, "kss", "tp_deferred", entity=f"kss:{row.id}", symbol=row.symbol, price=mkt)
-        else:
-            _queue(db, result["order"])  # market SELL through the approval queue
+        _handle_tp_triggered(db, row, result)
 
     db.commit()
     return result
+
+
+def _handle_tp_triggered(db: Session, row: KssSession, result: dict) -> None:
+    """Queue the TP sell, or K-2 defer it (back to ACTIVE) when selling now would realize
+    below the true cost basis + fees."""
+    from app.market import get_current_prices
+
+    mkt = get_current_prices([row.symbol]).get(row.symbol) or 0.0
+    if mkt and not _tp_clears_cost(db, row.symbol, mkt):
+        row.status = SESSION_ACTIVE  # K-2 defer (on_fill had set TP_TRIGGERED)
+        audit.log(db, "kss", "tp_deferred", entity=f"kss:{row.id}", symbol=row.symbol, price=mkt)
+    else:
+        _queue(db, result["order"])  # market SELL through the approval queue
 
 
 def queue_next_wave(db: Session, session_id: int) -> dict:
@@ -389,6 +410,13 @@ def queue_next_wave(db: Session, session_id: int) -> dict:
     if _wave_row(db, session_id, next_wave_num) is not None:
         raise ValueError(f"Wave {next_wave_num} already queued")
     next_wave = py.generate_wave(next_wave_num)
+    floor = _sl_floor_price(py)
+    if floor > 0 and next_wave.target_price <= floor:
+        raise ValueError(
+            f"Sóng {next_wave_num} (giá {next_wave.target_price:.6f}) nằm dưới SL "
+            f"({floor:.6f}) — SL sẽ kích hoạt trước nên lệnh DCA này vô dụng. "
+            "Nới SL của session hoặc giảm max_waves trước."
+        )
     cost = next_wave.quantity * next_wave.target_price
     if cost > py.remaining_fund:
         raise ValueError(
@@ -640,6 +668,23 @@ def sweep_deadlines(db: Session, now: datetime | None = None) -> list[int]:
 
 def adjust_session(db: Session, session_id: int, **changes: Any) -> dict:
     row = _get_row(db, session_id)
+    # The geometric ladder is anchored to entry_price: price(n)=entry×(1-distance%)^n. Changing
+    # distance_pct after waves have filled re-computes the NEXT rung at the new distance from
+    # entry, so it jumps discontinuously away from the last fill (and can land below the SL).
+    # Forbid the change once any wave is filled — start a fresh session for a different spacing.
+    new_d = changes.get("distance_pct")
+    if new_d is not None and abs(float(new_d) - row.distance_pct) > 1e-9:
+        filled = (
+            db.query(KssWave)
+            .filter(KssWave.session_id == session_id, KssWave.status == WAVE_FILLED)
+            .count()
+        )
+        if filled > 0:
+            raise ValueError(
+                "Không thể đổi distance_pct của session đã có sóng khớp — thang DCA neo theo "
+                "entry sẽ bị đứt đoạn (sóng kế tiếp nhảy xa khỏi nấc vừa khớp). Dừng session và "
+                "tạo session mới nếu cần khoảng cách khác."
+            )
     py = _to_pyramid(row)
     applied = py.adjust_params(**{k: v for k, v in changes.items() if v is not None})
     if not applied:

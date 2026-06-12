@@ -100,6 +100,17 @@ def render(row: AuditLog) -> dict:
     elif a == "grok" and act.startswith("decide_"):
         cat, sev, icon = OPUS, "warn", "⚠️"
         msg = f"GROK lỗi khi quyết định ({act})"
+    # --- Grok scanner gate (AI xAI thẩm định rủi ro, soát ứng viên đã qua mọi cổng lọc) ---
+    elif a == "grok" and act == "scanner_veto":
+        cat, sev, icon = RISK, "warn", "⛔"
+        msg = f"Grok (AI thẩm định rủi ro, xAI) PHỦ QUYẾT mở {s}: {d.get('reason', '')}"
+    elif a == "grok" and act == "scanner_review":
+        cat, sev, icon = OPUS, "info", "🛰️"
+        msg = (f"Grok soát {d.get('reviewed', 0)} ứng viên scanner (đã qua mọi cổng lọc) — "
+               f"phủ quyết {d.get('vetoed', 0)}")
+    elif a == "grok" and act in ("scanner_error", "scanner_parse_error"):
+        cat, sev, icon = OPUS, "warn", "⚠️"
+        msg = f"Grok lỗi khi thẩm định scanner ({d.get('error', act)}) — bỏ qua, vẫn cho lệnh qua (fail-open)"
     elif a == "consensus" and act == "merge":
         cat, sev, icon = OPUS, "info", "🤝"
         msg = (f"Đồng thuận OPUS+GROK: mở {d.get('agreed_open', 0)}/"
@@ -150,6 +161,12 @@ def render(row: AuditLog) -> dict:
         msg = (f"Chu kỳ quét: {d.get('candidates', 0)} ứng viên · "
                f"{d.get('auto_approved', 0)} tự duyệt · {d.get('auto_filled', 0)} khớp"
                + (" · FROZEN" if d.get("frozen") else ""))
+    elif act == "universe_degraded":
+        cat, sev, icon = SYSTEM, "warn", "📡"
+        src = d.get("source")
+        msg = (f"Nguồn dữ liệu lỗi tạm thời — dùng lại danh sách {d.get('reused', 0)} mã đã cache"
+               if src == "cache"
+               else "Nguồn dữ liệu lỗi — chỉ quét được watchlist (BTC/ETH/SOL) lượt này")
     elif act in ("scan_start", "candidate"):
         cat, sev, icon = SYSTEM, "info", "🔎"
         msg = (f"Quét {s} → {d.get('decision', '')}" if act == "candidate"

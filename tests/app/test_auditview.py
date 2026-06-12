@@ -25,6 +25,19 @@ def test_categories_and_severity(db):
     assert R(_row(db, "scheduler", "cycle", candidates=50))["category"] == "system"
 
 
+def test_grok_scanner_messages_are_explained(db):
+    R = auditview.render
+    veto = R(_row(db, "grok", "scanner_veto", "DOGE", reason="đà giảm mạnh"))
+    assert veto["category"] == "risk" and "PHỦ QUYẾT" in veto["message"]
+    assert veto["symbol"] == "DOGE" and "đà giảm mạnh" in veto["message"]
+    rev = R(_row(db, "grok", "scanner_review", reviewed=8, vetoed=3))
+    assert "soát 8" in rev["message"] and "phủ quyết 3" in rev["message"]
+    err = R(_row(db, "grok", "scanner_error", error="Timeout"))
+    assert err["severity"] == "warn" and "fail-open" in err["message"]
+    # no more raw "grok · scanner_*" fallthrough
+    assert "·" not in veto["message"]
+
+
 def test_symbol_extraction(db):
     assert auditview.render(_row(db, "opus", "open", "opos:1", symbol="BTC", notional=100))["symbol"] == "BTC"
     # bare-symbol entity (scanner skips)

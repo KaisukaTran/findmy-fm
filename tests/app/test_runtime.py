@@ -177,3 +177,54 @@ def test_state_returns_correct_snapshot(db, monkeypatch):
     assert s["auto_trade"] is True
     assert s["autoapprove"] is False
     assert s["frozen"] is False
+
+
+# ---------------------------------------------------------------------------
+# Auto-approve max_notional persistence (U5)
+# ---------------------------------------------------------------------------
+
+
+def test_set_autoapprove_persists_max_notional(db, monkeypatch):
+    """Setting max_notional should persist it to runtime_config."""
+    monkeypatch.setattr(settings, "autoapprove_max_notional", 50.0)
+
+    runtime.set_autoapprove(db, enabled=True, max_notional=123.45)
+
+    # In-memory updated
+    assert settings.autoapprove_max_notional == 123.45
+    # Persisted to DB
+    assert runtime.get(db, runtime.KEY_AUTOAPPROVE_MAX) == "123.45"
+
+
+def test_set_autoapprove_without_max_notional_preserves_persisted_value(db, monkeypatch):
+    """When max_notional is None, preserve the existing persisted value (don't revert to default).
+
+    This fixes the bug where toggling the enabled flag would lose the max_notional.
+    """
+    # First, set and persist a custom max_notional
+    monkeypatch.setattr(settings, "autoapprove_max_notional", 50.0)
+    runtime.set_autoapprove(db, enabled=True, max_notional=100.0)
+    assert runtime.get(db, runtime.KEY_AUTOAPPROVE_MAX) == "100.0"
+
+    # Now toggle enabled without changing max_notional (like toggleAutoApprove does)
+    monkeypatch.setattr(settings, "autoapprove_max_notional", 50.0)  # Reset to default
+    runtime.set_autoapprove(db, enabled=False, max_notional=None)
+
+    # The persisted value should NOT be lost
+    assert runtime.get(db, runtime.KEY_AUTOAPPROVE_MAX) == "100.0"
+    # And in-memory should be restored from DB
+    assert settings.autoapprove_max_notional == 100.0
+
+
+def test_set_autoapprove_max_notional_survives_restart(db, monkeypatch):
+    """After setting max_notional and persisting it, sync_from_db restores it."""
+    # Set and persist a custom value
+    monkeypatch.setattr(settings, "autoapprove_max_notional", 50.0)
+    runtime.set_autoapprove(db, enabled=True, max_notional=250.0)
+
+    # Simulate restart: reset in-memory to default
+    monkeypatch.setattr(settings, "autoapprove_max_notional", 50.0)
+
+    # Sync should restore it
+    runtime.sync_from_db(db)
+    assert settings.autoapprove_max_notional == 250.0

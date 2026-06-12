@@ -225,7 +225,7 @@ const actions = {
     // Preserve the current enabled flag; only change the threshold.
     const s = await api("GET", "/api/autoapprove");
     await api("POST", "/api/autoapprove", { enabled: s.enabled, max_notional: v });
-    refreshStatus();
+    refreshTrading(); refreshStatus();
   },
   async toggleScheduler(desired) {
     const enable = desired === "on";

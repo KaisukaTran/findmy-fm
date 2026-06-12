@@ -133,12 +133,23 @@ def opus_mode_off(db: Session) -> dict:
 
 
 def set_autoapprove(db: Session, *, enabled: bool, max_notional: float | None) -> None:
-    """Persist the auto-approval rule (enabled + max notional) so it survives restarts."""
+    """Persist the auto-approval rule (enabled + max notional) so it survives restarts.
+
+    If max_notional is None, preserve the currently persisted value.
+    """
     settings.autoapprove_enabled = enabled
     set_bool(db, KEY_AUTOAPPROVE_ENABLED, enabled)
     if max_notional is not None:
         settings.autoapprove_max_notional = max_notional
         set(db, KEY_AUTOAPPROVE_MAX, max_notional)
+    else:
+        # Preserve the existing persisted max_notional; don't let it revert to default.
+        persisted = get(db, KEY_AUTOAPPROVE_MAX)
+        if persisted is not None:
+            try:
+                settings.autoapprove_max_notional = float(persisted)
+            except ValueError:
+                pass  # Ignore corrupt values; keep the in-memory default
 
 
 def kss_settings(db: Session) -> dict:  # noqa: ARG001 (db kept for a uniform signature)

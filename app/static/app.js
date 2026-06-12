@@ -161,6 +161,20 @@ const actions = {
       alert("Đã bật Grok scanner. Cần XAI_API_KEY trong .env để Grok thực sự duyệt ứng viên.");
     refreshAll();
   },
+  async toggleTaLib() {
+    const s = await api("GET", "/api/automation");
+    await api("POST", "/api/ta-source", { source: "lib", enabled: !s.ta_lib });
+    if (!s.ta_lib)
+      alert("Đã bật overlay pandas-ta. Cần `pip install pandas-ta`; thiếu thì tự lùi về chỉ báo pure-Python.");
+    refreshAll();
+  },
+  async toggleTaExternal() {
+    const s = await api("GET", "/api/automation");
+    await api("POST", "/api/ta-source", { source: "external", enabled: !s.ta_external });
+    if (!s.ta_external)
+      alert("Đã bật nguồn TA ngoài (taapi.io). Cần TAAPI_API_KEY trong .env; hiện là STUB cho tới khi nối provider.");
+    refreshAll();
+  },
   async toggleOpusShadow() {
     const s = await api("GET", "/api/opus");
     // shadow ON → confirm before letting Opus place (paper) orders.

@@ -201,3 +201,23 @@ def test_grok_failure_is_fail_open(db, scan_env, monkeypatch):
     scanner.run_scan(db, mode="semi")
     cand = db.query(models.Candidate).filter_by(symbol="BTC").one()
     assert cand.session_id is not None  # opened despite no Grok verdict
+
+
+def test_scanner_passes_ta_bundle_to_grok(db, scan_env, monkeypatch):
+    """Each candidate handed to the Grok gate carries its TA evidence bundle, and the
+    compact TA tag is surfaced on the candidate reason."""
+    seen: dict = {}
+
+    def _capture(_db, items):
+        seen["items"] = items
+        return {}
+
+    monkeypatch.setattr("app.orchestrator.grok.scanner_enabled", lambda: True)
+    monkeypatch.setattr("app.orchestrator.grok.review_candidates", _capture)
+    scanner.run_scan(db, mode="semi")
+
+    assert seen["items"], "expected at least one gate-bound candidate"
+    ta = seen["items"][0]["ta"]
+    assert {"rsi", "adx", "st", "htf", "macd_h"} <= set(ta)
+    cand = db.query(models.Candidate).filter_by(symbol="BTC").one()
+    assert "TA: RSI" in cand.reason

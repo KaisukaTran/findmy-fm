@@ -30,6 +30,7 @@ from app.config import settings
 from app.data.providers import data_provider
 from app.kss import service
 from app.models import SESSION_ACTIVE, AgentVoteRecord, Candidate, KssSession, PendingOrder, ScanRun
+from app.ta import bundle as ta_bundle
 
 logger = logging.getLogger(__name__)
 
@@ -175,12 +176,16 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
             if blocked:
                 cand.reason += f" | skipped: {blocked}"
             else:
+                # Build the TA evidence bundle only for gate-bound candidates (the set the
+                # Grok review actually decides on), and surface a compact tag on the reason.
+                ta = ta_bundle.build(candles, db, symbol)
+                cand.reason += f" | TA: {_ta_tag(ta)}"
                 # Defer the actual open until after the batched Grok review.
                 to_open.append({
                     "cand": cand, "symbol": symbol, "entry": candles[-1]["close"],
                     "distance_pct": distance_pct, "tp_pct": tp_pct, "max_waves": max_waves,
                     "consensus": consensus, "win_rate": wr["win_rate"],
-                    "loss_rate": wr["loss_rate"], "net_edge": net_edge,
+                    "loss_rate": wr["loss_rate"], "net_edge": net_edge, "ta": ta,
                 })
         candidates.append(cand)
 
@@ -188,6 +193,13 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
 
     db.commit()
     return {"scan_id": scan.id, "mode": mode, "candidates": [c.to_dict() for c in candidates]}
+
+
+def _ta_tag(ta: dict) -> str:
+    """One-line TA summary for the scanner panel / audit (compact, human-readable)."""
+    return (f"RSI{ta['rsi']:.0f} ADX{ta['adx']:.0f}/{ta['di']} MACDh{ta['macd_h']:+.2f} "
+            f"%B{ta['bb_pct']:.2f} ATR{ta['atr_pct']:.1f}% ST:{ta['st']} HTF:{ta['htf']} "
+            f"sup-{ta['sr_sup']:.1f}%/res+{ta['sr_res']:.1f}%")
 
 
 def _trade_block_reason(db: Session, symbol: str) -> str | None:
@@ -222,6 +234,7 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
             "symbol": c["symbol"], "consensus": round(c["consensus"], 1),
             "win_rate": round(c["win_rate"], 1), "loss_rate": round(c["loss_rate"], 1),
             "net_edge": round(c["net_edge"], 2), "price": c["entry"],
+            "ta": c.get("ta", {}),
         } for c in to_open]
         reviews = grok.review_candidates(db, items)
 

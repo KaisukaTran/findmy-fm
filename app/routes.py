@@ -33,8 +33,8 @@ from app import (
 from app.config import settings
 from app.db import get_db
 from app.kss import service as kss_service
-from app.orchestrator import service as opus_service
 from app.models import SESSION_ACTIVE, AgentVoteRecord, AuditLog, Candidate, KssSession, ScanRun
+from app.orchestrator import service as opus_service
 from app.security import require_api_key
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -378,6 +378,22 @@ def set_grok_scanner(body: OpusBody, db: Session = Depends(get_db)):
     return runtime.state(db)
 
 
+class TaSourceBody(BaseModel):
+    source: str  # "lib" (Tier 2 pandas-ta) | "external" (Tier 3 taapi.io)
+    enabled: bool
+
+
+@api_router.post("/api/ta-source", dependencies=[Depends(require_api_key)])
+def set_ta_source(body: TaSourceBody, db: Session = Depends(get_db)):
+    """Toggle an optional TA overlay that enriches the Grok gate. Tier 1 indicators are always
+    on, so this only adds/removes the pandas-ta (lib) or external (taapi.io) overlay."""
+    if body.source == "lib":
+        runtime.ta_source_set(db, lib=body.enabled)
+    elif body.source == "external":
+        runtime.ta_source_set(db, external=body.enabled)
+    return runtime.state(db)
+
+
 @api_router.post("/api/opus/shadow", dependencies=[Depends(require_api_key)])
 def set_opus_shadow(body: OpusBody, db: Session = Depends(get_db)):
     """Toggle OPUS shadow mode (True = log intents only; False = execute on paper)."""
@@ -638,13 +654,19 @@ def partial_kss_settings(request: Request, db: Session = Depends(get_db)):
     # Ladder depth at the last wave = how far below entry the deepest DCA buy sits.
     depth_pct = (1 - (1 - k["scan_distance_pct"] / 100) ** k["scan_max_waves"]) * 100
     from app.orchestrator import grok
+    from app.ta import external as ta_external
     grok_scanner = {
         "enabled": settings.grok_scanner_enabled,
         "active": grok.scanner_enabled(),  # enabled AND xai key present
     }
+    ta = {
+        "lib": settings.ta_lib_enabled,
+        "external": settings.ta_external_enabled,
+        "external_active": ta_external.enabled(),  # enabled AND taapi key present
+    }
     return templates.TemplateResponse(
         "partials/kss_settings.html",
-        {"request": request, "k": k, "depth_pct": depth_pct, "gs": grok_scanner},
+        {"request": request, "k": k, "depth_pct": depth_pct, "gs": grok_scanner, "ta": ta},
     )
 
 

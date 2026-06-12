@@ -31,6 +31,8 @@ KEY_OPUS_MODE = "opus_mode"
 KEY_OPUS_SHADOW = "opus_shadow"
 KEY_GROK_ENABLED = "grok_enabled"
 KEY_GROK_SCANNER = "grok_scanner_enabled"
+KEY_TA_LIB = "ta_lib_enabled"
+KEY_TA_EXTERNAL = "ta_external_enabled"
 KEY_AUTOAPPROVE_ENABLED = "autoapprove_enabled"
 KEY_AUTOAPPROVE_MAX = "autoapprove_max_notional"
 
@@ -165,6 +167,18 @@ def grok_scanner_set(db: Session, enabled: bool) -> dict:
     return state(db)
 
 
+def ta_source_set(db: Session, *, lib: bool | None = None, external: bool | None = None) -> dict:
+    """Toggle the optional TA overlays feeding the Grok gate (Tier 2 lib / Tier 3 external).
+    Tier 1 pure-Python indicators are always on, so these only add/remove overlays. Persisted."""
+    if lib is not None:
+        settings.ta_lib_enabled = lib
+        set_bool(db, KEY_TA_LIB, lib)
+    if external is not None:
+        settings.ta_external_enabled = external
+        set_bool(db, KEY_TA_EXTERNAL, external)
+    return state(db)
+
+
 def opus_shadow_set(db: Session, shadow: bool) -> dict:
     """Set OPUS shadow mode (True = log intents but don't execute). Persisted."""
     settings.opus_shadow = shadow
@@ -180,6 +194,8 @@ def state(db: Session) -> dict:
         "autoapprove": settings.autoapprove_enabled,
         "opus_mode": settings.opus_mode,
         "grok_scanner": settings.grok_scanner_enabled,
+        "ta_lib": settings.ta_lib_enabled,
+        "ta_external": settings.ta_external_enabled,
         "frozen": is_frozen(db),
         "frozen_reason": get(db, KEY_FROZEN_REASON),
         "frozen_at": get(db, KEY_FROZEN_AT),
@@ -230,6 +246,8 @@ def sync_from_db(db: Session) -> None:
     settings.opus_shadow = get_bool(db, KEY_OPUS_SHADOW, default=settings.opus_shadow)
     settings.grok_enabled = get_bool(db, KEY_GROK_ENABLED, default=settings.grok_enabled)
     settings.grok_scanner_enabled = get_bool(db, KEY_GROK_SCANNER, default=settings.grok_scanner_enabled)
+    settings.ta_lib_enabled = get_bool(db, KEY_TA_LIB, default=settings.ta_lib_enabled)
+    settings.ta_external_enabled = get_bool(db, KEY_TA_EXTERNAL, default=settings.ta_external_enabled)
     # Auto-approval rule (persisted so a dashboard change survives a restart).
     if get(db, KEY_AUTOAPPROVE_ENABLED) is not None:
         settings.autoapprove_enabled = get_bool(db, KEY_AUTOAPPROVE_ENABLED)

@@ -125,6 +125,13 @@ class Settings(BaseSettings):
     # --- Grok scanner gate: a Grok (xAI) endorse/veto pass over qualified candidates ---
     grok_scanner_enabled: bool = Field(default=False, description="Have Grok review scanner candidates that passed every deterministic gate (one batched call/scan). Needs xai_api_key. Off = no cost, deterministic behaviour unchanged.")
 
+    # --- TA evidence bundle: enrich the Grok gate with technical indicators ---
+    # Tier 1 (pure-Python indicators) is ALWAYS on and feeds the bundle; these two flags only
+    # toggle the optional overlays. Both default OFF, both fail-open back to Tier 1.
+    ta_lib_enabled: bool = Field(default=False, description="Tier 2: overlay a few indicators via pandas-ta for extra precision. Requires `pip install pandas-ta` (pulls numpy+pandas); falls back to pure-Python if the import fails.")
+    ta_external_enabled: bool = Field(default=False, description="Tier 3: merge external TA signals (taapi.io) into the bundle. Needs taapi_api_key and network. STUB until a provider is wired; fail-open.")
+    taapi_api_key: SecretStr = Field(default=SecretStr(""), description="API key for the external TA source (taapi.io). Empty = Tier 3 off.")
+
     # --- Full-auto master switch + circuit breaker (Phase A) ---
     full_auto: bool = Field(
         default=False,

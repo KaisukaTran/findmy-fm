@@ -39,6 +39,19 @@
 </div>
 
 <div style="margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)">
+  <span class="muted" style="font-size:12px">Bằng chứng TA cho cổng Grok</span>
+  <div class="muted" style="font-size:12px;margin-top:4px">Chỉ báo pure-Python (RSI, MACD, ADX, ATR, Bollinger, Supertrend, hỗ trợ/kháng cự, HTF) <b>luôn bật</b> và được đính kèm cho từng coin trước khi Grok duyệt. Hai overlay dưới là tùy chọn, lỗi → tự lùi về pure-Python.</div>
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px">
+    <span class="badge {{ 'guardian-on' if ta.lib else 'full-auto-off' }}" title="Tier 2: tính lại vài chỉ báo bằng pandas-ta cho chính xác hơn. Cần `pip install pandas-ta`.">pandas-ta {{ 'ON' if ta.lib else 'OFF' }}</span>
+    <button class="sm {{ 'danger' if ta.lib else 'ok' }}" data-action="toggleTaLib">{{ 'Tắt' if ta.lib else 'Bật' }} pandas-ta</button>
+  </div>
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px">
+    <span class="badge {{ 'guardian-on' if ta.external_active else 'full-auto-off' }}" title="Tier 3: trộn tín hiệu TA từ taapi.io (qua mạng). STUB cho tới khi nối provider; cần TAAPI_API_KEY.">TA ngoài {{ 'ON' if ta.external_active else ('ENABLED (thiếu key)' if ta.external else 'OFF') }}</span>
+    <button class="sm {{ 'danger' if ta.external else 'ok' }}" data-action="toggleTaExternal">{{ 'Tắt' if ta.external else 'Bật' }} TA ngoài</button>
+  </div>
+</div>
+
+<div style="margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)">
   <div class="muted" style="font-size:12px">Kiểm tra tính nhất quán:</div>
   <div style="margin-top:4px">Thang DCA chạm tới <b>−{{ '%.1f'|format(depth_pct) }}%</b> so với giá vào (sóng cuối =
     entry×(1−{{ '%.1f'|format(k.scan_distance_pct) }}%)^{{ k.scan_max_waves }}).</div>

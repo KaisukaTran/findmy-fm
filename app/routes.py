@@ -327,6 +327,7 @@ class KssSettingsBody(BaseModel):
     loss_streak_window_days: int | None = Field(None, ge=1, le=365)
     min_expectancy_pct: float | None = Field(None, ge=-100, le=100)
     min_win_rate: float | None = Field(None, ge=0, le=100)
+    min_confidence: float | None = Field(None, ge=0, le=100)  # S4: consensus threshold
 
 
 @api_router.get("/api/kss-settings")
@@ -338,6 +339,27 @@ def get_kss_settings(db: Session = Depends(get_db)):
 def set_kss_settings(body: KssSettingsBody, db: Session = Depends(get_db)):
     """Update the master KSS knobs (applied to NEW sessions). Persisted across restarts."""
     return runtime.set_kss_settings(db, body.model_dump(exclude_none=True))
+
+
+class ConsensusWeightsBody(BaseModel):
+    """S4: runtime-editable consensus agent weights. backtest is always 0."""
+    trend: float | None = Field(None, ge=0, le=1)
+    dip: float | None = Field(None, ge=0, le=1)
+    volatility: float | None = Field(None, ge=0, le=1)
+    liquidity: float | None = Field(None, ge=0, le=1)
+    ml: float | None = Field(None, ge=0, le=1)
+
+
+@api_router.get("/api/consensus-weights")
+def get_consensus_weights(db: Session = Depends(get_db)):
+    """Return the active consensus agent weights (backtest always 0)."""
+    return runtime.get_consensus_weights(db)
+
+
+@api_router.post("/api/consensus-weights", dependencies=[Depends(require_api_key)])
+def set_consensus_weights_route(body: ConsensusWeightsBody, db: Session = Depends(get_db)):
+    """Update consensus agent weights. Persisted across restarts. backtest forced to 0."""
+    return runtime.set_consensus_weights(db, body.model_dump(exclude_none=True))
 
 
 class OpusBody(BaseModel):
@@ -668,9 +690,11 @@ def partial_kss_settings(request: Request, db: Session = Depends(get_db)):
         "external": settings.ta_external_enabled,
         "external_active": ta_external.enabled(),  # enabled AND taapi key present
     }
+    cw = runtime.get_consensus_weights(db)
     return templates.TemplateResponse(
         "partials/kss_settings.html",
-        {"request": request, "k": k, "depth_pct": depth_pct, "gs": grok_scanner, "ta": ta},
+        {"request": request, "k": k, "depth_pct": depth_pct, "gs": grok_scanner, "ta": ta,
+         "cw": cw},
     )
 
 

@@ -16,6 +16,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
+from app.agents.aggregator import DEFAULT_WEIGHTS
 from app.config import settings
 from app.models import RuntimeConfig
 
@@ -35,6 +36,7 @@ KEY_TA_LIB = "ta_lib_enabled"
 KEY_TA_EXTERNAL = "ta_external_enabled"
 KEY_AUTOAPPROVE_ENABLED = "autoapprove_enabled"
 KEY_AUTOAPPROVE_MAX = "autoapprove_max_notional"
+KEY_CONSENSUS_WEIGHTS = "consensus_weights"  # S4: JSON dict of agent weights
 
 # Master KSS strategy knobs the dashboard edits (persisted as kss:<field>). Each maps to a
 # settings field; the cast keeps them typed when restored from the string-valued KV store.
@@ -52,6 +54,7 @@ KSS_SETTING_FIELDS: dict[str, type] = {
     "loss_streak_window_days": int,
     "min_expectancy_pct": float,
     "min_win_rate": float,
+    "min_confidence": float,  # S4: consensus threshold, now decoupled from backtest
 }
 
 # ---------------------------------------------------------------------------
@@ -153,6 +156,50 @@ def set_kss_settings(db: Session, values: dict) -> dict:
         setattr(settings, key, val)
         set(db, f"kss:{key}", val)
     return kss_settings(db)
+
+
+def get_consensus_weights(db: Session) -> dict[str, float]:
+    """Return the active consensus agent weights.
+
+    Reads from runtime_config (KEY_CONSENSUS_WEIGHTS) so dashboard edits survive
+    restarts.  Falls back to DEFAULT_WEIGHTS when no override is stored, keeping
+    the backtest weight at 0 per the S4 contract.
+    """
+    import json as _json
+
+    raw = get(db, KEY_CONSENSUS_WEIGHTS)
+    if raw:
+        try:
+            stored = _json.loads(raw)
+            # Merge: stored overrides defaults so new agents added later get a 0 weight
+            # rather than being silently absent.
+            merged = dict(DEFAULT_WEIGHTS)
+            merged.update({k: float(v) for k, v in stored.items()})
+            return merged
+        except (ValueError, TypeError):
+            pass
+    return dict(DEFAULT_WEIGHTS)
+
+
+def set_consensus_weights(db: Session, weights: dict[str, float]) -> dict[str, float]:
+    """Persist agent consensus weights.  Returns the saved weights dict.
+
+    Only the five signal-agent keys are accepted; the backtest key is always
+    forced to 0 regardless of what is submitted (gates own the backtest evidence).
+    """
+    import json as _json
+
+    allowed = {"trend", "dip", "volatility", "liquidity", "ml"}
+    cleaned: dict[str, float] = dict(DEFAULT_WEIGHTS)  # start from defaults (backtest=0)
+    for k, v in weights.items():
+        if k in allowed:
+            try:
+                cleaned[k] = float(v)
+            except (TypeError, ValueError):
+                pass
+    cleaned["backtest"] = 0.0  # invariant: backtest never scores in consensus
+    set(db, KEY_CONSENSUS_WEIGHTS, _json.dumps(cleaned))
+    return cleaned
 
 
 def grok_set(db: Session, enabled: bool) -> dict:

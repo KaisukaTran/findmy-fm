@@ -1,8 +1,14 @@
 """Combine agent votes into a consensus % and a trade/skip decision.
 
 Consensus weights each agent's score by a fixed weight AND its own confidence,
-so low-confidence (thin-data) votes count less. The backtest agent carries the
-most weight because it is the only voter tied to a measured win-rate.
+so low-confidence (thin-data) votes count less.
+
+S4: the backtest agent's vote is EXCLUDED from the consensus score (weight 0) so
+the consensus becomes a pure market-context signal from {trend, dip, volatility,
+liquidity, ml}.  The backtest evidence (E, win_lb, loss_rate, days) is OWNED by
+the hard gates in ``decide`` — keeping it in the consensus caused the score to be
+largely the backtest agreeing with itself and prevented the 5 signal agents from
+ever vetoing a trade.  The vote row is still persisted for audit purposes.
 """
 
 from __future__ import annotations
@@ -10,12 +16,12 @@ from __future__ import annotations
 from app.agents.base import AgentVote
 
 DEFAULT_WEIGHTS = {
-    "backtest": 0.40,
-    "dip": 0.20,
-    "trend": 0.15,
+    "backtest": 0.0,   # S4: excluded from consensus; evidence lives in the hard gates
+    "dip": 0.25,
+    "trend": 0.20,
     "volatility": 0.15,
     "liquidity": 0.10,
-    "ml": 0.25,
+    "ml": 0.30,
 }
 
 

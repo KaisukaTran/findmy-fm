@@ -512,9 +512,21 @@ document.addEventListener("submit", async (e) => {
       loss_streak_window_days: num(f.get("loss_streak_window_days")),
       min_expectancy_pct: num(f.get("min_expectancy_pct")),
       min_win_rate: num(f.get("min_win_rate")),
+      min_confidence: num(f.get("min_confidence")),
     });
     toast("Đã lưu cấu hình KSS — áp dụng cho phiên mới.", "success");
     refreshTrading(); refreshStatus();
+  } else if (form.id === "consensus-weights-form") {
+    e.preventDefault();
+    const f = new FormData(form);
+    await api("POST", "/api/consensus-weights", {
+      trend: num(f.get("trend")),
+      dip: num(f.get("dip")),
+      volatility: num(f.get("volatility")),
+      liquidity: num(f.get("liquidity")),
+      ml: num(f.get("ml")),
+    });
+    toast("Đã lưu trọng số đồng thuận.", "success");
   } else if (form.id === "preview-form") {
     e.preventDefault();
     const f = new FormData(form);

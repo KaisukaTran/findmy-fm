@@ -298,7 +298,9 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
             db.add(AgentVoteRecord(scan_id=scan.id, symbol=symbol, agent_name=v.name,
                                    score=v.score, confidence=v.confidence, reason=v.reason))
 
-        consensus = aggregate(votes)
+        # S4: weights resolved at call time from runtime_config so dashboard edits
+        # are picked up without a restart; backtest weight is 0 per S4 contract.
+        consensus = aggregate(votes, weights=runtime.get_consensus_weights(db))
         net_edge = costengine.net_edge_pct(tp_pct)
         d = decide(
             consensus, wr["win_rate"], wr["avg_days_to_tp"],

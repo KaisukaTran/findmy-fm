@@ -91,7 +91,7 @@ class Settings(BaseSettings):
     min_trials: int = Field(default=8, description="Min completed backtest trials for a trustworthy win-rate; below this a pair is skipped (a 100%% from 3 trials is noise).")
 
     min_win_rate: float = Field(default=60.0, description="Min backtested win-rate %% (Wilson lower bound) to qualify. Paired with min_expectancy_pct as the primary trade rule: a pair trades when E ≥ min_expectancy_pct AND win-rate ≥ this.")
-    min_confidence: float = Field(default=70.0, description="Min agent consensus %% to qualify a pair.")
+    min_confidence: float = Field(default=45.0, description="Min agent consensus %% to qualify a pair. S4: default lowered from 70 to 45 because the consensus is now a pure market-context score from {{trend,dip,volatility,liquidity,ml}} (backtest weight=0); the hard gates (E, win_lb) own the backtest evidence.")
     deadline_days: int = Field(default=30, description="Max days a KSS session may wait for TP.")
     auto_trade: bool = Field(
         default=False,

@@ -28,8 +28,27 @@
     <input name="min_expectancy_pct" type="number" step="0.1" min="-100" max="100" value="{{ '%.1f'|format(k.min_expectancy_pct) }}" required></label>
   <label title="Win-rate tối thiểu (cận dưới Wilson) để đủ điều kiện trade. Cặp với gate kỳ vọng tạo thành quy tắc: trade khi E ≥ ngưỡng VÀ win-rate ≥ ngưỡng này.">Win-rate tối thiểu %
     <input name="min_win_rate" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.min_win_rate) }}" required></label>
+  <label title="Ngưỡng đồng thuận tối thiểu của 5 agent thị trường (trend/dip/volatility/liquidity/ml). S4: backtest bị loại khỏi điểm đồng thuận — chứng cứ backtest thuộc về các gate cứng (E, win_lb). Giá trị mặc định mới: 45%.">Đồng thuận tối thiểu %
+    <input name="min_confidence" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.min_confidence) }}" required></label>
   <button type="submit" class="ok">Lưu cấu hình KSS</button>
 </form>
+
+<div id="consensus-weights-panel" style="margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)">
+  <div class="muted" style="font-size:12px;margin-bottom:8px">Trọng số đồng thuận agent thị trường (S4) — backtest luôn = 0, chứng cứ backtest thuộc gate cứng.</div>
+  <form id="consensus-weights-form">
+    <label title="Agent xu hướng giá.">Trend
+      <input name="trend" type="number" step="0.01" min="0" max="1" value="{{ '%.2f'|format(cw.trend) }}" required></label>
+    <label title="Agent mua đáy / pullback.">Dip
+      <input name="dip" type="number" step="0.01" min="0" max="1" value="{{ '%.2f'|format(cw.dip) }}" required></label>
+    <label title="Agent biến động giá.">Volatility
+      <input name="volatility" type="number" step="0.01" min="0" max="1" value="{{ '%.2f'|format(cw.volatility) }}" required></label>
+    <label title="Agent thanh khoản.">Liquidity
+      <input name="liquidity" type="number" step="0.01" min="0" max="1" value="{{ '%.2f'|format(cw.liquidity) }}" required></label>
+    <label title="Agent ML dự báo.">ML
+      <input name="ml" type="number" step="0.01" min="0" max="1" value="{{ '%.2f'|format(cw.ml) }}" required></label>
+    <button type="submit" class="ok">Lưu trọng số</button>
+  </form>
+</div>
 
 <div style="margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)">
   <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">

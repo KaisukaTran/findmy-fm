@@ -159,7 +159,7 @@ const actions = {
     refreshTrading(); refreshStatus();
   },
   async reject(id) {
-    const reason = prompt("Reject reason?", "") ?? "";
+    const reason = prompt("Lý do từ chối?", "") ?? "";
     await api("POST", `/api/pending/reject/${id}`, { reason });
     refreshTrading(); refreshStatus();
   },
@@ -172,7 +172,7 @@ const actions = {
     refreshTrading(); refreshStatus();
   },
   async kssDelete(id) {
-    if (!confirm("Delete session " + id + "?")) return;
+    if (!confirm("Xóa phiên " + id + "?")) return;
     await api("DELETE", `/api/kss/sessions/${id}`);
     refreshTrading(); refreshStatus();
   },
@@ -185,7 +185,7 @@ const actions = {
     refreshTrading(); refreshStatus();
   },
   async kssDcaNext(id) {
-    if (!confirm("Mua thêm 1 sóng DCA cho session " + id + "?")) return;
+    if (!confirm("Đặt lệnh DCA sóng tiếp theo cho session " + id + "?")) return;
     const r = await api("POST", `/api/kss/sessions/${id}/dca-next`);
     toast(`Đã đưa sóng ${r.wave_num} vào hàng chờ: LIMIT BUY ${r.quantity} @ ${r.price}.`, "success");
     refreshTrading(); refreshStatus();
@@ -197,24 +197,24 @@ const actions = {
   async toggleAuto(desired) {
     const enable = desired === "on";
     if (enable &&
-        !confirm("Enable FULL-AUTO trading? Qualifying sessions will be auto-approved.")) return;
+        !confirm("Bật giao dịch FULL-AUTO? Các phiên đủ điều kiện sẽ tự duyệt.")) return;
     await api("POST", "/api/autotrade", { enabled: enable });
     refreshStatus();
   },
   async approveAll() {
-    if (!confirm("Approve and execute ALL pending orders?")) return;
+    if (!confirm("Duyệt và thực thi TẤT CẢ lệnh chờ?")) return;
     await api("POST", "/api/pending/approve-all");
     refreshTrading(); refreshStatus();
   },
   async rejectAll() {
-    if (!confirm("Reject ALL pending orders?")) return;
+    if (!confirm("Từ chối TẤT CẢ lệnh chờ?")) return;
     await api("POST", "/api/pending/reject-all", { reason: "bulk reject" });
     refreshTrading(); refreshStatus();
   },
   async toggleAutoApprove(desired) {
     const enable = desired === "on";
     if (enable &&
-        !confirm("Enable auto-approval rule? Small KSS orders will be approved automatically.")) return;
+        !confirm("Bật quy tắc tự duyệt? Lệnh KSS nhỏ sẽ tự động được duyệt.")) return;
     await api("POST", "/api/autoapprove", { enabled: enable });
     refreshStatus();
   },
@@ -230,23 +230,23 @@ const actions = {
   async toggleScheduler(desired) {
     const enable = desired === "on";
     if (enable &&
-        !confirm("Start the background scheduler? It will scan & manage sessions on an interval.")) return;
+        !confirm("Khởi chạy scheduler nền? Nó sẽ quét & quản lý phiên theo chu kỳ.")) return;
     await api("POST", "/api/scheduler", { enabled: enable });
     refreshStatus();
   },
   async toggleFullAuto(desired) {
     const enable = desired === "on";
     if (enable &&
-        !confirm("Enable FULL-AUTO master switch? This starts the scheduler and enables auto-trade + auto-approve.")) return;
+        !confirm("Bật công tắc chính FULL-AUTO? Điều này sẽ khởi chạy scheduler và bật auto-trade + auto-approve.")) return;
     if (!enable &&
-        !confirm("Disable FULL-AUTO? This will stop the scheduler and disable autonomous trading.")) return;
+        !confirm("Tắt FULL-AUTO? Điều này sẽ dừng scheduler và vô hiệu hóa giao dịch tự động.")) return;
     await api("POST", "/api/full-auto", { enabled: enable });
     refreshStatus();
   },
   async toggleOpus(desired) {
     const enable = desired === "on";
     if (enable &&
-        !confirm("Enable OPUS orchestrator mode? Opus will orchestrate trades on its own capital envelope (paper).")) return;
+        !confirm("Bật chế độ OPUS orchestrator? Opus sẽ điều phối giao dịch trên vốn riêng (giấy).")) return;
     await api("POST", "/api/opus", { enabled: enable });
     refreshStatus(); refreshOpus();
   },
@@ -322,48 +322,48 @@ const actions = {
     applyAuditSymbol();
   },
   async resetBreaker() {
-    if (!confirm("Manually reset the circuit-breaker? The system will resume trading.")) return;
+    if (!confirm("Khôi phục breaker thủ công? Hệ thống sẽ tiếp tục giao dịch.")) return;
     await api("POST", "/api/breaker/reset");
     refreshStatus();
   },
   async toggleGuardian(desired) {
     const enable = desired === "on";
     if (enable &&
-        !confirm("Enable AI Guardian? It will veto orders that fail its risk checks.")) return;
+        !confirm("Bật AI Guardian? Nó sẽ phủ quyết lệnh không qua kiểm tra rủi ro.")) return;
     if (!enable &&
-        !confirm("Disable AI Guardian? Orders will no longer be screened by the Guardian.")) return;
+        !confirm("Tắt AI Guardian? Lệnh sẽ không còn được Guardian kiểm tra.")) return;
     await api("POST", "/api/guardian", { enabled: enable });
     refreshStatus();
   },
   async toggleTelegram(desired) {
     const enable = desired === "on";
     if (enable &&
-        !confirm("Enable Telegram poller? The bot will receive and relay trade alerts.")) return;
+        !confirm("Bật Telegram poller? Bot sẽ nhận và chuyển tiếp cảnh báo giao dịch.")) return;
     if (!enable &&
-        !confirm("Disable Telegram poller?")) return;
+        !confirm("Tắt Telegram poller?")) return;
     await api("POST", "/api/telegram", { enabled: enable });
     refreshStatus();
   },
   async telegramTest() {
     const r = await api("POST", "/api/telegram/test");
-    toast(r.sent ? "Đã gửi test alert thành công." : "Test alert thất bại — kiểm tra cấu hình Telegram.",
+    toast(r.sent ? "Đã gửi cảnh báo kiểm tra thành công." : "Cảnh báo kiểm tra thất bại — kiểm tra cấu hình Telegram.",
       r.sent ? "success" : "error");
   },
   async toggleHyperopt(desired) {
     const enable = desired === "on";
     if (enable &&
-        !confirm("Enable Hyperopt? The system will tune KSS parameters using Optuna.")) return;
+        !confirm("Bật Hyperopt? Hệ thống sẽ điều chỉnh tham số KSS bằng Optuna.")) return;
     if (!enable &&
-        !confirm("Disable Hyperopt? Parameter tuning will stop.")) return;
+        !confirm("Tắt Hyperopt? Điều chỉnh tham số sẽ dừng.")) return;
     await api("POST", "/api/hyperopt", { enabled: enable });
     refreshStatus(); refreshParams();
   },
   async toggleMl(desired) {
     const enable = desired === "on";
     if (enable &&
-        !confirm("Enable ML? A model will be trained to predict entry quality.")) return;
+        !confirm("Bật ML? Một mô hình sẽ được huấn luyện để dự đoán chất lượng mở vị.")) return;
     if (!enable &&
-        !confirm("Disable ML? Model-based filtering will be turned off.")) return;
+        !confirm("Tắt ML? Lọc dựa trên mô hình sẽ bị tắt.")) return;
     await api("POST", "/api/ml", { enabled: enable });
     refreshStatus(); refreshParams();
   },
@@ -373,7 +373,7 @@ const actions = {
     try {
       const r = await api("POST", "/api/hyperopt/run");
       const n = Array.isArray(r) ? r.length : (r.count ?? "?");
-      toast("Hyperopt hoàn tất — " + n + " symbol đã tối ưu.", "success");
+      toast("Hyperopt hoàn tất — " + n + " cặp đã tối ưu.", "success");
       refreshParams();
     } finally {
       if (btn) btn.disabled = false;
@@ -385,9 +385,9 @@ const actions = {
     try {
       const r = await api("POST", "/api/ml/retrain");
       if (r && r.model) {
-        toast("Model huấn luyện xong: v" + r.model.version + " · metric " + r.model.metric + " · " + r.model.n_samples + " mẫu.", "success");
+        toast("Mô hình huấn luyện xong: v" + r.model.version + " · metric " + r.model.metric + " · " + r.model.n_samples + " mẫu.", "success");
       } else {
-        toast("Retrain không có model — chưa đủ dữ liệu.", "info");
+        toast("Huấn luyện lại không có mô hình — chưa đủ dữ liệu.", "info");
       }
       refreshParams();
     } finally {
@@ -423,7 +423,9 @@ function tabActive(el) {
 
 function showTab(name) {
   document.querySelectorAll("[data-tab]").forEach((b) => {
-    b.classList.toggle("active", b.dataset.tab === name);
+    const isActive = b.dataset.tab === name;
+    b.classList.toggle("active", isActive);
+    b.setAttribute("aria-selected", isActive ? "true" : "false");
   });
   document.querySelectorAll("[data-tab-panel]").forEach((p) => {
     const isActive = p.dataset.tabPanel === name;
@@ -476,7 +478,7 @@ document.addEventListener("submit", async (e) => {
     });
     form.reset();
     closeModal("orderOpen");
-    toast("Lệnh đã thêm vào hàng chờ.", "success");
+    toast("Đã thêm lệnh vào hàng chờ.", "success");
     refreshTrading(); refreshStatus();
   } else if (form.id === "kss-form") {
     e.preventDefault();
@@ -491,7 +493,7 @@ document.addEventListener("submit", async (e) => {
     });
     form.reset();
     closeModal("kssOpen");
-    toast("Đã tạo KSS session mới.", "success");
+    toast("Đã tạo phiên KSS mới.", "success");
     refreshTrading(); refreshStatus();
   } else if (form.id === "kss-settings-form") {
     e.preventDefault();
@@ -511,7 +513,7 @@ document.addEventListener("submit", async (e) => {
       min_expectancy_pct: num(f.get("min_expectancy_pct")),
       min_win_rate: num(f.get("min_win_rate")),
     });
-    toast("Đã lưu cấu hình KSS — áp dụng cho session mới.", "success");
+    toast("Đã lưu cấu hình KSS — áp dụng cho phiên mới.", "success");
     refreshTrading(); refreshStatus();
   } else if (form.id === "preview-form") {
     e.preventDefault();
@@ -579,22 +581,22 @@ function renderMlStatus(data) {
   if (!el) return;
   const m = data && data.model;
   if (!m) {
-    el.textContent = "ML model: none trained yet.";
+    el.textContent = "Mô hình ML: chưa được huấn luyện.";
     return;
   }
   el.innerHTML =
-    "ML model: <b>" + esc(m.id || "—") + "</b>" +
+    "Mô hình ML: <b>" + esc(m.id || "—") + "</b>" +
     " · v" + esc(m.version || "?") +
     " · metric <b>" + esc(m.metric ?? "—") + "</b>" +
-    " · " + esc(m.n_samples ?? "?") + " samples" +
-    " · trained " + esc(m.trained_at ? m.trained_at.slice(0, 19).replace("T", " ") : "—");
+    " · " + esc(m.n_samples ?? "?") + " mẫu" +
+    " · huấn luyện " + esc(m.trained_at ? m.trained_at.slice(0, 19).replace("T", " ") : "—");
 }
 
 function renderParamsRows(rows) {
   const tbody = document.getElementById("params-tbody");
   if (!tbody) return;
   if (!rows || !rows.length) {
-    tbody.innerHTML = "<tr><td colspan='7' class='muted'>No tuned params yet — run Hyperopt first.</td></tr>";
+    tbody.innerHTML = "<tr><td colspan='7' class='muted'>Chưa có tham số tối ưu — hãy chạy Hyperopt trước.</td></tr>";
     return;
   }
   tbody.innerHTML = rows.map((r) =>

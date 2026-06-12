@@ -5,8 +5,8 @@
     <b>[{{ 'ON' if aa_enabled else 'OFF' }}]</b></span>
   <span class="row-actions">
     {% if rows %}
-    <button class="ok sm" data-action="approveAll">Approve all</button>
-    <button class="danger sm" data-action="rejectAll">Reject all</button>
+    <button class="ok sm" data-action="approveAll">Duyệt tất cả</button>
+    <button class="danger sm" data-action="rejectAll">Từ chối tất cả</button>
     {% endif %}
     <button class="sm {{ 'ok' if aa_enabled else 'ghost' }}" data-action="toggleAutoApprove" data-id="{{ 'off' if aa_enabled else 'on' }}">Rule: {{ 'ON' if aa_enabled else 'OFF' }}</button>
   </span>
@@ -42,11 +42,11 @@
         {%- endif -%}
       </td>
       <td class="row-actions">
-        <button class="ok sm" data-action="approve" data-id="{{ o.id }}">Approve</button>
-        <button class="danger sm" data-action="reject" data-id="{{ o.id }}">Reject</button>
+        <button class="ok sm" data-action="approve" data-id="{{ o.id }}">Duyệt</button>
+        <button class="danger sm" data-action="reject" data-id="{{ o.id }}">Từ chối</button>
       </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
-{% else %}<p class="muted">Queue empty.</p>{% endif %}
+{% else %}<p class="muted">Hàng chờ trống.</p>{% endif %}

@@ -1,9 +1,10 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="vi">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>FINDMY-FM · Paper Trading</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/static/style.css" />
   <script defer src="/static/app.js"></script>
   <script defer src="/static/htmx.min.js"></script>
@@ -15,9 +16,9 @@
     <div hx-get="/partials/status" hx-trigger="load, every 5s [document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML" hx-indicator="#global-indicator"></div>
     <span id="global-indicator" class="htmx-indicator loading-chip" aria-hidden="true">Đang tải…</span>
     <div class="actions">
-      <button class="ghost" @click="toggleOrder">+ Order</button>
-      <button class="ghost" @click="toggleKss">+ KSS Session</button>
-      <button class="ghost" @click="togglePreview">Preview Pyramid</button>
+      <button class="ghost" @click="toggleOrder">+ Lệnh</button>
+      <button class="ghost" @click="toggleKss">+ Phiên KSS</button>
+      <button class="ghost" @click="togglePreview">Xem trước kim tự tháp</button>
     </div>
   </header>
 
@@ -28,9 +29,9 @@
     </div>
 
     <!-- Create-order modal -->
-    <div class="modal" x-show="orderOpen" x-cloak>
+    <div class="modal" x-show="orderOpen" x-cloak role="dialog" aria-modal="true">
       <div class="modal-header">
-        <h2>Queue manual order</h2>
+        <h2>Đặt lệnh thủ công</h2>
         <button type="button" class="sm ghost modal-close" @click="orderOpen=false" aria-label="Đóng">✕</button>
       </div>
       <form id="order-form">
@@ -43,14 +44,14 @@
         <label>Type
           <select name="order_type"><option>LIMIT</option><option>MARKET</option></select>
         </label>
-        <button type="submit">Queue</button>
+        <button type="submit">Đặt lệnh</button>
       </form>
     </div>
 
     <!-- Create-KSS modal -->
-    <div class="modal" x-show="kssOpen" x-cloak>
+    <div class="modal" x-show="kssOpen" x-cloak role="dialog" aria-modal="true">
       <div class="modal-header">
-        <h2>New KSS pyramid session</h2>
+        <h2>Tạo phiên KSS mới</h2>
         <button type="button" class="sm ghost modal-close" @click="kssOpen=false" aria-label="Đóng">✕</button>
       </div>
       <form id="kss-form">
@@ -60,14 +61,14 @@
         <label>Max waves<input name="max_waves" type="number" value="10" required /></label>
         <label>Isolated fund<input name="isolated_fund" type="number" step="any" value="10000" required /></label>
         <label>TP %<input name="tp_pct" type="number" step="any" value="3" required /></label>
-        <button type="submit">Create</button>
+        <button type="submit">Tạo</button>
       </form>
     </div>
 
     <!-- Preview modal -->
-    <div class="modal" x-show="previewOpen" x-cloak>
+    <div class="modal" x-show="previewOpen" x-cloak role="dialog" aria-modal="true">
       <div class="modal-header">
-        <h2>Preview pyramid (projection)</h2>
+        <h2>Xem trước kim tự tháp (dự báo)</h2>
         <button type="button" class="sm ghost modal-close" @click="previewOpen=false" aria-label="Đóng">✕</button>
       </div>
       <form id="preview-form">
@@ -77,19 +78,19 @@
         <label>Max waves<input name="max_waves" type="number" value="5" required /></label>
         <label>Isolated fund<input name="isolated_fund" type="number" step="any" value="1000" required /></label>
         <label>TP %<input name="tp_pct" type="number" step="any" value="3" required /></label>
-        <button type="submit">Preview</button>
+        <button type="submit">Xem trước</button>
       </form>
       <div id="preview-output"></div>
     </div>
 
     <!-- Tab navigation (plain-JS controlled; see app.js showTab) -->
-    <nav class="tabs">
-      <button class="tab" data-tab="overview">Tổng quan</button>
-      <button class="tab" data-tab="trading">Giao dịch</button>
-      <button class="tab" data-tab="opus">OPUS</button>
-      <button class="tab" data-tab="losses">Phân tích lỗ</button>
-      <button class="tab" data-tab="strategy">Chiến lược</button>
-      <button class="tab" data-tab="logs">Nhật ký</button>
+    <nav class="tabs" role="tablist">
+      <button class="tab" data-tab="overview" role="tab" aria-selected="true">Tổng quan</button>
+      <button class="tab" data-tab="trading" role="tab" aria-selected="false">Giao dịch</button>
+      <button class="tab" data-tab="opus" role="tab" aria-selected="false">OPUS</button>
+      <button class="tab" data-tab="losses" role="tab" aria-selected="false">Phân tích lỗ</button>
+      <button class="tab" data-tab="strategy" role="tab" aria-selected="false">Chiến lược</button>
+      <button class="tab" data-tab="logs" role="tab" aria-selected="false">Nhật ký</button>
     </nav>
 
     <!-- TAB: Tổng quan (Overview) -->
@@ -182,9 +183,9 @@
   </main>
 
   <!-- Click-to-view price ladder modal (plain JS — works on HTMX-swapped rows) -->
-  <div id="ladder-modal" class="overlay" style="display:none">
+  <div id="ladder-modal" class="overlay" style="display:none" role="dialog" aria-modal="true">
     <div class="overlay-box">
-      <button class="sm ghost" data-action="closeLadder" style="float:right">✕</button>
+      <button class="sm ghost" data-action="closeLadder" style="float:right" aria-label="Đóng">✕</button>
       <div id="ladder-body"></div>
     </div>
   </div>

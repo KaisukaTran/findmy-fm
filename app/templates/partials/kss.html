@@ -23,19 +23,19 @@
       <td><button class="sm ghost" data-action="viewLadder" data-id="{{ s.id }}">Xem</button></td>
       <td class="row-actions">
         {% if s.status == 'pending' %}
-        <button class="ok sm" data-action="kssStart" data-id="{{ s.id }}">Start</button>
+        <button class="ok sm" data-action="kssStart" data-id="{{ s.id }}">Bắt đầu</button>
         {% elif s.status == 'active' %}
         <button class="ghost sm" data-action="kssCheckTp" data-id="{{ s.id }}">TP?</button>
         <button class="ghost sm" data-action="kssDcaNext" data-id="{{ s.id }}"
           title="Mua thêm 1 sóng DCA (rung kế theo ladder). Nới max_waves trước nếu đã đầy.">DCA+</button>
-        <button class="danger sm" data-action="kssStop" data-id="{{ s.id }}">Stop</button>
+        <button class="danger sm" data-action="kssStop" data-id="{{ s.id }}">Dừng</button>
         {% endif %}
         {% if s.status != 'active' %}
-        <button class="ghost sm" data-action="kssDelete" data-id="{{ s.id }}">Del</button>
+        <button class="ghost sm" data-action="kssDelete" data-id="{{ s.id }}">Xóa</button>
         {% endif %}
       </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
-{% else %}<p class="muted">No sessions. Click "+ KSS Session".</p>{% endif %}
+{% else %}<p class="muted">Chưa có phiên. Bấm "+ KSS Session".</p>{% endif %}

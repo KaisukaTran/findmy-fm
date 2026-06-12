@@ -90,7 +90,7 @@ class Settings(BaseSettings):
     backtest_trial_spacing_days: float = Field(default=7.0, description="Min days between backtest entry points — decorrelates overlapping trials so the win-rate isn't inflated by one regime (0 = every bar).")
     min_trials: int = Field(default=8, description="Min completed backtest trials for a trustworthy win-rate; below this a pair is skipped (a 100%% from 3 trials is noise).")
 
-    min_win_rate: float = Field(default=55.0, description="Min backtested win-rate %% (Wilson lower bound) to qualify — a sanity backstop. Expectancy is the primary gate now that win-rate is SL-aware and realistic, so this is lower than the old gross-100%% era.")
+    min_win_rate: float = Field(default=60.0, description="Min backtested win-rate %% (Wilson lower bound) to qualify. Paired with min_expectancy_pct as the primary trade rule: a pair trades when E ≥ min_expectancy_pct AND win-rate ≥ this.")
     min_confidence: float = Field(default=70.0, description="Min agent consensus %% to qualify a pair.")
     deadline_days: int = Field(default=30, description="Max days a KSS session may wait for TP.")
     auto_trade: bool = Field(
@@ -109,7 +109,7 @@ class Settings(BaseSettings):
     scan_fund: float = Field(default=1000.0, description="Isolated fund per proposed session (USD).")
 
     # --- Loss-minimizing / cost-aware gates (capital preservation) ---
-    min_expectancy_pct: float = Field(default=0.3, description="PRIMARY gate: min mean net expected PnL %% per backtested trade (after stop-loss + round-trip cost). A high win-rate with fat-tail losses fails this. Trade only when the math has positive net edge.")
+    min_expectancy_pct: float = Field(default=3.0, description="PRIMARY gate: min mean net expected PnL %% per backtested trade (after stop-loss + round-trip cost). Paired with min_win_rate as the trade rule: trade when E ≥ this AND win-rate ≥ min_win_rate.")
     max_loss_rate: float = Field(default=20.0, description="Max backtested loss-rate %% to qualify.")
     min_net_edge: float = Field(default=0.5, description="Min TP%% above round-trip cost to trade (micro-trade guard).")
     walk_forward_split: float = Field(default=0.5, description="Fraction of history used in-sample; metric is out-of-sample.")

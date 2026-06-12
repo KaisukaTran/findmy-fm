@@ -234,17 +234,42 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
     to_open: list[dict] = []
     _skipped_thin: list[str] = []  # B6: symbols skipped for insufficient candles
 
-    # S2: warm the candle cache for all universe symbols in parallel (cache-miss
-    # symbols only hit the network; cache-hit symbols return immediately).
+    # S3: cheap-gates-first — run the four deterministic block checks (cooldown /
+    # loss-streak / per-symbol cap / OPUS-owned) for every universe symbol BEFORE
+    # touching the candle cache.  Blocked symbols get a skip Candidate immediately
+    # and are removed from the fetch set so they trigger ZERO OHLCV calls.
+    to_fetch: list[str] = []
+    for symbol in universe:
+        block_reason = _trade_block_reason(db, symbol)
+        if block_reason:
+            cand = Candidate(
+                scan_id=scan.id, symbol=symbol,
+                consensus_pct=0.0, win_rate=0.0, win_rate_lb=0.0,
+                expectancy=0.0, trials=0, est_days_to_tp=None,
+                decision="skip",
+                reason=f"pre-blocked: {block_reason}",
+            )
+            db.add(cand)
+            db.flush()
+            audit.log(db, "scanner", "candidate", entity=symbol, decision="skip",
+                      consensus=0.0, win_rate=0.0, win_rate_lb=0.0,
+                      expectancy=0.0, trials=0, loss_rate=0.0,
+                      net_edge=0.0, days=None, pre_blocked=block_reason)
+            candidates.append(cand)
+        else:
+            to_fetch.append(symbol)
+
+    # S2: warm the candle cache for unblocked symbols only (blocked symbols have
+    # already been recorded above and must not trigger any OHLCV network calls).
     limit = _days_to_bars(settings.backtest_lookback_days, settings.backtest_timeframe)
     exchange_id = settings.data_exchange
     _candle_map = _prefetch_candles(
-        exchange_id, universe, settings.backtest_timeframe, limit
+        exchange_id, to_fetch, settings.backtest_timeframe, limit
     )
     _cache_hits = sum(1 for _, hit in _candle_map.values() if hit)
-    _cache_misses = len(universe) - _cache_hits
+    _cache_misses = len(to_fetch) - _cache_hits
 
-    for symbol in universe:
+    for symbol in to_fetch:
         candles, _hit = _candle_map.get(symbol, ([], False))
         if len(candles) < _MIN_CANDLES:
             _skipped_thin.append(symbol)
@@ -304,21 +329,17 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
                   net_edge=net_edge, days=wr["avg_days_to_tp"])
 
         if d["decision"] == "trade":
-            blocked = _trade_block_reason(db, symbol)
-            if blocked:
-                cand.reason += f" | skipped: {blocked}"
-            else:
-                # Build the TA evidence bundle only for gate-bound candidates (the set the
-                # Grok review actually decides on), and surface a compact tag on the reason.
-                ta = ta_bundle.build(candles, db, symbol)
-                cand.reason += f" | TA: {_ta_tag(ta)}"
-                # Defer the actual open until after the batched Grok review.
-                to_open.append({
-                    "cand": cand, "symbol": symbol, "entry": candles[-1]["close"],
-                    "distance_pct": distance_pct, "tp_pct": tp_pct, "max_waves": max_waves,
-                    "consensus": consensus, "win_rate": wr["win_rate"],
-                    "loss_rate": wr["loss_rate"], "net_edge": net_edge, "ta": ta,
-                })
+            # Build the TA evidence bundle only for gate-bound candidates (the set the
+            # Grok review actually decides on), and surface a compact tag on the reason.
+            ta = ta_bundle.build(candles, db, symbol)
+            cand.reason = (cand.reason or "") + f" | TA: {_ta_tag(ta)}"
+            # Defer the actual open until after the batched Grok review.
+            to_open.append({
+                "cand": cand, "symbol": symbol, "entry": candles[-1]["close"],
+                "distance_pct": distance_pct, "tp_pct": tp_pct, "max_waves": max_waves,
+                "consensus": consensus, "win_rate": wr["win_rate"],
+                "loss_rate": wr["loss_rate"], "net_edge": net_edge, "ta": ta,
+            })
         candidates.append(cand)
 
     # B6: one compact audit entry per scan listing all thin/failed symbols together.
@@ -369,8 +390,21 @@ def _trade_block_reason(db: Session, symbol: str) -> str | None:
 def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
     """Optional batched Grok endorse/veto pass, then open a KSS session per surviving
     candidate (still subject to the cumulative capital caps via _can_open). Grok is
-    FAIL-OPEN: a symbol absent from the verdict map is treated as endorsed."""
+    FAIL-OPEN: a symbol absent from the verdict map is treated as endorsed.
+
+    S3: when the circuit-breaker is FROZEN the scan still records candidates (audit
+    trail intact) but opens NO sessions — not even semi.  Each suppressed open is
+    audited as ``skipped_frozen`` so the UI/logs explain why nothing opened.
+    """
     from app.orchestrator import grok  # lazy — avoid import-time coupling
+
+    # S3: check frozen state once for the whole batch.
+    breaker_frozen = runtime.is_frozen(db)
+    if breaker_frozen and to_open:
+        for c in to_open:
+            c["cand"].reason = (c["cand"].reason or "") + " | skipped: breaker frozen"
+            audit.log(db, "scanner", "skipped_frozen", entity=c["symbol"])
+        return
 
     reviews: dict[str, dict] = {}
     if to_open and grok.scanner_enabled():
@@ -393,11 +427,11 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
         cand, symbol = c["cand"], c["symbol"]
         verdict = reviews.get(symbol)
         if verdict and not verdict["endorse"]:
-            cand.reason += f" | Grok veto: {verdict['reason']}"
+            cand.reason = (cand.reason or "") + f" | Grok veto: {verdict['reason']}"
             audit.log(db, "grok", "scanner_veto", entity=symbol, reason=verdict["reason"])
             continue
         if verdict and verdict.get("reason"):
-            cand.reason += f" | Grok: {verdict['reason']}"
+            cand.reason = (cand.reason or "") + f" | Grok: {verdict['reason']}"
         ok, why = _can_open(db)
         if ok:
             cand.session_id = _open_session(
@@ -405,7 +439,7 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
                 distance_pct=c["distance_pct"], tp_pct=c["tp_pct"], max_waves=c["max_waves"],
             )
         else:
-            cand.reason += f" | capped: {why}"
+            cand.reason = (cand.reason or "") + f" | capped: {why}"
             audit.log(db, "scanner", "skipped_cap", entity=symbol, reason=why)
 
 

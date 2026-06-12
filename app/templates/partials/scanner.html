@@ -19,14 +19,22 @@
   </tr></thead>
   <tbody>
     {% for c in rows %}
+    {% set pre_blocked = c.reason and c.reason.startswith('pre-blocked:') %}
     <tr>
       <td>{{ c.symbol }}</td>
-      <td>{{ "%.0f"|format(c.consensus_pct) }}%</td>
-      <td class="{{ 'pos' if c.get('win_rate_lb', 0) >= min_win_rate else 'neg' }}">{{ "%.0f"|format(c.win_rate) }}% <span class="muted" style="font-size:11px">({{ "%.0f"|format(c.get('win_rate_lb', 0)) }})</span></td>
-      <td class="{{ 'pos' if c.get('expectancy', 0) >= min_expectancy_pct else 'neg' }}">{{ "%+.2f"|format(c.get('expectancy', 0)) }}%</td>
-      <td class="muted">{{ c.get('trials', 0) }}</td>
+      <td>{{ "%.0f"|format(c.consensus_pct or 0) }}%</td>
+      <td class="{{ 'pos' if (c.get('win_rate_lb', 0) or 0) >= min_win_rate else ('muted' if pre_blocked else 'neg') }}">
+        {%- if pre_blocked -%}—{%- else -%}{{ "%.0f"|format(c.win_rate or 0) }}% <span class="muted" style="font-size:11px">({{ "%.0f"|format(c.get('win_rate_lb', 0) or 0) }})</span>{%- endif -%}
+      </td>
+      <td class="{{ 'pos' if (c.get('expectancy', 0) or 0) >= min_expectancy_pct else ('muted' if pre_blocked else 'neg') }}">
+        {%- if pre_blocked -%}—{%- else -%}{{ "%+.2f"|format(c.get('expectancy', 0) or 0) }}%{%- endif -%}
+      </td>
+      <td class="muted">{{ c.get('trials', 0) or 0 }}</td>
       <td>{{ "%.1f"|format(c.est_days_to_tp) if c.est_days_to_tp is not none else "—" }}</td>
-      <td><span class="badge {{ 'active' if c.decision == 'trade' else '' }}">{{ c.decision }}</span></td>
+      <td>
+        {%- set reason_tip = c.reason if pre_blocked else '' -%}
+        <span class="badge {{ 'active' if c.decision == 'trade' else '' }}" {% if reason_tip %}title="{{ reason_tip }}"{% endif %}>{{ c.decision }}</span>
+      </td>
     </tr>
     {% endfor %}
   </tbody>

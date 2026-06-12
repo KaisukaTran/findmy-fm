@@ -339,3 +339,132 @@ def test_second_scan_zero_ohlcv_calls(db, scan_env, monkeypatch):  # noqa: ARG00
     assert detail.get("cache_hits", -1) >= 1
     assert detail.get("cache_misses", -1) == 0
     assert "scan_duration_ms" in detail
+
+
+# --- S3: cheap-gates-first ---------------------------------------------------
+
+
+def _make_spy_provider(candles_data):
+    """Return a (spy, call_count_getter) pair for OHLCV call counting."""
+    state = {"calls": 0}
+
+    class _SpyProvider:
+        exchange_id = "kraken"
+        quote = "USD"
+
+        def pair(self, symbol: str) -> str:
+            return f"{symbol}/USD"
+
+        def get_ohlcv(self, _symbol, _timeframe="1d", _limit=200):
+            state["calls"] += 1
+            return candles_data
+
+        def all_symbols(self, _min_quote_volume=0.0):
+            return ["BTC"]
+
+        def top_symbols(self, _n=10):
+            return []
+
+        def get_prices(self, symbols):
+            return {s: candles_data[-1]["close"] for s in symbols if s in ("BTC",)}
+
+        def get_exchange_info(self, _symbol):
+            return {"minQty": 0.00001, "stepSize": 0.00001, "maxQty": 10000.0}
+
+    return _SpyProvider(), lambda: state["calls"]
+
+
+def test_pre_blocked_symbol_skips_ohlcv_and_creates_skip_candidate(
+    db, scan_env, monkeypatch
+):
+    """S3(a): a cooldown-blocked symbol must trigger ZERO OHLCV fetches and still
+    produce a Candidate row with decision='skip' and reason tagged 'pre-blocked'."""
+    from app import runtime
+
+    candles_data = _uptrend()
+    spy, get_calls = _make_spy_provider(candles_data)
+
+    monkeypatch.setattr(scanner, "_provider_factory", lambda _xid: spy)
+    monkeypatch.setattr(scanner, "data_provider", lambda: spy)
+    candle_cache.clear()
+
+    # Put BTC into stop-loss cooldown (very long so it doesn't expire).
+    monkeypatch.setattr(settings, "stop_cooldown_min", 9999)
+    from datetime import datetime, timezone
+    runtime.set(db, "stop_cooldown:BTC", datetime.now(timezone.utc).isoformat())
+    db.commit()
+
+    scanner.run_scan(db, mode="semi")
+
+    # No OHLCV calls — blocked before the fetch stage.
+    assert get_calls() == 0, f"expected 0 OHLCV calls for a blocked symbol; got {get_calls()}"
+
+    # Candidate row must exist with decision=skip and pre-blocked tag.
+    cand = db.query(models.Candidate).filter_by(symbol="BTC").one()
+    assert cand.decision == "skip"
+    assert cand.reason is not None and cand.reason.startswith("pre-blocked:")
+    # win-rate fields default to 0 (not null, DB constraint).
+    assert cand.win_rate == 0.0
+    assert cand.win_rate_lb == 0.0
+    assert cand.trials == 0
+    assert cand.session_id is None
+
+    # Audit trail: skipped_cooldown must have been logged.
+    assert db.query(models.AuditLog).filter_by(action="skipped_cooldown").count() >= 1
+
+
+def test_pre_blocked_loss_streak_skips_ohlcv(db, scan_env, monkeypatch):
+    """S3(a) variant: loss-streak block also skips OHLCV and creates skip Candidate."""
+    candles_data = _uptrend()
+    spy, get_calls = _make_spy_provider(candles_data)
+
+    monkeypatch.setattr(scanner, "_provider_factory", lambda _xid: spy)
+    monkeypatch.setattr(scanner, "data_provider", lambda: spy)
+    candle_cache.clear()
+
+    monkeypatch.setattr(settings, "loss_block_enabled", True)
+    monkeypatch.setattr(settings, "loss_streak_block_k", 2)
+
+    _close(db, "BTC", -5.0, days_ago=2)
+    _close(db, "BTC", -3.0, days_ago=1)
+
+    scanner.run_scan(db, mode="semi")
+
+    assert get_calls() == 0, f"expected 0 OHLCV calls for loss-streak blocked symbol; got {get_calls()}"
+
+    cand = db.query(models.Candidate).filter_by(symbol="BTC").one()
+    assert cand.decision == "skip"
+    assert cand.reason is not None and "pre-blocked" in cand.reason
+    assert cand.session_id is None
+
+
+def test_frozen_breaker_records_candidates_but_opens_no_session(
+    db, scan_env, monkeypatch
+):
+    """S3(b): when the circuit-breaker is FROZEN, run_scan must record candidates with
+    decision='trade' but open ZERO KSS sessions.  'skipped_frozen' audit must appear."""
+    from app import runtime
+
+    candles_data = _uptrend()
+    spy, get_calls = _make_spy_provider(candles_data)
+
+    monkeypatch.setattr(scanner, "_provider_factory", lambda _xid: spy)
+    monkeypatch.setattr(scanner, "data_provider", lambda: spy)
+    candle_cache.clear()
+
+    # Freeze the breaker before the scan.
+    runtime.freeze(db, "test: circuit open")
+    db.commit()
+
+    scanner.run_scan(db, mode="semi")
+
+    # Candidate must exist (audit trail intact).
+    cand = db.query(models.Candidate).filter_by(symbol="BTC").one()
+    assert cand is not None
+
+    # No KSS sessions opened.
+    assert db.query(models.KssSession).count() == 0
+    assert cand.session_id is None
+
+    # skipped_frozen audit logged.
+    assert db.query(models.AuditLog).filter_by(action="skipped_frozen").count() >= 1

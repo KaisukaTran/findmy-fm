@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
@@ -28,7 +30,8 @@ from app import audit, costengine, hyperopt, ml, orders, runtime
 from app.agents import SIGNAL_AGENTS, BacktestAgent, aggregate, decide
 from app.backtest import estimate_win_rate
 from app.config import settings
-from app.data.providers import data_provider
+from app.data import candle_cache
+from app.data.providers import CcxtProvider, data_provider
 from app.kss import service
 from app.models import SESSION_ACTIVE, AgentVoteRecord, Candidate, KssSession, PendingOrder, ScanRun
 from app.ta import bundle as ta_bundle
@@ -36,6 +39,67 @@ from app.ta import bundle as ta_bundle
 logger = logging.getLogger(__name__)
 
 _MIN_CANDLES = 30
+
+_PARALLEL_WORKERS = 4  # S2: parallel OHLCV fetch workers
+
+
+def _provider_factory(exchange_id: str) -> CcxtProvider:
+    """Return a *fresh* CcxtProvider for the given exchange.
+
+    Called inside each ThreadPoolExecutor worker so every thread owns its own
+    ccxt client.  ccxt sync instances share HTTP session state and are NOT
+    thread-safe across concurrent callers; one-client-per-worker avoids locks
+    and delivers true parallelism.  (enableRateLimit=True is set by default on
+    each fresh instance so per-exchange rate limits are still respected.)
+    """
+    return CcxtProvider(exchange_id)
+
+
+def _prefetch_candles(
+    exchange_id: str,
+    symbols: list[str],
+    timeframe: str,
+    limit: int,
+) -> dict[str, tuple[list, bool]]:
+    """Warm the candle cache for *symbols* in parallel.
+
+    Returns a dict ``symbol -> (candles, was_hit)`` for every symbol in the
+    input list.  Cache-hit symbols are resolved immediately without spawning a
+    thread; only cache-miss symbols are fetched in the thread pool (up to
+    ``_PARALLEL_WORKERS`` concurrent threads).
+
+    Any individual symbol failure returns ``([], False)`` — the caller treats
+    that as thin data and audits via *skipped_thin_data* (unchanged behaviour).
+    """
+    results: dict[str, tuple[list, bool]] = {}
+    misses: list[str] = []
+
+    # First pass: collect hits without touching the network.
+    for sym in symbols:
+        key = (exchange_id, sym, timeframe)
+        entry = candle_cache._cache.get(key)
+        if entry is not None and entry.is_fresh(timeframe):
+            results[sym] = (entry.candles, True)
+        else:
+            misses.append(sym)
+
+    if not misses:
+        return results
+
+    # Second pass: fetch misses in parallel.
+    def _fetch(sym: str) -> tuple[str, list, bool]:
+        candles, hit = candle_cache.get_candles(
+            exchange_id, sym, timeframe, limit, _provider_factory
+        )
+        return sym, candles, hit
+
+    with ThreadPoolExecutor(max_workers=_PARALLEL_WORKERS) as pool:
+        futures = {pool.submit(_fetch, sym): sym for sym in misses}
+        for future in as_completed(futures):
+            sym, candles, hit = future.result()
+            results[sym] = (candles, hit)
+
+    return results
 
 # Bars per day for each supported timeframe — used to convert the lookback_days setting
 # into the correct bar ``limit`` regardless of the active timeframe.
@@ -147,6 +211,7 @@ def _effective_params(db: Session, symbol: str) -> tuple[float, float, int]:
 
 def run_scan(db: Session, mode: str | None = None) -> dict:
     """Run one full scan; returns {scan_id, mode, candidates:[...]}."""
+    _scan_start_mono = time.monotonic()  # S2: wall-clock for scan_duration_ms
     provider = data_provider()
     mode = mode or ("auto" if settings.auto_trade else "semi")
 
@@ -169,9 +234,18 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
     to_open: list[dict] = []
     _skipped_thin: list[str] = []  # B6: symbols skipped for insufficient candles
 
+    # S2: warm the candle cache for all universe symbols in parallel (cache-miss
+    # symbols only hit the network; cache-hit symbols return immediately).
+    limit = _days_to_bars(settings.backtest_lookback_days, settings.backtest_timeframe)
+    exchange_id = settings.data_exchange
+    _candle_map = _prefetch_candles(
+        exchange_id, universe, settings.backtest_timeframe, limit
+    )
+    _cache_hits = sum(1 for _, hit in _candle_map.values() if hit)
+    _cache_misses = len(universe) - _cache_hits
+
     for symbol in universe:
-        limit = _days_to_bars(settings.backtest_lookback_days, settings.backtest_timeframe)
-        candles = provider.get_ohlcv(symbol, settings.backtest_timeframe, limit)
+        candles, _hit = _candle_map.get(symbol, ([], False))
         if len(candles) < _MIN_CANDLES:
             _skipped_thin.append(symbol)
             continue
@@ -253,6 +327,13 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
                   count=len(_skipped_thin), symbols=",".join(_skipped_thin[:20]))
 
     _review_and_open(db, to_open, mode)
+
+    # S2: emit scan timing + cache stats into the cycle audit payload.
+    scan_duration_ms = int((time.monotonic() - _scan_start_mono) * 1000)
+    audit.log(db, "scanner", "scan_cycle", entity=f"run:{scan.id}",
+              scan_duration_ms=scan_duration_ms,
+              cache_hits=_cache_hits, cache_misses=_cache_misses,
+              candidates=len(candidates))
 
     db.commit()
     return {"scan_id": scan.id, "mode": mode, "candidates": [c.to_dict() for c in candidates]}

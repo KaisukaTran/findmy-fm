@@ -4,6 +4,7 @@ import pytest
 
 from app import models, scanner
 from app.config import settings
+from app.data import candle_cache
 
 _DAY = 86_400_000
 
@@ -243,7 +244,7 @@ def test_open_session_resolves_settings_at_call_time(db, monkeypatch):
     """B1: _open_session resolves distance/tp/max_waves from settings at CALL time
     when those kwargs are omitted. Monkeypatch settings to sentinels and verify the
     created KssSession row uses the patched values."""
-    from app.kss import service as kss_service
+    from app.kss import service as kss_service  # noqa: F401 (import verifies availability)
 
     # Monkeypatch settings to sentinel values
     monkeypatch.setattr(settings, "scan_distance_pct", 2.5)
@@ -262,3 +263,79 @@ def test_open_session_resolves_settings_at_call_time(db, monkeypatch):
     assert sess.distance_pct == 2.5
     assert sess.tp_pct == 15.0
     assert sess.max_waves == 7
+
+
+# --- S2: candle cache tests --------------------------------------------------
+
+
+def test_second_scan_zero_ohlcv_calls(db, scan_env, monkeypatch):  # noqa: ARG001
+    """S2 acceptance: a second scan within the same bar period must make ZERO
+    OHLCV network calls — all candles are served from the in-process cache.
+
+    Strategy:
+    - Replace the _FakeProvider.get_ohlcv with a counting spy so we can assert
+      it is called exactly once (first scan) then zero times (second scan).
+    - Patch candle_cache._provider_factory so it returns the spy provider.
+    - Clear the cache before the first scan so the test is deterministic.
+    """
+    call_count = 0
+    candles_data = _uptrend()
+
+    class _SpyProvider:
+        exchange_id = "kraken"
+        quote = "USD"
+
+        def pair(self, symbol: str) -> str:
+            return f"{symbol}/USD"
+
+        def get_ohlcv(self, _symbol, _timeframe="1d", _limit=200):
+            nonlocal call_count
+            call_count += 1
+            return candles_data
+
+        def all_symbols(self, _min_quote_volume=0.0):
+            return ["BTC"]
+
+        def top_symbols(self, _n=10):
+            return []
+
+        def get_prices(self, symbols):
+            return {s: candles_data[-1]["close"] for s in symbols}
+
+        def get_exchange_info(self, _symbol):
+            return {"minQty": 0.00001, "stepSize": 0.00001, "maxQty": 10000.0}
+
+    spy = _SpyProvider()
+
+    # Patch the provider factory inside candle_cache so parallel workers use our spy.
+    monkeypatch.setattr(scanner, "_provider_factory", lambda exchange_id: spy)
+    # Also patch data_provider so _universe + the provider reference use the spy.
+    monkeypatch.setattr(scanner, "data_provider", lambda: spy)
+
+    # Clear the cache to ensure a cold start.
+    candle_cache.clear()
+
+    # First scan — should hit the network (cache cold).
+    scanner.run_scan(db, mode="semi")
+    calls_after_first = call_count
+    assert calls_after_first >= 1, "first scan must fetch candles from the provider"
+
+    # Second scan — cache is warm; no OHLCV network calls expected.
+    call_count = 0
+    scanner.run_scan(db, mode="semi")
+    assert call_count == 0, (
+        f"second scan within TTL must make zero OHLCV calls; got {call_count}"
+    )
+
+    # Verify the scan_cycle audit carries cache stats.
+    cycle_logs = (
+        db.query(models.AuditLog).filter_by(action="scan_cycle").all()
+    )
+    assert len(cycle_logs) >= 2
+    # Second cycle: all hits, zero misses.
+    last = cycle_logs[-1]
+    import json as _json
+    detail = _json.loads(last.detail or "{}")
+    assert detail.get("cache_hits", -1) >= 1
+    assert detail.get("cache_misses", -1) == 0
+    assert "scan_duration_ms" in detail

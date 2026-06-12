@@ -227,7 +227,11 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
     # Load ML model once for the whole scan; None when ml disabled.
     ml_model = ml.load_latest(db) if settings.ml_enabled else None
 
+    # S6: per-stage monotonic checkpoints — accumulated ms totals, cheap.
+    _t0 = time.monotonic()
     universe = _universe(db, provider)
+    t_universe_ms = int((time.monotonic() - _t0) * 1000)
+
     scan = ScanRun(mode=mode, universe_size=len(universe), params=json.dumps(_thresholds()))
     db.add(scan)
     db.flush()
@@ -245,10 +249,12 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
     # loss-streak / per-symbol cap / OPUS-owned) for every universe symbol BEFORE
     # touching the candle cache.  Blocked symbols get a skip Candidate immediately
     # and are removed from the fetch set so they trigger ZERO OHLCV calls.
+    _n_pre_blocked = 0
     to_fetch: list[str] = []
     for symbol in universe:
         block_reason = _trade_block_reason(db, symbol)
         if block_reason:
+            _n_pre_blocked += 1
             cand = Candidate(
                 scan_id=scan.id, symbol=symbol,
                 consensus_pct=0.0, win_rate=0.0, win_rate_lb=0.0,
@@ -270,28 +276,39 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
     # already been recorded above and must not trigger any OHLCV network calls).
     limit = _days_to_bars(settings.backtest_lookback_days, settings.backtest_timeframe)
     exchange_id = settings.data_exchange
+    _t_fetch = time.monotonic()
     _candle_map = _prefetch_candles(
         exchange_id, to_fetch, settings.backtest_timeframe, limit
     )
+    t_fetch_ms = int((time.monotonic() - _t_fetch) * 1000)
     _cache_hits = sum(1 for _, hit in _candle_map.values() if hit)
     _cache_misses = len(to_fetch) - _cache_hits
+
+    # S6: accumulate per-symbol backtest + votes time across the loop.
+    t_backtest_ms = 0
+    t_votes_ms = 0
+    _n_skipped_thin = 0
 
     for symbol in to_fetch:
         candles, _hit = _candle_map.get(symbol, ([], False))
         if len(candles) < _MIN_CANDLES:
             _skipped_thin.append(symbol)
+            _n_skipped_thin += 1
             continue
 
         distance_pct, tp_pct, max_waves = _effective_params(db, symbol)
 
         # Walk-forward: out-of-sample tail, with the live exits (stop-loss + fees) modelled
         # and overlapping entries decorrelated so the win-rate is realistic, not ~100%.
+        _tb = time.monotonic()
         wr = estimate_win_rate(
             candles, distance_pct, max_waves,
             tp_pct, settings.deadline_days, split=settings.walk_forward_split,
             sl_pct=settings.sl_pct, cost_pct=costengine.round_trip_cost_pct(),
             spacing_days=settings.backtest_trial_spacing_days,
         )
+        t_backtest_ms += int((time.monotonic() - _tb) * 1000)
+
         ctx = {
             "win_rate": wr["win_rate"], "win_rate_lb": wr["win_rate_lb"],
             "trials": wr["trials"],
@@ -299,8 +316,11 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
             "ml_model": ml_model,
         }
 
+        _tv = time.monotonic()
         votes = [a.evaluate(symbol, candles, ctx) for a in SIGNAL_AGENTS]
         votes.append(backtest_agent.evaluate(symbol, candles, ctx))
+        t_votes_ms += int((time.monotonic() - _tv) * 1000)
+
         for v in votes:
             db.add(AgentVoteRecord(scan_id=scan.id, symbol=symbol, agent_name=v.name,
                                    score=v.score, confidence=v.confidence, reason=v.reason))
@@ -357,14 +377,53 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
         audit.log(db, "scanner", "skipped_thin_data", entity=f"run:{scan.id}",
                   count=len(_skipped_thin), symbols=",".join(_skipped_thin[:20]))
 
+    _t_grok = time.monotonic()
     _review_and_open(db, to_open, mode)
+    t_grok_open_ms = int((time.monotonic() - _t_grok) * 1000)
+    # Split grok/open: grok is the dominant cost; open is fast DB work.
+    # We cannot split them without modifying _review_and_open, so we report
+    # the combined total as t_grok_ms and leave t_open_ms=0 (open is O(1) DB).
+    t_grok_ms = t_grok_open_ms
+    t_open_ms = 0  # open_session calls are embedded in _review_and_open
 
-    # S2: emit scan timing + cache stats into the cycle audit payload.
+    # S2 + S6: emit scan timing + per-stage breakdown + cache stats into the cycle audit.
     scan_duration_ms = int((time.monotonic() - _scan_start_mono) * 1000)
+    cache_total = _cache_hits + _cache_misses
+    cache_hit_rate_pct = round(_cache_hits / cache_total * 100, 1) if cache_total else 0.0
     audit.log(db, "scanner", "scan_cycle", entity=f"run:{scan.id}",
               scan_duration_ms=scan_duration_ms,
+              t_universe_ms=t_universe_ms,
+              t_fetch_ms=t_fetch_ms,
+              t_backtest_ms=t_backtest_ms,
+              t_votes_ms=t_votes_ms,
+              t_grok_ms=t_grok_ms,
+              t_open_ms=t_open_ms,
               cache_hits=_cache_hits, cache_misses=_cache_misses,
-              candidates=len(candidates))
+              cache_hit_rate_pct=cache_hit_rate_pct,
+              candidates=len(candidates),
+              evaluated=len(to_fetch) - _n_skipped_thin,
+              skipped_thin=_n_skipped_thin,
+              pre_blocked=_n_pre_blocked)
+
+    # S6: write a compact runtime snapshot so the scanner-stats partial can pull it
+    # without a DB join on the audit log (simpler, cheaper).
+    runtime.set(db, "scanner_last_stats", json.dumps({
+        "scan_id": scan.id,
+        "scan_duration_ms": scan_duration_ms,
+        "t_universe_ms": t_universe_ms,
+        "t_fetch_ms": t_fetch_ms,
+        "t_backtest_ms": t_backtest_ms,
+        "t_votes_ms": t_votes_ms,
+        "t_grok_ms": t_grok_ms,
+        "t_open_ms": t_open_ms,
+        "cache_hits": _cache_hits,
+        "cache_misses": _cache_misses,
+        "cache_hit_rate_pct": cache_hit_rate_pct,
+        "evaluated": len(to_fetch) - _n_skipped_thin,
+        "skipped_thin": _n_skipped_thin,
+        "pre_blocked": _n_pre_blocked,
+        "universe": len(universe),
+    }))
 
     db.commit()
     return {"scan_id": scan.id, "mode": mode, "candidates": [c.to_dict() for c in candidates]}

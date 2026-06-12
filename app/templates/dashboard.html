@@ -102,6 +102,7 @@
       <div class="panel" style="margin-top:16px">
         <h2>Agent Scanner</h2>
         <div class="scroll" hx-get="/partials/scanner" hx-trigger="load, tab-shown from:closest [data-tab-panel], every 30s [tabActive(this) && document.visibilityState==='visible'], refresh-scanner from:body" hx-swap="innerHTML"></div>
+        <div hx-get="/partials/scanner-stats" hx-trigger="load, tab-shown from:closest [data-tab-panel], every 30s [tabActive(this) && document.visibilityState==='visible'], refresh-scanner from:body" hx-swap="innerHTML"></div>
       </div>
     </div>
 

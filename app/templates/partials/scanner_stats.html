@@ -1,0 +1,38 @@
+{% if stats %}
+<table class="tbl scan-stats-tbl">
+  <thead><tr>
+    <th title="Thời gian quét gần nhất (ms tổng)">Thời gian</th>
+    <th title="Symbols được đánh giá đủ dữ liệu (backtest + votes)">Đánh giá</th>
+    <th title="Symbols bị skip do dữ liệu quá mỏng (< 30 nến)">Thin-skip</th>
+    <th title="Symbols bị chặn trước (cooldown / streak / cap / OPUS) — không tốn OHLCV fetch">Pre-blocked</th>
+    <th title="Tổng symbols trong universe kỳ quét này">Universe</th>
+    <th title="Tỉ lệ cache hit OHLCV (lần quét sau trong cùng bar period)">Cache hit%</th>
+    <th title="Số lần fetch từ cache / network">Hits / Misses</th>
+    <th title="Thời gian từng giai đoạn (ms): universe build / candle fetch / backtest / votes / grok+open">Stages (ms)</th>
+  </tr></thead>
+  <tbody>
+    <tr>
+      <td class="{{ 'pos' if stats.scan_duration_ms < 30000 else 'neg' }}">
+        {{ stats.scan_duration_ms }}ms
+      </td>
+      <td>{{ stats.evaluated }}</td>
+      <td class="{{ 'neg' if stats.skipped_thin > 0 else 'muted' }}">{{ stats.skipped_thin }}</td>
+      <td class="muted">{{ stats.pre_blocked }}</td>
+      <td class="muted">{{ stats.universe }}</td>
+      <td class="{{ 'pos' if stats.cache_hit_rate_pct >= 80 else ('muted' if stats.cache_hit_rate_pct >= 40 else 'neg') }}">
+        {{ "%.0f"|format(stats.cache_hit_rate_pct) }}%
+      </td>
+      <td class="muted">{{ stats.cache_hits }} / {{ stats.cache_misses }}</td>
+      <td class="muted scan-stages">
+        <span title="Universe build">U:{{ stats.t_universe_ms }}ms</span>
+        <span title="Candle fetch/prefetch">F:{{ stats.t_fetch_ms }}ms</span>
+        <span title="Backtest (all symbols, accumulated)">B:{{ stats.t_backtest_ms }}ms</span>
+        <span title="Agent votes (all symbols, accumulated)">V:{{ stats.t_votes_ms }}ms</span>
+        <span title="Grok review + open sessions">G:{{ stats.t_grok_ms }}ms</span>
+      </td>
+    </tr>
+  </tbody>
+</table>
+{% else %}
+<p class="muted scan-stats-empty">Chưa có dữ liệu quét. Bấm "Quét ngay" để bắt đầu.</p>
+{% endif %}

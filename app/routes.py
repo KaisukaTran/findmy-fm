@@ -780,6 +780,24 @@ def partial_scanner(request: Request, db: Session = Depends(get_db)):
     )
 
 
+@ui_router.get("/partials/scanner-stats", response_class=HTMLResponse)
+def partial_scanner_stats(request: Request, db: Session = Depends(get_db)):
+    """S6: last scan timing + cache stats footer partial for the scanner panel."""
+    import json as _json
+
+    raw = runtime.get(db, "scanner_last_stats")
+    stats: dict = {}
+    if raw:
+        try:
+            stats = _json.loads(raw)
+        except (ValueError, TypeError):
+            pass
+    return templates.TemplateResponse(
+        "partials/scanner_stats.html",
+        {"request": request, "stats": stats},
+    )
+
+
 @ui_router.get("/partials/performance", response_class=HTMLResponse)
 def partial_performance(request: Request, db: Session = Depends(get_db)):
     p = portfolio.performance_view(db)

@@ -191,6 +191,11 @@ button { white-space: nowrap; }
   font-size: 11px; color: var(--muted); padding: 0 6px;
 }
 
+/* --- S6: Scanner stats footer table ----------------------------------- */
+.scan-stats-tbl { font-size: 12px; margin-top: 8px; border-top: 1px solid var(--line); }
+.scan-stages span { margin-right: 6px; }
+.scan-stats-empty { font-size: 12px; margin-top: 6px; }
+
 /* --- P3: Modal header (close button row) ------------------------------ */
 .modal-header {
   display: flex; align-items: center; justify-content: space-between;

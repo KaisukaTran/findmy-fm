@@ -85,3 +85,15 @@ def test_aggregate_and_decide_gates():
     too_slow = decide(consensus, win_rate=88, avg_days_to_tp=45,
                       min_confidence=70, min_win_rate=80, deadline_days=30)
     assert too_slow["decision"] == "skip"
+
+
+def test_decide_expectancy_is_primary_gate():
+    # High win-rate but NEGATIVE expectancy (fat-tail losses) → skip on the expectancy gate.
+    bad = decide(90, win_rate=95, avg_days_to_tp=5, min_confidence=70, min_win_rate=55,
+                 deadline_days=30, expectancy=-0.5, min_expectancy=0.3)
+    assert bad["decision"] == "skip" and any("kỳ vọng" in r for r in bad["reasons"])
+    # Modest win-rate but positive expectancy + trustworthy sample → trade.
+    good = decide(90, win_rate=70, avg_days_to_tp=5, min_confidence=70, min_win_rate=55,
+                  deadline_days=30, expectancy=1.2, min_expectancy=0.3,
+                  win_rate_lb=65, trials=20, min_trials=8)
+    assert good["decision"] == "trade"

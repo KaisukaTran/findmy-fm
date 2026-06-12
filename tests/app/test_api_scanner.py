@@ -48,6 +48,11 @@ def client(monkeypatch):
     monkeypatch.setattr(settings, "scan_top_n", 0)
     monkeypatch.setattr(settings, "min_confidence", 0.0)
     monkeypatch.setattr(settings, "min_win_rate", 0.0)
+    # Neutralise the realistic-win-rate gates so this exercises the scan ENDPOINT, not the
+    # statistical gates (every-bar trials, no min-trials floor, no expectancy floor).
+    monkeypatch.setattr(settings, "backtest_trial_spacing_days", 0.0)
+    monkeypatch.setattr(settings, "min_trials", 0)
+    monkeypatch.setattr(settings, "min_expectancy_pct", -100.0)
     monkeypatch.setattr(settings, "auto_trade", False)
     with TestClient(fastapi_app) as c:
         yield c

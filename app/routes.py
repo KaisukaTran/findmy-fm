@@ -722,6 +722,7 @@ def partial_scanner(request: Request, db: Session = Depends(get_db)):
             "sched": scheduler.is_running(),
             "interval": settings.scan_interval_min,
             "min_win_rate": settings.min_win_rate,
+            "min_expectancy_pct": settings.min_expectancy_pct,
             "min_confidence": settings.min_confidence,
             "deadline_days": settings.deadline_days,
         },

@@ -120,10 +120,13 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
 
         distance_pct, tp_pct, max_waves = _effective_params(db, symbol)
 
-        # Walk-forward: metric on the out-of-sample tail (regime-current, less overfit).
+        # Walk-forward: out-of-sample tail, with the live exits (stop-loss + fees) modelled
+        # and overlapping entries decorrelated so the win-rate is realistic, not ~100%.
         wr = estimate_win_rate(
             candles, distance_pct, max_waves,
             tp_pct, settings.deadline_days, split=settings.walk_forward_split,
+            sl_pct=settings.sl_pct, cost_pct=costengine.round_trip_cost_pct(),
+            spacing_days=settings.backtest_trial_spacing_days,
         )
         ctx = {
             "win_rate": wr["win_rate"], "trials": wr["trials"],
@@ -142,6 +145,8 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
         d = decide(
             consensus, wr["win_rate"], wr["avg_days_to_tp"],
             loss_rate=wr["loss_rate"], net_edge=net_edge,
+            win_rate_lb=wr["win_rate_lb"], trials=wr["trials"], min_trials=settings.min_trials,
+            expectancy=wr["expectancy"], min_expectancy=settings.min_expectancy_pct,
             max_loss_rate=settings.max_loss_rate, min_net_edge=settings.min_net_edge,
             **_thresholds(),
         )
@@ -149,15 +154,20 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
         params_tag = f"d={distance_pct}/tp={tp_pct}/w={max_waves}"
         cand = Candidate(
             scan_id=scan.id, symbol=symbol, consensus_pct=consensus,
-            win_rate=wr["win_rate"], est_days_to_tp=wr["avg_days_to_tp"],
+            win_rate=wr["win_rate"], win_rate_lb=wr["win_rate_lb"],
+            expectancy=wr["expectancy"], trials=wr["trials"],
+            est_days_to_tp=wr["avg_days_to_tp"],
             decision=d["decision"],
             reason="; ".join(d["reasons"])
-                   + f" | loss={wr['loss_rate']:.0f}% edge={net_edge:.2f}% | params {params_tag}",
+                   + f" | win_lb={wr['win_rate_lb']:.0f}% E={wr['expectancy']:+.2f}%"
+                   + f" n={wr['trials']} loss={wr['loss_rate']:.0f}% (stops={wr['stops']})"
+                   + f" edge={net_edge:.2f}% | params {params_tag}",
         )
         db.add(cand)
         db.flush()
         audit.log(db, "scanner", "candidate", entity=symbol, decision=d["decision"],
-                  consensus=consensus, win_rate=wr["win_rate"], loss_rate=wr["loss_rate"],
+                  consensus=consensus, win_rate=wr["win_rate"], win_rate_lb=wr["win_rate_lb"],
+                  expectancy=wr["expectancy"], trials=wr["trials"], loss_rate=wr["loss_rate"],
                   net_edge=net_edge, days=wr["avg_days_to_tp"])
 
         if d["decision"] == "trade":

@@ -48,6 +48,12 @@ def scan_env(monkeypatch):
     monkeypatch.setattr(settings, "scan_top_n", 0)
     monkeypatch.setattr(settings, "min_confidence", 0.0)
     monkeypatch.setattr(settings, "min_win_rate", 0.0)
+    # Neutralise the realistic-win-rate gates so these tests exercise scan MECHANICS, not the
+    # statistical gates (covered in test_backtest.py / test_agents.py): every-bar trials, no
+    # min-trials floor, no expectancy floor.
+    monkeypatch.setattr(settings, "backtest_trial_spacing_days", 0.0)
+    monkeypatch.setattr(settings, "min_trials", 0)
+    monkeypatch.setattr(settings, "min_expectancy_pct", -100.0)
     monkeypatch.setattr(settings, "auto_trade", False)
 
 

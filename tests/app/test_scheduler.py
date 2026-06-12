@@ -47,6 +47,10 @@ def env(monkeypatch):
     monkeypatch.setattr(settings, "min_confidence", 0.0)
     monkeypatch.setattr(settings, "min_win_rate", 0.0)
     monkeypatch.setattr(settings, "max_loss_rate", 100.0)
+    # Neutralise the realistic-win-rate gates so the scan trades on synthetic data.
+    monkeypatch.setattr(settings, "backtest_trial_spacing_days", 0.0)
+    monkeypatch.setattr(settings, "min_trials", 0)
+    monkeypatch.setattr(settings, "min_expectancy_pct", -100.0)
     monkeypatch.setattr(settings, "auto_trade", True)
 
 

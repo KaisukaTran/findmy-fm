@@ -1,5 +1,5 @@
 <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-  <span class="muted" title="Cổng vào lệnh — một cặp phải vượt CẢ BA: win-rate ≥ ngưỡng, consensus ≥ ngưỡng, và thời gian dự kiến tới TP ≤ số ngày deadline.">gates: win ≥ {{ "%.0f"|format(min_win_rate) }}% · consensus ≥ {{ "%.0f"|format(min_confidence) }}% · ≤ {{ deadline_days }}d</span>
+  <span class="muted" title="Cổng vào lệnh: kỳ vọng (E) ≥ ngưỡng là cổng CHÍNH (lợi nhuận net dương sau stop-loss + phí); kèm consensus ≥ ngưỡng, win-rate (cận dưới Wilson) ≥ ngưỡng, đủ số lần thử, và thời gian tới TP ≤ deadline.">gates: E ≥ {{ "%.1f"|format(min_expectancy_pct) }}% · win-lb ≥ {{ "%.0f"|format(min_win_rate) }}% · consensus ≥ {{ "%.0f"|format(min_confidence) }}% · ≤ {{ deadline_days }}d</span>
   <span class="row-actions">
     <button class="sm" data-action="scan">Run scan</button>
     <button class="sm {{ 'ok' if auto else 'ghost' }}" data-action="toggleAuto">Auto-trade: {{ 'ON' if auto else 'OFF' }}</button>
@@ -11,7 +11,9 @@
   <thead><tr>
     <th title="Mã coin (base symbol), ghép với quote của sàn dữ liệu (vd kraken → USD).">Sym</th>
     <th title="Mức đồng thuận của các agent = tổng hợp có trọng số các phiếu (quant + backtest + ML). Càng cao = nhiều agent cùng đồng ý vào lệnh.">Consensus</th>
-    <th title="Tỉ lệ thắng backtest, tính out-of-sample (walk-forward). Xanh nếu ≥ ngưỡng MIN_WIN_RATE.">Win%</th>
+    <th title="Tỉ lệ thắng backtest SL-aware (đã mô phỏng stop-loss + phí), out-of-sample. Trong ngoặc là cận dưới Wilson 95% — con số đáng tin khi ít mẫu. Xanh nếu cận dưới ≥ ngưỡng.">Win% (lb)</th>
+    <th title="KỲ VỌNG = lợi nhuận net trung bình mỗi lệnh trong backtest (sau stop-loss + phí). Đây là cổng CHÍNH: chỉ trade khi E dương đủ ngưỡng. Win% cao mà E âm = kèo xấu.">Kỳ vọng</th>
+    <th title="Số lần thử backtest (mẫu). Quá ít (< min_trials) thì win-rate không đáng tin → skip.">n</th>
     <th title="Số ngày dự kiến để đạt take-profit (ước lượng từ backtest).">~Days</th>
     <th title="Quyết định cuối: trade = đủ điều kiện mở session; skip = chưa đạt cổng.">Decision</th>
   </tr></thead>
@@ -20,7 +22,9 @@
     <tr>
       <td>{{ c.symbol }}</td>
       <td>{{ "%.0f"|format(c.consensus_pct) }}%</td>
-      <td class="{{ 'pos' if c.win_rate >= min_win_rate else 'neg' }}">{{ "%.0f"|format(c.win_rate) }}%</td>
+      <td class="{{ 'pos' if c.get('win_rate_lb', 0) >= min_win_rate else 'neg' }}">{{ "%.0f"|format(c.win_rate) }}% <span class="muted" style="font-size:11px">({{ "%.0f"|format(c.get('win_rate_lb', 0)) }})</span></td>
+      <td class="{{ 'pos' if c.get('expectancy', 0) >= min_expectancy_pct else 'neg' }}">{{ "%+.2f"|format(c.get('expectancy', 0)) }}%</td>
+      <td class="muted">{{ c.get('trials', 0) }}</td>
       <td>{{ "%.1f"|format(c.est_days_to_tp) if c.est_days_to_tp is not none else "—" }}</td>
       <td><span class="badge {{ 'active' if c.decision == 'trade' else '' }}">{{ c.decision }}</span></td>
     </tr>

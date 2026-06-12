@@ -43,17 +43,33 @@ def decide(
     max_loss_rate: float = 100.0,
     net_edge: float = 1.0,
     min_net_edge: float = 0.0,
+    win_rate_lb: float | None = None,
+    trials: int | None = None,
+    min_trials: int = 0,
+    expectancy: float | None = None,
+    min_expectancy: float = 0.0,
 ) -> dict:
     """
     Decide trade vs skip. Capital-preservation posture — a pair must clear ALL gates:
-      consensus ≥ min_confidence, win_rate ≥ min_win_rate, time-to-TP ≤ deadline,
-      loss_rate ≤ max_loss_rate, and net edge (TP − round-trip cost) ≥ min_net_edge.
+      consensus ≥ min_confidence, expectancy ≥ min_expectancy (PRIMARY), win-rate ≥
+      min_win_rate, time-to-TP ≤ deadline, loss_rate ≤ max_loss_rate, net edge ≥ min_net_edge.
+
+    `expectancy` (mean net PnL %/trade, SL- and fee-aware) is the primary gate: a pair only
+    trades when the math has positive net edge, so a high win-rate hiding fat-tail losses is
+    rejected. The win-rate gate compares against `win_rate_lb` (Wilson lower bound) when
+    supplied — high AND statistically trustworthy. `min_trials` rejects thin backtest evidence.
     """
     reasons: list[str] = []
+    wr_gated = win_rate if win_rate_lb is None else win_rate_lb
     if consensus_pct < min_confidence:
         reasons.append(f"consensus {consensus_pct:.1f}% < {min_confidence:.1f}%")
-    if win_rate < min_win_rate:
-        reasons.append(f"win-rate {win_rate:.1f}% < {min_win_rate:.1f}%")
+    if trials is not None and min_trials > 0 and trials < min_trials:
+        reasons.append(f"chỉ {trials} lần thử backtest < {min_trials} (chưa đủ tin cậy)")
+    if expectancy is not None and expectancy < min_expectancy:
+        reasons.append(f"kỳ vọng {expectancy:+.2f}% < {min_expectancy:.2f}% (net edge âm/thấp)")
+    if wr_gated < min_win_rate:
+        label = "win-rate (cận dưới)" if win_rate_lb is not None else "win-rate"
+        reasons.append(f"{label} {wr_gated:.1f}% < {min_win_rate:.1f}%")
     if loss_rate > max_loss_rate:
         reasons.append(f"loss-rate {loss_rate:.1f}% > {max_loss_rate:.1f}%")
     if net_edge < min_net_edge:
@@ -68,6 +84,7 @@ def decide(
         "decision": decision,
         "consensus_pct": consensus_pct,
         "win_rate": win_rate,
+        "expectancy": expectancy,
         "loss_rate": loss_rate,
         "net_edge": net_edge,
         "avg_days_to_tp": avg_days_to_tp,

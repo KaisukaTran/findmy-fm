@@ -41,6 +41,39 @@ def test_estimate_win_rate_all_win():
     assert res["avg_days_to_tp"] is not None
 
 
+def test_simulate_stop_loss_hit():
+    # Entry 100, next bar craters (low 80) — hard stop at avg×0.87 fires → realized loss.
+    candles = [candle(0, 100.0), candle(1, 82.0, high=85.0, low=80.0)]
+    r = simulate_kss(candles, 0, distance_pct=2, max_waves=5, tp_pct=3, deadline_days=30,
+                     sl_pct=13, cost_pct=0.3)
+    assert r.tp_hit is False and r.stopped is True
+    assert r.pnl_pct == round(-13 - 0.3, 4)
+
+
+def test_stop_loss_turns_a_recovering_dip_into_a_loss():
+    # A deep dip (would hit SL) that later recovers above TP: the realism fix.
+    candles = [candle(0, 100.0),
+               candle(1, 90.0, high=101.0, low=80.0),   # same bar touches deep low AND >TP
+               candle(2, 110.0, high=110.0, low=108.0)]
+    no_sl = simulate_kss(candles, 0, 2, 5, 3, 30, sl_pct=0, cost_pct=0)
+    assert no_sl.tp_hit is True              # legacy: rode the dip all the way to TP
+    with_sl = simulate_kss(candles, 0, 2, 5, 3, 30, sl_pct=13, cost_pct=0)
+    assert with_sl.tp_hit is False and with_sl.stopped is True  # SL cut it first → loss
+
+
+def test_estimate_win_rate_reports_expectancy_and_wilson_lb():
+    candles = []
+    price = 100.0
+    for d in range(40):
+        candles.append(candle(d, price, high=price, low=price * 0.999))
+        price *= 1.01
+    res = estimate_win_rate(candles, distance_pct=2, max_waves=5, tp_pct=3, deadline_days=30,
+                            cost_pct=0.3)
+    assert "expectancy" in res and "win_rate_lb" in res and "trials" in res
+    assert res["win_rate_lb"] <= res["win_rate"]          # lower bound never above point est
+    assert res["expectancy"] == round(3 - 0.3, 4)         # all wins, net of cost
+
+
 def test_estimate_win_rate_all_loss():
     # -1%/day decline over 60 days: entries hit the 30-day deadline without TP.
     candles = []

@@ -281,6 +281,11 @@ class Candidate(Base):
     symbol: Mapped[str] = mapped_column(String(20), nullable=False)
     consensus_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     win_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    # Wilson 95% lower bound of the win-rate (trustworthy small-sample number) and the mean
+    # net expected PnL %/trial — the realistic metrics the gate actually trades on.
+    win_rate_lb: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    expectancy: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    trials: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     est_days_to_tp: Mapped[float | None] = mapped_column(Float, nullable=True)
     decision: Mapped[str] = mapped_column(String(8), nullable=False, default="skip")  # trade / skip
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -291,6 +296,8 @@ class Candidate(Base):
         return {
             "id": self.id, "scan_id": self.scan_id, "symbol": self.symbol,
             "consensus_pct": self.consensus_pct, "win_rate": self.win_rate,
+            "win_rate_lb": self.win_rate_lb, "expectancy": self.expectancy,
+            "trials": self.trials,
             "est_days_to_tp": self.est_days_to_tp, "decision": self.decision,
             "reason": self.reason, "session_id": self.session_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,

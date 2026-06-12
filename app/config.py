@@ -85,10 +85,12 @@ class Settings(BaseSettings):
         description="Scan ALL pairs whose quote volume is above this floor (liquidity filter).",
     )
     scan_max_symbols: int = Field(default=50, description="Hard cap on symbols evaluated per scan.")
-    backtest_lookback_days: int = Field(default=180, description="History window for win-rate estimate.")
+    backtest_lookback_days: int = Field(default=365, description="History window for win-rate estimate (longer = more regimes, less single-trend bias).")
     backtest_timeframe: str = Field(default="1d", description="Candle timeframe for backtest.")
+    backtest_trial_spacing_days: float = Field(default=7.0, description="Min days between backtest entry points — decorrelates overlapping trials so the win-rate isn't inflated by one regime (0 = every bar).")
+    min_trials: int = Field(default=8, description="Min completed backtest trials for a trustworthy win-rate; below this a pair is skipped (a 100%% from 3 trials is noise).")
 
-    min_win_rate: float = Field(default=80.0, description="Min backtested win-rate %% to qualify a pair.")
+    min_win_rate: float = Field(default=55.0, description="Min backtested win-rate %% (Wilson lower bound) to qualify — a sanity backstop. Expectancy is the primary gate now that win-rate is SL-aware and realistic, so this is lower than the old gross-100%% era.")
     min_confidence: float = Field(default=70.0, description="Min agent consensus %% to qualify a pair.")
     deadline_days: int = Field(default=30, description="Max days a KSS session may wait for TP.")
     auto_trade: bool = Field(
@@ -107,6 +109,7 @@ class Settings(BaseSettings):
     scan_fund: float = Field(default=1000.0, description="Isolated fund per proposed session (USD).")
 
     # --- Loss-minimizing / cost-aware gates (capital preservation) ---
+    min_expectancy_pct: float = Field(default=0.3, description="PRIMARY gate: min mean net expected PnL %% per backtested trade (after stop-loss + round-trip cost). A high win-rate with fat-tail losses fails this. Trade only when the math has positive net edge.")
     max_loss_rate: float = Field(default=20.0, description="Max backtested loss-rate %% to qualify.")
     min_net_edge: float = Field(default=0.5, description="Min TP%% above round-trip cost to trade (micro-trade guard).")
     walk_forward_split: float = Field(default=0.5, description="Fraction of history used in-sample; metric is out-of-sample.")

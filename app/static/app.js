@@ -369,6 +369,8 @@ document.addEventListener("submit", async (e) => {
       max_deployed_pct: num(f.get("max_deployed_pct")),
       loss_streak_block_k: num(f.get("loss_streak_block_k")),
       loss_streak_window_days: num(f.get("loss_streak_window_days")),
+      min_expectancy_pct: num(f.get("min_expectancy_pct")),
+      min_win_rate: num(f.get("min_win_rate")),
     });
     alert("Đã lưu cấu hình KSS — áp dụng cho session mới.");
     refreshAll();

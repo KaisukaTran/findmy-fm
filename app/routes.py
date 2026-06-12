@@ -325,6 +325,8 @@ class KssSettingsBody(BaseModel):
     max_deployed_pct: float | None = Field(None, gt=0, le=100)
     loss_streak_block_k: int | None = Field(None, ge=1, le=20)
     loss_streak_window_days: int | None = Field(None, ge=1, le=365)
+    min_expectancy_pct: float | None = Field(None, ge=-100, le=100)
+    min_win_rate: float | None = Field(None, ge=0, le=100)
 
 
 @api_router.get("/api/kss-settings")

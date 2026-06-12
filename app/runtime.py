@@ -50,6 +50,8 @@ KSS_SETTING_FIELDS: dict[str, type] = {
     "max_deployed_pct": float,
     "loss_streak_block_k": int,
     "loss_streak_window_days": int,
+    "min_expectancy_pct": float,
+    "min_win_rate": float,
 }
 
 # ---------------------------------------------------------------------------

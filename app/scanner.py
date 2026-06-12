@@ -318,7 +318,8 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
             decision=d["decision"],
             reason="; ".join(d["reasons"])
                    + f" | win_lb={wr['win_rate_lb']:.0f}% E={wr['expectancy']:+.2f}%"
-                   + f" n={wr['trials']} loss={wr['loss_rate']:.0f}% (stops={wr['stops']})"
+                   + f" n={wr['trials']} win={wr['win_rate']:.0f}% loss={wr['loss_rate']:.0f}%"
+                   + f" flat={wr['flat_rate']:.0f}% (stops={wr['stops']})"
                    + f" edge={net_edge:.2f}% | params {params_tag}",
         )
         db.add(cand)

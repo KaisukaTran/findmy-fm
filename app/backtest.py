@@ -13,7 +13,14 @@ Quantities scale all waves equally, so absolute pip size cancels out of the
 average — the win/loss outcome depends only on price geometry, which is why this
 can run deterministically with no exchange/network calls.
 
-A "win" = take-profit reached within `deadline_days`.
+Outcome classification (3-way):
+    win  = TP hit before stop or deadline
+    loss = stop-loss hit  OR  deadline reached with pnl < 0
+    flat = deadline reached with pnl >= 0  (profitable/breakeven timeout exit)
+
+win_rate  = TP-only (excludes profitable deadline exits — keeps the metric strict)
+loss_rate = SL or negative-deadline exits only (flat exits do NOT inflate loss_rate)
+flat_rate = profitable/breakeven deadline exits
 """
 
 from __future__ import annotations
@@ -39,6 +46,21 @@ class SimResult:
 def _targets(entry: float, distance_pct: float, max_waves: int) -> list[float]:
     factor = 1 - distance_pct / 100
     return [entry * (factor ** n) for n in range(max_waves)]
+
+
+def _fill_price(target: float, bar_open: float) -> float:
+    """Return the realistic fill price when a wave triggers.
+
+    Live pyramid execution (app/kss/pyramid.py:generate_wave / service tick)
+    places a LIMIT BUY at `target_price`.  When the bar gaps below the target
+    on open, the exchange fills the limit at the *open* price (better for the
+    buyer), not at the original target.  We mirror that with min(target, open).
+
+    Matches app/kss/pyramid.py:204 — target price = entry * (1 - d/100)^n —
+    and the live fill-at-limit semantics: if the market opens below the limit,
+    the order executes at the market open (gap-fill), never worse than the limit.
+    """
+    return min(target, bar_open)
 
 
 def simulate_kss(
@@ -73,12 +95,15 @@ def simulate_kss(
     targets = _targets(entry, distance_pct, max_waves)
     weights = [n + 1 for n in range(max_waves)]
 
+    # fill_prices tracks the realistic execution price for each wave (B4: gap-below fill).
+    # Wave 0 always fills at the entry close (no gap for the entry bar itself).
+    fill_prices = [entry] + [targets[i] for i in range(1, max_waves)]
     filled = 1  # wave 0 fills at entry
     tp_threshold_factor = 1 + tp_pct / 100
     sl_threshold_factor = 1 - sl_pct / 100
 
     def avg_price(k: int) -> float:
-        num = sum(targets[i] * weights[i] for i in range(k))
+        num = sum(fill_prices[i] * weights[i] for i in range(k))
         den = sum(weights[i] for i in range(k))
         return num / den if den else entry
 
@@ -87,7 +112,11 @@ def simulate_kss(
         days = (bar["ts"] - entry_ts) / _MS_PER_DAY
 
         # Fill deeper waves whose target the bar traded through.
+        # B4: when the bar opens below the target (gap-down), the limit order
+        # fills at the open price (cheaper), not at the target — use _fill_price.
+        bar_open = bar.get("open", bar["close"])
         while filled < max_waves and bar["low"] <= targets[filled]:
+            fill_prices[filled] = _fill_price(targets[filled], bar_open)
             filled += 1
 
         avg = avg_price(filled)
@@ -145,15 +174,20 @@ def estimate_win_rate(
     `spacing_days` decorrelates entries (≥ spacing apart) so one regime can't inflate the rate.
 
     A win = TP reached (net of cost) before the stop or deadline; a loss = stop-loss hit or
-    deadline reached without TP. Incomplete trials (not enough look-ahead) are excluded.
+    deadline reached with negative pnl; a flat = deadline reached with pnl >= 0.
+    Incomplete trials (not enough look-ahead) are excluded.
 
     Returns win_rate (point), win_rate_lb (Wilson 95% lower bound — the trustworthy number),
-    loss_rate, expectancy (mean net pnl %/trial — the bottom line), trials, wins, losses,
-    stops, avg_days_to_tp, bar_days.
+    loss_rate (SL + negative-deadline only), flat_rate, flats count, expectancy
+    (mean net pnl %/trial — the bottom line), trials, wins, losses, stops,
+    avg_days_to_tp, bar_days.
+
+    B3: win_rate is TP-only; loss_rate excludes flat (profitable/breakeven deadline) exits so
+    the max_loss_rate gate is not punished by sessions that close out-of-time with a gain.
     """
-    empty = {"win_rate": 0.0, "win_rate_lb": 0.0, "loss_rate": 0.0, "expectancy": 0.0,
-             "trials": 0, "wins": 0, "losses": 0, "stops": 0, "avg_days_to_tp": None,
-             "bar_days": 0.0}
+    empty = {"win_rate": 0.0, "win_rate_lb": 0.0, "loss_rate": 0.0, "flat_rate": 0.0,
+             "expectancy": 0.0, "trials": 0, "wins": 0, "losses": 0, "flats": 0,
+             "stops": 0, "avg_days_to_tp": None, "bar_days": 0.0}
     if not candles:
         return empty
 
@@ -165,7 +199,7 @@ def estimate_win_rate(
     if spacing_days > 0 and span_days > 0:
         eff_step = max(eff_step, round(spacing_days / span_days))
 
-    wins = losses = stops = trials = 0
+    wins = losses = flats = stops = trials = 0
     days_sum = 0.0
     pnl_sum = 0.0
     for start in range(start_at, len(candles) - 1, eff_step):
@@ -178,22 +212,31 @@ def estimate_win_rate(
         if res.tp_hit:
             wins += 1
             days_sum += res.days_to_tp or 0.0
-        else:
+        elif res.stopped:
+            # Hard stop-loss: always a loss.
             losses += 1
-            if res.stopped:
-                stops += 1
+            stops += 1
+        elif res.hit_deadline and res.pnl_pct >= 0:
+            # B3: deadline exit that is profitable or breakeven — flat, not a loss.
+            flats += 1
+        else:
+            # Deadline exit with negative pnl — genuine loss.
+            losses += 1
 
     win_rate = (wins / trials * 100) if trials else 0.0
     loss_rate = (losses / trials * 100) if trials else 0.0
+    flat_rate = (flats / trials * 100) if trials else 0.0
     avg_days = (days_sum / wins) if wins else None
     return {
         "win_rate": round(win_rate, 2),
         "win_rate_lb": _wilson_lower_bound(wins, trials),
         "loss_rate": round(loss_rate, 2),
+        "flat_rate": round(flat_rate, 2),
         "expectancy": round(pnl_sum / trials, 4) if trials else 0.0,
         "trials": trials,
         "wins": wins,
         "losses": losses,
+        "flats": flats,
         "stops": stops,
         "avg_days_to_tp": round(avg_days, 2) if avg_days is not None else None,
         "bar_days": round(span_days, 4),

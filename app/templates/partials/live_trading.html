@@ -1,0 +1,28 @@
+<div class="live-box">
+  <div class="live-state">
+    Chế độ:
+    {% if lt.live_trading %}
+    <span class="badge full-auto-on">● LIVE (tiền thật)</span>
+    {% else %}
+    <span class="badge full-auto-off">PAPER (mô phỏng)</span>
+    {% endif %}
+    <span class="muted fs-12">· sàn {{ lt.exchange }} · cap ${{ '%.2f' | format(lt.max_notional) }}/BUY</span>
+  </div>
+
+  <div class="muted fs-12 mb-8">
+    {% if lt.live_keys %}✓ Khóa API đã cấu hình{% else %}⚠ Chưa có khóa API — không thể bật live{% endif %}
+    {% if lt.frozen %} · 🛑 Breaker đang đóng băng — không thể bật live{% endif %}
+  </div>
+
+  {% if lt.live_trading %}
+  <button class="sm danger" data-action="toggleLiveTrading" data-id="disable">Tắt LIVE → quay lại PAPER</button>
+  {% else %}
+  <button class="sm" data-action="toggleLiveTrading" data-id="enable"
+          {% if not lt.live_keys or lt.frozen %}disabled{% endif %}>Bật LIVE (cần gõ xác nhận)</button>
+  {% endif %}
+
+  <p class="muted fs-12 mt-8">
+    Bật LIVE đặt lệnh bằng tiền thật trên sàn. Lệnh BUY bị giới hạn theo notional cap và
+    bị chặn khi breaker đóng băng; lệnh SELL (thoát vị thế) không bao giờ bị chặn.
+  </p>
+</div>

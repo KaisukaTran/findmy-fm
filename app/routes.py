@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app import (
     charts,
     circuit,
+    execution,
     guardian,
     hyperopt,
     ml,
@@ -244,6 +245,8 @@ def _automation_state(db: Session) -> dict:
         "grok_scanner": settings.grok_scanner_enabled,
         "ta_lib": settings.ta_lib_enabled,
         "ta_external": settings.ta_external_enabled,
+        "live_trading": settings.live_trading,
+        "live_keys": execution.live_key_present(),
     }
 
 
@@ -285,6 +288,53 @@ async def set_full_auto(body: FullAutoBody, db: Session = Depends(get_db)):
         runtime.full_auto_off(db)
         scheduler.stop()
     return {**runtime.state(db), "scheduler_running": scheduler.is_running()}
+
+
+class LiveTradingBody(BaseModel):
+    enabled: bool
+    confirm: str | None = None
+
+
+_LIVE_CONFIRM_PHRASE = "LIVE-TRADING"
+
+
+@api_router.get("/api/live-trading")
+def get_live_trading(db: Session = Depends(get_db)):
+    """Current go-live state: master flag, whether exchange keys are present, breaker."""
+    return {
+        "live_trading": settings.live_trading,
+        "live_keys": execution.live_key_present(),
+        "exchange": settings.live_exchange,
+        "max_notional": settings.live_max_order_notional,
+        "frozen": runtime.is_frozen(db),
+        "confirm_phrase": _LIVE_CONFIRM_PHRASE,
+    }
+
+
+@api_router.post("/api/live-trading", dependencies=[Depends(require_api_key)])
+def set_live_trading(body: LiveTradingBody, db: Session = Depends(get_db)):
+    """Flip the real-money master switch.
+
+    Enabling requires a typed confirmation phrase AND configured exchange keys AND an
+    armed circuit breaker (a tripped breaker blocks going live). Disabling is always
+    allowed and immediate.
+    """
+    if body.enabled:
+        if (body.confirm or "").strip() != _LIVE_CONFIRM_PHRASE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Type '{_LIVE_CONFIRM_PHRASE}' to confirm real-money trading",
+            )
+        if not execution.live_key_present():
+            raise HTTPException(
+                status_code=400, detail="Exchange API key/secret not configured — cannot go live"
+            )
+        if runtime.is_frozen(db):
+            raise HTTPException(
+                status_code=409, detail="Circuit-breaker frozen — resolve it before going live"
+            )
+    runtime.set_live_trading(db, body.enabled)
+    return get_live_trading(db)
 
 
 class CloseBody(BaseModel):
@@ -673,6 +723,14 @@ def api_losses(db: Session = Depends(get_db)):
 def partial_losses(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         "partials/losses.html", {"request": request, "L": portfolio.loss_analysis(db)}
+    )
+
+
+@ui_router.get("/partials/live-trading", response_class=HTMLResponse)
+def partial_live_trading(request: Request, db: Session = Depends(get_db)):
+    """Go-live control: current paper/live posture + the typed-confirm toggle."""
+    return templates.TemplateResponse(
+        "partials/live_trading.html", {"request": request, "lt": get_live_trading(db)}
     )
 
 

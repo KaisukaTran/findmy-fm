@@ -228,7 +228,7 @@ def approve_order(db: Session, order_id: int, reviewer: str | None = None) -> Fi
     order.decided_at = datetime.utcnow()
     db.flush()
 
-    fill = _paper_execute(db, order)
+    fill = _execute(db, order)
     order.status = EXECUTED
     db.commit()
     db.refresh(fill)
@@ -242,6 +242,76 @@ def approve_order(db: Session, order_id: int, reviewer: str | None = None) -> Fi
         except Exception as exc:  # a strategy hook must never corrupt the fill
             logger.exception("KSS fill hook failed for %s: %s", order.source_ref, exc)
 
+    return fill
+
+
+# --- execution dispatch (paper by default; live only when explicitly on) ---
+
+
+def _execute(db: Session, order: PendingOrder) -> Fill:
+    """Route an approved order to live placement when go-live is active, else paper.
+
+    Paper is the default everywhere — live runs ONLY when `execution.live_enabled()`
+    (master flag + API keys). See app/execution.py.
+    """
+    from app import execution
+
+    if execution.live_enabled():
+        return _live_execute(db, order)
+    return _paper_execute(db, order)
+
+
+def _live_execute(db: Session, order: PendingOrder) -> Fill:
+    """Place a REAL order, re-gating new-exposure BUYs (breaker + notional cap). SELL
+    exits are never gated. Raises (never silently papers) if a guard or the exchange fails."""
+    from app import execution
+    from app.data.providers import live_provider
+
+    ref_price = order.price if order.price > 0 else (
+        get_current_prices([order.symbol]).get(order.symbol) or 0.0
+    )
+    if ref_price <= 0:
+        raise ValueError(f"No price available to execute {order.symbol}")
+
+    # New exposure (BUY) is gated; exits (SELL) are never blocked.
+    if order.side == "BUY":
+        if runtime.is_frozen(db):
+            raise ValueError("circuit-breaker frozen — live BUY blocked")
+        notional = ref_price * order.quantity
+        if notional > settings.live_max_order_notional:
+            raise ValueError(
+                f"live BUY notional {notional:.2f} exceeds cap "
+                f"{settings.live_max_order_notional:.2f}"
+            )
+
+    pair = live_provider().pair(order.symbol)
+    result = execution.place_live_order(
+        pair, order.side, order.quantity, order.price, order.order_type
+    )
+    eff = float(result.get("price") or 0.0)
+    if eff <= 0:
+        raise ValueError("live order returned no fill price")
+    qty = float(result.get("quantity") or order.quantity)
+    fee = float(result.get("fee") or 0.0)
+
+    realized = _update_position(db, order.symbol, order.side, qty, eff, fee)
+    fill = Fill(
+        pending_order_id=order.id,
+        symbol=order.symbol,
+        side=order.side,
+        quantity=qty,
+        price=eff,
+        fee=fee,
+        slippage=0.0,
+        realized_pnl=realized,
+        source_ref=order.source_ref,
+        strategy_name=order.strategy_name,
+    )
+    db.add(fill)
+    db.flush()
+    logger.info(
+        "LIVE fill order %s: %s %s %s @ %s", order.id, order.side, qty, order.symbol, eff
+    )
     return fill
 
 

@@ -95,12 +95,28 @@ Wave C = Phase 6 (live infra) then final gate.
 
 | Task | Content | DoD | Depends | Agent | Status |
 |------|---------|-----|---------|-------|--------|
-| 6.1 | Live Binance execution path behind a `LIVE_TRADING=false` master flag + small per-order notional cap; paper stays default. | flag off by default; unit test asserts paper unless explicitly on | 1.x,2.x | backend-builder | cc:TODO |
-| 6.2 | Paper→live switch in UI with a typed confirm + circuit-breaker/approval-gate re-check before first live order. | switch requires confirm; breaker veto blocks live | 6.1,3.x | frontend-htmx | cc:TODO |
-| 6.3 | `.env.example` + docs for real keys; secrets never logged; key validated at boot. | security-reviewer sign-off | 6.1 | security-reviewer | cc:TODO |
-| 6.4 | Final gate: full suite + ruff + mypy green, offline smoke via `scripts/observe_full_auto.py`, security pass, single squash-ready summary. | all gates green; go/no-go note | all | test-runner | cc:TODO |
+| 6.1 | Live Binance execution path behind a `LIVE_TRADING=false` master flag + small per-order notional cap; paper stays default. | flag off by default; unit test asserts paper unless explicitly on | 1.x,2.x | backend-builder | cc:DONE — `app/execution.py` (live_enabled = flag AND keys); `orders._execute` dispatches paper↔live; `_live_execute` re-gates BUYs (frozen + `live_max_order_notional`), never gates SELL exits; never silently papers on error. `tests/app/test_golive.py` (10 pass). |
+| 6.2 | Paper→live switch in UI with a typed confirm + circuit-breaker/approval-gate re-check before first live order. | switch requires confirm; breaker veto blocks live | 6.1,3.x | frontend-htmx | cc:DONE — `POST /api/live-trading` requires `confirm=="LIVE-TRADING"` + keys present + breaker armed (409 if frozen); Strategy-tab `partials/live_trading.html` panel + `toggleLiveTrading` (typed prompt). Persisted via `runtime.set_live_trading`. |
+| 6.3 | `.env.example` + docs for real keys; secrets never logged; key validated at boot. | security-reviewer sign-off | 6.1 | security-reviewer | cc:DONE — `.env.example` go-live block; `docs/go-live.md` runbook; `execution.validate_at_boot()` logged in `main.lifespan` (no secret); keys are `SecretStr`, never logged. |
+| 6.4 | Final gate: full suite + ruff + mypy green, offline smoke via `scripts/observe_full_auto.py`, security pass, single squash-ready summary. | all gates green; go/no-go note | all | test-runner | cc:DONE — suite **420 pass / 2 skip**; ruff clean except 1 **pre-existing** C901 (`auto_approve_by_policy`, present on HEAD, unrelated to go-live); mypy not installed in this env; app boots + scans on paper via TestClient lifespan. See go/no-go note below. |
 
 ---
+
+## Go / no-go note (2026-06-13)
+
+**GO for shipping the infrastructure (still on paper).** All six phases landed on branch
+`go-live` as six commits. Gates: full app suite **420 pass / 2 skip**; ruff clean apart
+from one pre-existing `C901` on `auto_approve_by_policy` (present on `main`, unrelated to
+this work — left untouched to avoid editing the approval path); app boots and runs a paper
+scan cycle via the TestClient lifespan. mypy is not installed in this dev env (could not
+run that gate here). Phases 1–2 were largely verification — most was already shipped in
+prior sessions; this push added the USDT regression test, the security-audit doc, and
+re-confirmed every memory trap by path:line + test.
+
+**NO-GO for real money** until the operator: sets exchange keys, flips `LIVE_TRADING`
+(typed confirm), and starts with a tiny `LIVE_MAX_ORDER_NOTIONAL`. See `docs/go-live.md`.
+Carry-forward from Phase 2.1: when going live, also set `REQUIRE_AUTH=true` so the
+mutation endpoints aren't reachable unauthenticated.
 
 ## Out of scope / deferred
 - Phase D of the full-auto roadmap ([[full-auto-roadmap]]) — unchanged.

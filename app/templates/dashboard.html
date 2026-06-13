@@ -169,6 +169,10 @@
                editing (it would clobber unsaved input). Saving keeps the typed values. -->
           <div hx-get="/partials/kss-settings" hx-trigger="load" hx-swap="innerHTML"></div>
         </div>
+        <div class="panel">
+          <h2>Go-live (PAPER / LIVE)</h2>
+          <div hx-get="/partials/live-trading" hx-trigger="load, tab-shown from:closest [data-tab-panel], refresh-live from:body, refresh-status from:body" hx-swap="innerHTML"></div>
+        </div>
       </div>
     </div>
 

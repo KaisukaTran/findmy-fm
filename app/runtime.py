@@ -38,6 +38,7 @@ KEY_AUTOAPPROVE_ENABLED = "autoapprove_enabled"
 KEY_AUTOAPPROVE_MAX = "autoapprove_max_notional"
 KEY_CONSENSUS_WEIGHTS = "consensus_weights"  # S4: JSON dict of agent weights
 KEY_GROK_FAIL_MODE = "grok_scanner_fail_mode"  # S5: "open" | "closed"
+KEY_LIVE_TRADING = "live_trading"  # Phase 6: real-money master switch (default off)
 
 # Master KSS strategy knobs the dashboard edits (persisted as kss:<field>). Each maps to a
 # settings field; the cast keeps them typed when restored from the string-valued KV store.
@@ -145,6 +146,14 @@ def opus_mode_off(db: Session) -> dict:
     """Disable OPUS orchestrator mode. Persisted."""
     settings.opus_mode = False
     set_bool(db, KEY_OPUS_MODE, False)
+    return state(db)
+
+
+def set_live_trading(db: Session, enabled: bool) -> dict:
+    """Persist the go-live master switch. Real placement still needs exchange keys; this
+    only flips intent. The caller (route) is responsible for the typed-confirm gate."""
+    settings.live_trading = enabled
+    set_bool(db, KEY_LIVE_TRADING, enabled)
     return state(db)
 
 
@@ -343,6 +352,9 @@ def sync_from_db(db: Session) -> None:
         settings.grok_scanner_enabled = True
     settings.ta_lib_enabled = get_bool(db, KEY_TA_LIB, default=settings.ta_lib_enabled)
     settings.ta_external_enabled = get_bool(db, KEY_TA_EXTERNAL, default=settings.ta_external_enabled)
+    # Go-live master switch — persisted operator choice; .env default is OFF. Even when
+    # restored True, real placement is inert unless exchange keys are configured.
+    settings.live_trading = get_bool(db, KEY_LIVE_TRADING, default=settings.live_trading)
     # Auto-approval rule (persisted so a dashboard change survives a restart).
     if get(db, KEY_AUTOAPPROVE_ENABLED) is not None:
         settings.autoapprove_enabled = get_bool(db, KEY_AUTOAPPROVE_ENABLED)

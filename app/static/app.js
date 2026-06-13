@@ -203,6 +203,21 @@ const actions = {
     await api("POST", `/api/pending/approve/${id}`);
     refreshTrading(); refreshStatus();
   },
+  async toggleLiveTrading(mode) {
+    const enable = mode === "enable";
+    if (enable) {
+      const phrase = prompt(
+        "BẬT GIAO DỊCH TIỀN THẬT.\nGõ chính xác 'LIVE-TRADING' để xác nhận:");
+      if (phrase === null) return;
+      await api("POST", "/api/live-trading", { enabled: true, confirm: phrase });
+      toast("Đã bật LIVE — lệnh mới sẽ đặt bằng tiền thật.", "success");
+    } else {
+      if (!confirm("Tắt LIVE và quay lại chế độ paper (mô phỏng)?")) return;
+      await api("POST", "/api/live-trading", { enabled: false });
+      toast("Đã tắt LIVE — quay lại paper.", "info");
+    }
+    fireRefresh("refresh-live"); refreshStatus();
+  },
   async reject(id) {
     const reason = prompt("Lý do từ chối?", "") ?? "";
     await api("POST", `/api/pending/reject/${id}`, { reason });

@@ -48,6 +48,7 @@ _MUTABLE_SETTINGS = (
     "grok_enabled", "grok_scanner_enabled",
     "scan_distance_pct", "scan_tp_pct", "scan_max_waves", "scan_fund",
     "sl_pct", "trailing_pct", "deadline_days",
+    "live_trading", "live_max_order_notional",
 )
 
 
@@ -59,7 +60,7 @@ _MUTABLE_SETTINGS = (
 _FLAG_SETTINGS = (
     "auto_trade", "autoapprove_enabled", "full_auto", "scheduler_enabled",
     "guardian_enabled", "telegram_enabled", "opus_mode", "opus_shadow",
-    "grok_enabled", "grok_scanner_enabled",
+    "grok_enabled", "grok_scanner_enabled", "live_trading",
 )
 
 

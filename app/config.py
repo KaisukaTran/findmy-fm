@@ -52,6 +52,29 @@ class Settings(BaseSettings):
     demo_isolated_fund: float = Field(default=10000.0, description="Default demo isolated fund (USD).")
     account_equity: float = Field(default=10000.0, description="Notional account equity for risk checks.")
 
+    # --- Go-live execution (SHIPPED OFF — operator flips it) ---
+    live_trading: bool = Field(
+        default=False,
+        description="Master switch for REAL-money order placement. Off = paper everywhere. "
+        "When on AND exchange API keys are set, approved orders place real orders on "
+        "`live_exchange`. New-exposure BUYs are still gated by the circuit breaker and "
+        "`live_max_order_notional`; SELL exits are never gated.",
+    )
+    live_max_order_notional: float = Field(
+        default=25.0,
+        gt=0,
+        description="Per-order notional cap (quote ccy) for live BUYs — a real BUY above this "
+        "is refused. A small default keeps the first live orders tiny.",
+    )
+    live_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="API key for the live exchange (private trading endpoints). Empty = live off.",
+    )
+    live_api_secret: SecretStr = Field(
+        default=SecretStr(""),
+        description="API secret for the live exchange. Empty = live off. Never logged.",
+    )
+
     # --- Paper execution simulation ---
     taker_fee_pct: float = Field(default=0.1, description="Taker fee % applied per fill.")
     slippage_pct: float = Field(default=0.05, description="Simulated slippage % on market fills.")

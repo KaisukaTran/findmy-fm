@@ -189,8 +189,15 @@
       </div>
     </div>
 
-    <!-- TAB: Nhật ký (Logs) — meaningful, categorised feed -->
+    <!-- TAB: Nhật ký (Logs) — recent transactions + meaningful, categorised feed -->
     <div data-tab-panel="logs">
+      <div class="panel mt-16">
+        <h2>Giao dịch gần nhất</h2>
+        <div class="scroll"
+             hx-get="/partials/log-trades"
+             hx-trigger="tab-shown from:closest [data-tab-panel], load, refresh-trading from:body"
+             hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
+      </div>
       <div class="panel mt-16">
         <h2>Nhật ký hoạt động</h2>
         <!-- #audit-wrap is OUTSIDE the hx-swap, so the category filter (a CSS class on it)

@@ -8,7 +8,7 @@
   <tbody>
     {% for r in rows %}
     <tr class="audit-row cat-{{ r.category }} sev-{{ r.severity }}" data-symbol="{{ r.symbol }}">
-      <td class="muted td-nowrap">{{ r.time }}</td>
+      <td class="muted td-nowrap">{{ r.full_time }}</td>
       <td class="td-shrink">{{ r.icon }}</td>
       <td class="{{ sev.get(r.severity,'') }}" title="{{ r.actor }} · {{ r.action }} | {{ r.detail }}">{{ r.message }}</td>
       <td class="td-shrink">

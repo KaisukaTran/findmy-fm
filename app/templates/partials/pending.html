@@ -21,7 +21,8 @@
     <th title="Mã coin của lệnh.">Sym</th>
     <th title="Hướng lệnh: BUY (mua) hoặc SELL (bán).">Side</th>
     <th title="Khối lượng đặt.">Qty</th>
-    <th title="Giá đặt; 'mkt' = lệnh thị trường (khớp theo giá hiện tại).">Price</th>
+    <th title="Giá đặt; 'mkt' = lệnh thị trường (khớp theo giá hiện tại).">Giá đặt</th>
+    <th title="Giá thị trường hiện tại của coin — so với giá đặt để biết lệnh còn cách bao xa.">Giá hiện tại</th>
     <th title="Giá trị lệnh = khối lượng × giá (USD). So với ngưỡng để biết AUTO hay TAY.">Giá trị $</th>
     <th title="Nguồn tạo lệnh (vd kss = từ chiến lược KSS). ⚠ = có ghi chú rủi ro; VETOED = bị AI Guardian chặn.">Source</th>
     <th title="AUTO sẵn sàng = sẽ tự duyệt chu kỳ tới. AUTO chờ giá = ≤ ngưỡng nhưng đợi giá tới limit. TAY = lệnh lớn cần duyệt thủ công.">Tự duyệt</th>
@@ -34,6 +35,7 @@
       <td class="{{ 'pos' if o.side == 'BUY' else 'neg' }}">{{ o.side }}</td>
       <td>{{ o.quantity | qty }}</td>
       <td>{{ (o.price | money) if o.price else "mkt" }}</td>
+      <td class="muted">{{ (o.mkt | money) if o.mkt else "—" }}</td>
       <td class="muted">${{ o.notional | money }}</td>
       <td class="muted">{{ o.source }}{% if o.risk_note %} ⚠{% endif %}{% if o.get('auto_veto') %} <span class="badge veto" title="{{ o.get('auto_veto_reason') or '' }}">VETOED</span>{% endif %}</td>
       <td>

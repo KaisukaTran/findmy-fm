@@ -738,6 +738,16 @@ def partial_trades(request: Request, page: int = 1, db: Session = Depends(get_db
     )
 
 
+@ui_router.get("/partials/log-trades", response_class=HTMLResponse)
+def partial_log_trades(request: Request, db: Session = Depends(get_db)):
+    """Recent executed transactions (fills) for the 'Nhật ký' tab — the audit feed only
+    carries strategy/system events, not the raw fills, so this surfaces actual trades."""
+    rows = portfolio.trades_view(db, limit=15, offset=0)
+    return templates.TemplateResponse(
+        "partials/log_trades.html", {"request": request, "rows": rows}
+    )
+
+
 @ui_router.get("/partials/pending", response_class=HTMLResponse)
 def partial_pending(request: Request, page: int = 1, db: Session = Depends(get_db)):
     page = max(1, min(page, 10))
@@ -749,6 +759,7 @@ def partial_pending(request: Request, page: int = 1, db: Session = Depends(get_d
         d = o.to_dict()
         ref = o.price if o.price > 0 else (prices.get(o.symbol) or 0.0)
         mkt = prices.get(o.symbol) or 0.0
+        d["mkt"] = mkt  # current market price (for the "Giá hiện tại" column)
         d["notional"] = o.quantity * ref
         # eligible to auto-clear by size+source; "due" = its limit price is reached now.
         d["auto"] = (o.source in settings.autoapprove_sources

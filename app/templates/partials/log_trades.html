@@ -1,0 +1,32 @@
+<div id="log-trades-pane" class="scroll"
+     hx-get="/partials/log-trades"
+     hx-trigger="every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body"
+     hx-target="this" hx-swap="outerHTML">
+{% if rows %}
+<table class="tbl">
+  <thead><tr>
+    <th title="Thời điểm khớp lệnh (ngày giờ VN GMT+7).">Thời gian</th>
+    <th title="Mã coin.">Sym</th>
+    <th title="Hướng: BUY (mua) / SELL (bán).">Side</th>
+    <th title="Khối lượng khớp.">Qty</th>
+    <th title="Giá khớp thực tế (đã gồm slippage mô phỏng).">Giá</th>
+    <th title="Lãi/lỗ đã chốt của lệnh bán.">P&amp;L</th>
+    <th title="Nguồn lệnh: OPUS / KSS / manual / auto.">Nguồn</th>
+  </tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td class="muted td-nowrap">{{ r.executed_at | localdt }}</td>
+      <td>{{ r.symbol }}</td>
+      <td class="{{ 'pos' if r.side == 'BUY' else 'neg' }}">{{ r.side }}</td>
+      <td>{{ r.quantity | qty }}</td>
+      <td>{{ r.price | money }}</td>
+      <td class="{{ 'pos' if r.realized_pnl >= 0 else 'neg' }}">{{ r.realized_pnl | money }}</td>
+      <td><span class="badge {{ 'ml-on' if r.source == 'OPUS' else ('active' if r.source == 'KSS' else '') }}">{{ r.source }}</span></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="muted fs-11 mt-6">{{ rows|length }} giao dịch gần nhất. Xem đầy đủ + phân trang ở tab “Giao dịch”.</p>
+{% else %}<p class="muted">Chưa có giao dịch nào.</p>{% endif %}
+</div>

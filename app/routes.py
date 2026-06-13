@@ -832,13 +832,16 @@ def partial_scanner_stats(request: Request, db: Session = Depends(get_db)):
 
 
 @ui_router.get("/partials/performance", response_class=HTMLResponse)
-def partial_performance(request: Request, db: Session = Depends(get_db)):
-    p = portfolio.performance_view(db)
+def partial_performance(request: Request, period: str = "all", db: Session = Depends(get_db)):
+    if period not in ("24h", "7d", "30d", "all"):
+        period = "all"
+    p = portfolio.performance_view(db, period=period)
     return templates.TemplateResponse(
         "partials/performance.html",
         {
             "request": request,
             "p": p,
+            "period": period,
             "equity_svg": charts.equity_curve_svg(p["equity_curve"], p["equity_times"]),
             "winloss_svg": charts.winloss_bars_svg(p["wins"], p["losses"]),
         },

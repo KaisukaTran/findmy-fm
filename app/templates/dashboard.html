@@ -103,7 +103,9 @@
     <div data-tab-panel="overview">
       <div class="panel mt-16">
         <h2>Hiệu suất (Performance)</h2>
-        <div hx-get="/partials/performance" hx-trigger="load, tab-shown from:closest [data-tab-panel], every 20s [tabActive(this) && document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML"></div>
+        <!-- Initial lazy load only; the returned #perf partial owns its own polling
+             so the period toggle survives refreshes (it bakes ?period into its hx-get). -->
+        <div hx-get="/partials/performance" hx-trigger="load, tab-shown from:closest [data-tab-panel]" hx-swap="innerHTML"></div>
       </div>
       <div class="panel mt-16">
         <h2>Agent Scanner</h2>

@@ -87,9 +87,9 @@ Wave C = Phase 6 (live infra) then final gate.
 
 | Task | Content | DoD | Depends | Agent | Status |
 |------|---------|-----|---------|-------|--------|
-| 5.1 | Enlarge equity curve (bigger viewport, drawdown shaded band, hover-free value ticks) in `charts.py`. | new SVG renders; existing tests green | - | backend-builder | cc:TODO |
-| 5.2 | Add a period toggle (24h/7d/30d/all) feeding the curve + a richer win/loss + expectancy panel. | toggle switches series server-side | 5.1 | frontend-htmx | cc:TODO |
-| 5.3 | Replace tiny winloss bar with a fuller performance panel; keep CSP-perfect inline SVG. | performance.html updated, no canvas/JS dep | 5.1 | frontend-htmx | cc:TODO |
+| 5.1 | Enlarge equity curve (bigger viewport, drawdown shaded band, hover-free value ticks) in `charts.py`. | new SVG renders; existing tests green | - | backend-builder | cc:DONE — `equity_curve_svg` now 860×300 with a running-peak dashed line + red-tinted underwater (drawdown) band; preserves polyline/polygon/value-tick/time-axis contract (`test_charts` green). |
+| 5.2 | Add a period toggle (24h/7d/30d/all) feeding the curve + a richer win/loss + expectancy panel. | toggle switches series server-side | 5.1 | frontend-htmx | cc:DONE — `performance_view(db, period=)` windows fills by cutoff (curve continues from equity-as-of-cutoff) + adds expectancy/avg-win/avg-loss/profit-factor; `/partials/performance?period=` validated; self-replacing `#perf` partial bakes period into its own poll so the toggle survives refreshes. Test: `test_performance_view_expectancy_and_period`. |
+| 5.3 | Replace tiny winloss bar with a fuller performance panel; keep CSP-perfect inline SVG. | performance.html updated, no canvas/JS dep | 5.1 | frontend-htmx | cc:DONE — performance.html: KPI cards incl. expectancy/PF/max-DD + enlarged winloss bar + econ cards (avg win/loss, closed). No inline style/JS — CSP stays 'self'. |
 
 ## Phase 6: Go-live infrastructure — default OFF (go-live mode)  [tdd:required]
 

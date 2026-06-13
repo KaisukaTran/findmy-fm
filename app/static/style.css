@@ -169,6 +169,13 @@ button { white-space: nowrap; }
 .cal-day-panel h3 { font-size: 13px; margin: 0 0 8px; color: var(--muted); }
 .cal-year tr.cal-click td { cursor: pointer; }
 
+/* --- Phase 5: performance panel --------------------------------------- */
+.perf-period { display: flex; gap: 4px; margin-bottom: 10px; }
+.perf-curve { width: 100%; }
+.perf-stats { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-top: 6px; }
+.perf-winloss { flex: 0 0 300px; max-width: 100%; }
+.perf-econ { flex: 1 1 240px; }
+
 /* --- Hover tooltips ---
    Two mechanisms by context:
    - [data-tip]: styled CSS tooltip for the top KPI strip (not inside an

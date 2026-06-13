@@ -50,12 +50,28 @@ _MUTABLE_SETTINGS = (
 )
 
 
+# Automation on/off flags that must start each test at their MODEL DEFAULT (all
+# off), so a developer's local .env (e.g. GUARDIAN_ENABLED=true, GROK_ENABLED=true)
+# does not leak into tests that assert the default-off behaviour. Numeric strategy
+# params are NOT reset here — tests that depend on them set them explicitly, and
+# resetting them could change unrelated assertions.
+_FLAG_SETTINGS = (
+    "auto_trade", "autoapprove_enabled", "full_auto", "scheduler_enabled",
+    "guardian_enabled", "telegram_enabled", "opus_mode", "opus_shadow", "grok_enabled",
+)
+
+
 @pytest.fixture(autouse=True)
 def _settings_guard():
-    """Snapshot and restore the mutable automation settings around every test."""
+    """Snapshot/restore mutable automation settings around every test, and reset the
+    on/off flags to their model defaults at setup so tests are hermetic vs the .env."""
     from app.config import settings
 
     saved = {name: getattr(settings, name) for name in _MUTABLE_SETTINGS}
+    fields = type(settings).model_fields
+    for name in _FLAG_SETTINGS:
+        if name in fields:
+            setattr(settings, name, fields[name].default)
     yield
     for name, value in saved.items():
         setattr(settings, name, value)

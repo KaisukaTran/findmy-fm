@@ -6,33 +6,33 @@
 
 ---
 
-## 🎯 Mục tiêu Day 02 (UPDATED)
+## 🎯 Day 02 Objectives (UPDATED)
 
-Day 02 **KHÔNG tập trung vào PnL**.
-Trọng tâm là **xây dựng nền tảng dữ liệu (Database & Auditability)** cho FINDMY.
+Day 02 is **NOT focused on PnL**.
+The focus is **building data foundation (Database & Auditability)** for FINDMY.
 
-### Mục tiêu chính
+### Main Objectives
 
-* Thiết kế **DB schema rõ ràng** cho paper trading
-* Lưu **toàn bộ lệnh đã thực hiện**
-* Ghi lại **lịch sử các yêu cầu từ Excel (sheet `purchase order`)**
-* Đảm bảo **audit trail**: có thể truy vết lại *ai – khi nào – upload file nào – sinh ra lệnh gì*
+* Design **clear DB schema** for paper trading
+* Save **all executed orders**
+* Record **full history of requests from Excel (sheet `purchase order`)**
+* Ensure **audit trail**: ability to trace back *who – when – uploaded which file – generated which orders*
 
-> PnL & equity curve **để Day 03**
+> PnL & equity curve **for Day 03**
 
 ---
 
-## 🧠 Phạm vi (Scope Control)
+## 🧠 Scope Control
 
-### ✅ Sẽ làm
+### ✅ Will Do
 
 * Order history (orders table)
 * Trade history (trades table)
 * Position snapshot (positions table)
-* **Request history** từ Excel upload
+* **Request history** from Excel uploads
 * Execution run tracking
 
-### ❌ Chưa làm
+### ❌ Not Yet
 
 * PnL / equity
 * Strategy logic
@@ -41,11 +41,11 @@ Trọng tâm là **xây dựng nền tảng dữ liệu (Database & Auditability
 
 ---
 
-## 🗄️ 1. Thiết kế Database (Core của Day 02)
+## 🗄️ 1. Database Design (Core of Day 02)
 
-### 1.1 Bảng `execution_runs`
+### 1.1 `execution_runs` Table
 
-> Mỗi lần upload Excel = **1 execution run**
+> Each Excel upload = **1 execution run**
 
 ```sql
 execution_runs
@@ -58,17 +58,17 @@ created_at
 notes
 ```
 
-Ý nghĩa:
+Meaning:
 
-* `run_id`: liên kết tất cả orders/trades của 1 lần chạy
-* `source_file_name`: tên file Excel upload
-* `sheet_name`: mặc định `purchase order`
+* `run_id`: links all orders/trades from 1 run
+* `source_file_name`: name of uploaded Excel file
+* `sheet_name`: default `purchase order`
 
 ---
 
-### 1.2 Bảng `order_requests` (LỊCH SỬ EXCEL)
+### 1.2 `order_requests` Table (EXCEL HISTORY)
 
-> Lưu **nguyên trạng dữ liệu đọc từ Excel** (chưa execution)
+> Save **raw data read from Excel** (before execution)
 
 ```sql
 order_requests
@@ -84,14 +84,14 @@ raw_data (JSON)
 created_at
 ```
 
-Ý nghĩa:
+Meaning:
 
-* Ghi lại **mỗi dòng trong sheet purchase order**
-* `raw_data`: lưu row gốc để audit/debug
+* Record **each row in purchase order sheet**
+* `raw_data`: save original row for audit/debug
 
 ---
 
-### 1.3 Bảng `orders`
+### 1.3 `orders` Table
 
 ```sql
 orders
@@ -109,7 +109,7 @@ created_at
 
 ---
 
-### 1.4 Bảng `trades`
+### 1.4 `trades` Table
 
 ```sql
 trades
@@ -125,7 +125,7 @@ ts
 
 ---
 
-### 1.5 Bảng `positions`
+### 1.5 `positions` Table
 
 ```sql
 positions
@@ -159,61 +159,61 @@ Update positions
 
 ---
 
-## 🔧 3. Task Breakdown (Thực hiện trong ngày)
+## 🔧 3. Task Breakdown (Implementation for the Day)
 
 ### 3.1 Persistence Layer
 
-* [ ] Thêm model `ExecutionRun`
-* [ ] Thêm model `OrderRequest`
-* [ ] Gắn `run_id` cho orders & trades
+* [ ] Add `ExecutionRun` model
+* [ ] Add `OrderRequest` model
+* [ ] Attach `run_id` to orders & trades
 
 ### 3.2 Execution Layer
 
-* [ ] Generate `run_id` mỗi lần execution
-* [ ] Lưu order_requests trước khi execution
-* [ ] Execution **KHÔNG phụ thuộc API**
+* [ ] Generate `run_id` for each execution
+* [ ] Save order_requests before execution
+* [ ] Execution **independent of API**
 
 ### 3.3 API Layer
 
-* [ ] `/paper-execution` trả về `run_id`
-* [ ] Endpoint mới:
+* [ ] `/paper-execution` returns `run_id`
+* [ ] New endpoints:
 
   * `GET /runs` (list execution runs)
-  * `GET /runs/{run_id}` (chi tiết 1 run)
+  * `GET /runs/{run_id}` (details of 1 run)
 
 ---
 
 ## 🧪 4. Test Plan
 
-### Test case 1
+### Test Case 1
 
-* Upload 1 file Excel
+* Upload 1 Excel file
 * Expect:
 
   * 1 execution_run
   * N order_requests
   * N orders
 
-### Test case 2
+### Test Case 2
 
-* Upload cùng file 2 lần
+* Upload same file 2 times
 * Expect:
 
-  * 2 execution_runs khác nhau
-  * Dữ liệu không bị overwrite
+  * 2 different execution_runs
+  * Data not overwritten
 
 ---
 
-## 🧠 5. Design Decisions (RẤT QUAN TRỌNG)
+## 🧠 5. Design Decisions (VERY IMPORTANT)
 
-* Excel ingestion **luôn được lưu lại**, dù execution fail
-* DB là **nguồn sự thật duy nhất**
-* API chỉ trigger & query, không giữ state
-* Strategy (Day 03) sẽ **đọc từ DB**, không từ Excel
+* Excel ingestion **always saved**, even if execution fails
+* DB is **single source of truth**
+* API only triggers & queries, no state kept
+* Strategy (Day 03) will **read from DB**, not Excel
 
 ---
 
-## 📝 6. Lệnh dự kiến sử dụng
+## 📝 6. Anticipated Commands
 
 ```bash
 # start api
@@ -229,12 +229,12 @@ sqlite3 data/findmy_fm_paper.db
 
 ---
 
-## 🔮 7. Ghi chú cho Day 03
+## 🔮 7. Notes for Day 03
 
-* Dùng DB đã có để tính PnL
-* Strategy engine chỉ sinh signal
-* Không đọc Excel trực tiếp nữa
+* Use existing DB to calculate PnL
+* Strategy engine only generates signals
+* No longer read Excel directly
 
 ---
 
-> *Day 02 đặt nền móng cho auditability và khả năng phân tích lại toàn bộ lịch sử giao dịch.*
+> *Day 02 establishes foundation for auditability and ability to analyze full trading history.*

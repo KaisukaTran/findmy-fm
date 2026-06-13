@@ -16,7 +16,7 @@
 
 ---
 
-## �� 1. Environment Setup (GitHub Codespaces)
+## 🧱 1. Environment Setup (GitHub Codespaces)
 
 ### 1.1 Create Repository
 

@@ -20,27 +20,21 @@ Documentation serves multiple purposes:
 ```
 docs/
 ├── README.md              # Documentation index & entry point
-├── architecture.md        # System design & data flow
-├── api.md                 # API reference & endpoints
-├── execution.md           # Execution engine details
-├── modules.md             # Module reference & code organization
-├── strategy.md            # Strategy interface & examples
-├── roadmap.md             # Project phases & timeline
-├── rules.md               # Architectural rules & constraints
-├── SOT.md                 # Source of Truth data model
-├── devlog/                # Development journal
-│   ├── day-01.md
-│   ├── day-02.md
-│   └── day-xx.md
-└── diagrams/              # Architecture diagrams
-    ├── architecture.png
-    ├── data-flow.png
-    └── module-dependencies.png
+├── REBUILD.md             # v2 architecture & what changed from v1
+├── kss.md                 # KSS Pyramid DCA strategy reference
+├── AGENTS.md              # Multi-agent scanner & auto-trading
+├── go-live.md             # Real-money execution runbook (OFF by default)
+├── telegram-setup.md      # Telegram alerts & command reference
+├── plan/                  # Plans & proposals (in-progress / proposed)
+├── devlog/                # Development journal (day-by-day)
+└── archive/               # Superseded v0.1 implementation summaries
 
 /
 ├── README.md              # Project overview & quick start
+├── CHANGELOG.md           # Release history
 ├── CONTRIBUTING.md        # How to contribute
-└── DOCUMENTATION.md       # This file (docs standards)
+├── DOCUMENTATION.md       # This file (docs standards)
+└── .env.example           # Canonical, commented configuration reference
 ```
 
 ---
@@ -77,8 +71,8 @@ docs/
 [3-5 commands]
 
 ## Next Steps
-- See [architecture.md](docs/architecture.md) for design details
-- See [api.md](docs/api.md) for API reference
+- See [REBUILD.md](docs/REBUILD.md) for design details
+- See [kss.md](docs/kss.md) for the strategy reference
 ```
 
 ### 2. Reference Documentation
@@ -253,8 +247,7 @@ def calculate_position(fills):
 **Shell**:
 ```bash
 # Good: Clear, single task
-curl -X POST http://localhost:8000/paper-execution \
-  -F "file=@orders.xlsx" | jq '.positions'
+curl http://localhost:8000/api/positions | jq '.'
 ```
 
 **JSON**:
@@ -315,16 +308,16 @@ curl -X POST http://localhost:8000/paper-execution \
 
 **Link to other docs**:
 ```markdown
-See [architecture.md](architecture.md) for system design.
+See [REBUILD.md](REBUILD.md) for system design.
 
-See [modules.md](modules.md#execution-module) for execution details.
+See [kss.md](kss.md#wave-calculations) for the wave formulas.
 ```
 
 **Link to sections**:
 ```markdown
-See [Design Principles](#design-principles) below.
+See [Wave Calculations](#wave-calculations) below.
 
-See [architecture.md#design-principles](architecture.md#design-principles).
+See [kss.md#session-lifecycle](kss.md#session-lifecycle).
 ```
 
 **Don't use**:
@@ -561,7 +554,7 @@ Before submitting doc changes:
 ## References
 
 - [Docs README](docs/README.md) – Documentation index
-- [Architecture](docs/architecture.md) – System design
+- [REBUILD.md](docs/REBUILD.md) – System design
 - [Contributing Guide](CONTRIBUTING.md) – How to contribute
 
 ---

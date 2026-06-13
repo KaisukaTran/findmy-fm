@@ -264,5 +264,15 @@ class Settings(BaseSettings):
     grok_price_out_per_mtok: float = Field(default=15.0, description="Grok output price (USD per million tokens).")
     grok_role: str = Field(default="risk", description="Grok's mandate: 'risk' (skeptical second opinion) or 'peer' (equal alpha agent).")
 
+    # --- Operating-cost tracking (trade fee + withdrawal fee + VAT + AI cost) ---
+    # Withdrawal fee = (withdrawal_fee_pct + withdrawal_fee_tolerance_pct) × amount; VAT =
+    # vat_pct × amount. Both are booked ONLY when a withdrawal is recorded. AI cost reads the
+    # metered OpusCostLedger first and falls back to these monthly estimates for empty periods.
+    withdrawal_fee_pct: float = Field(default=0.0, ge=0, description="Exchange (Binance) withdrawal fee, %% of the withdrawn amount. Operator sets the real rate.")
+    withdrawal_fee_tolerance_pct: float = Field(default=0.05, ge=0, description="Safety buffer %% added on top of withdrawal_fee_pct (dung sai).")
+    vat_pct: float = Field(default=10.0, ge=0, description="VAT %% charged on the withdrawn amount, per withdrawal.")
+    ai_monthly_claude_usd: float = Field(default=25.0, ge=0, description="Fallback estimate of Claude (Anthropic) API spend per month, used when a period has no metered cost.")
+    ai_monthly_grok_usd: float = Field(default=20.0, ge=0, description="Fallback estimate of Grok (xAI) API spend per month, used when a period has no metered cost.")
+
 
 settings = Settings()

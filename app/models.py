@@ -421,3 +421,32 @@ class MlModel(Base):
             "n_samples": self.n_samples,
             "trained_at": self.trained_at.isoformat() if self.trained_at else None,
         }
+
+
+class Withdrawal(Base):
+    """A recorded withdrawal off the exchange. The exchange fee + VAT are computed from config
+    and FROZEN at insert (a snapshot) so later rate changes never rewrite booked history.
+    These costs are booked ONLY here — i.e. only when an actual withdrawal happens."""
+
+    __tablename__ = "withdrawals"
+    __table_args__ = (Index("ix_withdrawals_created_at", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    amount: Mapped[float] = mapped_column(Float, nullable=False)  # withdrawn amount (USD)
+    fee: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # exchange fee (frozen)
+    vat: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # VAT on amount (frozen)
+    exchange: Mapped[str] = mapped_column(String(20), nullable=False, default="binance")
+    note: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "amount": self.amount,
+            "fee": self.fee,
+            "vat": self.vat,
+            "total_cost": self.fee + self.vat,
+            "exchange": self.exchange,
+            "note": self.note,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }

@@ -26,3 +26,8 @@ data/sot/*.db
 
 # Dev server logs
 *.log
+
+# Local Claude Code tooling skills (generic, not project-specific — the
+# FINDMY-FM skills under .claude/skills/ stay tracked).
+.claude/skills/context-budget/
+.claude/skills/harness-plan/

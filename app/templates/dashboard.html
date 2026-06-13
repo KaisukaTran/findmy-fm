@@ -19,6 +19,7 @@
       <button class="ghost" @click="toggleOrder">+ Lệnh</button>
       <button class="ghost" @click="toggleKss">+ Phiên KSS</button>
       <button class="ghost" @click="togglePreview">Xem trước kim tự tháp</button>
+      <span id="key-indicator" class="key-indicator" title="" data-action="clearKey"></span>
     </div>
   </header>
 
@@ -95,11 +96,11 @@
 
     <!-- TAB: Tổng quan (Overview) -->
     <div data-tab-panel="overview">
-      <div class="panel" style="margin-top:16px">
+      <div class="panel mt-16">
         <h2>Hiệu suất (Performance)</h2>
         <div hx-get="/partials/performance" hx-trigger="load, tab-shown from:closest [data-tab-panel], every 20s [tabActive(this) && document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML"></div>
       </div>
-      <div class="panel" style="margin-top:16px">
+      <div class="panel mt-16">
         <h2>Agent Scanner</h2>
         <div class="scroll" hx-get="/partials/scanner" hx-trigger="load, tab-shown from:closest [data-tab-panel], every 30s [tabActive(this) && document.visibilityState==='visible'], refresh-scanner from:body" hx-swap="innerHTML"></div>
         <div hx-get="/partials/scanner-stats" hx-trigger="load, tab-shown from:closest [data-tab-panel], every 30s [tabActive(this) && document.visibilityState==='visible'], refresh-scanner from:body" hx-swap="innerHTML"></div>
@@ -108,7 +109,7 @@
 
     <!-- TAB: Giao dịch (Trading) -->
     <div data-tab-panel="trading">
-      <div class="grid" style="margin-top:16px">
+      <div class="grid mt-16">
         <div class="panel">
           <h2>KSS Sessions</h2>
           <div class="scroll" hx-get="/partials/kss" hx-trigger="tab-shown from:closest [data-tab-panel], every 10s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body" hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
@@ -130,7 +131,7 @@
 
     <!-- TAB: OPUS orchestrator mode -->
     <div data-tab-panel="opus">
-      <div class="panel" style="margin-top:16px">
+      <div class="panel mt-16">
         <h2>OPUS orchestrator (Opus tự điều phối · paper)</h2>
         <div hx-get="/partials/opus" hx-trigger="tab-shown from:closest [data-tab-panel], every 10s [tabActive(this) && document.visibilityState==='visible'], refresh-opus from:body" hx-swap="innerHTML"></div>
       </div>
@@ -138,7 +139,7 @@
 
     <!-- TAB: Phân tích lỗ (Loss analysis — for strategy improvement) -->
     <div data-tab-panel="losses">
-      <div class="panel" style="margin-top:16px">
+      <div class="panel mt-16">
         <h2>Phân tích lỗ — nguyên nhân / thời gian / giá trị / cặp</h2>
         <div hx-get="/partials/losses" hx-trigger="tab-shown from:closest [data-tab-panel], every 30s [tabActive(this) && document.visibilityState==='visible'], refresh-losses from:body" hx-swap="innerHTML"></div>
       </div>
@@ -146,7 +147,7 @@
 
     <!-- TAB: Chiến lược (Strategy / Params) -->
     <div data-tab-panel="strategy">
-      <div class="grid" style="margin-top:16px">
+      <div class="grid mt-16">
         <div class="panel">
           <h2>Cấu hình KSS (tổng)</h2>
           <!-- load once only: a global refresh must NOT reload the form while the user is
@@ -162,7 +163,7 @@
 
     <!-- TAB: Nhật ký (Logs) — meaningful, categorised feed -->
     <div data-tab-panel="logs">
-      <div class="panel" style="margin-top:16px">
+      <div class="panel mt-16">
         <h2>Nhật ký hoạt động</h2>
         <!-- #audit-wrap is OUTSIDE the hx-swap, so the category filter (a CSS class on it)
              survives the 15s poll. -->
@@ -174,7 +175,7 @@
             <button class="sm ghost" data-action="auditFilter" data-id="opus">🤖 OPUS</button>
             <button class="sm ghost" data-action="auditFilter" data-id="system">⚙️ Hệ thống</button>
             <button class="sm ghost" data-action="auditFilter" data-id="all">Tất cả</button>
-            <span id="audit-sym-filter" style="display:none">· coin: <b id="audit-sym-label"></b>
+            <span id="audit-sym-filter" class="hidden">· coin: <b id="audit-sym-label"></b>
               <button class="sm ghost" data-action="auditClearSymbol">✕ bỏ lọc</button></span>
           </div>
           <div class="scroll" hx-get="/partials/audit" hx-trigger="tab-shown from:closest [data-tab-panel], every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-audit from:body" hx-swap="innerHTML"></div>
@@ -184,9 +185,9 @@
   </main>
 
   <!-- Click-to-view price ladder modal (plain JS — works on HTMX-swapped rows) -->
-  <div id="ladder-modal" class="overlay" style="display:none" role="dialog" aria-modal="true">
+  <div id="ladder-modal" class="overlay hidden" role="dialog" aria-modal="true">
     <div class="overlay-box">
-      <button class="sm ghost" data-action="closeLadder" style="float:right" aria-label="Đóng">✕</button>
+      <button class="sm ghost float-right" data-action="closeLadder" aria-label="Đóng">✕</button>
       <div id="ladder-body"></div>
     </div>
   </div>

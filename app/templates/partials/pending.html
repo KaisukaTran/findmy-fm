@@ -1,6 +1,6 @@
-<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+<div class="flex-spaced mb-8">
   <span class="muted" title="Quy tắc tự duyệt: chỉ duyệt lệnh từ các nguồn này có notional (KL×giá) ≤ ngưỡng. Notional lớn hơn vẫn phải người duyệt.">auto-approve:</span> <span class="muted">{{ aa_sources }} ≤ $<input id="aa-max-input" type="number" min="1" step="1"
-      value="{{ '%.2f' | format(aa_max) }}" style="width:5.5em" title="Ngưỡng notional tối đa (USD) để tự duyệt. Sửa số rồi bấm Set.">
+      value="{{ '%.2f' | format(aa_max) }}" class="w-5em" title="Ngưỡng notional tối đa (USD) để tự duyệt. Sửa số rồi bấm Set.">
     <button class="sm ghost" data-action="setAutoApproveMax">Set</button>
     <b>[{{ 'ON' if aa_enabled else 'OFF' }}]</b></span>
   <span class="row-actions">
@@ -34,11 +34,11 @@
       <td class="muted">{{ o.source }}{% if o.risk_note %} ⚠{% endif %}{% if o.get('auto_veto') %} <span class="badge veto" title="{{ o.get('auto_veto_reason') or '' }}">VETOED</span>{% endif %}</td>
       <td>
         {%- if not o.auto -%}
-          <span class="badge" style="border-color:#f0883e;color:#f0883e" title="${{ o.notional | money }} > ngưỡng — cần duyệt tay">TAY</span>
+          <span class="badge badge-manual" title="${{ o.notional | money }} > ngưỡng — cần duyệt tay">TAY</span>
         {%- elif o.due -%}
           <span class="badge active" title="≤ ngưỡng và đã tới giá — tự duyệt chu kỳ tới">AUTO ✓</span>
         {%- else -%}
-          <span class="badge" style="border-color:#2f81f7;color:#2f81f7" title="≤ ngưỡng nhưng đang chờ giá tới limit (lệnh DCA mua đáy)">AUTO ⏳</span>
+          <span class="badge badge-auto-pending" title="≤ ngưỡng nhưng đang chờ giá tới limit (lệnh DCA mua đáy)">AUTO ⏳</span>
         {%- endif -%}
       </td>
       <td class="row-actions">

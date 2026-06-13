@@ -1,4 +1,4 @@
-<p class="muted" style="margin:0 0 10px">Cấu hình tổng cho chiến lược KSS — áp dụng cho các session <b>mới</b>.
+<p class="muted mb-10-0">Cấu hình tổng cho chiến lược KSS — áp dụng cho các session <b>mới</b>.
   Lưu bền qua restart. (Session đang chạy giữ tham số cũ, trừ SL/Trailing đọc động.)</p>
 
 <form id="kss-settings-form">
@@ -33,8 +33,8 @@
   <button type="submit" class="ok">Lưu cấu hình KSS</button>
 </form>
 
-<div id="consensus-weights-panel" style="margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)">
-  <div class="muted" style="font-size:12px;margin-bottom:8px">Trọng số đồng thuận agent thị trường (S4) — backtest luôn = 0, chứng cứ backtest thuộc gate cứng.</div>
+<div id="consensus-weights-panel" class="settings-subpanel">
+  <div class="muted fs-12 mb-8">Trọng số đồng thuận agent thị trường (S4) — backtest luôn = 0, chứng cứ backtest thuộc gate cứng.</div>
   <form id="consensus-weights-form">
     <label title="Agent xu hướng giá.">Trend
       <input name="trend" type="number" step="0.01" min="0" max="1" value="{{ '%.2f'|format(cw.trend) }}" required></label>
@@ -50,46 +50,46 @@
   </form>
 </div>
 
-<div style="margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)">
-  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-    <span class="muted" style="font-size:12px">Cổng Grok cho scanner</span>
+<div class="settings-subpanel">
+  <div class="flex-spaced">
+    <span class="muted fs-12">Cổng Grok cho scanner</span>
     <span class="row-actions">
       <span class="badge {{ 'guardian-on' if gs.active else 'full-auto-off' }}" title="Grok (xAI) duyệt lần cuối các coin đã qua mọi gate quyết định: endorse (mở) / veto (bỏ) kèm lý do. 1 call/scan. Cần xai_api_key.">GROK SCANNER {{ 'ON' if gs.active else ('ENABLED (thiếu key)' if gs.enabled else 'OFF') }}</span>
       <button class="sm {{ 'danger' if gs.enabled else 'ok' }}" data-action="toggleGrokScanner" data-id="{{ 'off' if gs.enabled else 'on' }}">{{ 'Tắt' if gs.enabled else 'Bật' }} Grok scanner</button>
     </span>
   </div>
-  <div class="muted" style="font-size:12px;margin-top:6px">Khi bật, Grok cho lý do cụ thể vì sao chọn/bỏ từng coin (xem panel scanner & Nhật ký). Lỗi API → bỏ qua, dùng quyết định deterministic (không chặn lệnh).</div>
-  <div style="margin-top:8px">
+  <div class="muted fs-12 mt-6">Khi bật, Grok cho lý do cụ thể vì sao chọn/bỏ từng coin (xem panel scanner & Nhật ký). Lỗi API → bỏ qua, dùng quyết định deterministic (không chặn lệnh).</div>
+  <div class="mt-8">
     <form id="grok-fail-mode-form">
       <label title="open (mặc định): lỗi/timeout Grok → coin vẫn mở (fail-open, ưu tiên sẵn sàng). closed: coin KHÔNG có verdict rõ ràng từ Grok sẽ bị bỏ qua lần quét này (ưu tiên bảo toàn vốn khi full-auto). Batch cap (top 8) cũng áp dụng: coin bị loại vì vượt cap thì: open → vẫn mở; closed → bị chặn.">Chế độ lỗi Grok
-        <select name="grok_scanner_fail_mode" style="padding:2px 6px;border-radius:4px;border:1px solid var(--line)">
+        <select name="grok_scanner_fail_mode" class="select-inline">
           <option value="open" {% if k.grok_scanner_fail_mode == 'open' %}selected{% endif %}>open (fail-open)</option>
           <option value="closed" {% if k.grok_scanner_fail_mode == 'closed' %}selected{% endif %}>closed (bảo toàn vốn)</option>
         </select>
       </label>
-      <button type="submit" class="sm ok" style="margin-top:4px">Lưu</button>
+      <button type="submit" class="sm ok mt-4">Lưu</button>
     </form>
   </div>
 </div>
 
-<div style="margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)">
-  <span class="muted" style="font-size:12px">Bằng chứng TA cho cổng Grok</span>
-  <div class="muted" style="font-size:12px;margin-top:4px">Chỉ báo pure-Python (RSI, MACD, ADX, ATR, Bollinger, Supertrend, hỗ trợ/kháng cự, HTF) <b>luôn bật</b> và được đính kèm cho từng coin trước khi Grok duyệt. Hai overlay dưới là tùy chọn, lỗi → tự lùi về pure-Python.</div>
-  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px">
+<div class="settings-subpanel">
+  <span class="muted fs-12">Bằng chứng TA cho cổng Grok</span>
+  <div class="muted fs-12 mt-4">Chỉ báo pure-Python (RSI, MACD, ADX, ATR, Bollinger, Supertrend, hỗ trợ/kháng cự, HTF) <b>luôn bật</b> và được đính kèm cho từng coin trước khi Grok duyệt. Hai overlay dưới là tùy chọn, lỗi → tự lùi về pure-Python.</div>
+  <div class="flex-spaced mt-8">
     <span class="badge {{ 'guardian-on' if ta.lib else 'full-auto-off' }}" title="Tier 2: tính lại vài chỉ báo bằng pandas-ta cho chính xác hơn. Cần `pip install pandas-ta`.">pandas-ta {{ 'ON' if ta.lib else 'OFF' }}</span>
     <button class="sm {{ 'danger' if ta.lib else 'ok' }}" data-action="toggleTaLib" data-id="{{ 'off' if ta.lib else 'on' }}">{{ 'Tắt' if ta.lib else 'Bật' }} pandas-ta</button>
   </div>
-  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px">
+  <div class="flex-spaced mt-6">
     <span class="badge {{ 'guardian-on' if ta.external_active else 'full-auto-off' }}" title="Tier 3: trộn tín hiệu TA từ taapi.io (qua mạng). STUB cho tới khi nối provider; cần TAAPI_API_KEY.">TA ngoài {{ 'ON' if ta.external_active else ('ENABLED (thiếu key)' if ta.external else 'OFF') }}</span>
     <button class="sm {{ 'danger' if ta.external else 'ok' }}" data-action="toggleTaExternal" data-id="{{ 'off' if ta.external else 'on' }}">{{ 'Tắt' if ta.external else 'Bật' }} TA ngoài</button>
   </div>
 </div>
 
-<div style="margin-top:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)">
-  <div class="muted" style="font-size:12px">Kiểm tra tính nhất quán:</div>
-  <div style="margin-top:4px">Thang DCA chạm tới <b>−{{ '%.1f'|format(depth_pct) }}%</b> so với giá vào (sóng cuối =
+<div class="settings-subpanel">
+  <div class="muted fs-12">Kiểm tra tính nhất quán:</div>
+  <div class="mt-4">Thang DCA chạm tới <b>−{{ '%.1f'|format(depth_pct) }}%</b> so với giá vào (sóng cuối =
     entry×(1−{{ '%.1f'|format(k.scan_distance_pct) }}%)^{{ k.scan_max_waves }}).</div>
-  <div style="margin-top:2px">SL hiện <b>{{ '%.1f'|format(k.sl_pct) }}%</b> (so với avg).
+  <div class="mt-2">SL hiện <b>{{ '%.1f'|format(k.sl_pct) }}%</b> (so với avg).
     {% if k.sl_pct > 0 and k.sl_pct < depth_pct * 0.6 %}
     <span class="neg">⚠ SL khá nông so với độ sâu thang — nhiều sóng sâu có thể bị SL cắt trước khi kịp khớp. Cân nhắc tăng SL, giảm số sóng, hoặc giảm distance.</span>
     {% else %}

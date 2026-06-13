@@ -4,15 +4,15 @@
   <tbody>
     {% for r in rows %}
     <tr class="audit-row cat-{{ r.category }} sev-{{ r.severity }}" data-symbol="{{ r.symbol }}">
-      <td class="muted" style="white-space:nowrap">{{ r.time }}</td>
-      <td style="width:1%">{{ r.icon }}</td>
+      <td class="muted td-nowrap">{{ r.time }}</td>
+      <td class="td-shrink">{{ r.icon }}</td>
       <td class="{{ sev.get(r.severity,'') }}" title="{{ r.actor }} · {{ r.action }} | {{ r.detail }}">{{ r.message }}</td>
-      <td style="width:1%">
+      <td class="td-shrink">
         {% if r.symbol %}<button class="sm ghost audit-sym" data-action="auditFilterSymbol" data-id="{{ r.symbol }}" title="Chỉ xem sự kiện của {{ r.symbol }}">{{ r.symbol }}</button>{% endif %}
       </td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
-<p class="muted" style="font-size:11px;margin-top:6px">Hiện {{ rows|length }} sự kiện gần nhất. Di chuột vào dòng để xem chi tiết thô.</p>
+<p class="muted fs-11 mt-6">Hiện {{ rows|length }} sự kiện gần nhất. Di chuột vào dòng để xem chi tiết thô.</p>
 {% else %}<p class="muted">Chưa có hoạt động nào.</p>{% endif %}

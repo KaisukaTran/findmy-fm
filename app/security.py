@@ -27,7 +27,7 @@ from app.config import settings
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
 
-_CSP = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'"
+_CSP = "default-src 'self'; img-src 'self' data:; style-src 'self'"
 _HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",

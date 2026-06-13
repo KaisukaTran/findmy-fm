@@ -1,20 +1,20 @@
 {% if o %}
-<h3 style="margin:0 0 4px">{{ o.symbol }} <span class="badge {{ o.status }}">{{ o.status }}</span>
-  <span class="muted" style="font-size:12px">· sóng {{ o.filled_waves_count }}/{{ o.max_waves }} · uP&L
+<h3 class="ladder-title">{{ o.symbol }} <span class="badge {{ o.status }}">{{ o.status }}</span>
+  <span class="muted fs-12">· sóng {{ o.filled_waves_count }}/{{ o.max_waves }} · uP&L
     <span class="{{ 'pos' if o.unrealized_pnl >= 0 else 'neg' }}">${{ o.unrealized_pnl | money }}</span></span>
 </h3>
 {{ ladder_svg | safe }}
-<table class="tbl" style="margin-top:8px">
+<table class="tbl mt-8">
   <tbody>
-    <tr><td><span class="badge" style="border-color:#d29922;color:#d29922">●</span> Giá mua TB</td>
+    <tr><td><span class="badge badge-avg-price">●</span> Giá mua TB</td>
         <td title="Giá vốn trung bình = tổng chi phí ÷ KL đã khớp.">{{ "%.6g"|format(o.avg_price or o.entry_price or 0) }}</td></tr>
-    <tr><td><span class="badge" style="border-color:#2f81f7;color:#2f81f7">●</span> Giá hiện tại</td>
+    <tr><td><span class="badge badge-current-price">●</span> Giá hiện tại</td>
         <td>{{ "%.6g"|format(o.current_price or 0) }}</td></tr>
-    <tr><td><span class="badge" style="border-color:#f0883e;color:#f0883e">●</span> Sóng kế tiếp (DCA)</td>
+    <tr><td><span class="badge badge-next-wave">●</span> Sóng kế tiếp (DCA)</td>
         <td title="Giá mua của sóng tiếp theo — chờ giá giảm tới đây mới khớp.">{{ ("%.6g"|format(o.next_wave_price)) if o.next_wave_price else "—" }}</td></tr>
-    <tr><td><span class="badge" style="border-color:#2ea043;color:#2ea043">●</span> Chốt lời (TP)</td>
+    <tr><td><span class="badge badge-tp">●</span> Chốt lời (TP)</td>
         <td title="TP = avg × (1 + TP%/100). Đạt giá này sẽ bán toàn bộ.">{{ ("%.6g"|format(o.estimated_tp_price)) if o.estimated_tp_price else "—" }}</td></tr>
-    <tr><td><span class="badge" style="border-color:#e5534b;color:#e5534b">●</span> Cắt lỗ (SL)</td>
+    <tr><td><span class="badge badge-sl">●</span> Cắt lỗ (SL)</td>
         <td title="SL = avg × (1 − SL%/100). Giá ≤ đây sẽ bán cắt lỗ.">{{ ("%.6g"|format(o.sl_price)) if o.sl_price else "—" }}</td></tr>
   </tbody>
 </table>

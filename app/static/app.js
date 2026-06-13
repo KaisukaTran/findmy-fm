@@ -11,6 +11,11 @@ function esc(s) {
   return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+// --- U2: API key management (sessionStorage, not localStorage) ----------
+// Initialise from sessionStorage on load so a page refresh within the same
+// browser session does not re-prompt.
+window.API_KEY = sessionStorage.getItem("api_key") || "";
+
 // --- Toast notifications (P3) -------------------------------------------
 // Container is injected once from JS — CSP-safe, no inline style or script.
 // Usage: toast(msg, 'info'|'success'|'error')  auto-dismisses after 4 s.
@@ -77,18 +82,55 @@ function apiHeaders() {
   return h;
 }
 
+// U2: On the first 401, prompt once for the API key, store in sessionStorage,
+// and retry the failed call once.  Subsequent 401s (wrong key) surface as errors.
+let _promptingKey = false;
+
 async function api(method, url, body) {
-  const res = await fetch(url, {
+  const doFetch = () => fetch(url, {
     method,
     headers: apiHeaders(),
     body: body ? JSON.stringify(body) : undefined,
   });
+
+  let res = await doFetch();
+
+  if (res.status === 401 && !_promptingKey) {
+    _promptingKey = true;
+    const entered = window.prompt("Nhập API key để tiếp tục:", "") ?? "";
+    if (entered) {
+      window.API_KEY = entered;
+      sessionStorage.setItem("api_key", entered);
+      _updateKeyIndicator();
+      res = await doFetch();  // single retry with new key
+    }
+    // Reset only after the retry resolves so the re-entrancy guard covers the
+    // full prompt+retry duration (security review: avoid a premature re-prompt).
+    _promptingKey = false;
+  }
+
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
     toast("Lỗi: " + (detail.detail || res.status), "error");
     throw new Error(res.status);
   }
   return res.json();
+}
+
+// U2: Update the key indicator in the header (re-rendered on every status poll,
+// so we call this whenever the key changes to keep it in sync immediately).
+function _updateKeyIndicator() {
+  const ind = document.getElementById("key-indicator");
+  if (!ind) return;
+  if (window.API_KEY) {
+    ind.textContent = "🔑";
+    ind.title = "API key đã nạp — bấm để đăng xuất khóa";
+    ind.classList.add("key-loaded");
+  } else {
+    ind.textContent = "";
+    ind.title = "";
+    ind.classList.remove("key-loaded");
+  }
 }
 
 // --- Scoped refresh helpers (P2) ----------------------------------------
@@ -123,6 +165,9 @@ function applyAuditSymbol() {
   });
 }
 document.addEventListener("DOMContentLoaded", () => {
+  // U2: sync key indicator on load.
+  _updateKeyIndicator();
+
   document.body.addEventListener("htmx:afterSwap", applyAuditSymbol);
 
   // P3: connection chip — htmx request lifecycle.
@@ -141,14 +186,15 @@ document.addEventListener("DOMContentLoaded", () => {
     closeModal("previewOpen");
     // Also close the plain JS ladder modal.
     const m = document.getElementById("ladder-modal");
-    if (m && m.style.display !== "none") m.style.display = "none";
+    if (m && !m.classList.contains("hidden")) m.classList.add("hidden");
   });
 });
 
 async function openLadder(url) {
   const res = await fetch(url, { headers: apiHeaders() });
   document.getElementById("ladder-body").innerHTML = await res.text();
-  document.getElementById("ladder-modal").style.display = "flex";
+  const m = document.getElementById("ladder-modal");
+  m.classList.remove("hidden");
 }
 
 // --- mutation handlers (event delegation) -------------------------------
@@ -300,7 +346,7 @@ const actions = {
     await openLadder(`/partials/ladder?symbol=${encodeURIComponent(sym)}`);
   },
   closeLadder() {
-    document.getElementById("ladder-modal").style.display = "none";
+    document.getElementById("ladder-modal").classList.add("hidden");
   },
   auditFilter(mode) {
     const w = document.getElementById("audit-wrap");
@@ -312,14 +358,20 @@ const actions = {
   auditFilterSymbol(sym) {
     window._auditSym = sym || "";
     const f = document.getElementById("audit-sym-filter");
-    if (f) { f.style.display = ""; document.getElementById("audit-sym-label").textContent = sym; }
+    if (f) { f.classList.remove("hidden"); document.getElementById("audit-sym-label").textContent = sym; }
     applyAuditSymbol();
   },
   auditClearSymbol() {
     window._auditSym = "";
     const f = document.getElementById("audit-sym-filter");
-    if (f) f.style.display = "none";
+    if (f) f.classList.add("hidden");
     applyAuditSymbol();
+  },
+  clearKey() {
+    window.API_KEY = "";
+    sessionStorage.removeItem("api_key");
+    _updateKeyIndicator();
+    location.reload();
   },
   async resetBreaker() {
     if (!confirm("Khôi phục breaker thủ công? Hệ thống sẽ tiếp tục giao dịch.")) return;
@@ -455,7 +507,7 @@ document.addEventListener("DOMContentLoaded", () => {
 // Close the ladder modal when clicking the dark backdrop (outside the box).
 document.addEventListener("click", (e) => {
   const m = document.getElementById("ladder-modal");
-  if (m && e.target === m) m.style.display = "none";
+  if (m && e.target === m) m.classList.add("hidden");
 });
 
 // --- forms --------------------------------------------------------------

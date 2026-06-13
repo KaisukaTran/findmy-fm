@@ -1,4 +1,4 @@
-<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+<div class="flex-spaced mb-10">
   <span class="statusbar-opus">
     <span class="badge {{ 'full-auto-on' if o.mode else 'full-auto-off' }}">OPUS {{ 'ON' if o.mode else 'OFF' }}</span>
     <button class="sm {{ 'danger' if o.mode else 'ok' }}" data-action="toggleOpus" data-id="{{ 'off' if o.mode else 'on' }}">{{ 'Tắt' if o.mode else 'Bật' }}</button>
@@ -14,7 +14,7 @@
 <div class="cards">
   <div class="card"><div class="label" data-tip="Vốn cấp riêng cho OPUS. Đây là mẫu số của KPI 1%/24h. Tách rời khỏi vốn full-auto thường.">Vốn cấp</div><div class="value">${{ o.allocation_usd | money }}</div></div>
   <div class="card"><div class="label" data-tip="Tổng lãi/lỗ OPUS = đã chốt + tạm tính − chi phí Opus hôm nay (×2). %% so với vốn cấp.">Lãi/Lỗ OPUS</div>
-    <div class="value {{ 'pos' if o.total_pnl >= 0 else 'neg' }}">${{ o.total_pnl | money }} <span style="font-size:12px">({{ "%+.2f"|format(o.pnl_pct) }}%)</span></div></div>
+    <div class="value {{ 'pos' if o.total_pnl >= 0 else 'neg' }}">${{ o.total_pnl | money }} <span class="fs-12">({{ "%+.2f"|format(o.pnl_pct) }}%)</span></div></div>
   <div class="card"><div class="label" data-tip="Vốn đang nằm trong các vị thế OPUS đang mở = Σ (KL × giá vốn).">Đang đầu tư</div><div class="value">${{ o.deployed_usd | money }}</div></div>
   <div class="card"><div class="label" data-tip="Vốn OPUS còn trống = vốn cấp − đang đầu tư.">Khả dụng</div><div class="value">${{ o.free_usd | money }}</div></div>
   <div class="card"><div class="label" data-tip="Số vị thế Opus đang quản lý (watch/ride).">Vị thế</div><div class="value">{{ o.open_positions }}</div></div>
@@ -24,17 +24,17 @@
     <div class="value {{ 'pos' if o.kpi_24h_pct >= o.kpi_target_pct else ('neg' if o.kpi_24h_pct < 0 else '') }}">{{ "%.2f"|format(o.kpi_24h_pct) }}% / {{ "%.1f"|format(o.kpi_target_pct) }}%</div></div>
 </div>
 
-<div style="margin-top:14px">
-  <div class="muted" style="margin-bottom:4px" title="Lợi nhuận ròng mỗi giờ chạy auto = lãi thực hiện − 2×chi phí Opus trong giờ đó.">Net P/L mỗi giờ (ròng)</div>
+<div class="mt-14">
+  <div class="muted mb-4" title="Lợi nhuận ròng mỗi giờ chạy auto = lãi thực hiện − 2×chi phí Opus trong giờ đó.">Net P/L mỗi giờ (ròng)</div>
   {{ pnl_svg | safe }}
 </div>
-<div style="margin-top:10px">
-  <div class="muted" style="margin-bottom:4px" title="Lũy kế lợi nhuận ròng so với đường mục tiêu tuyến tính (allocation × 1% / 24h mỗi giờ).">Lũy kế net vs mục tiêu 1%/24h</div>
+<div class="mt-10">
+  <div class="muted mb-4" title="Lũy kế lợi nhuận ròng so với đường mục tiêu tuyến tính (allocation × 1% / 24h mỗi giờ).">Lũy kế net vs mục tiêu 1%/24h</div>
   {{ cum_svg | safe }}
 </div>
 
 {% if o.mode and o.open_positions == 0 %}
-<p class="muted" style="margin-top:10px">OPUS đang bật, chưa có vị thế. Chu kỳ quyết định sẽ được kích hoạt ở pha sau (O-3).</p>
+<p class="muted mt-10">OPUS đang bật, chưa có vị thế. Chu kỳ quyết định sẽ được kích hoạt ở pha sau (O-3).</p>
 {% elif not o.mode %}
-<p class="muted" style="margin-top:10px">OPUS đang tắt. Bấm Enable để bật chế độ điều phối nâng cao (paper).</p>
+<p class="muted mt-10">OPUS đang tắt. Bấm Enable để bật chế độ điều phối nâng cao (paper).</p>
 {% endif %}

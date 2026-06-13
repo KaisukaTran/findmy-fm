@@ -202,3 +202,88 @@ button { white-space: nowrap; }
   margin-bottom: 8px;
 }
 .modal-header h2 { margin: 0; }
+
+/* --- P4: U13 inline-style sweep utility classes ----------------------- */
+/* hidden: replaces style="display:none" on the ladder overlay (.overlay has
+   display:flex so we need !important here) and audit-sym-filter span. */
+.hidden { display: none !important; }
+.float-right { float: right; }
+
+/* spacing utilities — exact values from swept attributes */
+.mt-2  { margin-top: 2px; }
+.mt-4  { margin-top: 4px; }
+.mt-6  { margin-top: 6px; }
+.mt-8  { margin-top: 8px; }
+.mt-10 { margin-top: 10px; }
+.mt-12 { margin-top: 12px; }
+.mt-14 { margin-top: 14px; }
+.mt-16 { margin-top: 16px; }
+.mb-4  { margin-bottom: 4px; }
+.mb-6  { margin-bottom: 6px; }
+.mb-8  { margin-bottom: 8px; }
+.mb-10 { margin-bottom: 10px; }
+.mb-12 { margin-bottom: 12px; }
+.mb-14 { margin-bottom: 14px; }
+/* margin shorthand for the kss-settings intro paragraph */
+.mb-10-0 { margin: 0 0 10px; }
+
+/* font-size utilities — exact values from swept attributes */
+.fs-11 { font-size: 11px; }
+.fs-12 { font-size: 12px; }
+.fs-13 { font-size: 13px; }
+.fs-15 { font-size: 15px; }
+
+/* layout helpers */
+.flex-spaced {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 8px; flex-wrap: wrap;
+}
+
+/* --- kss_settings subpanels (replaces repeated inline panel style) ---- */
+.settings-subpanel {
+  margin-top: 12px; padding: 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg);
+}
+
+/* inline select inside a label (grok fail-mode) */
+.select-inline { padding: 2px 6px; border-radius: 4px; border: 1px solid var(--line); width: auto; }
+
+/* width override for aa-max notional input */
+.w-5em { width: 5.5em; }
+
+/* --- ladder.html title / table margin --------------------------------- */
+.ladder-title { margin: 0 0 4px; }
+
+/* --- losses / audit section subheadings ------------------------------- */
+.section-subhead { margin: 6px 0 4px; font-size: 13px; color: var(--muted); }
+
+/* --- audit table column constraints ----------------------------------- */
+.td-nowrap { white-space: nowrap; }
+.td-shrink { width: 1%; }
+
+/* --- ladder price-level color badges ---------------------------------- */
+/* avg price — amber */
+.badge-avg-price    { border-color: #d29922; color: #d29922; }
+/* current price — blue */
+.badge-current-price { border-color: #2f81f7; color: #2f81f7; }
+/* next DCA wave — orange */
+.badge-next-wave    { border-color: #f0883e; color: #f0883e; }
+/* take-profit — green */
+.badge-tp           { border-color: #2ea043; color: #2ea043; }
+/* stop-loss — red */
+.badge-sl           { border-color: #e5534b; color: #e5534b; }
+
+/* --- pending.html auto-approve status badges -------------------------- */
+/* manual (TAY) — orange; same color as badge-next-wave intentionally */
+.badge-manual       { border-color: #f0883e; color: #f0883e; }
+/* auto-pending (waiting for price) — blue */
+.badge-auto-pending { border-color: #2f81f7; color: #2f81f7; }
+
+/* --- U2: API key indicator in the header ------------------------------ */
+.key-indicator {
+  display: inline-block; cursor: pointer; font-size: 14px;
+  padding: 2px 4px; border-radius: 4px; line-height: 1;
+  color: var(--muted); transition: color .2s;
+}
+.key-indicator.key-loaded { color: var(--fg); }
+.key-indicator:empty { display: none; }

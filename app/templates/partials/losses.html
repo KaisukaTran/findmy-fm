@@ -1,17 +1,17 @@
 {% set cause_badge = {'OPUS':'ml-on','KSS-SL':'veto','KSS-Trail':'hyperopt-on','KSS-TP?':'breaker-frozen','Khác':''} %}
-<div class="cards" style="margin-bottom:12px">
+<div class="cards mb-12">
   <div class="card"><div class="label" data-tip="Tổng lỗ đã chốt từ mọi lệnh bán có realized < 0.">Tổng lỗ đã chốt</div>
     <div class="value neg">${{ L.total | money }}</div></div>
   <div class="card"><div class="label" data-tip="Số lệnh bán bị lỗ.">Số lệnh lỗ</div><div class="value">{{ L.count }}</div></div>
   {% for tag, c in L.by_cause.items() %}
   <div class="card"><div class="label"><span class="badge {{ cause_badge.get(tag,'') }}">{{ tag }}</span></div>
-    <div class="value neg" style="font-size:15px">${{ c.total | money }} <span class="muted" style="font-size:12px">· {{ c.count }} lệnh</span></div></div>
+    <div class="value neg fs-15">${{ c.total | money }} <span class="muted fs-12">· {{ c.count }} lệnh</span></div></div>
   {% endfor %}
 </div>
 
 {% if L.by_pair %}
-<h3 style="margin:6px 0 4px;font-size:13px;color:var(--muted)">Cặp lỗ nhiều nhất</h3>
-<div class="scroll" style="margin-bottom:14px"><table class="tbl">
+<h3 class="section-subhead">Cặp lỗ nhiều nhất</h3>
+<div class="scroll mb-14"><table class="tbl">
   <thead><tr><th>Cặp</th><th>Số lệnh lỗ</th><th>Tổng lỗ</th></tr></thead>
   <tbody>
     {% for sym, p in L.by_pair %}
@@ -21,7 +21,7 @@
 </table></div>
 {% endif %}
 
-<h3 style="margin:6px 0 4px;font-size:13px;color:var(--muted)">Nhật ký từng lệnh lỗ</h3>
+<h3 class="section-subhead">Nhật ký từng lệnh lỗ</h3>
 {% if L.rows %}
 <div class="scroll"><table class="tbl">
   <thead><tr>

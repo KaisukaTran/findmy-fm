@@ -663,21 +663,22 @@ def partial_summary(request: Request, db: Session = Depends(get_db)):
 
 @ui_router.get("/partials/positions", response_class=HTMLResponse)
 def partial_positions(request: Request, db: Session = Depends(get_db)):
+    # Trading tab cards show at most 20 rows each.
     return templates.TemplateResponse(
-        "partials/positions.html", {"request": request, "rows": portfolio.positions_view(db)}
+        "partials/positions.html", {"request": request, "rows": portfolio.positions_view(db)[:20]}
     )
 
 
 @ui_router.get("/partials/trades", response_class=HTMLResponse)
 def partial_trades(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
-        "partials/trades.html", {"request": request, "rows": portfolio.trades_view(db)}
+        "partials/trades.html", {"request": request, "rows": portfolio.trades_view(db, limit=20)}
     )
 
 
 @ui_router.get("/partials/pending", response_class=HTMLResponse)
 def partial_pending(request: Request, db: Session = Depends(get_db)):
-    pend = orders.list_pending(db)
+    pend = orders.list_pending(db, limit=20)
     prices = portfolio.get_current_prices(list({o.symbol for o in pend})) if pend else {}
     rows = []
     for o in pend:
@@ -847,7 +848,7 @@ def partial_kss(request: Request, db: Session = Depends(get_db)):
         "partials/kss.html",
         {
             "request": request,
-            "sessions": kss_service.list_sessions(db),
+            "sessions": kss_service.list_sessions(db, limit=20),
             "summary": kss_service.summary(db),
         },
     )

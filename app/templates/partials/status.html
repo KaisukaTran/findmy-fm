@@ -1,4 +1,3 @@
-{% set live = a.auto_trade or a.scheduler_running %}
 <span id="conn-chip" class="conn-chip conn-live" aria-label="Trạng thái kết nối"></span>
 <span class="statusbar" x-data="{ autoOpen: false }">
 
@@ -7,7 +6,6 @@
   <span class="auto-mobile-wrap">
     <button class="sm ghost" @click="autoOpen = !autoOpen" :aria-expanded="autoOpen.toString()">Automation ▾</button>
     <span class="auto-popover" x-show="autoOpen" x-cloak>
-      <span class="dot {{ 'on' if live else '' }}"></span>
       <span class="{{ 'pos' if a.auto_trade else 'muted' }}">Auto-trade {{ 'ON' if a.auto_trade else 'OFF' }}</span>
       <span class="statusbar-full-auto">
         <span class="badge {{ 'full-auto-on' if a.full_auto else 'full-auto-off' }}">FULL-AUTO {{ 'ON' if a.full_auto else 'OFF' }}</span>
@@ -34,20 +32,11 @@
         <button class="sm {{ 'danger' if a.telegram else 'ok' }}" data-action="toggleTelegram" data-id="{{ 'off' if a.telegram else 'on' }}">{{ 'Tắt' if a.telegram else 'Bật' }}</button>
         <button class="sm ghost" data-action="telegramTest">Thử</button>
       </span>
-      <span class="statusbar-hyperopt">
-        <span class="badge {{ 'hyperopt-on' if a.hyperopt else 'hyperopt-off' }}">HYPEROPT {{ 'ON' if a.hyperopt else 'OFF' }}</span>
-        <button class="sm {{ 'danger' if a.hyperopt else 'ok' }}" data-action="toggleHyperopt" data-id="{{ 'off' if a.hyperopt else 'on' }}">{{ 'Tắt' if a.hyperopt else 'Bật' }}</button>
-      </span>
-      <span class="statusbar-ml">
-        <span class="badge {{ 'ml-on' if a.ml else 'ml-off' }}">ML {{ 'ON' if a.ml else 'OFF' }}</span>
-        <button class="sm {{ 'danger' if a.ml else 'ok' }}" data-action="toggleMl" data-id="{{ 'off' if a.ml else 'on' }}">{{ 'Tắt' if a.ml else 'Bật' }}</button>
-      </span>
     </span>
   </span>
 
   {# ── Desktop inline strip (.auto-inline): hidden <600px via CSS media query ── #}
   <span class="auto-inline">
-    <span class="dot {{ 'on' if live else '' }}"></span>
     <span class="{{ 'pos' if a.auto_trade else 'muted' }}">Auto-trade {{ 'ON' if a.auto_trade else 'OFF' }}</span>
     <span class="sep">·</span>
     <span class="{{ 'pos' if a.scheduler_running else 'muted' }}">Scheduler {{ ('ON ('~a.interval_min~'m)') if a.scheduler_running else 'OFF' }}</span>
@@ -80,16 +69,6 @@
       <span class="badge {{ 'telegram-on' if a.telegram else 'telegram-off' }}">TELEGRAM {{ 'ON' if a.telegram else 'OFF' }}</span>
       <button class="sm {{ 'danger' if a.telegram else 'ok' }}" data-action="toggleTelegram" data-id="{{ 'off' if a.telegram else 'on' }}">{{ 'Tắt' if a.telegram else 'Bật' }}</button>
       <button class="sm ghost" data-action="telegramTest">Thử</button>
-    </span>
-    <span class="sep">·</span>
-    <span class="statusbar-hyperopt">
-      <span class="badge {{ 'hyperopt-on' if a.hyperopt else 'hyperopt-off' }}">HYPEROPT {{ 'ON' if a.hyperopt else 'OFF' }}</span>
-      <button class="sm {{ 'danger' if a.hyperopt else 'ok' }}" data-action="toggleHyperopt" data-id="{{ 'off' if a.hyperopt else 'on' }}">{{ 'Tắt' if a.hyperopt else 'Bật' }}</button>
-    </span>
-    <span class="sep">·</span>
-    <span class="statusbar-ml">
-      <span class="badge {{ 'ml-on' if a.ml else 'ml-off' }}">ML {{ 'ON' if a.ml else 'OFF' }}</span>
-      <button class="sm {{ 'danger' if a.ml else 'ok' }}" data-action="toggleMl" data-id="{{ 'off' if a.ml else 'on' }}">{{ 'Tắt' if a.ml else 'Bật' }}</button>
     </span>
   </span>
 

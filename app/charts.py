@@ -51,6 +51,16 @@ def _time_label(iso: str) -> str:
     return dt.strftime("%H:%M") if "T" in iso else dt.strftime("%m-%d")
 
 
+def _date_time_label(iso: str) -> str:
+    """ISO timestamp -> 'MM-DD HH:MM' axis label in the display zone (date + time)."""
+    from app.timefmt import to_local
+
+    dt = to_local(iso)
+    if dt is None:
+        return (iso or "")[:10]
+    return dt.strftime("%m-%d %H:%M") if "T" in iso else dt.strftime("%m-%d")
+
+
 def equity_curve_svg(
     values: list[float], times: list[str] | None = None, w: int = 860, h: int = 300
 ) -> str:
@@ -106,7 +116,7 @@ def equity_curve_svg(
         for i in (0, n // 2, n - 1):
             anchor = "start" if i == 0 else ("end" if i == n - 1 else "middle")
             parts.append(f'<text x="{px(i):.1f}" y="{h-6}" fill="{_MUTED}" font-size="10" '
-                         f'text-anchor="{anchor}">{_time_label(times[i])}</text>')
+                         f'text-anchor="{anchor}">{_date_time_label(times[i])}</text>')
     parts.append("</svg>")
     return "".join(parts)
 

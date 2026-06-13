@@ -116,11 +116,8 @@
 
     <!-- TAB: Giao dịch (Trading) -->
     <div data-tab-panel="trading">
-      <div class="grid mt-16">
-        <div class="panel">
-          <h2>KSS Sessions</h2>
-          <div class="scroll" hx-get="/partials/kss" hx-trigger="tab-shown from:closest [data-tab-panel], every 10s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body" hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
-        </div>
+      <!-- 2×2 cards: top = Pending + Positions, bottom = KSS + Trades (≤20 rows each). -->
+      <div class="grid grid-2 mt-16">
         <div class="panel">
           <h2>Hàng chờ duyệt (Pending)</h2>
           <div class="scroll" hx-get="/partials/pending" hx-trigger="tab-shown from:closest [data-tab-panel], every 10s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body" hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
@@ -128,6 +125,10 @@
         <div class="panel">
           <h2>Vị thế (Positions)</h2>
           <div class="scroll" hx-get="/partials/positions" hx-trigger="tab-shown from:closest [data-tab-panel], every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body" hx-swap="innerHTML"></div>
+        </div>
+        <div class="panel">
+          <h2>KSS Sessions</h2>
+          <div class="scroll" hx-get="/partials/kss" hx-trigger="tab-shown from:closest [data-tab-panel], every 10s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body" hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
         </div>
         <div class="panel">
           <h2>Lịch sử giao dịch (Trades)</h2>

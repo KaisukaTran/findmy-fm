@@ -49,6 +49,7 @@ _MUTABLE_SETTINGS = (
     "scan_distance_pct", "scan_tp_pct", "scan_max_waves", "scan_fund",
     "sl_pct", "trailing_pct", "deadline_days",
     "live_trading", "live_max_order_notional",
+    "telegram_notify_trades", "telegram_notify_risk", "telegram_digest_hours",
 )
 
 

@@ -242,6 +242,14 @@ def approve_order(db: Session, order_id: int, reviewer: str | None = None) -> Fi
         except Exception as exc:  # a strategy hook must never corrupt the fill
             logger.exception("KSS fill hook failed for %s: %s", order.source_ref, exc)
 
+    # Best-effort Telegram trade/risk alert — must never break or delay the fill.
+    try:
+        from app import notify
+
+        notify.fill_alert(fill)
+    except Exception:  # network/notify error is non-fatal
+        logger.debug("fill_alert failed for fill %s", fill.id)
+
     return fill
 
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 import httpx
 
@@ -79,82 +80,262 @@ def send(text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Categorised event push (kill switches + per-key throttle)
+# ---------------------------------------------------------------------------
+
+# Per-key last-sent monotonic timestamps for throttling (e.g. one key per symbol).
+_last_event: dict[str, float] = {}
+_TRADE_COOLDOWN = 8.0  # seconds; coalesce a chatty same-symbol DCA wave into one trade push
+
+
+def _throttle_ok(key: str, cooldown: float) -> bool:
+    """True if `key` hasn't fired within `cooldown` seconds (and stamps it). cooldown<=0 = always."""
+    if cooldown <= 0:
+        return True
+    now = time.monotonic()
+    if now - _last_event.get(key, 0.0) < cooldown:
+        return False
+    _last_event[key] = now
+    return True
+
+
+def event(kind: str, text: str, *, throttle_key: str | None = None, cooldown: float = 0.0) -> bool:
+    """Push an alert for a category, honouring its kill switch + optional per-key throttle.
+
+    kind="trade" → gated by telegram_notify_trades; kind="risk" → telegram_notify_risk.
+    Risk events are never throttled (an SL/breaker alert must always go out).
+    """
+    if kind == "trade" and not settings.telegram_notify_trades:
+        return False
+    if kind == "risk" and not settings.telegram_notify_risk:
+        return False
+    if throttle_key and not _throttle_ok(f"{kind}:{throttle_key}", cooldown):
+        return False
+    return send(text)
+
+
+def fill_alert(fill) -> bool:
+    """Push a one-line alert for a Fill. SL/trailing exits route through the *risk* kill
+    switch (never throttled); ordinary fills through *trade* (throttled per symbol)."""
+    ref = fill.source_ref or ""
+    if ref.endswith(":sl"):
+        kind, tag = "risk", "🛑 SL"
+    elif ref.endswith(":trailing"):
+        kind, tag = "risk", "📉 Trailing"
+    elif ref.endswith(":tp"):
+        kind, tag = "trade", "✅ TP"
+    elif fill.side == "SELL":
+        kind, tag = "trade", "↩️ SELL"
+    else:
+        kind, tag = "trade", "🟢 BUY"
+    pnl = f" · PnL ${fill.realized_pnl:,.2f}" if fill.side == "SELL" else ""
+    text = f"{tag} {fill.quantity:g} {fill.symbol} @ {fill.price:g}{pnl}"
+    cooldown = 0.0 if kind == "risk" else _TRADE_COOLDOWN
+    return event(kind, text, throttle_key=fill.symbol, cooldown=cooldown)
+
+
+def build_digest(db) -> str:
+    """Compact periodic snapshot: equity, today's realized P&L, all-time realized, open counts."""
+    from app import pnlcal, portfolio
+    from app.kss import service as kss_service
+
+    s = portfolio.summary_view(db)
+    ksum = kss_service.summary(db)
+    today = pnlcal.local_today()
+    day = pnlcal.realized_by_day(db, today, today).get(today, {}).get("pnl", 0.0)
+    return (
+        "📈 FINDMY-FM digest\n"
+        f"Equity ${s['total_equity']:,.2f}\n"
+        f"Hôm nay: ${day:,.2f} · Đã chốt (tổng): ${s['realized_pnl']:,.2f} ({s['realized_pct']:+.2f}%)\n"
+        f"Chưa chốt: ${s['unrealized_pnl']:,.2f}\n"
+        f"Vị thế {s['positions_count']} · KSS {ksum['active_sessions']} active · "
+        f"Pending {s['pending_count']}"
+    )
+
+
+def maybe_send_digest(db) -> bool:
+    """Push a digest if `telegram_digest_hours` has elapsed since the last one. No-op when
+    disabled (0) or Telegram off. Tracks the last send in-process."""
+    hours = settings.telegram_digest_hours
+    if hours <= 0 or not enabled():
+        return False
+    if not _throttle_ok("digest", hours * 3600.0):
+        return False
+    return send(build_digest(db))
+
+
+# ---------------------------------------------------------------------------
 # Command handler (synchronous; no network calls)
 # ---------------------------------------------------------------------------
 
 _HELP_TEXT = (
-    "Available commands:\n"
-    "  /status  — show automation state + circuit metrics\n"
-    "  /pause   — stop full-auto + scheduler\n"
-    "  /resume  — start full-auto + scheduler\n"
-    "  /freeze  — freeze the circuit breaker (blocks auto-approve)\n"
-    "  /reset   — reset (unfreeze) the circuit breaker\n"
-    "  /help    — show this message"
+    "Lệnh khả dụng:\n"
+    "  /summary   — equity, cash, P&L (đã/chưa chốt)\n"
+    "  /status    — automation + chỉ số breaker\n"
+    "  /pending   — lệnh chờ duyệt\n"
+    "  /positions — vị thế đang mở\n"
+    "  /kss       — phiên KSS\n"
+    "  /fullauto on|off — bật/tắt Full-Auto\n"
+    "  /pause     — tắt Full-Auto + scheduler\n"
+    "  /resume    — bật Full-Auto + scheduler\n"
+    "  /freeze    — đóng băng breaker (chặn auto-approve)\n"
+    "  /reset     — mở băng breaker\n"
+    "  /help      — hiện trợ giúp"
 )
+
+
+def _cmd_summary(db) -> str:
+    from app import portfolio
+
+    s = portfolio.summary_view(db)
+    return (
+        "💰 FINDMY-FM — Tổng quan\n"
+        f"Equity:     ${s['total_equity']:,.2f}\n"
+        f"Cash:       ${s['cash']:,.2f} ({s['cash_pct']:.0f}%)\n"
+        f"Market val: ${s['total_market_value']:,.2f}\n"
+        f"Realized:   ${s['realized_pnl']:,.2f} ({s['realized_pct']:+.2f}%)\n"
+        f"Unrealized: ${s['unrealized_pnl']:,.2f} ({s['unrealized_pct']:+.2f}%)\n"
+        f"Trades {s['total_trades']} · Pending {s['pending_count']} · "
+        f"Positions {s['positions_count']}"
+    )
+
+
+def _cmd_pending(db) -> str:
+    from app import orders
+
+    pend = orders.list_pending(db, limit=15)
+    if not pend:
+        return "Không có lệnh chờ duyệt."
+    lines = ["⏳ Pending (≤15):"]
+    lines += [f"#{o.id} {o.side} {o.quantity:g} {o.symbol} @ {o.price:g}" for o in pend]
+    return "\n".join(lines)
+
+
+def _cmd_positions(db) -> str:
+    from app import portfolio
+
+    rows = portfolio.positions_view(db)
+    if not rows:
+        return "Không có vị thế mở."
+    lines = ["📊 Positions (≤15):"]
+    lines += [
+        f"{r['symbol']}: {r['quantity']:g} @ {r['avg_entry_price']:g} · "
+        f"uPnL ${r['unrealized_pnl']:,.2f} ({r['unrealized_pnl_pct']:+.1f}%)"
+        for r in rows[:15]
+    ]
+    return "\n".join(lines)
+
+
+def _cmd_kss(db) -> str:
+    from app.kss import service as kss
+
+    sess = kss.list_sessions(db, limit=15)
+    summ = kss.summary(db)
+    if not sess:
+        return "Không có phiên KSS."
+    lines = [f"🔺 KSS — {summ['active_sessions']}/{summ['total_sessions']} active (≤15):"]
+    lines += [
+        f"{s.get('symbol')} [{s.get('status')}] "
+        f"avg {s.get('avg_price') or 0.0:g} · now {s.get('current_price') or 0.0:g}"
+        for s in sess
+    ]
+    return "\n".join(lines)
+
+
+def _cmd_status(db) -> str:
+    from app import circuit, runtime, scheduler
+
+    rt, cb = runtime.state(db), circuit.metrics(db)
+    return "\n".join([
+        "--- FINDMY-FM status ---",
+        f"full_auto:   {rt['full_auto']}",
+        f"auto_trade:  {rt['auto_trade']}",
+        f"autoapprove: {rt['autoapprove']}",
+        f"frozen:      {rt['frozen']}",
+        f"frozen_reason: {rt['frozen_reason'] or '-'}",
+        f"scheduler:   {'running' if scheduler.is_running() else 'stopped'}",
+        f"drawdown:    {cb['drawdown_pct']:.2f}%",
+        f"daily_loss:  {cb['daily_loss_pct']:.2f}%",
+        f"consec_loss: {cb['consecutive_losses']}",
+    ])
+
+
+# token -> read-only handler (state-changing commands live in _handle_control)
+_INFO_COMMANDS = {
+    "summary": _cmd_summary,
+    "pending": _cmd_pending,
+    "positions": _cmd_positions,
+    "position": _cmd_positions,
+    "pos": _cmd_positions,
+    "kss": _cmd_kss,
+    "status": _cmd_status,
+}
+
+
+def _handle_info(db, token: str) -> str | None:
+    """Dispatch a read-only info command, or None if `token` isn't one."""
+    handler = _INFO_COMMANDS.get(token)
+    return handler(db) if handler else None
+
+
+def _set_full_auto(db, on: bool) -> None:
+    """Toggle full-auto + the scheduler loop together (shared by /resume /pause /fullauto)."""
+    from app import runtime, scheduler
+
+    (runtime.full_auto_on if on else runtime.full_auto_off)(db)
+    (scheduler.start if on else scheduler.stop)()
+
+
+def _handle_control(db, token: str, arg: str) -> str:
+    """Control commands (state-changing). Returns a reply for any token (unknown → help)."""
+    if token == "pause":
+        _set_full_auto(db, False)
+        return "Paused: full-auto disabled and scheduler stopped."
+    if token == "resume":
+        _set_full_auto(db, True)
+        return "Resumed: full-auto enabled and scheduler started."
+    if token == "fullauto":
+        if arg not in ("on", "off"):
+            return "Dùng: /fullauto on  hoặc  /fullauto off"
+        on = arg == "on"
+        _set_full_auto(db, on)
+        state = "ON (scheduler đã chạy)" if on else "OFF (scheduler đã dừng)"
+        return f"Full-Auto: {state}."
+    if token == "freeze":
+        from app import runtime
+
+        runtime.freeze(db, "telegram")
+        return "Breaker frozen (auto-approve blocked; manual approval still works)."
+    if token == "reset":
+        from app import circuit
+
+        circuit.reset(db)
+        return "Breaker reset: auto-approve unblocked."
+    return f"Unknown command: /{token}\n\n{_HELP_TEXT}"
 
 
 def handle_command(text: str) -> str:
     """Parse *text* as a Telegram command and return a reply string.
 
-    Opens its own DB session and closes it in a finally block.
-    Lazy-imports runtime / circuit / scheduler to avoid import-time cycles.
+    Opens its own DB session and closes it in a finally block. Dispatches to
+    `_handle_info` (read-only) then `_handle_control` (state-changing).
     """
-    # Normalise: strip whitespace, lower-case, drop leading '/', drop @botname
     raw = text.strip()
     if raw.startswith("/"):
         raw = raw[1:]
-    token = raw.split()[0].split("@")[0].lower() if raw else ""
+    parts = raw.split()
+    token = parts[0].split("@")[0].lower() if parts else ""
+    arg = parts[1].lower() if len(parts) > 1 else ""
 
     if token in ("help", ""):
         return _HELP_TEXT
 
-    # DB-backed commands
-    from app import circuit as _circuit
-    from app import runtime as _runtime
-    from app import scheduler as _scheduler
     from app.db import SessionLocal
 
     db = SessionLocal()
     try:
-        if token == "status":
-            rt = _runtime.state(db)
-            sched = _scheduler.is_running()
-            cb = _circuit.metrics(db)
-            lines = [
-                "--- FINDMY-FM status ---",
-                f"full_auto:   {rt['full_auto']}",
-                f"auto_trade:  {rt['auto_trade']}",
-                f"autoapprove: {rt['autoapprove']}",
-                f"frozen:      {rt['frozen']}",
-                f"frozen_reason: {rt['frozen_reason'] or '-'}",
-                f"scheduler:   {'running' if sched else 'stopped'}",
-                f"drawdown:    {cb['drawdown_pct']:.2f}%",
-                f"daily_loss:  {cb['daily_loss_pct']:.2f}%",
-                f"consec_loss: {cb['consecutive_losses']}",
-            ]
-            return "\n".join(lines)
-
-        if token == "pause":
-            _runtime.full_auto_off(db)
-            _scheduler.stop()
-            return "Paused: full-auto disabled and scheduler stopped."
-
-        if token == "resume":
-            _runtime.full_auto_on(db)
-            _scheduler.start()
-            return "Resumed: full-auto enabled and scheduler started."
-
-        if token == "freeze":
-            _runtime.freeze(db, "telegram")
-            return "Breaker frozen (auto-approve blocked; manual approval still works)."
-
-        if token == "reset":
-            _circuit.reset(db)
-            return "Breaker reset: auto-approve unblocked."
-
-        # Unknown command
-        return f"Unknown command: /{token}\n\n{_HELP_TEXT}"
-
+        reply = _handle_info(db, token)
+        return reply if reply is not None else _handle_control(db, token, arg)
     finally:
         db.close()
 

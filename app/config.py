@@ -201,6 +201,9 @@ class Settings(BaseSettings):
     telegram_bot_token: SecretStr = Field(default=SecretStr(""), description="Telegram bot token (from @BotFather).")
     telegram_chat_id: str = Field(default="", description="Only this chat id may send commands and receive alerts.")
     telegram_poll_interval: int = Field(default=5, description="Seconds between Telegram getUpdates polls.")
+    telegram_notify_trades: bool = Field(default=True, description="Push a Telegram alert on each fill (trade). Kill switch for trade alerts.")
+    telegram_notify_risk: bool = Field(default=True, description="Push Telegram alerts on risk events (SL/trailing exits, breaker freeze, guardian veto).")
+    telegram_digest_hours: int = Field(default=0, ge=0, description="Hours between periodic Telegram digest pushes (equity + today's P&L + open counts). 0 = off.")
 
     # --- Phase C: per-pair hyperopt + ML win-rate (off by default) ---
     hyperopt_enabled: bool = Field(default=False, description="Tune KSS params per pair (grid search; falls back to global scan_* when off).")

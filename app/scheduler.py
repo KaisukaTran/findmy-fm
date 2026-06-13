@@ -137,7 +137,7 @@ def run_cycle(db: Session) -> dict:
                     order.auto_veto_reason = reason
                     order.auto_veto_at = datetime.utcnow()
                     audit.log(db, "guardian", "veto", entity=f"order:{oid}", reason=reason)
-                    notify.send(f"Guardian vetoed order {oid} ({order.symbol}): {reason}")
+                    notify.event("risk", f"⛔ Guardian vetoed order {oid} ({order.symbol}): {reason}")
                     guardian_vetoes += 1
 
     # Phase C: periodic per-pair hyperopt + ML retrain (time-gated, never blocks).
@@ -152,6 +152,11 @@ def run_cycle(db: Session) -> dict:
               auto_approved=len(auto_approved), frozen=frozen, guardian_vetoes=guardian_vetoes,
               veto_expired=veto_expired, hyperopt_runs=hyperopt_runs, ml_trained=ml_trained)
     db.commit()
+    # Periodic Telegram digest (no-op unless telegram_digest_hours>0 and the interval elapsed).
+    try:
+        notify.maybe_send_digest(db)
+    except Exception:
+        logger.debug("maybe_send_digest failed")
     summary = {
         "deadlines_closed": closed,
         "tp_queued": tp,

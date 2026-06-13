@@ -69,10 +69,10 @@ Wave C = Phase 6 (live infra) then final gate.
 
 | Task | Content | DoD | Depends | Agent | Status |
 |------|---------|-----|---------|-------|--------|
-| 3.1 | Design brief: dark design tokens (spacing scale, mono numerics, accent palette), sidebar nav spec, small-KPI-card spec. Confirm against the chosen mock. | brief committed in docs/ | - | frontend-htmx | cc:TODO |
-| 3.2 | Replace top tabs with a left **sidebar nav** (sticky, icon+label, active state); keep HTMX lazy-tab loading from P-phase. | nav works, no full reloads, CSP clean | 3.1 | frontend-htmx | cc:TODO |
-| 3.3 | Top **KPI card strip** (Equity/PnL/Win/Drawdown) — small cards, overview only; all detail stays tables. | cards render; tables untouched | 3.1 | frontend-htmx | cc:TODO |
-| 3.4 | Apply tokens to style.css (typography, contrast, table density); no card-ify of dense data. | visual pass, Lighthouse a11y ≥ 90 | 3.2,3.3 | frontend-htmx | cc:TODO |
+| 3.1 | Design brief: dark design tokens (spacing scale, mono numerics, accent palette), sidebar nav spec, small-KPI-card spec. Confirm against the chosen mock. | brief committed in docs/ | - | frontend-htmx | cc:DONE — layout confirmed with user (sidebar-left + KPI-strip-in-content, Option A). Reuses existing dark tokens; no card-ify of dense data. |
+| 3.2 | Replace top tabs with a left **sidebar nav** (sticky, icon+label, active state); keep HTMX lazy-tab loading from P-phase. | nav works, no full reloads, CSP clean | 3.1 | frontend-htmx | cc:DONE — `dashboard.html` `.layout`>`aside.sidebar`+`.content`; nav items keep `data-tab` so `showTab` drives them with **0 JS change**. TestClient render 200, CSP intact, lazy-tab triggers preserved. |
+| 3.3 | Top **KPI card strip** (Equity/PnL/Win/Drawdown) — small cards, overview only; all detail stays tables. | cards render; tables untouched | 3.1 | frontend-htmx | cc:DONE — existing `/partials/summary` `.cards` strip moved to top of `.content`; tables unchanged. |
+| 3.4 | Apply tokens to style.css (typography, contrast, table density); no card-ify of dense data. | visual pass, Lighthouse a11y ≥ 90 | 3.2,3.3 | frontend-htmx | cc:DONE — sidebar styles + `tabular-nums` on `.card .value`/`.tbl td`; semantic `nav`/`aside`, `aria-selected`, `aria-hidden` icons; responsive fold <900px. |
 
 ## Phase 4: PnL Calendar — day/week/month (req #7)  [tdd:required]
 

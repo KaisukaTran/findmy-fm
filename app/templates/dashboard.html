@@ -23,7 +23,22 @@
   </header>
 
   <main>
-    <!-- Summary cards -->
+    <div class="layout">
+      <!-- Left sidebar nav. data-tab drives app.js showTab — presentation-only,
+           no JS change: showTab toggles .active on [data-tab] and shows the panel. -->
+      <aside class="sidebar">
+        <nav class="sidebar-nav" role="tablist" aria-label="Điều hướng">
+          <button class="tab active" data-tab="overview" role="tab" aria-selected="true"><span class="nav-ico" aria-hidden="true">▦</span><span>Tổng quan</span></button>
+          <button class="tab" data-tab="trading" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">⇅</span><span>Giao dịch</span></button>
+          <button class="tab" data-tab="opus" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">◈</span><span>OPUS</span></button>
+          <button class="tab" data-tab="losses" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">⚠</span><span>Phân tích lỗ</span></button>
+          <button class="tab" data-tab="strategy" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">⚙</span><span>Chiến lược</span></button>
+          <button class="tab" data-tab="logs" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">☰</span><span>Nhật ký</span></button>
+        </nav>
+      </aside>
+      <div class="content">
+
+    <!-- Summary cards (KPI strip — overview only; all detail stays in tables) -->
     <div hx-get="/partials/summary" hx-trigger="load, every 15s [document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML">
       <span class="htmx-indicator loading-row">Đang tải…</span>
     </div>
@@ -82,16 +97,6 @@
       </form>
       <div id="preview-output"></div>
     </div>
-
-    <!-- Tab navigation (plain-JS controlled; see app.js showTab) -->
-    <nav class="tabs" role="tablist">
-      <button class="tab" data-tab="overview" role="tab" aria-selected="true">Tổng quan</button>
-      <button class="tab" data-tab="trading" role="tab" aria-selected="false">Giao dịch</button>
-      <button class="tab" data-tab="opus" role="tab" aria-selected="false">OPUS</button>
-      <button class="tab" data-tab="losses" role="tab" aria-selected="false">Phân tích lỗ</button>
-      <button class="tab" data-tab="strategy" role="tab" aria-selected="false">Chiến lược</button>
-      <button class="tab" data-tab="logs" role="tab" aria-selected="false">Nhật ký</button>
-    </nav>
 
     <!-- TAB: Tổng quan (Overview) -->
     <div data-tab-panel="overview">
@@ -177,6 +182,8 @@
         </div>
       </div>
     </div>
+      </div><!-- /.content -->
+    </div><!-- /.layout -->
   </main>
 
   <!-- Click-to-view price ladder modal (plain JS — works on HTMX-swapped rows) -->

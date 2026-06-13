@@ -112,6 +112,35 @@ button { white-space: nowrap; }
   border-color: var(--line); border-bottom: 1px solid var(--panel); margin-bottom: -1px;
 }
 
+/* --- Phase 3: sidebar layout + KPI strip (tables stay tables) ---------- */
+.layout { display: flex; gap: 20px; align-items: flex-start; }
+.sidebar { position: sticky; top: 16px; flex: 0 0 196px; }
+.content { flex: 1 1 0; min-width: 0; }
+.sidebar-nav { display: flex; flex-direction: column; gap: 2px; }
+.sidebar-nav .tab {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  justify-content: flex-start; text-align: left; margin: 0;
+  padding: 9px 12px; border: 1px solid transparent; border-radius: 8px;
+  background: transparent; color: var(--muted); font-size: 13px; font-weight: 500;
+}
+.sidebar-nav .tab .nav-ico { width: 18px; text-align: center; font-size: 14px; opacity: .85; }
+.sidebar-nav .tab:hover { color: var(--fg); background: var(--panel); }
+.sidebar-nav .tab.active {
+  color: var(--fg); background: var(--panel);
+  border-color: var(--line); margin-bottom: 0;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+/* Narrow screens: sidebar folds to a horizontal wrap above the content. */
+@media (max-width: 900px) {
+  .layout { flex-direction: column; }
+  .sidebar { position: static; flex: none; width: 100%; }
+  .sidebar-nav { flex-direction: row; flex-wrap: wrap; gap: 4px; }
+  .sidebar-nav .tab { width: auto; }
+}
+
+/* Phase 3.4 token polish: tabular numerics so dense $/% columns line up. */
+.card .value, .tbl td { font-variant-numeric: tabular-nums; }
+
 /* --- Hover tooltips ---
    Two mechanisms by context:
    - [data-tip]: styled CSS tooltip for the top KPI strip (not inside an

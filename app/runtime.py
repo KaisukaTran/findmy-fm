@@ -100,21 +100,37 @@ def set_bool(db: Session, key: str, value: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _xai_key_present() -> bool:
+    """True when an xAI key is configured (so the Grok gates can actually run)."""
+    key = settings.xai_api_key
+    val = key.get_secret_value() if hasattr(key, "get_secret_value") else str(key or "")
+    return bool(val and val.strip())
+
+
 def full_auto_on(db: Session) -> dict:
-    """Enable full-auto mode: sets settings flags and persists KEY_FULL_AUTO."""
+    """Enable full-auto: scheduler + auto-trade + auto-approve as one, plus the Grok
+    co-pilot + scanner gate when an xAI key is configured. Persists every flag so the
+    whole stack survives a restart (the scheduler is auto-started by main.lifespan when
+    KEY_FULL_AUTO is set). The scheduler loop itself is started by the caller/route."""
     settings.full_auto = True
     settings.auto_trade = True
     settings.autoapprove_enabled = True
     set_bool(db, KEY_FULL_AUTO, True)
+    if _xai_key_present():
+        grok_set(db, True)
+        grok_scanner_set(db, True)
     return state(db)
 
 
 def full_auto_off(db: Session) -> dict:
-    """Disable full-auto mode: clears settings flags and persists KEY_FULL_AUTO."""
+    """Disable full-auto: clears auto-trade/auto-approve and the Grok gates, and persists
+    every flag so nothing silently re-enables on the next restart."""
     settings.full_auto = False
     settings.auto_trade = False
     settings.autoapprove_enabled = False
     set_bool(db, KEY_FULL_AUTO, False)
+    grok_set(db, False)
+    grok_scanner_set(db, False)
     return state(db)
 
 
@@ -309,7 +325,11 @@ def sync_from_db(db: Session) -> None:
     on the settings singleton. Safe when the key is absent (defaults to no-op).
     Does not touch the scheduler — the caller manages the async loop.
     """
-    if get_bool(db, KEY_FULL_AUTO, default=False):
+    # Full-auto may come from persisted state (the dashboard switch) OR from the
+    # environment (FULL_AUTO=true in .env) — honour either, and cascade the same flags
+    # full_auto_on() sets so a fresh boot behaves exactly like a clicked one.
+    full_auto = settings.full_auto or get_bool(db, KEY_FULL_AUTO, default=False)
+    if full_auto:
         settings.full_auto = True
         settings.auto_trade = True
         settings.autoapprove_enabled = True
@@ -317,6 +337,10 @@ def sync_from_db(db: Session) -> None:
     settings.opus_shadow = get_bool(db, KEY_OPUS_SHADOW, default=settings.opus_shadow)
     settings.grok_enabled = get_bool(db, KEY_GROK_ENABLED, default=settings.grok_enabled)
     settings.grok_scanner_enabled = get_bool(db, KEY_GROK_SCANNER, default=settings.grok_scanner_enabled)
+    # Under full-auto the Grok gates are part of the bundle when an xAI key is configured.
+    if full_auto and _xai_key_present():
+        settings.grok_enabled = True
+        settings.grok_scanner_enabled = True
     settings.ta_lib_enabled = get_bool(db, KEY_TA_LIB, default=settings.ta_lib_enabled)
     settings.ta_external_enabled = get_bool(db, KEY_TA_EXTERNAL, default=settings.ta_external_enabled)
     # Auto-approval rule (persisted so a dashboard change survives a restart).

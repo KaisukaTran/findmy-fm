@@ -44,7 +44,8 @@ _MUTABLE_SETTINGS = (
     "auto_trade", "autoapprove_enabled", "autoapprove_max_notional",
     "full_auto", "scheduler_enabled", "scan_interval_min",
     "guardian_enabled", "telegram_enabled",
-    "opus_mode", "opus_shadow", "opus_allocation_usd", "opus_daily_cost_cap_usd", "grok_enabled",
+    "opus_mode", "opus_shadow", "opus_allocation_usd", "opus_daily_cost_cap_usd",
+    "grok_enabled", "grok_scanner_enabled",
     "scan_distance_pct", "scan_tp_pct", "scan_max_waves", "scan_fund",
     "sl_pct", "trailing_pct", "deadline_days",
 )
@@ -57,7 +58,8 @@ _MUTABLE_SETTINGS = (
 # resetting them could change unrelated assertions.
 _FLAG_SETTINGS = (
     "auto_trade", "autoapprove_enabled", "full_auto", "scheduler_enabled",
-    "guardian_enabled", "telegram_enabled", "opus_mode", "opus_shadow", "grok_enabled",
+    "guardian_enabled", "telegram_enabled", "opus_mode", "opus_shadow",
+    "grok_enabled", "grok_scanner_enabled",
 )
 
 

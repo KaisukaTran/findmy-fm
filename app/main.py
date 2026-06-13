@@ -52,7 +52,10 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
-    if settings.scheduler_enabled:
+    # Start the scan loop when it is explicitly enabled OR when full-auto is active
+    # (persisted via runtime_config or set in .env) — full-auto without a running
+    # scheduler would never scan, so the two must boot together.
+    if settings.scheduler_enabled or settings.full_auto:
         scheduler.start()
     from app import notify
     notify.start()

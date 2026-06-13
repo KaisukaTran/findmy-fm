@@ -13,8 +13,7 @@
 <body x-data="ui">
   <header>
     <h1>FINDMY-FM <span class="muted">· KSS Pyramid DCA</span></h1>
-    <div hx-get="/partials/status" hx-trigger="load, every 5s [document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML" hx-indicator="#global-indicator"></div>
-    <span id="global-indicator" class="htmx-indicator loading-chip" aria-hidden="true">Đang tải…</span>
+    <div hx-get="/partials/status" hx-trigger="load, every 5s [document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML"></div>
     <div class="actions">
       <button class="ghost" @click="toggleOrder">+ Lệnh</button>
       <button class="ghost" @click="toggleKss">+ Phiên KSS</button>
@@ -153,10 +152,6 @@
           <!-- load once only: a global refresh must NOT reload the form while the user is
                editing (it would clobber unsaved input). Saving keeps the typed values. -->
           <div hx-get="/partials/kss-settings" hx-trigger="load" hx-swap="innerHTML"></div>
-        </div>
-        <div class="panel" id="params-panel">
-          <h2>Hyperopt &amp; ML Params</h2>
-          {% include "partials/params.html" %}
         </div>
       </div>
     </div>

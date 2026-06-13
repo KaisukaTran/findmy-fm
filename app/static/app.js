@@ -147,12 +147,11 @@ function refreshScanner() { fireRefresh("refresh-scanner"); }
 function refreshOpus()    { fireRefresh("refresh-opus"); }
 function refreshLosses()  { fireRefresh("refresh-losses"); }
 function refreshAudit()   { fireRefresh("refresh-audit"); }
-function refreshParams()  { fireRefresh("refresh-params"); }
 
 function refreshAll() {
   // Used by WS push — refetch everything.
   ["refresh-status","refresh-trading","refresh-scanner",
-   "refresh-opus","refresh-losses","refresh-audit","refresh-params"]
+   "refresh-opus","refresh-losses","refresh-audit"]
     .forEach((ev) => document.body.dispatchEvent(new CustomEvent(ev)));
 }
 
@@ -408,7 +407,7 @@ const actions = {
     if (!enable &&
         !confirm("Tắt Hyperopt? Điều chỉnh tham số sẽ dừng.")) return;
     await api("POST", "/api/hyperopt", { enabled: enable });
-    refreshStatus(); refreshParams();
+    refreshStatus();
   },
   async toggleMl(desired) {
     const enable = desired === "on";
@@ -417,34 +416,7 @@ const actions = {
     if (!enable &&
         !confirm("Tắt ML? Lọc dựa trên mô hình sẽ bị tắt.")) return;
     await api("POST", "/api/ml", { enabled: enable });
-    refreshStatus(); refreshParams();
-  },
-  async hyperoptRun() {
-    const btn = document.querySelector("[data-action='hyperoptRun']");
-    if (btn) btn.disabled = true;
-    try {
-      const r = await api("POST", "/api/hyperopt/run");
-      const n = Array.isArray(r) ? r.length : (r.count ?? "?");
-      toast("Hyperopt hoàn tất — " + n + " cặp đã tối ưu.", "success");
-      refreshParams();
-    } finally {
-      if (btn) btn.disabled = false;
-    }
-  },
-  async mlRetrain() {
-    const btn = document.querySelector("[data-action='mlRetrain']");
-    if (btn) btn.disabled = true;
-    try {
-      const r = await api("POST", "/api/ml/retrain");
-      if (r && r.model) {
-        toast("Mô hình huấn luyện xong: v" + r.model.version + " · metric " + r.model.metric + " · " + r.model.n_samples + " mẫu.", "success");
-      } else {
-        toast("Huấn luyện lại không có mô hình — chưa đủ dữ liệu.", "info");
-      }
-      refreshParams();
-    } finally {
-      if (btn) btn.disabled = false;
-    }
+    refreshStatus();
   },
 };
 
@@ -640,63 +612,6 @@ function connectWs() {
 }
 connectWs();
 
-// --- Phase C: params panel (client-side fetch — no /partials/params route) ----
-// All other panels use hx-get to /partials/* HTML routes. The params panel is
-// the sole exception: no server route exists and Python cannot be edited, so
-// we fetch /api/params + /api/ml JSON here and render rows in JS on load.
-
-function renderMlStatus(data) {
-  const el = document.getElementById("ml-status");
-  if (!el) return;
-  const m = data && data.model;
-  if (!m) {
-    el.textContent = "Mô hình ML: chưa được huấn luyện.";
-    return;
-  }
-  el.innerHTML =
-    "Mô hình ML: <b>" + esc(m.id || "—") + "</b>" +
-    " · v" + esc(m.version || "?") +
-    " · metric <b>" + esc(m.metric ?? "—") + "</b>" +
-    " · " + esc(m.n_samples ?? "?") + " mẫu" +
-    " · huấn luyện " + esc(m.trained_at ? m.trained_at.slice(0, 19).replace("T", " ") : "—");
-}
-
-function renderParamsRows(rows) {
-  const tbody = document.getElementById("params-tbody");
-  if (!tbody) return;
-  if (!rows || !rows.length) {
-    tbody.innerHTML = "<tr><td colspan='7' class='muted'>Chưa có tham số tối ưu — hãy chạy Hyperopt trước.</td></tr>";
-    return;
-  }
-  tbody.innerHTML = rows.map((r) =>
-    "<tr>" +
-    "<td>" + esc(r.symbol) + "</td>" +
-    "<td>" + (r.distance_pct != null ? r.distance_pct.toFixed(2) : "—") + "</td>" +
-    "<td>" + (r.tp_pct != null ? r.tp_pct.toFixed(2) : "—") + "</td>" +
-    "<td>" + (r.max_waves ?? "—") + "</td>" +
-    "<td>" + (r.score != null ? r.score.toFixed(4) : "—") + "</td>" +
-    "<td>" + (r.trials ?? "—") + "</td>" +
-    "<td class='muted'>" + esc(r.updated_at ? r.updated_at.slice(0, 16).replace("T", " ") : "—") + "</td>" +
-    "</tr>"
-  ).join("");
-}
-
-async function loadParams() {
-  try {
-    const [rows, mlData] = await Promise.all([
-      api("GET", "/api/params"),
-      api("GET", "/api/ml"),
-    ]);
-    renderParamsRows(rows);
-    renderMlStatus(mlData);
-  } catch (_) {
-    // errors already alerted by api()
-  }
-}
-
-// Initialise on first load; also refresh when the scoped refresh-params fires.
-document.addEventListener("DOMContentLoaded", loadParams);
-document.body.addEventListener("refresh-params", loadParams);
 
 // --- Alpine (CSP build): modal visibility only -------------------------
 

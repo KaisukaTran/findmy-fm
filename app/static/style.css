@@ -1,0 +1,332 @@
+:root {
+  --bg: #0f1419; --panel: #1a2129; --line: #2a333d; --fg: #e6edf3;
+  --muted: #8b98a5; --green: #2ea043; --red: #e5534b; --accent: #2f81f7;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+header {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel);
+}
+header h1 { font-size: 18px; margin: 0; }
+header .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+main { padding: 16px 24px; max-width: 1680px; margin: 0 auto; }
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+/* min-width:0 lets grid/flex items shrink instead of overflowing their track */
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-width: 0; overflow: hidden; }
+.panel h2 { font-size: 14px; margin: 0 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.cards { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+.card { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+.card .label { color: var(--muted); font-size: 12px; }
+.card .value { font-size: 18px; font-weight: 600; margin-top: 2px; overflow-wrap: anywhere; }
+/* horizontal-scroll wrapper so wide tables never spill out of a panel */
+.scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tbl th, .tbl td { text-align: left; padding: 5px 7px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.tbl th { color: var(--muted); font-weight: 500; }
+.pos { color: var(--green); } .neg { color: var(--red); }
+.badge { padding: 1px 7px; border-radius: 999px; font-size: 11px; border: 1px solid var(--line); }
+.badge.active { color: var(--green); border-color: var(--green); }
+.badge.pending { color: var(--accent); border-color: var(--accent); }
+.badge.tp_triggered, .badge.completed { color: var(--muted); }
+.badge.full-auto-on { color: var(--green); border-color: var(--green); font-weight: 600; }
+.badge.full-auto-off { color: var(--muted); border-color: var(--muted); }
+.badge.breaker-frozen { color: var(--red); border-color: var(--red); font-weight: 600; }
+.badge.breaker-armed { color: var(--green); border-color: var(--green); }
+.badge.guardian-on { color: var(--accent); border-color: var(--accent); font-weight: 600; }
+.badge.guardian-off { color: var(--muted); border-color: var(--muted); }
+.badge.telegram-on { color: var(--accent); border-color: var(--accent); }
+.badge.telegram-off { color: var(--muted); border-color: var(--muted); }
+.badge.veto { color: var(--red); border-color: var(--red); font-weight: 600; }
+.badge.hyperopt-on { color: #e3b341; border-color: #e3b341; font-weight: 600; }
+.badge.hyperopt-off { color: var(--muted); border-color: var(--muted); }
+.badge.ml-on { color: #bc8cff; border-color: #bc8cff; font-weight: 600; }
+.badge.ml-off { color: var(--muted); border-color: var(--muted); }
+.statusbar-full-auto, .statusbar-breaker,
+.statusbar-guardian, .statusbar-telegram,
+.statusbar-hyperopt, .statusbar-ml { display: inline-flex; align-items: center; gap: 4px; }
+button {
+  background: var(--accent); color: #fff; border: 0; border-radius: 6px;
+  padding: 6px 12px; cursor: pointer; font-size: 13px;
+}
+button.ghost { background: transparent; border: 1px solid var(--line); color: var(--fg); }
+button.danger { background: var(--red); } button.ok { background: var(--green); }
+button.sm { padding: 3px 8px; font-size: 12px; }
+.modal { margin-top: 12px; padding: 12px; border: 1px dashed var(--line); border-radius: 8px; background: var(--bg); }
+.modal form { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); align-items: end; }
+label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+input, select {
+  width: 100%; max-width: 100%; box-sizing: border-box;
+  background: var(--panel); border: 1px solid var(--line); color: var(--fg);
+  border-radius: 6px; padding: 6px;
+}
+.row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.muted { color: var(--muted); }
+button { white-space: nowrap; }
+/* automation status badge */
+.statusbar { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; flex-wrap: wrap; }
+.statusbar .sep { color: var(--line); }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); display: inline-block; }
+.dot.on { background: var(--green); box-shadow: 0 0 0 0 rgba(46,160,67,.6); animation: pulse 1.6s infinite; }
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(46,160,67,.5); }
+  70% { box-shadow: 0 0 0 7px rgba(46,160,67,0); }
+  100% { box-shadow: 0 0 0 0 rgba(46,160,67,0); }
+}
+/* preview table is injected by JS — keep it scrollable inside the modal */
+#preview-output { overflow-x: auto; margin-top: 10px; }
+[x-cloak] { display: none !important; }
+
+/* Audit "Nhật ký" feed: category filter via the wrapper class (survives the poll). */
+.audit-filters { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; font-size: 12px; }
+.af-important .cat-system { display: none; }
+.af-trade  .audit-row:not(.cat-trade)  { display: none; }
+.af-risk   .audit-row:not(.cat-risk)   { display: none; }
+.af-opus   .audit-row:not(.cat-opus)   { display: none; }
+.af-system .audit-row:not(.cat-system) { display: none; }
+/* .af-all shows everything */
+.audit-sym-hidden { display: none !important; }
+.audit-warn { color: #f0883e; }
+.audit-tbl td { padding: 4px 7px; vertical-align: top; }
+.audit-row.sev-danger td:nth-child(3) { font-weight: 600; }
+.audit-sym { padding: 1px 6px; font-size: 11px; }
+
+/* Click-to-view overlay modal (price ladder) */
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.overlay-box { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; width: min(560px, 92vw); max-height: 90vh; overflow: auto; }
+
+/* --- Tab navigation --- */
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 16px 0 4px; border-bottom: 1px solid var(--line); }
+.tab {
+  background: transparent; color: var(--muted); border: 1px solid transparent;
+  border-bottom: 0; border-radius: 8px 8px 0 0; padding: 8px 16px; font-size: 13px;
+  font-weight: 500; cursor: pointer;
+}
+.tab:hover { color: var(--fg); }
+.tab.active {
+  color: var(--fg); background: var(--panel);
+  border-color: var(--line); border-bottom: 1px solid var(--panel); margin-bottom: -1px;
+}
+
+/* --- Hover tooltips ---
+   Two mechanisms by context:
+   - [data-tip]: styled CSS tooltip for the top KPI strip (not inside an
+     overflow-clipped panel, so ::after can show).
+   - title="": native tooltip for table headers inside .scroll/.panel (which
+     clip overflow); never gets cut off. th[title] gets a dotted hint. */
+[data-tip] { position: relative; cursor: help; border-bottom: 1px dotted var(--muted); }
+[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute; left: 0; top: 130%; z-index: 50;
+  width: max-content; max-width: 280px; white-space: normal;
+  background: #000; color: var(--fg); border: 1px solid var(--line); border-radius: 6px;
+  padding: 7px 9px; font-size: 12px; font-weight: 400; line-height: 1.45;
+  text-transform: none; letter-spacing: normal;
+  box-shadow: 0 4px 14px rgba(0,0,0,.5);
+}
+.tbl th[title], .muted[title] { cursor: help; text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
+
+/* Phone / narrow viewports */
+@media (max-width: 600px) {
+  header { padding: 10px 12px; }
+  header h1 { font-size: 16px; }
+  main { padding: 12px; }
+  .grid { gap: 12px; }
+  .card .value { font-size: 16px; }
+  .modal form { grid-template-columns: 1fr; }
+}
+
+/* --- P3: Toast notifications ------------------------------------------ */
+#toast-container {
+  position: fixed; bottom: 20px; right: 20px; z-index: 9999;
+  display: flex; flex-direction: column; gap: 8px;
+  pointer-events: none;
+}
+.toast {
+  max-width: 340px; padding: 10px 14px; border-radius: 8px;
+  font-size: 13px; line-height: 1.4; border: 1px solid var(--line);
+  background: var(--panel); color: var(--fg);
+  opacity: 0; transform: translateY(8px);
+  transition: opacity .2s ease, transform .2s ease;
+  pointer-events: auto;
+}
+.toast.toast-in  { opacity: 1; transform: translateY(0); }
+.toast.toast-out { opacity: 0; transform: translateY(8px); }
+.toast.toast-success { border-color: var(--green); color: var(--green); }
+.toast.toast-error   { border-color: var(--red);   color: var(--red); }
+.toast.toast-info    { border-color: var(--accent); color: var(--fg); }
+
+/* --- P3: Connection chip ---------------------------------------------- */
+.conn-chip {
+  display: inline-block; width: 8px; height: 8px;
+  border-radius: 50%; margin-right: 4px; flex-shrink: 0;
+  transition: background .3s;
+}
+.conn-chip::after {
+  display: none; /* chip uses background color only — text is in title attr */
+}
+.conn-live        { background: var(--green); }
+.conn-error       { background: var(--red); animation: chip-blink .8s infinite; }
+.conn-reconnecting { background: #e3b341; animation: chip-blink 1.2s infinite; }
+@keyframes chip-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: .35; }
+}
+
+/* --- P3: htmx first-load indicator ------------------------------------ */
+/* htmx adds .htmx-request to the element when a request is in-flight,
+   and shows children with class .htmx-indicator (hidden otherwise). */
+.htmx-indicator { display: none; }
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator { display: inline; }
+.loading-row {
+  display: block; padding: 8px 0; color: var(--muted);
+  font-size: 12px; text-align: center;
+}
+.loading-chip {
+  font-size: 11px; color: var(--muted); padding: 0 6px;
+}
+
+/* --- S6: Scanner stats footer table ----------------------------------- */
+.scan-stats-tbl { font-size: 12px; margin-top: 8px; border-top: 1px solid var(--line); }
+.scan-stages span { margin-right: 6px; }
+.scan-stats-empty { font-size: 12px; margin-top: 6px; }
+
+/* --- P3: Modal header (close button row) ------------------------------ */
+.modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.modal-header h2 { margin: 0; }
+
+/* --- P4: U13 inline-style sweep utility classes ----------------------- */
+/* hidden: replaces style="display:none" on the ladder overlay (.overlay has
+   display:flex so we need !important here) and audit-sym-filter span. */
+.hidden { display: none !important; }
+.float-right { float: right; }
+
+/* spacing utilities — exact values from swept attributes */
+.mt-2  { margin-top: 2px; }
+.mt-4  { margin-top: 4px; }
+.mt-6  { margin-top: 6px; }
+.mt-8  { margin-top: 8px; }
+.mt-10 { margin-top: 10px; }
+.mt-12 { margin-top: 12px; }
+.mt-14 { margin-top: 14px; }
+.mt-16 { margin-top: 16px; }
+.mb-4  { margin-bottom: 4px; }
+.mb-6  { margin-bottom: 6px; }
+.mb-8  { margin-bottom: 8px; }
+.mb-10 { margin-bottom: 10px; }
+.mb-12 { margin-bottom: 12px; }
+.mb-14 { margin-bottom: 14px; }
+/* margin shorthand for the kss-settings intro paragraph */
+.mb-10-0 { margin: 0 0 10px; }
+
+/* font-size utilities — exact values from swept attributes */
+.fs-11 { font-size: 11px; }
+.fs-12 { font-size: 12px; }
+.fs-13 { font-size: 13px; }
+.fs-15 { font-size: 15px; }
+
+/* layout helpers */
+.flex-spaced {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 8px; flex-wrap: wrap;
+}
+
+/* --- kss_settings subpanels (replaces repeated inline panel style) ---- */
+.settings-subpanel {
+  margin-top: 12px; padding: 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg);
+}
+
+/* inline select inside a label (grok fail-mode) */
+.select-inline { padding: 2px 6px; border-radius: 4px; border: 1px solid var(--line); width: auto; }
+
+/* width override for aa-max notional input */
+.w-5em { width: 5.5em; }
+
+/* --- ladder.html title / table margin --------------------------------- */
+.ladder-title { margin: 0 0 4px; }
+
+/* --- losses / audit section subheadings ------------------------------- */
+.section-subhead { margin: 6px 0 4px; font-size: 13px; color: var(--muted); }
+
+/* --- audit table column constraints ----------------------------------- */
+.td-nowrap { white-space: nowrap; }
+.td-shrink { width: 1%; }
+
+/* --- ladder price-level color badges ---------------------------------- */
+/* avg price — amber */
+.badge-avg-price    { border-color: #d29922; color: #d29922; }
+/* current price — blue */
+.badge-current-price { border-color: #2f81f7; color: #2f81f7; }
+/* next DCA wave — orange */
+.badge-next-wave    { border-color: #f0883e; color: #f0883e; }
+/* take-profit — green */
+.badge-tp           { border-color: #2ea043; color: #2ea043; }
+/* stop-loss — red */
+.badge-sl           { border-color: #e5534b; color: #e5534b; }
+
+/* --- pending.html auto-approve status badges -------------------------- */
+/* manual (TAY) — orange; same color as badge-next-wave intentionally */
+.badge-manual       { border-color: #f0883e; color: #f0883e; }
+/* auto-pending (waiting for price) — blue */
+.badge-auto-pending { border-color: #2f81f7; color: #2f81f7; }
+
+/* --- U2: API key indicator in the header ------------------------------ */
+.key-indicator {
+  display: inline-block; cursor: pointer; font-size: 14px;
+  padding: 2px 4px; border-radius: 4px; line-height: 1;
+  color: var(--muted); transition: color .2s;
+}
+.key-indicator.key-loaded { color: var(--fg); }
+.key-indicator:empty { display: none; }
+
+/* --- P6: Scanner "skipped: why" expander ------------------------------ */
+/* <details> sits inside the Decision td; summary reuses .badge styles.
+   No new column; no layout change. */
+.scan-reason-details { display: inline; }
+.scan-reason-details summary { display: inline; list-style: none; cursor: pointer; }
+.scan-reason-details summary::-webkit-details-marker { display: none; }
+.scan-reason {
+  display: block; margin-top: 4px;
+  font-size: 11px; color: var(--muted);
+  white-space: normal; max-width: 260px; line-height: 1.4;
+}
+
+/* --- P6: Mobile "Automation ▾" popover (<600px) ----------------------- */
+/* Desktop default: hide the mobile wrapper entirely (pure CSS, no JS needed).
+   The inline strip (.auto-inline) shows naturally as a flex child of .statusbar. */
+.auto-mobile-wrap { display: none; }
+
+@media (max-width: 599px) {
+  /* Hide the desktop inline strip on narrow viewports. */
+  .auto-inline { display: none; }
+
+  /* Show the mobile wrapper (contains the button + popover). */
+  .auto-mobile-wrap {
+    display: inline-flex;
+    align-items: center;
+    position: relative;   /* anchor for the absolute popover */
+  }
+
+  /* The popover: Alpine x-show manages display (none/block).
+     We use flex layout for the stacked badges when visible. */
+  .auto-popover {
+    position: absolute;
+    top: calc(100% + 4px); left: 0;
+    min-width: 200px; width: max-content; max-width: 92vw;
+    z-index: 200;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 12px;
+    display: flex; flex-direction: column; gap: 8px;
+    font-size: 12px;
+  }
+  /* x-cloak hides it before Alpine initialises; after that x-show takes over */
+}

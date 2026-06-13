@@ -1,0 +1,11 @@
+<div class="cards">
+  <div class="card"><div class="label" data-tip="Tổng vốn định giá theo thị trường (MTM) = tiền mặt + giá trị thị trường các vị thế. Dùng cho mọi kiểm tra rủi ro.">Total equity</div><div class="value">${{ s.total_equity | money }}</div></div>
+  <div class="card"><div class="label" data-tip="Tiền mặt khả dụng = vốn ban đầu − vốn đã đầu tư + lãi/lỗ đã chốt.">Cash</div><div class="value">${{ s.cash | money }} <span class="muted fs-12">{{ "%.0f"|format(s.cash_pct) }}%</span></div></div>
+  <div class="card"><div class="label" data-tip="Tổng giá trị thị trường các vị thế đang nắm = Σ (khối lượng × giá hiện tại). %% so với tổng vốn.">Market value</div><div class="value">${{ s.total_market_value | money }} <span class="muted fs-12">{{ "%.0f"|format(s.market_value_pct) }}%</span></div></div>
+  <div class="card"><div class="label" data-tip="Lãi/lỗ ĐÃ chốt = tiền bán − giá vốn − phí. %% so với vốn ban đầu.">Realized P&L</div>
+    <div class="value {{ 'pos' if s.realized_pnl >= 0 else 'neg' }}">${{ s.realized_pnl | money }} <span class="fs-12">({{ "%+.2f"|format(s.realized_pct) }}%)</span></div></div>
+  <div class="card"><div class="label" data-tip="Lãi/lỗ tạm tính CHƯA chốt = (giá hiện tại − giá vốn TB) × KL. %% so với vốn đang đầu tư.">Unrealized P&L</div>
+    <div class="value {{ 'pos' if s.unrealized_pnl >= 0 else 'neg' }}">${{ s.unrealized_pnl | money }} <span class="fs-12">({{ "%+.2f"|format(s.unrealized_pct) }}%)</span></div></div>
+  <div class="card"><div class="label" data-tip="Tổng số lệnh đã khớp (fill) từ trước tới nay.">Trades</div><div class="value">{{ s.total_trades }}</div></div>
+  <div class="card"><div class="label" data-tip="Số lệnh đang chờ duyệt trong hàng chờ phê duyệt.">Pending</div><div class="value">{{ s.pending_count }}</div></div>
+</div>

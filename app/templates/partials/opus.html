@@ -1,0 +1,40 @@
+<div class="flex-spaced mb-10">
+  <span class="statusbar-opus">
+    <span class="badge {{ 'full-auto-on' if o.mode else 'full-auto-off' }}">OPUS {{ 'ON' if o.mode else 'OFF' }}</span>
+    <button class="sm {{ 'danger' if o.mode else 'ok' }}" data-action="toggleOpus" data-id="{{ 'off' if o.mode else 'on' }}">{{ 'Tắt' if o.mode else 'Bật' }}</button>
+    <span class="badge {{ 'hyperopt-on' if o.shadow else 'full-auto-off' }}" title="Chế độ bóng: Opus chỉ ghi lại quyết định, CHƯA đặt lệnh. Tắt để cho phép đặt lệnh paper thật.">SHADOW {{ 'ON' if o.shadow else 'OFF' }}</span>
+    <button class="sm {{ 'danger' if o.shadow else 'ok' }}" data-action="toggleOpusShadow" data-id="{{ 'off' if o.shadow else 'on' }}" title="{{ 'Tắt shadow → Opus sẽ ĐẶT LỆNH (paper)' if o.shadow else 'Bật shadow → chỉ ghi, không đặt lệnh' }}">{{ 'Cho đặt lệnh' if o.shadow else 'Về shadow' }}</button>
+    {% if o.cost_cap_reached %}<span class="badge veto" title="Đã chạm trần chi phí Opus/ngày — tạm dừng ra quyết định mới.">COST CAP</span>{% endif %}
+    <span class="badge {{ 'guardian-on' if o.grok_active else 'full-auto-off' }}" title="Grok (xAI) đồng quyết định với OPUS: MỞ khi cả hai đồng ý, ĐÓNG khi một trong hai muốn. Cần xai_api_key.">GROK {{ 'ON' if o.grok_active else ('ENABLED (thiếu key)' if o.grok_enabled else 'OFF') }}</span>
+    <button class="sm {{ 'danger' if o.grok_enabled else 'ok' }}" data-action="toggleGrok" data-id="{{ 'off' if o.grok_enabled else 'on' }}">{{ 'Tắt Grok' if o.grok_enabled else 'Bật Grok' }}</button>
+  </span>
+  <span class="muted" title="Opus ra quyết định mỗi chu kỳ này (phút).">tick: {{ o.interval_min }}m</span>
+</div>
+
+<div class="cards">
+  <div class="card"><div class="label" data-tip="Vốn cấp riêng cho OPUS. Đây là mẫu số của KPI 1%/24h. Tách rời khỏi vốn full-auto thường.">Vốn cấp</div><div class="value">${{ o.allocation_usd | money }}</div></div>
+  <div class="card"><div class="label" data-tip="Tổng lãi/lỗ OPUS = đã chốt + tạm tính − chi phí Opus hôm nay (×2). %% so với vốn cấp.">Lãi/Lỗ OPUS</div>
+    <div class="value {{ 'pos' if o.total_pnl >= 0 else 'neg' }}">${{ o.total_pnl | money }} <span class="fs-12">({{ "%+.2f"|format(o.pnl_pct) }}%)</span></div></div>
+  <div class="card"><div class="label" data-tip="Vốn đang nằm trong các vị thế OPUS đang mở = Σ (KL × giá vốn).">Đang đầu tư</div><div class="value">${{ o.deployed_usd | money }}</div></div>
+  <div class="card"><div class="label" data-tip="Vốn OPUS còn trống = vốn cấp − đang đầu tư.">Khả dụng</div><div class="value">${{ o.free_usd | money }}</div></div>
+  <div class="card"><div class="label" data-tip="Số vị thế Opus đang quản lý (watch/ride).">Vị thế</div><div class="value">{{ o.open_positions }}</div></div>
+  <div class="card"><div class="label" data-tip="Chi phí gọi Opus hôm nay đã nhân ×2 (theo quy tắc tính chi phí trước lợi nhuận). Vượt trần thì tạm dừng.">Opus cost today</div>
+    <div class="value {{ 'neg' if o.cost_cap_reached else '' }}">${{ o.spend_today_usd | money }} / ${{ o.daily_cost_cap_usd | money }}</div></div>
+  <div class="card"><div class="label" data-tip="Lợi nhuận RÒNG 24h gần nhất / allocation. Ròng = lãi gộp − phí trade − 2×chi phí Opus. Mục tiêu ≥ 1%.">KPI 24h (net)</div>
+    <div class="value {{ 'pos' if o.kpi_24h_pct >= o.kpi_target_pct else ('neg' if o.kpi_24h_pct < 0 else '') }}">{{ "%.2f"|format(o.kpi_24h_pct) }}% / {{ "%.1f"|format(o.kpi_target_pct) }}%</div></div>
+</div>
+
+<div class="mt-14">
+  <div class="muted mb-4" title="Lợi nhuận ròng mỗi giờ chạy auto = lãi thực hiện − 2×chi phí Opus trong giờ đó.">Net P/L mỗi giờ (ròng)</div>
+  {{ pnl_svg | safe }}
+</div>
+<div class="mt-10">
+  <div class="muted mb-4" title="Lũy kế lợi nhuận ròng so với đường mục tiêu tuyến tính (allocation × 1% / 24h mỗi giờ).">Lũy kế net vs mục tiêu 1%/24h</div>
+  {{ cum_svg | safe }}
+</div>
+
+{% if o.mode and o.open_positions == 0 %}
+<p class="muted mt-10">OPUS đang bật, chưa có vị thế. Chu kỳ quyết định sẽ được kích hoạt ở pha sau (O-3).</p>
+{% elif not o.mode %}
+<p class="muted mt-10">OPUS đang tắt. Bấm Enable để bật chế độ điều phối nâng cao (paper).</p>
+{% endif %}

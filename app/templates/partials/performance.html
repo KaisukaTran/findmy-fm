@@ -1,0 +1,12 @@
+<div class="cards mb-10">
+  <div class="card"><div class="label muted" title="Tổng vốn định giá theo thị trường (MTM) = tiền mặt + giá trị thị trường các vị thế.">Equity</div><div class="value">${{ p.total_equity | money }}</div></div>
+  <div class="card"><div class="label muted" title="Lãi/lỗ đã chốt = tiền bán − giá vốn − phí.">Realized P&L</div>
+    <div class="value {{ 'pos' if p.realized_pnl >= 0 else 'neg' }}">${{ p.realized_pnl | money }}</div></div>
+  <div class="card"><div class="label muted" title="Tỉ lệ thắng backtest, tính out-of-sample (walk-forward) để tránh overfit. Ngưỡng vào lệnh ≥ MIN_WIN_RATE.">Win-rate</div><div class="value">{{ "%.0f"|format(p.win_rate) }}%</div></div>
+  <div class="card"><div class="label muted" title="Tỉ lệ thua backtest. Vượt MAX_LOSS_RATE thì cặp đó bị loại, không giao dịch.">Loss-rate</div>
+    <div class="value {{ 'neg' if p.loss_rate > 0 else '' }}">{{ "%.0f"|format(p.loss_rate) }}%</div></div>
+  <div class="card"><div class="label muted" title="Sụt giảm sâu nhất từ đỉnh vốn = (đỉnh − đáy)/đỉnh. Vượt MAX_DRAWDOWN_PCT → circuit-breaker đóng băng auto.">Max drawdown</div>
+    <div class="value {{ 'neg' if p.max_drawdown_pct > 0 else '' }}">{{ "%.1f"|format(p.max_drawdown_pct) }}%</div></div>
+</div>
+<div class="mb-8">{{ equity_svg | safe }}</div>
+<div>{{ winloss_svg | safe }}</div>

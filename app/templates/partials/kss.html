@@ -1,0 +1,41 @@
+<div class="cards mb-10">
+  <div class="card"><div class="label">Sessions</div><div class="value">{{ summary.total_sessions }}</div></div>
+  <div class="card"><div class="label">Active</div><div class="value">{{ summary.active_sessions }}</div></div>
+  <div class="card"><div class="label">Active fund</div><div class="value">${{ summary.total_isolated_fund | money }}</div></div>
+</div>
+{% if sessions %}
+<table class="tbl">
+  <thead><tr>
+    <th title="Mã coin của phiên (số sau là ID).">Coin</th>
+    <th title="Trạng thái: pending → active → (tp_triggered | stopped | timeout) → completed.">Trạng thái</th>
+    <th title="Số sóng đã khớp / tối đa. Mỗi sóng là một lần DCA mua thêm khi giá giảm.">Sóng</th>
+    <th title="Lãi/lỗ tạm tính = (giá hiện tại − avg) × KL đã khớp.">uP&L</th>
+    <th title="Mở biểu đồ giá rõ ràng: giá mua, hiện tại, sóng kế, TP, SL. (Avg/SL/Trail xem ở đây)">Chi tiết</th>
+    <th></th>
+  </tr></thead>
+  <tbody>
+    {% for s in sessions %}
+    <tr>
+      <td>{{ s.symbol }} <span class="muted fs-11">#{{ s.id }}</span></td>
+      <td><span class="badge {{ s.status }}">{{ s.status }}</span></td>
+      <td>{{ s.filled_waves_count }}/{{ s.max_waves }}</td>
+      <td class="{{ 'pos' if s.unrealized_pnl >= 0 else 'neg' }}">{{ s.unrealized_pnl | money }}</td>
+      <td><button class="sm ghost" data-action="viewLadder" data-id="{{ s.id }}">Xem</button></td>
+      <td class="row-actions">
+        {% if s.status == 'pending' %}
+        <button class="ok sm" data-action="kssStart" data-id="{{ s.id }}">Bắt đầu</button>
+        {% elif s.status == 'active' %}
+        <button class="ghost sm" data-action="kssCheckTp" data-id="{{ s.id }}">TP?</button>
+        <button class="ghost sm" data-action="kssDcaNext" data-id="{{ s.id }}"
+          title="Mua thêm 1 sóng DCA (rung kế theo ladder). Nới max_waves trước nếu đã đầy.">DCA+</button>
+        <button class="danger sm" data-action="kssStop" data-id="{{ s.id }}">Dừng</button>
+        {% endif %}
+        {% if s.status != 'active' %}
+        <button class="ghost sm" data-action="kssDelete" data-id="{{ s.id }}">Xóa</button>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="muted">Chưa có phiên. Bấm "+ KSS Session".</p>{% endif %}

@@ -1,0 +1,35 @@
+{% if rows %}
+<table class="tbl">
+  <thead><tr>
+    <th title="Mã coin.">Symbol</th>
+    <th title="Khối lượng đang nắm giữ.">Qty</th>
+    <th title="Giá vốn trung bình (đã gồm phí mua).">Avg</th>
+    <th title="Giá thị trường hiện tại.">Price</th>
+    <th title="Giá trị thị trường = KL × giá hiện tại, và %% so với TỔNG vốn (equity).">Giá trị</th>
+    <th title="Lãi/lỗ tạm tính = (giá hiện tại − avg) × KL, và %% so với giá vốn.">uP&L</th>
+    <th title="Ai đang quản lý coin này: OPUS (Opus tự điều phối) hoặc KSS (full-auto theo chiến lược). Có thể cả hai.">Src</th>
+    <th title="Mở biểu đồ giá: mua, hiện tại, sóng kế, TP, SL.">Giá</th>
+    <th title="Bán toàn bộ vị thế ngay (can thiệp thủ công, dừng cả session KSS của coin).">Đóng</th>
+  </tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.symbol }}</td>
+      <td>{{ r.quantity | qty }}</td>
+      <td>{{ r.avg_entry_price | money }}</td>
+      <td>{{ r.current_price | money }}</td>
+      <td>${{ r.market_value | money }} <span class="muted fs-11">{{ "%.1f"|format(r.market_value_pct) }}%</span></td>
+      <td class="{{ 'pos' if r.unrealized_pnl >= 0 else 'neg' }}">
+        ${{ r.unrealized_pnl | money }} ({{ "%.1f"|format(r.unrealized_pnl_pct) }}%)
+      </td>
+      <td>
+        {% for s in r.sources %}<span class="badge {{ 'ml-on' if s == 'OPUS' else 'active' }}">{{ s }}</span> {% endfor %}
+        {% if not r.sources %}<span class="muted">—</span>{% endif %}
+      </td>
+      <td><button class="sm ghost" data-action="viewLadderSymbol" data-id="{{ r.symbol }}">Xem</button></td>
+      <td><button class="sm danger" data-action="closePosition" data-id="{{ r.symbol }}" title="Bán toàn bộ {{ r.symbol }} ngay (can thiệp thủ công)">Đóng</button></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="muted">No open positions.</p>{% endif %}

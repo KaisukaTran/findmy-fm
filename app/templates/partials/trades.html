@@ -1,0 +1,28 @@
+{% if rows %}
+<table class="tbl">
+  <thead><tr>
+    <th title="Thời điểm khớp lệnh (giờ:phút:giây, giờ VN GMT+7).">Time</th>
+    <th title="Mã coin.">Sym</th>
+    <th title="Hướng: BUY (mua) / SELL (bán).">Side</th>
+    <th title="Khối lượng khớp.">Qty</th>
+    <th title="Giá khớp thực tế (đã gồm slippage mô phỏng).">Price</th>
+    <th title="Phí giao dịch = notional × taker_fee_pct (mặc định 0.1%).">Fee</th>
+    <th title="Lãi/lỗ đã chốt của lệnh bán = tiền bán − giá vốn − phí.">P&L</th>
+    <th title="Nguồn lệnh: OPUS (Opus điều phối), KSS (chiến lược full-auto), manual/auto.">Src</th>
+  </tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td class="muted">{{ r.executed_at | hms }}</td>
+      <td>{{ r.symbol }}</td>
+      <td class="{{ 'pos' if r.side == 'BUY' else 'neg' }}">{{ r.side }}</td>
+      <td>{{ r.quantity | qty }}</td>
+      <td>{{ r.price | money }}</td>
+      <td>{{ "%.4f"|format(r.fee) }}</td>
+      <td class="{{ 'pos' if r.realized_pnl >= 0 else 'neg' }}">{{ r.realized_pnl | money }}</td>
+      <td><span class="badge {{ 'ml-on' if r.source == 'OPUS' else ('active' if r.source == 'KSS' else '') }}">{{ r.source }}</span></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="muted">No trades yet.</p>{% endif %}

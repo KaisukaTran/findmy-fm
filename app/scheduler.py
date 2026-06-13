@@ -1,0 +1,215 @@
+"""
+Background scheduler — drives autonomous operation.
+
+Each cycle: close overdue sessions → check TP on open sessions → scan the
+universe (auto-opens sessions in full-auto) → auto-fill KSS orders whose limit
+the market reached (full-auto only). Off by default; toggled via settings /
+the /api/scheduler endpoint. Everything it does is audit-logged downstream.
+
+`run_cycle(db)` is the synchronous unit of work (unit-testable); the async loop
+just calls it on an interval.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+
+from sqlalchemy.orm import Session
+
+from app import audit, orders, scanner
+from app.config import settings
+from app.db import SessionLocal
+from app.kss import service
+
+logger = logging.getLogger(__name__)
+
+_task: asyncio.Task | None = None
+_last_cycle_at: str | None = None
+_last_summary: dict = {}
+
+
+def status() -> dict:
+    """Lightweight scheduler status for the header badge / /api/automation."""
+    return {
+        "scheduler_running": is_running(),
+        "interval_min": settings.scan_interval_min,
+        "last_cycle_at": _last_cycle_at,
+        "last_summary": _last_summary,
+    }
+
+
+def _run_periodic(db: Session) -> tuple[int, bool]:
+    """Phase C: time-gated per-pair hyperopt + ML retrain. Never raises."""
+    from datetime import datetime
+
+    hyperopt_runs = 0
+    ml_trained = False
+    try:
+        from app import hyperopt, ml, runtime
+        now = datetime.utcnow()
+
+        def _due(key: str, hours: float) -> bool:
+            last = runtime.get(db, key)
+            if not last:
+                return True
+            try:
+                return (now - datetime.fromisoformat(last)).total_seconds() >= hours * 3600
+            except ValueError:
+                return True
+
+        if settings.hyperopt_enabled and _due("hyperopt_last_at", settings.hyperopt_interval_hours):
+            for sym in settings.watchlist:
+                if hyperopt.run_for(db, sym) is not None:
+                    hyperopt_runs += 1
+            runtime.set(db, "hyperopt_last_at", now.isoformat())
+        if settings.ml_enabled and _due("ml_last_at", settings.ml_retrain_hours):
+            ml_trained = ml.train(db) is not None
+            runtime.set(db, "ml_last_at", now.isoformat())
+    except Exception:  # periodic tuning must never kill the cycle
+        logger.exception("phase-c periodic tasks failed")
+    return hyperopt_runs, ml_trained
+
+
+def run_cycle(db: Session) -> dict:
+    """One scheduler cycle. Returns a small summary (counts), not data dumps."""
+    global _last_cycle_at, _last_summary
+    from datetime import datetime, timedelta
+
+    from app import circuit, guardian, notify
+    from app.models import PENDING, PendingOrder
+    closed = service.sweep_deadlines(db)
+    tp = service.manage_open_sessions(db)
+    service.manage_orphan_positions(db)  # TP/SL leftover positions no session/OPUS covers
+    scan = scanner.run_scan(db)
+    breaker = circuit.evaluate(db)
+    frozen = breaker["frozen"]
+
+    # Veto TTL: expire stale Guardian vetoes so a transient veto can't permanently
+    # deadlock a KSS DCA wave whose limit price has since been reached. Cleared orders
+    # become auto-eligible again and are re-reviewed below (if the Guardian is on) — if
+    # still unsafe they get re-vetoed with a fresh timestamp. Runs unconditionally
+    # (even when frozen / Guardian off) so a stuck veto always drains. Legacy rows with
+    # no timestamp are treated as already expired.
+    veto_expired = 0
+    ttl = settings.guardian_veto_ttl_min
+    if ttl > 0:
+        cutoff = datetime.utcnow() - timedelta(minutes=ttl)
+        stale = (
+            db.query(PendingOrder)
+            .filter(
+                PendingOrder.status == PENDING,
+                PendingOrder.auto_veto == True,  # noqa: E712
+                (PendingOrder.auto_veto_at == None) | (PendingOrder.auto_veto_at < cutoff),  # noqa: E711
+            )
+            .all()
+        )
+        for order in stale:
+            order.auto_veto = False
+            order.auto_veto_reason = None
+            order.auto_veto_at = None
+            audit.log(db, "guardian", "veto_expired", entity=f"order:{order.id}",
+                      symbol=order.symbol)
+            veto_expired += 1
+
+    # Guardian review: veto any auto-eligible orders the LLM deems unsafe.
+    guardian_vetoes = 0
+    if not frozen and guardian.enabled():
+        _eligible_sources = list(set(settings.autoapprove_sources) | {"kss"})
+        pend = (
+            db.query(PendingOrder)
+            .filter(
+                PendingOrder.status == PENDING,
+                PendingOrder.auto_veto == False,  # noqa: E712
+                PendingOrder.source.in_(_eligible_sources),
+                # Guardian only screens NEW risk (BUYs). Exits (SELLs) reduce risk and must
+                # never be vetoed — vetoing a take-profit/stop traps capital (drawdown).
+                PendingOrder.side == "BUY",
+            )
+            .all()
+        )
+        if pend:
+            vetoes = guardian.review(pend)
+            for oid, reason in vetoes.items():
+                order = db.get(PendingOrder, oid)
+                if order is not None:
+                    order.auto_veto = True
+                    order.auto_veto_reason = reason
+                    order.auto_veto_at = datetime.utcnow()
+                    audit.log(db, "guardian", "veto", entity=f"order:{oid}", reason=reason)
+                    notify.send(f"Guardian vetoed order {oid} ({order.symbol}): {reason}")
+                    guardian_vetoes += 1
+
+    # Phase C: periodic per-pair hyperopt + ML retrain (time-gated, never blocks).
+    hyperopt_runs, ml_trained = _run_periodic(db)
+
+    # Defense-in-depth: short-circuit the auto branches when frozen. The callees
+    # also self-guard, but gating here makes the breaker's intent explicit.
+    filled = orders.auto_fill_due_orders(db) if settings.auto_trade and not frozen else []
+    auto_approved = [] if frozen else orders.auto_approve_by_policy(db)  # self-guards on autoapprove_enabled
+    audit.log(db, "scheduler", "cycle", deadlines_closed=len(closed), tp_queued=len(tp),
+              candidates=len(scan["candidates"]), auto_filled=len(filled),
+              auto_approved=len(auto_approved), frozen=frozen, guardian_vetoes=guardian_vetoes,
+              veto_expired=veto_expired, hyperopt_runs=hyperopt_runs, ml_trained=ml_trained)
+    db.commit()
+    summary = {
+        "deadlines_closed": closed,
+        "tp_queued": tp,
+        "scan_id": scan["scan_id"],
+        "auto_filled": filled,
+        "auto_approved": auto_approved,
+        "frozen": frozen,
+        "guardian_vetoes": guardian_vetoes,
+        "veto_expired": veto_expired,
+        "hyperopt_runs": hyperopt_runs,
+        "ml_trained": ml_trained,
+    }
+    _last_cycle_at = datetime.utcnow().isoformat()
+    _last_summary = {k: (len(v) if isinstance(v, list) else v) for k, v in summary.items()}
+    return summary
+
+
+def _cycle_once() -> None:
+    db = SessionLocal()
+    try:
+        run_cycle(db)
+    finally:
+        db.close()
+
+
+async def _loop() -> None:
+    logger.info("scheduler started (every %s min)", settings.scan_interval_min)
+    while True:
+        try:
+            # Offload the blocking, network-heavy cycle to a thread so the event
+            # loop (and the API) stays responsive.
+            await asyncio.to_thread(_cycle_once)
+        except Exception:  # a bad cycle must not kill the loop
+            logger.exception("scheduler cycle failed")
+        await asyncio.sleep(max(settings.scan_interval_min, 1) * 60)
+
+
+def start() -> bool:
+    """Start the background loop if not already running. Returns True if started."""
+    global _task
+    if _task and not _task.done():
+        return False
+    settings.scheduler_enabled = True
+    _task = asyncio.create_task(_loop())
+    return True
+
+
+def stop() -> bool:
+    """Stop the background loop. Returns True if a running task was cancelled."""
+    global _task
+    settings.scheduler_enabled = False
+    if _task and not _task.done():
+        _task.cancel()
+        _task = None
+        return True
+    _task = None
+    return False
+
+
+def is_running() -> bool:
+    return bool(_task and not _task.done())

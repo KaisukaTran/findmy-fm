@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FINDMY-FM · Paper Trading</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <script defer src="/static/app.js"></script>
+  <script defer src="/static/htmx.min.js"></script>
+  <script defer src="/static/alpine.min.js"></script>
+</head>
+<body x-data="ui">
+  <header>
+    <h1>FINDMY-FM <span class="muted">· KSS Pyramid DCA</span></h1>
+    <div hx-get="/partials/status" hx-trigger="load, every 5s [document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML" hx-indicator="#global-indicator"></div>
+    <span id="global-indicator" class="htmx-indicator loading-chip" aria-hidden="true">Đang tải…</span>
+    <div class="actions">
+      <button class="ghost" @click="toggleOrder">+ Lệnh</button>
+      <button class="ghost" @click="toggleKss">+ Phiên KSS</button>
+      <button class="ghost" @click="togglePreview">Xem trước kim tự tháp</button>
+      <span id="key-indicator" class="key-indicator" title="" data-action="clearKey"></span>
+    </div>
+  </header>
+
+  <main>
+    <!-- Summary cards -->
+    <div hx-get="/partials/summary" hx-trigger="load, every 15s [document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML">
+      <span class="htmx-indicator loading-row">Đang tải…</span>
+    </div>
+
+    <!-- Create-order modal -->
+    <div class="modal" x-show="orderOpen" x-cloak role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h2>Đặt lệnh thủ công</h2>
+        <button type="button" class="sm ghost modal-close" @click="orderOpen=false" aria-label="Đóng">✕</button>
+      </div>
+      <form id="order-form">
+        <label>Symbol<input name="symbol" value="BTC" required /></label>
+        <label>Side
+          <select name="side"><option>BUY</option><option>SELL</option></select>
+        </label>
+        <label>Quantity<input name="quantity" type="number" step="any" required /></label>
+        <label>Price (0=market)<input name="price" type="number" step="any" value="0" /></label>
+        <label>Type
+          <select name="order_type"><option>LIMIT</option><option>MARKET</option></select>
+        </label>
+        <button type="submit">Đặt lệnh</button>
+      </form>
+    </div>
+
+    <!-- Create-KSS modal -->
+    <div class="modal" x-show="kssOpen" x-cloak role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h2>Tạo phiên KSS mới</h2>
+        <button type="button" class="sm ghost modal-close" @click="kssOpen=false" aria-label="Đóng">✕</button>
+      </div>
+      <form id="kss-form">
+        <label>Symbol<input name="symbol" value="BTC" required /></label>
+        <label>Entry price<input name="entry_price" type="number" step="any" value="50000" required /></label>
+        <label>Distance %<input name="distance_pct" type="number" step="any" value="2" required /></label>
+        <label>Max waves<input name="max_waves" type="number" value="10" required /></label>
+        <label>Isolated fund<input name="isolated_fund" type="number" step="any" value="10000" required /></label>
+        <label>TP %<input name="tp_pct" type="number" step="any" value="3" required /></label>
+        <button type="submit">Tạo</button>
+      </form>
+    </div>
+
+    <!-- Preview modal -->
+    <div class="modal" x-show="previewOpen" x-cloak role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h2>Xem trước kim tự tháp (dự báo)</h2>
+        <button type="button" class="sm ghost modal-close" @click="previewOpen=false" aria-label="Đóng">✕</button>
+      </div>
+      <form id="preview-form">
+        <label>Symbol<input name="symbol" value="BTC" /></label>
+        <label>Entry price<input name="entry_price" type="number" step="any" value="50000" required /></label>
+        <label>Distance %<input name="distance_pct" type="number" step="any" value="2" required /></label>
+        <label>Max waves<input name="max_waves" type="number" value="5" required /></label>
+        <label>Isolated fund<input name="isolated_fund" type="number" step="any" value="1000" required /></label>
+        <label>TP %<input name="tp_pct" type="number" step="any" value="3" required /></label>
+        <button type="submit">Xem trước</button>
+      </form>
+      <div id="preview-output"></div>
+    </div>
+
+    <!-- Tab navigation (plain-JS controlled; see app.js showTab) -->
+    <nav class="tabs" role="tablist">
+      <button class="tab" data-tab="overview" role="tab" aria-selected="true">Tổng quan</button>
+      <button class="tab" data-tab="trading" role="tab" aria-selected="false">Giao dịch</button>
+      <button class="tab" data-tab="opus" role="tab" aria-selected="false">OPUS</button>
+      <button class="tab" data-tab="losses" role="tab" aria-selected="false">Phân tích lỗ</button>
+      <button class="tab" data-tab="strategy" role="tab" aria-selected="false">Chiến lược</button>
+      <button class="tab" data-tab="logs" role="tab" aria-selected="false">Nhật ký</button>
+    </nav>
+
+    <!-- TAB: Tổng quan (Overview) -->
+    <div data-tab-panel="overview">
+      <div class="panel mt-16">
+        <h2>Hiệu suất (Performance)</h2>
+        <div hx-get="/partials/performance" hx-trigger="load, tab-shown from:closest [data-tab-panel], every 20s [tabActive(this) && document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML"></div>
+      </div>
+      <div class="panel mt-16">
+        <h2>Agent Scanner</h2>
+        <div class="scroll" hx-get="/partials/scanner" hx-trigger="load, tab-shown from:closest [data-tab-panel], every 30s [tabActive(this) && document.visibilityState==='visible'], refresh-scanner from:body" hx-swap="innerHTML"></div>
+        <div hx-get="/partials/scanner-stats" hx-trigger="load, tab-shown from:closest [data-tab-panel], every 30s [tabActive(this) && document.visibilityState==='visible'], refresh-scanner from:body" hx-swap="innerHTML"></div>
+      </div>
+    </div>
+
+    <!-- TAB: Giao dịch (Trading) -->
+    <div data-tab-panel="trading">
+      <div class="grid mt-16">
+        <div class="panel">
+          <h2>KSS Sessions</h2>
+          <div class="scroll" hx-get="/partials/kss" hx-trigger="tab-shown from:closest [data-tab-panel], every 10s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body" hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
+        </div>
+        <div class="panel">
+          <h2>Hàng chờ duyệt (Pending)</h2>
+          <div class="scroll" hx-get="/partials/pending" hx-trigger="tab-shown from:closest [data-tab-panel], every 10s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body" hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
+        </div>
+        <div class="panel">
+          <h2>Vị thế (Positions)</h2>
+          <div class="scroll" hx-get="/partials/positions" hx-trigger="tab-shown from:closest [data-tab-panel], every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body" hx-swap="innerHTML"></div>
+        </div>
+        <div class="panel">
+          <h2>Lịch sử giao dịch (Trades)</h2>
+          <div class="scroll" hx-get="/partials/trades" hx-trigger="tab-shown from:closest [data-tab-panel], every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body" hx-swap="innerHTML"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: OPUS orchestrator mode -->
+    <div data-tab-panel="opus">
+      <div class="panel mt-16">
+        <h2>OPUS orchestrator (Opus tự điều phối · paper)</h2>
+        <div hx-get="/partials/opus" hx-trigger="tab-shown from:closest [data-tab-panel], every 10s [tabActive(this) && document.visibilityState==='visible'], refresh-opus from:body" hx-swap="innerHTML"></div>
+      </div>
+    </div>
+
+    <!-- TAB: Phân tích lỗ (Loss analysis — for strategy improvement) -->
+    <div data-tab-panel="losses">
+      <div class="panel mt-16">
+        <h2>Phân tích lỗ — nguyên nhân / thời gian / giá trị / cặp</h2>
+        <div hx-get="/partials/losses" hx-trigger="tab-shown from:closest [data-tab-panel], every 30s [tabActive(this) && document.visibilityState==='visible'], refresh-losses from:body" hx-swap="innerHTML"></div>
+      </div>
+    </div>
+
+    <!-- TAB: Chiến lược (Strategy / Params) -->
+    <div data-tab-panel="strategy">
+      <div class="grid mt-16">
+        <div class="panel">
+          <h2>Cấu hình KSS (tổng)</h2>
+          <!-- load once only: a global refresh must NOT reload the form while the user is
+               editing (it would clobber unsaved input). Saving keeps the typed values. -->
+          <div hx-get="/partials/kss-settings" hx-trigger="load" hx-swap="innerHTML"></div>
+        </div>
+        <div class="panel" id="params-panel">
+          <h2>Hyperopt &amp; ML Params</h2>
+          {% include "partials/params.html" %}
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: Nhật ký (Logs) — meaningful, categorised feed -->
+    <div data-tab-panel="logs">
+      <div class="panel mt-16">
+        <h2>Nhật ký hoạt động</h2>
+        <!-- #audit-wrap is OUTSIDE the hx-swap, so the category filter (a CSS class on it)
+             survives the 15s poll. -->
+        <div id="audit-wrap" class="af-important">
+          <div class="audit-filters">
+            <button class="sm" data-action="auditFilter" data-id="important">Quan trọng</button>
+            <button class="sm ghost" data-action="auditFilter" data-id="trade">🟢 Giao dịch</button>
+            <button class="sm ghost" data-action="auditFilter" data-id="risk">🛑 Rủi ro</button>
+            <button class="sm ghost" data-action="auditFilter" data-id="opus">🤖 OPUS</button>
+            <button class="sm ghost" data-action="auditFilter" data-id="system">⚙️ Hệ thống</button>
+            <button class="sm ghost" data-action="auditFilter" data-id="all">Tất cả</button>
+            <span id="audit-sym-filter" class="hidden">· coin: <b id="audit-sym-label"></b>
+              <button class="sm ghost" data-action="auditClearSymbol">✕ bỏ lọc</button></span>
+          </div>
+          <div class="scroll" hx-get="/partials/audit" hx-trigger="tab-shown from:closest [data-tab-panel], every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-audit from:body" hx-swap="innerHTML"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Click-to-view price ladder modal (plain JS — works on HTMX-swapped rows) -->
+  <div id="ladder-modal" class="overlay hidden" role="dialog" aria-modal="true">
+    <div class="overlay-box">
+      <button class="sm ghost float-right" data-action="closeLadder" aria-label="Đóng">✕</button>
+      <div id="ladder-body"></div>
+    </div>
+  </div>
+</body>
+</html>

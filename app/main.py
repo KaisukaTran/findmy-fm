@@ -63,8 +63,9 @@ async def lifespan(app: FastAPI):
     # scheduler would never scan, so the two must boot together.
     if settings.scheduler_enabled or settings.full_auto:
         scheduler.start()
-    from app import notify
+    from app import notify, notify_discord
     notify.start()
+    notify_discord.start()
     if settings.opus_mode:
         from app.orchestrator import loop as opus_loop
 
@@ -74,6 +75,7 @@ async def lifespan(app: FastAPI):
     finally:
         scheduler.stop()
         notify.stop()
+        notify_discord.stop()
         from app.orchestrator import loop as opus_loop
 
         opus_loop.stop()

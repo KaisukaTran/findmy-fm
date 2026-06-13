@@ -99,7 +99,7 @@ class Settings(BaseSettings):
         description="Display timezone offset from UTC (Vietnam = +7). Storage stays UTC; this "
         "only shifts timestamps shown in the dashboard/charts.",
     )
-    live_exchange: str = Field(default="kraken", description="ccxt exchange id for live prices (public, no key — e.g. kraken/okx/bybit; binance.com is geo/network-blocked here).")
+    live_exchange: str = Field(default="kraken", description="ccxt exchange id for live prices (public, no key — e.g. binance/kraken/gateio/okx/bybit). NOTE: binance.com is reachable from this machine (re-verified 2026-06-13); override via .env LIVE_EXCHANGE.")
     data_exchange: str = Field(
         default="kraken",
         description="ccxt exchange id for backtest/scan history (public, no key — e.g. kraken/coinbase).",
@@ -211,6 +211,15 @@ class Settings(BaseSettings):
     telegram_notify_trades: bool = Field(default=True, description="Push a Telegram alert on each fill (trade). Kill switch for trade alerts.")
     telegram_notify_risk: bool = Field(default=True, description="Push Telegram alerts on risk events (SL/trailing exits, breaker freeze, guardian veto).")
     telegram_digest_hours: int = Field(default=0, ge=0, description="Hours between periodic Telegram digest pushes (equity + today's P&L + open counts). 0 = off.")
+
+    # --- Discord notifier (alternative to Telegram; works where TG is SNI/DPI-blocked) ---
+    # Push alerts via a channel webhook (no bot needed); optional 2-way commands via a bot
+    # gateway (NAT-friendly outbound WebSocket, like Telegram long-poll). Shares the
+    # telegram_notify_* kill switches + telegram_digest_hours (channel-agnostic categories).
+    discord_enabled: bool = Field(default=False, description="Enable the Discord notifier. Needs discord_webhook_url (alerts) and/or discord_bot_token+discord_channel_id (commands).")
+    discord_webhook_url: SecretStr = Field(default=SecretStr(""), description="Discord channel webhook URL for pushing alerts. Empty = no Discord push. Never logged.")
+    discord_bot_token: SecretStr = Field(default=SecretStr(""), description="Discord bot token for the 2-way command gateway. Requires the privileged MESSAGE CONTENT intent enabled in the Developer Portal. Empty = no inbound commands.")
+    discord_channel_id: str = Field(default="", description="Only messages in this Discord channel id are accepted as commands (auth boundary). Empty = commands off.")
 
     # --- Phase C: per-pair hyperopt + ML win-rate (off by default) ---
     hyperopt_enabled: bool = Field(default=False, description="Tune KSS params per pair (grid search; falls back to global scan_* when off).")

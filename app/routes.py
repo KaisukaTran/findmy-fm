@@ -24,6 +24,7 @@ from app import (
     hyperopt,
     ml,
     notify,
+    notify_discord,
     orders,
     pnlcal,
     portfolio,
@@ -240,6 +241,7 @@ def _automation_state(db: Session) -> dict:
         "open_sessions": active,
         "guardian": guardian.enabled(),
         "telegram": notify.is_running(),
+        "discord": notify_discord.is_running() or notify_discord.webhook_enabled(),
         "hyperopt": settings.hyperopt_enabled,
         "ml": settings.ml_enabled,
         "grok_scanner": settings.grok_scanner_enabled,
@@ -602,6 +604,42 @@ def set_telegram(body: TelegramBody):
 @api_router.post("/api/telegram/test", dependencies=[Depends(require_api_key)])
 def test_telegram():
     return {"sent": notify.send("FINDMY-FM test alert")}
+
+
+# --- Discord endpoints --------------------------------------------------
+
+
+class DiscordBody(BaseModel):
+    enabled: bool
+
+
+def _discord_state() -> dict:
+    return {
+        "enabled": settings.discord_enabled,
+        "running": notify_discord.is_running(),  # command gateway alive
+        "webhook": notify_discord.webhook_enabled(),  # push configured
+        "commands": notify_discord.command_enabled(),  # 2-way configured
+    }
+
+
+@api_router.get("/api/discord")
+def get_discord():
+    return _discord_state()
+
+
+@api_router.post("/api/discord", dependencies=[Depends(require_api_key)])
+def set_discord(body: DiscordBody):
+    settings.discord_enabled = body.enabled
+    if body.enabled:
+        notify_discord.start()  # no-op unless a bot token + channel id are set
+    else:
+        notify_discord.stop()
+    return _discord_state()
+
+
+@api_router.post("/api/discord/test", dependencies=[Depends(require_api_key)])
+def test_discord():
+    return {"sent": notify_discord.send("FINDMY-FM test alert")}
 
 
 # --- Phase C: hyperopt + ML endpoints -----------------------------------

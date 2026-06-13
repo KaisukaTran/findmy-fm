@@ -61,12 +61,8 @@ def _base_url() -> str:
 # ---------------------------------------------------------------------------
 
 
-def send(text: str) -> bool:
-    """Send *text* to the configured Telegram chat.
-
-    Returns True on HTTP 200, False on any error or when disabled.
-    Never raises; never logs the token.
-    """
+def _telegram_send(text: str) -> bool:
+    """Send *text* to the configured Telegram chat. False on error/disabled."""
     if not enabled():
         return False
     try:
@@ -75,8 +71,37 @@ def send(text: str) -> bool:
         resp = httpx.post(url, json=payload, timeout=_TIMEOUT)
         return resp.status_code == 200
     except Exception:  # network, timeout, parse error — all swallowed
-        logger.debug("notify.send failed (Telegram unreachable or misconfigured)")
+        logger.debug("notify._telegram_send failed (Telegram unreachable or misconfigured)")
         return False
+
+
+def any_channel_enabled() -> bool:
+    """True if at least one alert channel (Telegram or Discord webhook) is configured."""
+    if enabled():
+        return True
+    try:
+        from app import notify_discord
+
+        return notify_discord.webhook_enabled()
+    except Exception:
+        return False
+
+
+def send(text: str) -> bool:
+    """Broadcast *text* to every configured alert channel (Telegram + Discord).
+
+    Returns True if at least one channel accepted it. Never raises; a failure on one
+    channel never suppresses the others.
+    """
+    sent = _telegram_send(text)
+    try:
+        from app import notify_discord
+
+        if notify_discord.webhook_enabled():
+            sent = notify_discord.send(text) or sent
+    except Exception:  # importing/sending to Discord must never break a Telegram alert
+        logger.debug("notify: Discord fan-out failed")
+    return sent
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +182,7 @@ def maybe_send_digest(db) -> bool:
     """Push a digest if `telegram_digest_hours` has elapsed since the last one. No-op when
     disabled (0) or Telegram off. Tracks the last send in-process."""
     hours = settings.telegram_digest_hours
-    if hours <= 0 or not enabled():
+    if hours <= 0 or not any_channel_enabled():
         return False
     if not _throttle_ok("digest", hours * 3600.0):
         return False

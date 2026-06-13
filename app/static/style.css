@@ -141,6 +141,34 @@ button { white-space: nowrap; }
 /* Phase 3.4 token polish: tabular numerics so dense $/% columns line up. */
 .card .value, .tbl td { font-variant-numeric: tabular-nums; }
 
+/* --- Phase 4: PnL calendar -------------------------------------------- */
+.cal-head { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-bottom: 10px; }
+.cal-nav { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.cal-toggle { display: flex; gap: 4px; }
+.cal-total { margin-left: auto; font-size: 12px; }
+.cal-grid { width: 100%; border-collapse: separate; border-spacing: 4px; table-layout: fixed; }
+.cal-grid th { color: var(--muted); font-size: 11px; font-weight: 500; text-align: center; padding: 2px; }
+.cal-grid th.cal-wk-h { width: 56px; }
+.cal-cell {
+  height: 62px; vertical-align: top; padding: 4px 6px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.cal-cell .cal-day { font-size: 11px; color: var(--muted); }
+.cal-cell .cal-pnl { font-size: 13px; font-weight: 600; margin-top: 4px; }
+.cal-cell .cal-cnt { font-size: 10px; }
+.cal-out { opacity: .35; }
+.cal-today { outline: 1px solid var(--accent); }
+.cal-pos { background: rgba(46,160,67,.14); border-color: rgba(46,160,67,.4); }
+.cal-neg { background: rgba(229,83,75,.14); border-color: rgba(229,83,75,.4); }
+.cal-click { cursor: pointer; }
+.cal-click:hover { border-color: var(--accent); }
+.cal-wk { text-align: right; font-size: 12px; font-weight: 600; vertical-align: middle;
+          background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; }
+.cal-drill { margin-top: 12px; }
+.cal-day-panel h3 { font-size: 13px; margin: 0 0 8px; color: var(--muted); }
+.cal-year tr.cal-click td { cursor: pointer; }
+
 /* --- Hover tooltips ---
    Two mechanisms by context:
    - [data-tip]: styled CSS tooltip for the top KPI strip (not inside an

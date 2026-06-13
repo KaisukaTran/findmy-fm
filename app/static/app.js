@@ -472,7 +472,7 @@ document.addEventListener("click", (e) => {
 document.addEventListener("DOMContentLoaded", () => {
   // U8: restore tab from hash on load; fallback to overview.
   const hash = location.hash.replace("#", "").trim();
-  const valid = ["overview", "trading", "opus", "losses", "strategy", "logs"];
+  const valid = ["overview", "trading", "opus", "losses", "calendar", "strategy", "logs"];
   showTab(valid.includes(hash) ? hash : "overview");
 });
 

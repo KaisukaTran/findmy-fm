@@ -78,10 +78,10 @@ Wave C = Phase 6 (live infra) then final gate.
 
 | Task | Content | DoD | Depends | Agent | Status |
 |------|---------|-----|---------|-------|--------|
-| 4.1 | Aggregation service: realized PnL grouped by day/week/month from closed trades (USDT). | unit test on a fixture matches hand-sum | - | backend-builder | cc:TODO |
-| 4.2 | Server-rendered calendar grid (month view) colour-coded green/red + day $ amount; week/month toggle. | renders for the fixture; zero JS beyond HTMX | 4.1, 5.x SVG helpers | frontend-htmx | cc:TODO |
-| 4.3 | Click a day → partial listing that day's closed trades. | HTMX partial returns correct rows | 4.2 | frontend-htmx | cc:TODO |
-| 4.4 | Route + sidebar entry + lazy-load. | tab loads on reveal only | 4.2,3.2 | frontend-htmx | cc:TODO |
+| 4.1 | Aggregation service: realized PnL grouped by day/week/month from closed trades (USDT). | unit test on a fixture matches hand-sum | - | backend-builder | cc:DONE — `app/pnlcal.py` buckets `Fill.realized_pnl` by local date (UTC+offset); `tests/app/test_pnlcal.py` 8 pass (hand-sums for day/week/month/year, in-month leak guard). |
+| 4.2 | Server-rendered calendar grid (month view) colour-coded green/red + day $ amount; week/month toggle. | renders for the fixture; zero JS beyond HTMX | 4.1, 5.x SVG helpers | frontend-htmx | cc:DONE — `partials/calendar.html` month grid (per-day cells + weekly subtotal col) + green/red bg; Tháng/Năm toggle via HTMX swap. No inline style (CSP clean). |
+| 4.3 | Click a day → partial listing that day's closed trades. | HTMX partial returns correct rows | 4.2 | frontend-htmx | cc:DONE — `/partials/calendar/day?d=YYYY-MM-DD` → `partials/calendar_day.html`; bad date → 400. |
+| 4.4 | Route + sidebar entry + lazy-load. | tab loads on reveal only | 4.2,3.2 | frontend-htmx | cc:DONE — `GET /partials/calendar`; sidebar item `data-tab="calendar"` + panel; `hx-trigger="tab-shown"` (lazy, no load-while-hidden); added to app.js hash `valid`. |
 
 ## Phase 5: Performance chart revamp (req #8)  [tdd:skip:visual]
 

@@ -32,6 +32,7 @@
           <button class="tab" data-tab="trading" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">⇅</span><span>Giao dịch</span></button>
           <button class="tab" data-tab="opus" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">◈</span><span>OPUS</span></button>
           <button class="tab" data-tab="losses" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">⚠</span><span>Phân tích lỗ</span></button>
+          <button class="tab" data-tab="calendar" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">⊞</span><span>Lịch P&amp;L</span></button>
           <button class="tab" data-tab="strategy" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">⚙</span><span>Chiến lược</span></button>
           <button class="tab" data-tab="logs" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">☰</span><span>Nhật ký</span></button>
         </nav>
@@ -146,6 +147,14 @@
       <div class="panel mt-16">
         <h2>Phân tích lỗ — nguyên nhân / thời gian / giá trị / cặp</h2>
         <div hx-get="/partials/losses" hx-trigger="tab-shown from:closest [data-tab-panel], every 30s [tabActive(this) && document.visibilityState==='visible'], refresh-losses from:body" hx-swap="innerHTML"></div>
+      </div>
+    </div>
+
+    <!-- TAB: Lịch P&L (PnL Calendar) — realized PnL by day/week/month -->
+    <div data-tab-panel="calendar">
+      <div class="panel mt-16">
+        <h2>Lịch lãi/lỗ đã chốt (PnL Calendar)</h2>
+        <div id="calendar-wrap" hx-get="/partials/calendar" hx-trigger="tab-shown from:closest [data-tab-panel]" hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
       </div>
     </div>
 

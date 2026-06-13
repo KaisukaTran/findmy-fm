@@ -24,6 +24,7 @@ from app import (
     ml,
     notify,
     orders,
+    pnlcal,
     portfolio,
     runtime,
     scanner,
@@ -672,6 +673,38 @@ def api_losses(db: Session = Depends(get_db)):
 def partial_losses(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         "partials/losses.html", {"request": request, "L": portfolio.loss_analysis(db)}
+    )
+
+
+@ui_router.get("/partials/calendar", response_class=HTMLResponse)
+def partial_calendar(
+    request: Request,
+    view: str = "month",
+    year: int | None = None,
+    month: int | None = None,
+    db: Session = Depends(get_db),
+):
+    """PnL calendar partial — month grid (day/week subtotals) or year (per-month) view."""
+    ctx = pnlcal.calendar_view(db, view=view, year=year, month=month)
+    return templates.TemplateResponse(
+        "partials/calendar.html", {"request": request, "ctx": ctx}
+    )
+
+
+@ui_router.get("/partials/calendar/day", response_class=HTMLResponse)
+def partial_calendar_day(request: Request, d: str, db: Session = Depends(get_db)):
+    """Drilldown: the closed-trade fills for one local calendar day (d=YYYY-MM-DD)."""
+    from datetime import date
+
+    try:
+        day = date.fromisoformat(d)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid date") from exc
+    rows = pnlcal.day_fills(db, day)
+    total = round(sum(f.realized_pnl for f in rows), 2)
+    return templates.TemplateResponse(
+        "partials/calendar_day.html",
+        {"request": request, "d": d, "rows": rows, "total": total},
     )
 
 

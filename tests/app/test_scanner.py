@@ -312,6 +312,14 @@ def test_second_scan_zero_ohlcv_calls(db, scan_env, monkeypatch):  # noqa: ARG00
     # Also patch data_provider so _universe + the provider reference use the spy.
     monkeypatch.setattr(scanner, "data_provider", lambda: spy)
 
+    # S3 (cheap-gates-first) pre-blocks a symbol that already has an open session.
+    # If scan 1 opened a session for BTC (which it does under default gate thresholds),
+    # scan 2 would PRE-BLOCK BTC and skip it before the cache is consulted, so
+    # cache_hits would be 0 for the wrong reason. Keep _can_open False so no session
+    # opens — BTC is re-evaluated each scan and genuinely served from the warm cache.
+    # (Makes the test independent of gate thresholds / .env.)
+    monkeypatch.setattr(scanner, "_can_open", lambda _db: (False, "test-no-open"))
+
     # Clear the cache to ensure a cold start.
     candle_cache.clear()
 

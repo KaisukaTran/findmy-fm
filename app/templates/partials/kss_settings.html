@@ -30,6 +30,12 @@
     <input name="min_win_rate" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.min_win_rate) }}" required></label>
   <label title="Ngưỡng đồng thuận tối thiểu của 5 agent thị trường (trend/dip/volatility/liquidity/ml). S4: backtest bị loại khỏi điểm đồng thuận — chứng cứ backtest thuộc về các gate cứng (E, win_lb). Giá trị mặc định mới: 45%.">Đồng thuận tối thiểu %
     <input name="min_confidence" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.min_confidence) }}" required></label>
+  <label title="Notional sóng đầu mỗi session. >0 = đặt cỡ lệnh đầu theo USD (dùng nhiều vốn hơn); 0 = cỡ pip mặc định (rất nhỏ).">Giá trị lệnh đầu (USD)
+    <input name="kss_first_wave_usd" type="number" step="any" min="0" value="{{ '%.2f'|format(k.kss_first_wave_usd) }}"></label>
+  <label title="Trần số coin mỗi lần quét. Tăng để quét nhiều coin hơn (mặc định 50).">Số coin quét tối đa
+    <input name="scan_max_symbols" type="number" step="1" min="1" value="{{ k.scan_max_symbols }}"></label>
+  <label title="Chỉ quét coin có quote-volume ≥ ngưỡng này. Giảm để quét thêm coin nhỏ (mặc định 1,000,000).">Thanh khoản tối thiểu (quote vol)
+    <input name="min_quote_volume" type="number" step="any" min="0" value="{{ '%.0f'|format(k.min_quote_volume) }}"></label>
   <button type="submit" class="ok">Lưu cấu hình KSS</button>
 </form>
 

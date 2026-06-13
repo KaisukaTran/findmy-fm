@@ -1,3 +1,7 @@
+<div id="kss-pane"
+     hx-get="/partials/kss?page={{ page }}"
+     hx-trigger="every 10s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body"
+     hx-target="this" hx-swap="outerHTML">
 <div class="cards mb-10">
   <div class="card"><div class="label">Sessions</div><div class="value">{{ summary.total_sessions }}</div></div>
   <div class="card"><div class="label">Active</div><div class="value">{{ summary.active_sessions }}</div></div>
@@ -39,3 +43,13 @@
   </tbody>
 </table>
 {% else %}<p class="muted">Chưa có phiên. Bấm "+ KSS Session".</p>{% endif %}
+<div class="page-nav">
+  <button class="sm ghost" {{ 'disabled' if not has_prev }}
+          hx-get="/partials/kss?page={{ page - 1 }}"
+          hx-target="#kss-pane" hx-swap="outerHTML">&#8249; Trước</button>
+  <span class="muted">Trang {{ page }}</span>
+  <button class="sm ghost" {{ 'disabled' if not has_next }}
+          hx-get="/partials/kss?page={{ page + 1 }}"
+          hx-target="#kss-pane" hx-swap="outerHTML">Sau &#8250;</button>
+</div>
+</div>

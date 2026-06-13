@@ -328,6 +328,13 @@ button { white-space: nowrap; }
 .td-nowrap { white-space: nowrap; }
 .td-shrink { width: 1%; }
 
+/* --- pagination nav (Task 3.2) ---------------------------------------- */
+.page-nav {
+  display: flex; gap: 8px; align-items: center;
+  margin-top: 8px; font-size: 12px;
+}
+.page-nav button[disabled] { opacity: .4; cursor: default; }
+
 /* --- ladder price-level color badges ---------------------------------- */
 /* avg price — amber */
 .badge-avg-price    { border-color: #d29922; color: #d29922; }

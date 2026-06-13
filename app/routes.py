@@ -380,6 +380,9 @@ class KssSettingsBody(BaseModel):
     min_win_rate: float | None = Field(None, ge=0, le=100)
     min_confidence: float | None = Field(None, ge=0, le=100)  # S4: consensus threshold
     grok_scanner_fail_mode: str | None = Field(None, pattern=r"^(open|closed)$")  # S5
+    scan_max_symbols: int | None = Field(None, ge=1, le=500)
+    min_quote_volume: float | None = Field(None, ge=0)
+    kss_first_wave_usd: float | None = Field(None, ge=0)
 
 
 @api_router.get("/api/kss-settings")
@@ -662,23 +665,46 @@ def partial_summary(request: Request, db: Session = Depends(get_db)):
 
 
 @ui_router.get("/partials/positions", response_class=HTMLResponse)
-def partial_positions(request: Request, db: Session = Depends(get_db)):
-    # Trading tab cards show at most 20 rows each.
+def partial_positions(request: Request, page: int = 1, db: Session = Depends(get_db)):
+    # Trading tab: page size 20, up to 10 pages.
+    page = max(1, min(page, 10))
+    offset = (page - 1) * 20
+    all_rows = portfolio.positions_view(db)
+    rows = all_rows[offset: offset + 20]
     return templates.TemplateResponse(
-        "partials/positions.html", {"request": request, "rows": portfolio.positions_view(db)[:20]}
+        "partials/positions.html",
+        {
+            "request": request,
+            "rows": rows,
+            "page": page,
+            "has_prev": page > 1,
+            "has_next": len(all_rows) > offset + 20,
+        },
     )
 
 
 @ui_router.get("/partials/trades", response_class=HTMLResponse)
-def partial_trades(request: Request, db: Session = Depends(get_db)):
+def partial_trades(request: Request, page: int = 1, db: Session = Depends(get_db)):
+    page = max(1, min(page, 10))
+    offset = (page - 1) * 20
+    rows = portfolio.trades_view(db, limit=20, offset=offset)
     return templates.TemplateResponse(
-        "partials/trades.html", {"request": request, "rows": portfolio.trades_view(db, limit=20)}
+        "partials/trades.html",
+        {
+            "request": request,
+            "rows": rows,
+            "page": page,
+            "has_prev": page > 1,
+            "has_next": len(rows) == 20,
+        },
     )
 
 
 @ui_router.get("/partials/pending", response_class=HTMLResponse)
-def partial_pending(request: Request, db: Session = Depends(get_db)):
-    pend = orders.list_pending(db, limit=20)
+def partial_pending(request: Request, page: int = 1, db: Session = Depends(get_db)):
+    page = max(1, min(page, 10))
+    offset = (page - 1) * 20
+    pend = orders.list_pending(db, limit=20, offset=offset)
     prices = portfolio.get_current_prices(list({o.symbol for o in pend})) if pend else {}
     rows = []
     for o in pend:
@@ -703,6 +729,9 @@ def partial_pending(request: Request, db: Session = Depends(get_db)):
             "aa_enabled": settings.autoapprove_enabled,
             "aa_max": settings.autoapprove_max_notional,
             "aa_sources": ",".join(settings.autoapprove_sources),
+            "page": page,
+            "has_prev": page > 1,
+            "has_next": len(rows) == 20,
         },
     )
 
@@ -843,13 +872,20 @@ def partial_opus(request: Request, db: Session = Depends(get_db)):
 
 
 @ui_router.get("/partials/kss", response_class=HTMLResponse)
-def partial_kss(request: Request, db: Session = Depends(get_db)):
+def partial_kss(request: Request, page: int = 1, db: Session = Depends(get_db)):
+    page = max(1, min(page, 10))
+    offset = (page - 1) * 20
+    all_sessions = kss_service.list_sessions(db, limit=offset + 21)
+    sessions = all_sessions[offset: offset + 20]
     return templates.TemplateResponse(
         "partials/kss.html",
         {
             "request": request,
-            "sessions": kss_service.list_sessions(db, limit=20),
+            "sessions": sessions,
             "summary": kss_service.summary(db),
+            "page": page,
+            "has_prev": page > 1,
+            "has_next": len(all_sessions) > offset + 20,
         },
     )
 
@@ -908,11 +944,29 @@ def partial_performance(request: Request, period: str = "all", db: Session = Dep
 
 
 @ui_router.get("/partials/audit", response_class=HTMLResponse)
-def partial_audit(request: Request, db: Session = Depends(get_db)):
+def partial_audit(request: Request, page: int = 1, db: Session = Depends(get_db)):
     from app import auditview
+    from app.models import AuditLog as _AuditLog
 
+    page = max(1, min(page, 10))
+    offset = (page - 1) * 20
+    raw = (
+        db.query(_AuditLog)
+        .order_by(_AuditLog.id.desc())
+        .offset(offset)
+        .limit(20)
+        .all()
+    )
+    rows = [auditview.render(r) for r in raw]
     return templates.TemplateResponse(
-        "partials/audit.html", {"request": request, "rows": auditview.audit_view(db, limit=300)}
+        "partials/audit.html",
+        {
+            "request": request,
+            "rows": rows,
+            "page": page,
+            "has_prev": page > 1,
+            "has_next": len(rows) == 20,
+        },
     )
 
 

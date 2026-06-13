@@ -47,6 +47,13 @@ class Settings(BaseSettings):
 
     # --- KSS / risk / pip sizing ---
     pip_multiplier: float = Field(default=2.0, description="1 pip = pip_multiplier × minQty.")
+    kss_first_wave_usd: float = Field(
+        default=0.0,
+        ge=0,
+        description="Target notional (USD) of a KSS session's FIRST wave. >0 sizes pip_size = "
+        "first_wave_usd/entry so wave-0 ≈ this value (later waves keep the (n+1)× pyramid shape); "
+        "0 = legacy pip_multiplier×minQty sizing. Raise to deploy more idle capital per session.",
+    )
     max_position_size_pct: float = Field(default=10.0, description="Max position as % of equity.")
     max_daily_loss_pct: float = Field(default=5.0, description="Max daily loss as % of equity.")
     demo_isolated_fund: float = Field(default=10000.0, description="Default demo isolated fund (USD).")

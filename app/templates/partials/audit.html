@@ -1,3 +1,7 @@
+<div id="audit-pane"
+     hx-get="/partials/audit?page={{ page }}"
+     hx-trigger="every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-audit from:body"
+     hx-target="this" hx-swap="outerHTML">
 {% set sev = {'good':'pos','danger':'neg','warn':'audit-warn','info':'muted'} %}
 {% if rows %}
 <table class="tbl audit-tbl">
@@ -16,3 +20,13 @@
 </table>
 <p class="muted fs-11 mt-6">Hiện {{ rows|length }} sự kiện gần nhất. Di chuột vào dòng để xem chi tiết thô.</p>
 {% else %}<p class="muted">Chưa có hoạt động nào.</p>{% endif %}
+<div class="page-nav">
+  <button class="sm ghost" {{ 'disabled' if not has_prev }}
+          hx-get="/partials/audit?page={{ page - 1 }}"
+          hx-target="#audit-pane" hx-swap="outerHTML">&#8249; Trước</button>
+  <span class="muted">Trang {{ page }}</span>
+  <button class="sm ghost" {{ 'disabled' if not has_next }}
+          hx-get="/partials/audit?page={{ page + 1 }}"
+          hx-target="#audit-pane" hx-swap="outerHTML">Sau &#8250;</button>
+</div>
+</div>

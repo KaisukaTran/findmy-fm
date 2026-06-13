@@ -58,6 +58,9 @@ KSS_SETTING_FIELDS: dict[str, type] = {
     "min_win_rate": float,
     "min_confidence": float,  # S4: consensus threshold, now decoupled from backtest
     "grok_scanner_fail_mode": str,  # S5: "open" | "closed"
+    "scan_max_symbols": int,
+    "min_quote_volume": float,
+    "kss_first_wave_usd": float,
 }
 
 # ---------------------------------------------------------------------------

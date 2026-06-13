@@ -165,7 +165,19 @@ class PyramidSession:
 
     @property
     def pip_size(self) -> float:
-        """Calculate pip size: pip_multiplier × minQty."""
+        """Calculate pip size.
+
+        Default (legacy): ``pip_multiplier × minQty``.
+
+        Opt-in override: when ``settings.kss_first_wave_usd > 0`` and
+        ``self.entry_price > 0``, returns ``kss_first_wave_usd / entry_price``
+        so that wave-0 qty = (0+1) × pip_size and its notional ≈ the configured
+        USD value.  Later waves keep the ``(n+1)×`` pyramid shape unchanged.
+        Setting ``kss_first_wave_usd`` to 0 (default) leaves all behaviour
+        identical to the legacy pip-based formula.
+        """
+        if settings.kss_first_wave_usd > 0 and self.entry_price > 0:
+            return settings.kss_first_wave_usd / self.entry_price
         return settings.pip_multiplier * self._min_qty
 
     @property

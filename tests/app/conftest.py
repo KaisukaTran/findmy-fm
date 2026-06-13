@@ -48,6 +48,7 @@ _MUTABLE_SETTINGS = (
     "grok_enabled", "grok_scanner_enabled",
     "scan_distance_pct", "scan_tp_pct", "scan_max_waves", "scan_fund",
     "sl_pct", "trailing_pct", "deadline_days",
+    "scan_max_symbols", "min_quote_volume", "kss_first_wave_usd",
     "live_trading", "live_max_order_notional",
     "telegram_notify_trades", "telegram_notify_risk", "telegram_digest_hours",
 )

@@ -87,11 +87,11 @@ def queue_order(
     return order, risk_note
 
 
-def list_pending(db: Session, status: str | None = None, limit: int = 100) -> list[PendingOrder]:
+def list_pending(db: Session, status: str | None = None, limit: int = 100, offset: int = 0) -> list[PendingOrder]:
     """List orders, optionally filtered by status (defaults to pending)."""
     q = db.query(PendingOrder)
     q = q.filter(PendingOrder.status == (status or PENDING))
-    return q.order_by(PendingOrder.created_at.desc()).limit(limit).all()
+    return q.order_by(PendingOrder.created_at.desc()).offset(offset).limit(limit).all()
 
 
 # --- decisions ----------------------------------------------------------

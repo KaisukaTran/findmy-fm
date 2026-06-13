@@ -552,6 +552,9 @@ document.addEventListener("submit", async (e) => {
       min_expectancy_pct: num(f.get("min_expectancy_pct")),
       min_win_rate: num(f.get("min_win_rate")),
       min_confidence: num(f.get("min_confidence")),
+      kss_first_wave_usd: num(f.get("kss_first_wave_usd")),
+      scan_max_symbols: num(f.get("scan_max_symbols")),
+      min_quote_volume: num(f.get("min_quote_volume")),
     });
     toast("Đã lưu cấu hình KSS — áp dụng cho phiên mới.", "success");
     refreshTrading(); refreshStatus();

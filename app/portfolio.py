@@ -149,9 +149,9 @@ def loss_analysis(db: Session, limit: int = 300) -> dict:
     }
 
 
-def trades_view(db: Session, limit: int = 50) -> list[dict]:
+def trades_view(db: Session, limit: int = 50, offset: int = 0) -> list[dict]:
     """Most recent fills (trade history), tagged with their provenance (OPUS/KSS/…)."""
-    fills = db.query(Fill).order_by(Fill.executed_at.desc()).limit(limit).all()
+    fills = db.query(Fill).order_by(Fill.executed_at.desc()).offset(offset).limit(limit).all()
     out = []
     for f in fills:
         d = f.to_dict()

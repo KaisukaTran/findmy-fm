@@ -32,8 +32,14 @@
       <td class="muted">{{ c.get('trials', 0) or 0 }}</td>
       <td>{{ "%.1f"|format(c.est_days_to_tp) if c.est_days_to_tp is not none else "—" }}</td>
       <td>
-        {%- set reason_tip = c.reason if pre_blocked else '' -%}
-        <span class="badge {{ 'active' if c.decision == 'trade' else '' }}" {% if reason_tip %}title="{{ reason_tip }}"{% endif %}>{{ c.decision }}</span>
+        {%- if c.reason -%}
+        <details class="scan-reason-details">
+          <summary class="badge {{ 'active' if c.decision == 'trade' else '' }}">{{ c.decision }}</summary>
+          <span class="scan-reason">{{ c.reason }}</span>
+        </details>
+        {%- else -%}
+        <span class="badge {{ 'active' if c.decision == 'trade' else '' }}">{{ c.decision }}</span>
+        {%- endif -%}
       </td>
     </tr>
     {% endfor %}

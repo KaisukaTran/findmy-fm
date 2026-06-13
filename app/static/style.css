@@ -287,3 +287,46 @@ button { white-space: nowrap; }
 }
 .key-indicator.key-loaded { color: var(--fg); }
 .key-indicator:empty { display: none; }
+
+/* --- P6: Scanner "skipped: why" expander ------------------------------ */
+/* <details> sits inside the Decision td; summary reuses .badge styles.
+   No new column; no layout change. */
+.scan-reason-details { display: inline; }
+.scan-reason-details summary { display: inline; list-style: none; cursor: pointer; }
+.scan-reason-details summary::-webkit-details-marker { display: none; }
+.scan-reason {
+  display: block; margin-top: 4px;
+  font-size: 11px; color: var(--muted);
+  white-space: normal; max-width: 260px; line-height: 1.4;
+}
+
+/* --- P6: Mobile "Automation ▾" popover (<600px) ----------------------- */
+/* Desktop default: hide the mobile wrapper entirely (pure CSS, no JS needed).
+   The inline strip (.auto-inline) shows naturally as a flex child of .statusbar. */
+.auto-mobile-wrap { display: none; }
+
+@media (max-width: 599px) {
+  /* Hide the desktop inline strip on narrow viewports. */
+  .auto-inline { display: none; }
+
+  /* Show the mobile wrapper (contains the button + popover). */
+  .auto-mobile-wrap {
+    display: inline-flex;
+    align-items: center;
+    position: relative;   /* anchor for the absolute popover */
+  }
+
+  /* The popover: Alpine x-show manages display (none/block).
+     We use flex layout for the stacked badges when visible. */
+  .auto-popover {
+    position: absolute;
+    top: calc(100% + 4px); left: 0;
+    min-width: 200px; width: max-content; max-width: 92vw;
+    z-index: 200;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 12px;
+    display: flex; flex-direction: column; gap: 8px;
+    font-size: 12px;
+  }
+  /* x-cloak hides it before Alpine initialises; after that x-show takes over */
+}

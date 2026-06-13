@@ -1,48 +1,96 @@
 {% set live = a.auto_trade or a.scheduler_running %}
 <span id="conn-chip" class="conn-chip conn-live" aria-label="Trạng thái kết nối"></span>
-<span class="statusbar">
-  <span class="dot {{ 'on' if live else '' }}"></span>
-  <span class="{{ 'pos' if a.auto_trade else 'muted' }}">Auto-trade {{ 'ON' if a.auto_trade else 'OFF' }}</span>
-  <span class="sep">·</span>
-  <span class="{{ 'pos' if a.scheduler_running else 'muted' }}">Scheduler {{ ('ON ('~a.interval_min~'m)') if a.scheduler_running else 'OFF' }}</span>
-  <span class="sep">·</span>
-  <span class="{{ 'pos' if a.autoapprove else 'muted' }}">Auto-approve {{ 'ON' if a.autoapprove else 'OFF' }}</span>
-  <span class="sep">·</span>
-  <span class="muted">{{ a.open_sessions }} open</span>
-  {% if a.last_cycle_at %}<span class="sep">·</span><span class="muted">last {{ a.last_cycle_at | hms }}</span>{% endif %}
-  <span class="sep">·</span>
-  <span class="statusbar-full-auto">
-    <span class="badge {{ 'full-auto-on' if a.full_auto else 'full-auto-off' }}">FULL-AUTO {{ 'ON' if a.full_auto else 'OFF' }}</span>
-    <button class="sm {{ 'danger' if a.full_auto else 'ok' }}" data-action="toggleFullAuto" data-id="{{ 'off' if a.full_auto else 'on' }}">{{ 'Tắt' if a.full_auto else 'Bật' }}</button>
+<span class="statusbar" x-data="{ autoOpen: false }">
+
+  {# ── Mobile toggle + popover: the whole .auto-mobile-wrap is hidden at >=600px
+       via a CSS media query, so Alpine x-show can work freely inside it. ── #}
+  <span class="auto-mobile-wrap">
+    <button class="sm ghost" @click="autoOpen = !autoOpen" :aria-expanded="autoOpen.toString()">Automation ▾</button>
+    <span class="auto-popover" x-show="autoOpen" x-cloak>
+      <span class="dot {{ 'on' if live else '' }}"></span>
+      <span class="{{ 'pos' if a.auto_trade else 'muted' }}">Auto-trade {{ 'ON' if a.auto_trade else 'OFF' }}</span>
+      <span class="statusbar-full-auto">
+        <span class="badge {{ 'full-auto-on' if a.full_auto else 'full-auto-off' }}">FULL-AUTO {{ 'ON' if a.full_auto else 'OFF' }}</span>
+        <button class="sm {{ 'danger' if a.full_auto else 'ok' }}" data-action="toggleFullAuto" data-id="{{ 'off' if a.full_auto else 'on' }}">{{ 'Tắt' if a.full_auto else 'Bật' }}</button>
+      </span>
+      <span class="{{ 'pos' if a.scheduler_running else 'muted' }}">Scheduler {{ ('ON ('~a.interval_min~'m)') if a.scheduler_running else 'OFF' }}</span>
+      <span class="{{ 'pos' if a.autoapprove else 'muted' }}">Auto-approve {{ 'ON' if a.autoapprove else 'OFF' }}</span>
+      <span class="muted">{{ a.open_sessions }} open</span>
+      {% if a.last_cycle_at %}<span class="muted">last {{ a.last_cycle_at | hms }}</span>{% endif %}
+      <span class="statusbar-breaker">
+        {% if a.frozen %}
+        <span class="badge breaker-frozen">FROZEN</span>
+        <button class="sm ghost" data-action="resetBreaker">Khôi phục breaker</button>
+        {% else %}
+        <span class="badge breaker-armed">ARMED</span>
+        {% endif %}
+      </span>
+      <span class="statusbar-guardian">
+        <span class="badge {{ 'guardian-on' if a.guardian else 'guardian-off' }}">GUARDIAN {{ 'ON' if a.guardian else 'OFF' }}</span>
+        <button class="sm {{ 'danger' if a.guardian else 'ok' }}" data-action="toggleGuardian" data-id="{{ 'off' if a.guardian else 'on' }}">{{ 'Tắt' if a.guardian else 'Bật' }}</button>
+      </span>
+      <span class="statusbar-telegram">
+        <span class="badge {{ 'telegram-on' if a.telegram else 'telegram-off' }}">TELEGRAM {{ 'ON' if a.telegram else 'OFF' }}</span>
+        <button class="sm {{ 'danger' if a.telegram else 'ok' }}" data-action="toggleTelegram" data-id="{{ 'off' if a.telegram else 'on' }}">{{ 'Tắt' if a.telegram else 'Bật' }}</button>
+        <button class="sm ghost" data-action="telegramTest">Thử</button>
+      </span>
+      <span class="statusbar-hyperopt">
+        <span class="badge {{ 'hyperopt-on' if a.hyperopt else 'hyperopt-off' }}">HYPEROPT {{ 'ON' if a.hyperopt else 'OFF' }}</span>
+        <button class="sm {{ 'danger' if a.hyperopt else 'ok' }}" data-action="toggleHyperopt" data-id="{{ 'off' if a.hyperopt else 'on' }}">{{ 'Tắt' if a.hyperopt else 'Bật' }}</button>
+      </span>
+      <span class="statusbar-ml">
+        <span class="badge {{ 'ml-on' if a.ml else 'ml-off' }}">ML {{ 'ON' if a.ml else 'OFF' }}</span>
+        <button class="sm {{ 'danger' if a.ml else 'ok' }}" data-action="toggleMl" data-id="{{ 'off' if a.ml else 'on' }}">{{ 'Tắt' if a.ml else 'Bật' }}</button>
+      </span>
+    </span>
   </span>
-  <span class="sep">·</span>
-  <span class="statusbar-breaker">
-    {% if a.frozen %}
-    <span class="badge breaker-frozen">FROZEN</span>
-    <button class="sm ghost" data-action="resetBreaker">Khôi phục breaker</button>
-    {% else %}
-    <span class="badge breaker-armed">ARMED</span>
-    {% endif %}
+
+  {# ── Desktop inline strip (.auto-inline): hidden <600px via CSS media query ── #}
+  <span class="auto-inline">
+    <span class="dot {{ 'on' if live else '' }}"></span>
+    <span class="{{ 'pos' if a.auto_trade else 'muted' }}">Auto-trade {{ 'ON' if a.auto_trade else 'OFF' }}</span>
+    <span class="sep">·</span>
+    <span class="{{ 'pos' if a.scheduler_running else 'muted' }}">Scheduler {{ ('ON ('~a.interval_min~'m)') if a.scheduler_running else 'OFF' }}</span>
+    <span class="sep">·</span>
+    <span class="{{ 'pos' if a.autoapprove else 'muted' }}">Auto-approve {{ 'ON' if a.autoapprove else 'OFF' }}</span>
+    <span class="sep">·</span>
+    <span class="muted">{{ a.open_sessions }} open</span>
+    {% if a.last_cycle_at %}<span class="sep">·</span><span class="muted">last {{ a.last_cycle_at | hms }}</span>{% endif %}
+    <span class="sep">·</span>
+    <span class="statusbar-full-auto">
+      <span class="badge {{ 'full-auto-on' if a.full_auto else 'full-auto-off' }}">FULL-AUTO {{ 'ON' if a.full_auto else 'OFF' }}</span>
+      <button class="sm {{ 'danger' if a.full_auto else 'ok' }}" data-action="toggleFullAuto" data-id="{{ 'off' if a.full_auto else 'on' }}">{{ 'Tắt' if a.full_auto else 'Bật' }}</button>
+    </span>
+    <span class="sep">·</span>
+    <span class="statusbar-breaker">
+      {% if a.frozen %}
+      <span class="badge breaker-frozen">FROZEN</span>
+      <button class="sm ghost" data-action="resetBreaker">Khôi phục breaker</button>
+      {% else %}
+      <span class="badge breaker-armed">ARMED</span>
+      {% endif %}
+    </span>
+    <span class="sep">·</span>
+    <span class="statusbar-guardian">
+      <span class="badge {{ 'guardian-on' if a.guardian else 'guardian-off' }}">GUARDIAN {{ 'ON' if a.guardian else 'OFF' }}</span>
+      <button class="sm {{ 'danger' if a.guardian else 'ok' }}" data-action="toggleGuardian" data-id="{{ 'off' if a.guardian else 'on' }}">{{ 'Tắt' if a.guardian else 'Bật' }}</button>
+    </span>
+    <span class="sep">·</span>
+    <span class="statusbar-telegram">
+      <span class="badge {{ 'telegram-on' if a.telegram else 'telegram-off' }}">TELEGRAM {{ 'ON' if a.telegram else 'OFF' }}</span>
+      <button class="sm {{ 'danger' if a.telegram else 'ok' }}" data-action="toggleTelegram" data-id="{{ 'off' if a.telegram else 'on' }}">{{ 'Tắt' if a.telegram else 'Bật' }}</button>
+      <button class="sm ghost" data-action="telegramTest">Thử</button>
+    </span>
+    <span class="sep">·</span>
+    <span class="statusbar-hyperopt">
+      <span class="badge {{ 'hyperopt-on' if a.hyperopt else 'hyperopt-off' }}">HYPEROPT {{ 'ON' if a.hyperopt else 'OFF' }}</span>
+      <button class="sm {{ 'danger' if a.hyperopt else 'ok' }}" data-action="toggleHyperopt" data-id="{{ 'off' if a.hyperopt else 'on' }}">{{ 'Tắt' if a.hyperopt else 'Bật' }}</button>
+    </span>
+    <span class="sep">·</span>
+    <span class="statusbar-ml">
+      <span class="badge {{ 'ml-on' if a.ml else 'ml-off' }}">ML {{ 'ON' if a.ml else 'OFF' }}</span>
+      <button class="sm {{ 'danger' if a.ml else 'ok' }}" data-action="toggleMl" data-id="{{ 'off' if a.ml else 'on' }}">{{ 'Tắt' if a.ml else 'Bật' }}</button>
+    </span>
   </span>
-  <span class="sep">·</span>
-  <span class="statusbar-guardian">
-    <span class="badge {{ 'guardian-on' if a.guardian else 'guardian-off' }}">GUARDIAN {{ 'ON' if a.guardian else 'OFF' }}</span>
-    <button class="sm {{ 'danger' if a.guardian else 'ok' }}" data-action="toggleGuardian" data-id="{{ 'off' if a.guardian else 'on' }}">{{ 'Tắt' if a.guardian else 'Bật' }}</button>
-  </span>
-  <span class="sep">·</span>
-  <span class="statusbar-telegram">
-    <span class="badge {{ 'telegram-on' if a.telegram else 'telegram-off' }}">TELEGRAM {{ 'ON' if a.telegram else 'OFF' }}</span>
-    <button class="sm {{ 'danger' if a.telegram else 'ok' }}" data-action="toggleTelegram" data-id="{{ 'off' if a.telegram else 'on' }}">{{ 'Tắt' if a.telegram else 'Bật' }}</button>
-    <button class="sm ghost" data-action="telegramTest">Thử</button>
-  </span>
-  <span class="sep">·</span>
-  <span class="statusbar-hyperopt">
-    <span class="badge {{ 'hyperopt-on' if a.hyperopt else 'hyperopt-off' }}">HYPEROPT {{ 'ON' if a.hyperopt else 'OFF' }}</span>
-    <button class="sm {{ 'danger' if a.hyperopt else 'ok' }}" data-action="toggleHyperopt" data-id="{{ 'off' if a.hyperopt else 'on' }}">{{ 'Tắt' if a.hyperopt else 'Bật' }}</button>
-  </span>
-  <span class="sep">·</span>
-  <span class="statusbar-ml">
-    <span class="badge {{ 'ml-on' if a.ml else 'ml-off' }}">ML {{ 'ON' if a.ml else 'OFF' }}</span>
-    <button class="sm {{ 'danger' if a.ml else 'ok' }}" data-action="toggleMl" data-id="{{ 'off' if a.ml else 'on' }}">{{ 'Tắt' if a.ml else 'Bật' }}</button>
-  </span>
+
 </span>

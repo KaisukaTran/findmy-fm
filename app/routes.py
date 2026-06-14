@@ -30,6 +30,7 @@ from app import (
     pnlcal,
     portfolio,
     runtime,
+    savings,
     scanner,
     scheduler,
     timefmt,
@@ -687,6 +688,44 @@ def partial_costs(request: Request, period: str = "month", db: Session = Depends
             "ai_claude_est": settings.ai_monthly_claude_usd,
             "ai_grok_est": settings.ai_monthly_grok_usd,
         },
+    )
+
+
+# --- Savings (KAI) holdings — protected, never auto-sold ----------------
+
+
+class SavingsBody(BaseModel):
+    symbol: str = Field(..., min_length=1, max_length=20)
+    quantity: float = Field(..., gt=0)
+    avg_cost: float = Field(..., ge=0, description="USD price/unit of this buy.")
+    note: str | None = Field(None, max_length=200)
+    mode: str = Field("add", pattern="^(add|set)$", description="add = accumulate; set = overwrite.")
+
+
+@api_router.post("/api/savings", dependencies=[Depends(require_api_key)])
+def create_savings(body: SavingsBody, db: Session = Depends(get_db)):
+    try:
+        fn = savings.set_holding if body.mode == "set" else savings.add_holding
+        h = fn(db, body.symbol, body.quantity, body.avg_cost, note=body.note)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"holding": h.to_dict()}
+
+
+@api_router.delete("/api/savings/{symbol}", dependencies=[Depends(require_api_key)])
+def delete_savings(symbol: str, db: Session = Depends(get_db)):
+    return {"removed": savings.remove_holding(db, symbol)}
+
+
+@api_router.get("/api/savings")
+def get_savings(db: Session = Depends(get_db)):
+    return savings.summary(db)
+
+
+@ui_router.get("/partials/savings", response_class=HTMLResponse)
+def partial_savings(request: Request, db: Session = Depends(get_db)):
+    return templates.TemplateResponse(
+        "partials/savings.html", {"request": request, "s": savings.summary(db)}
     )
 
 

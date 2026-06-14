@@ -148,11 +148,12 @@ function refreshOpus()    { fireRefresh("refresh-opus"); }
 function refreshLosses()  { fireRefresh("refresh-losses"); }
 function refreshAudit()   { fireRefresh("refresh-audit"); }
 function refreshCosts()   { fireRefresh("refresh-costs"); }
+function refreshSavings() { fireRefresh("refresh-savings"); }
 
 function refreshAll() {
   // Used by WS push — refetch everything.
   ["refresh-status","refresh-trading","refresh-scanner",
-   "refresh-opus","refresh-losses","refresh-audit","refresh-costs"]
+   "refresh-opus","refresh-losses","refresh-audit","refresh-costs","refresh-savings"]
     .forEach((ev) => document.body.dispatchEvent(new CustomEvent(ev)));
 }
 
@@ -298,6 +299,26 @@ const actions = {
     if (noteEl) noteEl.value = "";
     toast("Đã ghi nhận lệnh rút.");
     refreshCosts();
+  },
+  async addSavings(mode) {
+    const sym = (document.getElementById("sv-symbol")?.value || "").trim();
+    const qty = num(document.getElementById("sv-qty")?.value);
+    const cost = num(document.getElementById("sv-cost")?.value);
+    if (!sym) { toast("Nhập mã coin.", "error"); return; }
+    if (qty == null || qty <= 0) { toast("Nhập số lượng dương.", "error"); return; }
+    if (cost == null || cost < 0) { toast("Nhập giá vốn ≥ 0.", "error"); return; }
+    const note = (document.getElementById("sv-note")?.value || "").trim();
+    await api("POST", "/api/savings",
+      { symbol: sym, quantity: qty, avg_cost: cost, note: note || null, mode: mode || "add" });
+    ["sv-symbol","sv-qty","sv-cost","sv-note"].forEach((id) => { const e = document.getElementById(id); if (e) e.value = ""; });
+    toast(mode === "set" ? "Đã ghi đè holding." : "Đã tích thêm.");
+    refreshSavings();
+  },
+  async removeSavings(sym) {
+    if (!confirm(`Xoá ${sym} khỏi sổ savings? (không bán coin — chỉ xoá ghi nhận)`)) return;
+    await api("DELETE", `/api/savings/${encodeURIComponent(sym)}`);
+    toast(`Đã xoá ${sym} khỏi savings.`);
+    refreshSavings();
   },
   async toggleScheduler(desired) {
     const enable = desired === "on";

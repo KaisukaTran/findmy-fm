@@ -450,3 +450,41 @@ class Withdrawal(Base):
             "note": self.note,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+
+
+class SavingsHolding(Base):
+    """A coin the operator holds as long-term savings (e.g. SOL), bought EXTERNALLY and
+    recorded here (src='KAI') for protection + display.
+
+    It lives in its OWN table, deliberately OUTSIDE the trading `Position` table, so the
+    orphan manager / scanner / OPUS — which only ever read Position + KssSession — never see
+    it and can never sell it. The bot may still trade the same symbol with its own capital;
+    that trading inventory is the separate Position row. One row per symbol (accumulating buys
+    update qty + a weighted avg cost)."""
+
+    __tablename__ = "savings_holdings"
+    __table_args__ = (Index("ix_savings_symbol", "symbol", unique=True),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    quantity: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    avg_cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # USD/unit
+    src: Mapped[str] = mapped_column(String(16), nullable=False, default="KAI")  # provenance tag
+    note: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "symbol": self.symbol,
+            "quantity": self.quantity,
+            "avg_cost": self.avg_cost,
+            "cost_basis": self.quantity * self.avg_cost,
+            "src": self.src,
+            "note": self.note,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }

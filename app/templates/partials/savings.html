@@ -1,0 +1,60 @@
+<div id="savings-pane"
+     hx-get="/partials/savings"
+     hx-trigger="every 30s [tabActive(this) && document.visibilityState==='visible'], refresh-savings from:body"
+     hx-target="this" hx-swap="outerHTML">
+
+<p class="muted mb-10-0">Coin bạn tự tích trữ (mua ngoài), tag <b>KAI</b> — ghi nhận để theo dõi + hiển thị.
+  <b>Bot KHÔNG bao giờ bán nhóm này</b>: chúng nằm ở sổ riêng, không vào Position giao dịch, nên
+  orphan-manager / scanner / OPUS không thấy. Bot vẫn có thể trade cùng coin bằng vốn riêng.</p>
+
+{% if s.rows %}
+<table class="tbl">
+  <thead><tr>
+    <th title="Mã coin.">Sym</th>
+    <th title="Số lượng đang giữ.">Số lượng</th>
+    <th title="Giá vốn trung bình (USD/coin).">Giá vốn TB</th>
+    <th title="Giá thị trường hiện tại.">Giá hiện tại</th>
+    <th title="Giá trị hiện tại = SL × giá.">Giá trị</th>
+    <th title="Lãi/lỗ tạm tính so với giá vốn.">PnL</th>
+    <th title="Ghi chú.">Ghi chú</th>
+    <th></th>
+  </tr></thead>
+  <tbody>
+    {% for r in s.rows %}
+    <tr>
+      <td><b>{{ r.symbol }}</b> <span class="badge ml-on" title="Nguồn KAI — savings, bot không bán">{{ r.src }}</span></td>
+      <td>{{ r.quantity | qty }}</td>
+      <td>${{ r.avg_cost | money }}</td>
+      <td>{{ ('$' + (r.price | money)) if r.price else '—' }}</td>
+      <td>${{ r.value | money }}</td>
+      <td class="{{ 'pos' if r.unrealized_pnl >= 0 else 'neg' }}">${{ r.unrealized_pnl | money }} ({{ '%+.1f'|format(r.unrealized_pnl_pct) }}%)</td>
+      <td class="muted">{{ r.note or '' }}</td>
+      <td class="row-actions">
+        <button class="danger sm" data-action="removeSavings" data-id="{{ r.symbol }}" title="Xoá khỏi sổ savings">Xoá</button>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+  <tfoot><tr>
+    <td class="muted">Tổng {{ s.count }}</td>
+    <td></td><td></td><td class="muted">vốn ${{ s.cost_basis | money }}</td>
+    <td><b>${{ s.value | money }}</b></td>
+    <td class="{{ 'pos' if s.unrealized_pnl >= 0 else 'neg' }}"><b>${{ s.unrealized_pnl | money }}</b></td>
+    <td></td><td></td>
+  </tr></tfoot>
+</table>
+{% else %}<p class="muted">Chưa ghi nhận khoản tích trữ nào.</p>{% endif %}
+
+<div class="panel mt-16">
+  <h3>Ghi nhận / tích thêm</h3>
+  <div class="flex-spaced mb-8">
+    <span>Coin: <input id="sv-symbol" type="text" maxlength="20" class="w-5em" placeholder="SOL"></span>
+    <span>Số lượng: <input id="sv-qty" type="number" min="0" step="any" class="w-6em"></span>
+    <span>Giá vốn $ (mỗi coin): <input id="sv-cost" type="number" min="0" step="any" class="w-6em"></span>
+    <span>Ghi chú: <input id="sv-note" type="text" maxlength="200" class="w-10em"></span>
+    <button class="ok sm" data-action="addSavings" data-id="add" title="Cộng dồn vào holding (giá vốn TB tự tính lại)">Tích thêm</button>
+    <button class="sm ghost" data-action="addSavings" data-id="set" title="Ghi đè toàn bộ holding của coin này">Ghi đè</button>
+  </div>
+  <p class="muted fs-11">“Tích thêm” = cộng dồn số lượng + tính lại giá vốn TB. “Ghi đè” = đặt lại số lượng/giá vốn của coin.</p>
+</div>
+</div>

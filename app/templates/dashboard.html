@@ -34,6 +34,7 @@
           <button class="tab" data-tab="losses" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">⚠</span><span>Phân tích lỗ</span></button>
           <button class="tab" data-tab="calendar" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">⊞</span><span>Lịch P&amp;L</span></button>
           <button class="tab" data-tab="costs" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">₫</span><span>Chi phí</span></button>
+          <button class="tab" data-tab="savings" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">◆</span><span>Tích trữ</span></button>
           <button class="tab" data-tab="strategy" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">⚙</span><span>Chiến lược</span></button>
           <button class="tab" data-tab="logs" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">☰</span><span>Nhật ký</span></button>
         </nav>
@@ -179,6 +180,16 @@
       <div class="panel mt-16">
         <h2>Chi phí vận hành</h2>
         <div hx-get="/partials/costs?period=month"
+             hx-trigger="tab-shown from:closest [data-tab-panel], load"
+             hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
+      </div>
+    </div>
+
+    <!-- TAB: Tích trữ (KAI savings — protected holdings the bot never sells) -->
+    <div data-tab-panel="savings">
+      <div class="panel mt-16">
+        <h2>Tích trữ (KAI) — bot không bán</h2>
+        <div hx-get="/partials/savings"
              hx-trigger="tab-shown from:closest [data-tab-panel], load"
              hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
       </div>

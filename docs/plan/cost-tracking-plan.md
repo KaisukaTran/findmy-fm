@@ -89,12 +89,12 @@ spec.md; follows the existing `docs/plan/` convention). Precedence: this spec > 
 
 | Task | Content | DoD | Depends | Status |
 |------|---------|-----|---------|--------|
-| 1.1 | `Withdrawal` model + `init_db` table + 5 config knobs (fee%, 0.05% tol, VAT 10%, $25/$20) `[tdd:required]` | table created on boot; `settings` load the 5 knobs | - | cc:TODO |
-| 1.2 | `app/costs.py`: `record_withdrawal` (fee+VAT frozen at insert) + `cost_summary(period,buckets)` `[tdd:required]` | unit math exact; buckets TZ-aware; AI metered→estimate fallback | 1.1 | cc:TODO |
-| 1.3 | API: `POST/GET /api/withdrawals`, `GET /api/costs`, `GET /partials/costs` `[tdd:required]` | endpoints 200; bad amount → 422; auth-gated POST | 1.2 | cc:TODO |
-| 1.4 | UI: "Chi phí" tab + Tuần/Tháng/Năm toggle + breakdown table + withdrawal form `[tdd:skip:server-rendered-partial]` | tab renders; toggle re-fetches; form posts | 1.3 | cc:TODO |
-| 1.5 | `tests/app/test_costs.py` (math, bucketing, fallback, API shape) `[tdd:required]` | suite green | 1.2 | cc:TODO |
-| 1.6 | Security pass on `POST /api/withdrawals` (amount validation, auth, no injection) `[tdd:skip:review-only]` | no findings | 1.3 | cc:TODO |
+| 1.1 | `Withdrawal` model + `init_db` table + 5 config knobs (fee%, 0.05% tol, VAT 10%, $25/$20) `[tdd:required]` | table created on boot; `settings` load the 5 knobs | - | cc:done |
+| 1.2 | `app/costs.py`: `record_withdrawal` (fee+VAT frozen at insert) + `cost_summary(period,buckets)` `[tdd:required]` | unit math exact; buckets TZ-aware; AI metered→estimate fallback | 1.1 | cc:done |
+| 1.3 | API: `POST/GET /api/withdrawals`, `GET /api/costs`, `GET /partials/costs` `[tdd:required]` | endpoints 200; bad amount → 422; auth-gated POST | 1.2 | cc:done |
+| 1.4 | UI: "Chi phí" tab + Tuần/Tháng/Năm toggle + breakdown table + withdrawal form `[tdd:skip:server-rendered-partial]` | tab renders; toggle re-fetches; form posts | 1.3 | cc:done |
+| 1.5 | `tests/app/test_costs.py` (math, bucketing, fallback, API shape) `[tdd:required]` | suite green | 1.2 | cc:done |
+| 1.6 | Security pass on `POST /api/withdrawals` (amount validation, auth, no injection) `[tdd:skip:review-only]` | no findings | 1.3 | cc:done |
 
 **Sequencing:** 1.1→1.2→1.3 (backend chain); 1.4 + 1.5 after 1.3/1.2; 1.6 last.
 Built inline by Opus (user did not request subagents) with Karpathy discipline; commit per task at green.
@@ -116,7 +116,12 @@ Built inline by Opus (user did not request subagents) with Karpathy discipline; 
 ## Open questions / notes
 - `withdrawal_fee_pct` default is 0.0 — operator must set the actual Binance rate per coin/usage
   (Binance real withdrawal fees are fixed network fees per coin; modeling as % per the user's choice).
-- AI metered split needs Grok calls tagged `purpose="grok"` in `meter_cost`; verify/添加 if missing.
+- AI metered split relies on Grok calls being tagged `purpose="grok_*"` (already are, in
+  app/orchestrator/grok.py) — Opus uses `purpose="decision"`. Verified.
 - Scanner Grok-gate cost is NOT currently metered into `OpusCostLedger` — fallback estimate covers it.
 - Stretch: "Net sau phí" per period; export CSV; cost trend chart.
-```
+
+## Status — BUILT 2026-06-14
+All 6 tasks `cc:done`. WAL+busy_timeout added to `app/db.py` (a withdrawal write hit
+SQLite "database is locked" under the dashboard's read polling — WAL lets readers not block
+the writer). Security pass: no findings. Full `tests/app` green.

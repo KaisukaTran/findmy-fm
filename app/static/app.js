@@ -147,11 +147,12 @@ function refreshScanner() { fireRefresh("refresh-scanner"); }
 function refreshOpus()    { fireRefresh("refresh-opus"); }
 function refreshLosses()  { fireRefresh("refresh-losses"); }
 function refreshAudit()   { fireRefresh("refresh-audit"); }
+function refreshCosts()   { fireRefresh("refresh-costs"); }
 
 function refreshAll() {
   // Used by WS push — refetch everything.
   ["refresh-status","refresh-trading","refresh-scanner",
-   "refresh-opus","refresh-losses","refresh-audit"]
+   "refresh-opus","refresh-losses","refresh-audit","refresh-costs"]
     .forEach((ev) => document.body.dispatchEvent(new CustomEvent(ev)));
 }
 
@@ -286,6 +287,17 @@ const actions = {
     const s = await api("GET", "/api/autoapprove");
     await api("POST", "/api/autoapprove", { enabled: s.enabled, max_notional: v });
     refreshTrading(); refreshStatus();
+  },
+  async recordWithdrawal() {
+    const amt = num(document.getElementById("wd-amount") && document.getElementById("wd-amount").value);
+    if (amt == null || amt <= 0) { toast("Nhập số tiền rút dương (USD).", "error"); return; }
+    const noteEl = document.getElementById("wd-note");
+    const note = (noteEl && noteEl.value || "").trim();
+    await api("POST", "/api/withdrawals", { amount: amt, note: note || null });
+    const a = document.getElementById("wd-amount"); if (a) a.value = "";
+    if (noteEl) noteEl.value = "";
+    toast("Đã ghi nhận lệnh rút.");
+    refreshCosts();
   },
   async toggleScheduler(desired) {
     const enable = desired === "on";

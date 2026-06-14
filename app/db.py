@@ -63,6 +63,21 @@ engine = create_engine(settings.database_url, connect_args=_connect_args, future
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
 
+if settings.database_url.startswith("sqlite"):
+    from sqlalchemy import event
+
+    @event.listens_for(engine, "connect")
+    def _sqlite_pragmas(dbapi_conn, _record):  # noqa: ANN001
+        """WAL so readers never block the writer (the dashboard polls constantly while the
+        scheduler/OPUS/withdrawals write) + a busy_timeout so a writer waits for the lock
+        instead of raising 'database is locked'. Set per-connection on connect."""
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA busy_timeout=30000")
+        cur.execute("PRAGMA synchronous=NORMAL")
+        cur.close()
+
+
 def get_db() -> Iterator[Session]:
     """FastAPI dependency: yield a DB session and guarantee it is closed."""
     db = SessionLocal()

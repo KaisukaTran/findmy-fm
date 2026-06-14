@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app import (
     charts,
     circuit,
+    costs,
     execution,
     guardian,
     hyperopt,
@@ -640,6 +641,53 @@ def set_discord(body: DiscordBody):
 @api_router.post("/api/discord/test", dependencies=[Depends(require_api_key)])
 def test_discord():
     return {"sent": notify_discord.send("FINDMY-FM test alert")}
+
+
+# --- Cost endpoints (trade fee + withdrawal + VAT + AI) -----------------
+
+
+class WithdrawalBody(BaseModel):
+    amount: float = Field(..., gt=0, description="Withdrawn amount in USD.")
+    note: str | None = Field(None, max_length=200)
+
+
+@api_router.post("/api/withdrawals", dependencies=[Depends(require_api_key)])
+def create_withdrawal(body: WithdrawalBody, db: Session = Depends(get_db)):
+    try:
+        w = costs.record_withdrawal(db, body.amount, note=body.note)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"withdrawal": w.to_dict()}
+
+
+@api_router.get("/api/withdrawals")
+def list_withdrawals(limit: int = 50, db: Session = Depends(get_db)):
+    return {"rows": [w.to_dict() for w in costs.list_withdrawals(db, limit=limit)]}
+
+
+@api_router.get("/api/costs")
+def get_costs(period: str = "month", buckets: int = 12, db: Session = Depends(get_db)):
+    return costs.cost_summary(db, period=period, buckets=buckets)
+
+
+@ui_router.get("/partials/costs", response_class=HTMLResponse)
+def partial_costs(request: Request, period: str = "month", db: Session = Depends(get_db)):
+    buckets = {"week": 12, "month": 12, "year": 5}.get(period, 12)
+    summary = costs.cost_summary(db, period=period, buckets=buckets)
+    recent = [w.to_dict() for w in costs.list_withdrawals(db, limit=10)]
+    return templates.TemplateResponse(
+        "partials/costs.html",
+        {
+            "request": request,
+            "s": summary,
+            "period": period,
+            "withdrawals": recent,
+            "fee_pct": settings.withdrawal_fee_pct + settings.withdrawal_fee_tolerance_pct,
+            "vat_pct": settings.vat_pct,
+            "ai_claude_est": settings.ai_monthly_claude_usd,
+            "ai_grok_est": settings.ai_monthly_grok_usd,
+        },
+    )
 
 
 # --- Phase C: hyperopt + ML endpoints -----------------------------------

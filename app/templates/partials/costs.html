@@ -1,0 +1,86 @@
+<div id="costs-pane"
+     hx-get="/partials/costs?period={{ period }}"
+     hx-trigger="refresh-costs from:body"
+     hx-target="this" hx-swap="outerHTML">
+
+<div class="flex-spaced mb-8">
+  <span class="row-actions">
+    <button class="sm {{ 'ok' if period == 'week' else 'ghost' }}"
+            hx-get="/partials/costs?period=week" hx-target="#costs-pane" hx-swap="outerHTML">Tuần</button>
+    <button class="sm {{ 'ok' if period == 'month' else 'ghost' }}"
+            hx-get="/partials/costs?period=month" hx-target="#costs-pane" hx-swap="outerHTML">Tháng</button>
+    <button class="sm {{ 'ok' if period == 'year' else 'ghost' }}"
+            hx-get="/partials/costs?period=year" hx-target="#costs-pane" hx-swap="outerHTML">Năm</button>
+  </span>
+  <span class="muted">Kỳ hiện tại <b>{{ s.current.label }}</b>: tổng phí
+    <b>${{ s.current.total | money }}</b>{% if s.current.ai_estimated %}
+    <span class="muted" title="Kỳ chưa có chi phí AI đo thực — đang dùng ước tính">· AI ước tính</span>{% endif %}</span>
+</div>
+
+<table class="tbl">
+  <thead><tr>
+    <th title="Kỳ (tuần ISO / tháng / năm), GMT+7.">Kỳ</th>
+    <th title="Tổng phí khớp lệnh (taker fee) — Σ Fill.fee.">Phí GD</th>
+    <th title="Phí rút sàn (Binance % + 0.05% dung sai) — chỉ khi có lệnh rút.">Phí rút</th>
+    <th title="VAT 10% trên số tiền rút — chỉ khi có lệnh rút.">VAT</th>
+    <th title="Chi phí Claude (Anthropic). ~ = ước tính.">AI Claude</th>
+    <th title="Chi phí Grok (xAI). ~ = ước tính.">AI Grok</th>
+    <th title="Tổng chi phí trong kỳ.">Tổng</th>
+  </tr></thead>
+  <tbody>
+    {% for b in s.series | reverse %}
+    <tr class="{{ 'cost-current' if b.current else '' }}">
+      <td class="{{ '' if b.current else 'muted' }}">{{ b.label }}{% if b.current %} •{% endif %}</td>
+      <td>${{ b.trade_fees | money }}</td>
+      <td>${{ b.withdrawal_fee | money }}</td>
+      <td>${{ b.vat | money }}</td>
+      <td>${{ b.ai_claude | money }}{% if b.ai_estimated %}<span class="muted" title="ước tính">~</span>{% endif %}</td>
+      <td>${{ b.ai_grok | money }}{% if b.ai_estimated %}<span class="muted" title="ước tính">~</span>{% endif %}</td>
+      <td><b>${{ b.total | money }}</b></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+  <tfoot><tr>
+    <td class="muted">Tổng {{ s.series | length }} kỳ</td>
+    <td>${{ s.totals.trade_fees | money }}</td>
+    <td>${{ s.totals.withdrawal_fee | money }}</td>
+    <td>${{ s.totals.vat | money }}</td>
+    <td>${{ s.totals.ai_claude | money }}</td>
+    <td>${{ s.totals.ai_grok | money }}</td>
+    <td><b>${{ s.totals.total | money }}</b></td>
+  </tr></tfoot>
+</table>
+<p class="muted fs-11 mt-6">~ = phí AI ước tính (${{ '%.0f' | format(ai_claude_est) }} Claude + ${{ '%.0f' | format(ai_grok_est) }} Grok/tháng, chia theo độ dài kỳ) khi kỳ chưa có chi phí đo thực.
+  Phí rút = {{ '%.2f' | format(fee_pct) }}% + VAT {{ '%.0f' | format(vat_pct) }}% trên số tiền rút — chỉ ghi khi có lệnh rút.</p>
+
+<div class="panel mt-16">
+  <h3>Ghi nhận lệnh rút</h3>
+  <div class="flex-spaced mb-8">
+    <span>Số tiền rút (USD):
+      <input id="wd-amount" type="number" min="0" step="any" class="w-7em"
+             title="Số tiền rút khỏi sàn; phí {{ '%.2f' | format(fee_pct) }}% + VAT {{ '%.0f' | format(vat_pct) }}% sẽ tự tính."></span>
+    <span>Ghi chú:
+      <input id="wd-note" type="text" maxlength="200" class="w-12em"></span>
+    <button class="ok sm" data-action="recordWithdrawal">Ghi nhận lệnh rút</button>
+  </div>
+  {% if withdrawals %}
+  <table class="tbl">
+    <thead><tr>
+      <th>Thời gian</th><th>Số tiền</th><th>Phí rút</th><th>VAT</th><th>Tổng phí</th><th>Ghi chú</th>
+    </tr></thead>
+    <tbody>
+      {% for w in withdrawals %}
+      <tr>
+        <td class="muted td-nowrap">{{ w.created_at | localdt }}</td>
+        <td>${{ w.amount | money }}</td>
+        <td>${{ w.fee | money }}</td>
+        <td>${{ w.vat | money }}</td>
+        <td><b>${{ w.total_cost | money }}</b></td>
+        <td class="muted">{{ w.note or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">Chưa có lệnh rút nào.</p>{% endif %}
+</div>
+</div>

@@ -2,39 +2,39 @@
   Lưu bền qua restart. (Session đang chạy giữ tham số cũ, trừ SL/Trailing đọc động.)</p>
 
 <form id="kss-settings-form">
-  <label title="Khoảng cách giá giữa các sóng DCA. Giá sóng n = entry×(1−d%)^n.">Distance %
+  <label title="Khoảng cách giá giữa các sóng DCA. Giá sóng n = entry×(1−d%)^n.">Distance % <span class="varname">scan_distance_pct</span>
     <input name="scan_distance_pct" type="number" step="0.1" min="0.1" value="{{ '%.2f'|format(k.scan_distance_pct) }}" required></label>
-  <label title="Chốt lời: bán toàn bộ khi giá ≥ avg×(1+TP%).">TP %
+  <label title="Chốt lời: bán toàn bộ khi giá ≥ avg×(1+TP%).">TP % <span class="varname">scan_tp_pct</span>
     <input name="scan_tp_pct" type="number" step="0.1" min="0.1" value="{{ '%.2f'|format(k.scan_tp_pct) }}" required></label>
-  <label title="Số sóng DCA tối đa mỗi session.">Số sóng (max)
+  <label title="Số sóng DCA tối đa mỗi session.">Số sóng (max) <span class="varname">scan_max_waves</span>
     <input name="scan_max_waves" type="number" step="1" min="1" value="{{ k.scan_max_waves }}" required></label>
-  <label title="Vốn cô lập mỗi session (USD).">Vốn/session $
+  <label title="Vốn cô lập mỗi session (USD).">Vốn/session $ <span class="varname">scan_fund</span>
     <input name="scan_fund" type="number" step="any" min="1" value="{{ '%.0f'|format(k.scan_fund) }}" required></label>
-  <label title="Cắt lỗ: bán toàn bộ khi giá ≤ avg×(1−SL%). 0 = tắt.">SL %
+  <label title="Cắt lỗ: bán toàn bộ khi giá ≤ avg×(1−SL%). 0 = tắt.">SL % <span class="varname">sl_pct</span>
     <input name="sl_pct" type="number" step="0.1" min="0" value="{{ '%.2f'|format(k.sl_pct) }}" required></label>
-  <label title="Trailing stop: khi có lãi, bán nếu giá ≤ đỉnh×(1−Trail%). 0 = tắt.">Trailing %
+  <label title="Trailing stop: khi có lãi, bán nếu giá ≤ đỉnh×(1−Trail%). 0 = tắt.">Trailing % <span class="varname">trailing_pct</span>
     <input name="trailing_pct" type="number" step="0.1" min="0" value="{{ '%.2f'|format(k.trailing_pct) }}" required></label>
-  <label title="Số ngày tối đa chờ TP trước khi đóng session.">Deadline (ngày)
+  <label title="Số ngày tối đa chờ TP trước khi đóng session.">Deadline (ngày) <span class="varname">deadline_days</span>
     <input name="deadline_days" type="number" step="1" min="1" value="{{ k.deadline_days }}" required></label>
-  <label title="Số session KSS tối đa chạy song song. Tăng để mở thêm coin khi còn vốn.">Số session tối đa
+  <label title="Số session KSS tối đa chạy song song. Tăng để mở thêm coin khi còn vốn.">Số session tối đa <span class="varname">max_concurrent_sessions</span>
     <input name="max_concurrent_sessions" type="number" step="1" min="1" value="{{ k.max_concurrent_sessions }}" required></label>
-  <label title="Trần % vốn được triển khai (Σ quỹ session ≤ % × equity). Tăng để dùng nhiều vốn hơn.">Trần vốn %
+  <label title="Trần % vốn được triển khai (Σ quỹ session ≤ % × equity). Tăng để dùng nhiều vốn hơn.">Trần vốn % <span class="varname">max_deployed_pct</span>
     <input name="max_deployed_pct" type="number" step="any" min="1" max="100" value="{{ '%.0f'|format(k.max_deployed_pct) }}" required></label>
-  <label title="Chặn mở session mới cho coin đã thua K lần ĐÓNG LỆNH liên tiếp (một lần lãi sẽ phá chuỗi). Tăng để khó bị chặn hơn.">Chặn sau K lần thua
+  <label title="Chặn mở session mới cho coin đã thua K lần ĐÓNG LỆNH liên tiếp (một lần lãi sẽ phá chuỗi). Tăng để khó bị chặn hơn.">Chặn sau K lần thua <span class="varname">loss_streak_block_k</span>
     <input name="loss_streak_block_k" type="number" step="1" min="1" max="20" value="{{ k.loss_streak_block_k }}" required></label>
-  <label title="Chỉ tính các lần đóng lệnh trong N ngày gần nhất — lỗ cũ trôi ra ngoài cửa sổ thì coin tự được giao dịch lại.">Cửa sổ lỗ (ngày)
+  <label title="Chỉ tính các lần đóng lệnh trong N ngày gần nhất — lỗ cũ trôi ra ngoài cửa sổ thì coin tự được giao dịch lại.">Cửa sổ lỗ (ngày) <span class="varname">loss_streak_window_days</span>
     <input name="loss_streak_window_days" type="number" step="1" min="1" max="365" value="{{ k.loss_streak_window_days }}" required></label>
-  <label title="Gate CHÍNH: kỳ vọng net trung bình mỗi lệnh backtest (đã trừ SL + phí). Coin chỉ trade khi E ≥ ngưỡng này VÀ win-rate ≥ ngưỡng dưới.">Kỳ vọng tối thiểu E %
+  <label title="Gate CHÍNH: kỳ vọng net trung bình mỗi lệnh backtest (đã trừ SL + phí). Coin chỉ trade khi E ≥ ngưỡng này VÀ win-rate ≥ ngưỡng dưới.">Kỳ vọng tối thiểu E % <span class="varname">min_expectancy_pct</span>
     <input name="min_expectancy_pct" type="number" step="0.1" min="-100" max="100" value="{{ '%.1f'|format(k.min_expectancy_pct) }}" required></label>
-  <label title="Win-rate tối thiểu (cận dưới Wilson) để đủ điều kiện trade. Cặp với gate kỳ vọng tạo thành quy tắc: trade khi E ≥ ngưỡng VÀ win-rate ≥ ngưỡng này.">Win-rate tối thiểu %
+  <label title="Win-rate tối thiểu (cận dưới Wilson) để đủ điều kiện trade. Cặp với gate kỳ vọng tạo thành quy tắc: trade khi E ≥ ngưỡng VÀ win-rate ≥ ngưỡng này.">Win-rate tối thiểu % <span class="varname">min_win_rate</span>
     <input name="min_win_rate" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.min_win_rate) }}" required></label>
-  <label title="Ngưỡng đồng thuận tối thiểu của 5 agent thị trường (trend/dip/volatility/liquidity/ml). S4: backtest bị loại khỏi điểm đồng thuận — chứng cứ backtest thuộc về các gate cứng (E, win_lb). Giá trị mặc định mới: 45%.">Đồng thuận tối thiểu %
+  <label title="Ngưỡng đồng thuận tối thiểu của 5 agent thị trường (trend/dip/volatility/liquidity/ml). S4: backtest bị loại khỏi điểm đồng thuận — chứng cứ backtest thuộc về các gate cứng (E, win_lb). Giá trị mặc định mới: 45%.">Đồng thuận tối thiểu % <span class="varname">min_confidence</span>
     <input name="min_confidence" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.min_confidence) }}" required></label>
-  <label title="Notional sóng đầu mỗi session. >0 = đặt cỡ lệnh đầu theo USD (dùng nhiều vốn hơn); 0 = cỡ pip mặc định (rất nhỏ).">Giá trị lệnh đầu (USD)
+  <label title="Notional sóng đầu mỗi session. >0 = đặt cỡ lệnh đầu theo USD (dùng nhiều vốn hơn); 0 = cỡ pip mặc định (rất nhỏ).">Giá trị lệnh đầu (USD) <span class="varname">kss_first_wave_usd</span>
     <input name="kss_first_wave_usd" type="number" step="any" min="0" value="{{ '%.2f'|format(k.kss_first_wave_usd) }}"></label>
-  <label title="Trần số coin mỗi lần quét. Tăng để quét nhiều coin hơn (mặc định 50).">Số coin quét tối đa
+  <label title="Trần số coin mỗi lần quét. Tăng để quét nhiều coin hơn (mặc định 50).">Số coin quét tối đa <span class="varname">scan_max_symbols</span>
     <input name="scan_max_symbols" type="number" step="1" min="1" value="{{ k.scan_max_symbols }}"></label>
-  <label title="Chỉ quét coin có quote-volume ≥ ngưỡng này. Giảm để quét thêm coin nhỏ (mặc định 1,000,000).">Thanh khoản tối thiểu (quote vol)
+  <label title="Chỉ quét coin có quote-volume ≥ ngưỡng này. Giảm để quét thêm coin nhỏ (mặc định 1,000,000).">Thanh khoản tối thiểu (quote vol) <span class="varname">min_quote_volume</span>
     <input name="min_quote_volume" type="number" step="any" min="0" value="{{ '%.0f'|format(k.min_quote_volume) }}"></label>
   <button type="submit" class="ok">Lưu cấu hình KSS</button>
 </form>
@@ -67,7 +67,7 @@
   <div class="muted fs-12 mt-6">Khi bật, Grok cho lý do cụ thể vì sao chọn/bỏ từng coin (xem panel scanner & Nhật ký). Lỗi API → bỏ qua, dùng quyết định deterministic (không chặn lệnh).</div>
   <div class="mt-8">
     <form id="grok-fail-mode-form">
-      <label title="open (mặc định): lỗi/timeout Grok → coin vẫn mở (fail-open, ưu tiên sẵn sàng). closed: coin KHÔNG có verdict rõ ràng từ Grok sẽ bị bỏ qua lần quét này (ưu tiên bảo toàn vốn khi full-auto). Batch cap (top 8) cũng áp dụng: coin bị loại vì vượt cap thì: open → vẫn mở; closed → bị chặn.">Chế độ lỗi Grok
+      <label title="open (mặc định): lỗi/timeout Grok → coin vẫn mở (fail-open, ưu tiên sẵn sàng). closed: coin KHÔNG có verdict rõ ràng từ Grok sẽ bị bỏ qua lần quét này (ưu tiên bảo toàn vốn khi full-auto). Batch cap (top 8) cũng áp dụng: coin bị loại vì vượt cap thì: open → vẫn mở; closed → bị chặn.">Chế độ lỗi Grok <span class="varname">grok_scanner_fail_mode</span>
         <select name="grok_scanner_fail_mode" class="select-inline">
           <option value="open" {% if k.grok_scanner_fail_mode == 'open' %}selected{% endif %}>open (fail-open)</option>
           <option value="closed" {% if k.grok_scanner_fail_mode == 'closed' %}selected{% endif %}>closed (bảo toàn vốn)</option>

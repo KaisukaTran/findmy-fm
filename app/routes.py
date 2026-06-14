@@ -786,16 +786,6 @@ def partial_trades(request: Request, page: int = 1, db: Session = Depends(get_db
     )
 
 
-@ui_router.get("/partials/log-trades", response_class=HTMLResponse)
-def partial_log_trades(request: Request, db: Session = Depends(get_db)):
-    """Recent executed transactions (fills) for the 'Nhật ký' tab — the audit feed only
-    carries strategy/system events, not the raw fills, so this surfaces actual trades."""
-    rows = portfolio.trades_view(db, limit=15, offset=0)
-    return templates.TemplateResponse(
-        "partials/log_trades.html", {"request": request, "rows": rows}
-    )
-
-
 @ui_router.get("/partials/pending", response_class=HTMLResponse)
 def partial_pending(request: Request, page: int = 1, db: Session = Depends(get_db)):
     page = max(1, min(page, 10))
@@ -1041,28 +1031,22 @@ def partial_performance(request: Request, period: str = "all", db: Session = Dep
 
 
 @ui_router.get("/partials/audit", response_class=HTMLResponse)
-def partial_audit(request: Request, page: int = 1, db: Session = Depends(get_db)):
+def partial_audit(request: Request, category: str = "important", db: Session = Depends(get_db)):
+    """The 20 most-recent activity-log events of the requested category (server-side filter,
+    so a sparse category is never hidden behind a window of scan noise)."""
     from app import auditview
-    from app.models import AuditLog as _AuditLog
 
-    page = max(1, min(page, 10))
-    offset = (page - 1) * 20
-    raw = (
-        db.query(_AuditLog)
-        .order_by(_AuditLog.id.desc())
-        .offset(offset)
-        .limit(20)
-        .all()
-    )
-    rows = [auditview.render(r) for r in raw]
+    if category not in auditview.CATEGORY_LABELS:
+        category = "important"
+    rows = auditview.recent_by_category(db, category, limit=20)
     return templates.TemplateResponse(
         "partials/audit.html",
         {
             "request": request,
             "rows": rows,
-            "page": page,
-            "has_prev": page > 1,
-            "has_next": len(rows) == 20,
+            "category": category,
+            "cat_label": auditview.CATEGORY_LABELS[category],
+            "filters": list(auditview.CATEGORY_LABELS.items()),
         },
     )
 

@@ -374,13 +374,6 @@ const actions = {
   closeLadder() {
     document.getElementById("ladder-modal").classList.add("hidden");
   },
-  auditFilter(mode) {
-    const w = document.getElementById("audit-wrap");
-    if (w) w.className = "af-" + (mode || "important");
-    document.querySelectorAll("[data-action='auditFilter']").forEach((b) =>
-      b.classList.toggle("ghost", b.dataset.id !== mode));
-    applyAuditSymbol();
-  },
   auditFilterSymbol(sym) {
     window._auditSym = sym || "";
     const f = document.getElementById("audit-sym-filter");

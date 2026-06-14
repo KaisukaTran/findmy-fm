@@ -152,29 +152,34 @@ def test_partial_positions_page_gt10_clamps(client):
 
 
 # ---------------------------------------------------------------------------
-# F) /partials/audit — page param
+# F) /partials/audit — server-side category filter (each tab = its 20 most-recent events)
 # ---------------------------------------------------------------------------
 
-def test_partial_audit_page1_vs_page2(db, client):
-    """Seed 25 audit rows; page=2 must differ from page=1."""
+def test_partial_audit_category_filter_server_side(db, client):
+    """A 'trade' tab shows only trade events even when system noise dominates the recent rows."""
     from app import audit
-    for i in range(25):
-        audit.log(db, actor="test", action=f"action_{i}", entity="test")
-    db.commit()  # audit.log only flushes; commit so TestClient sessions can see the rows
+    for i in range(20):  # bulk system noise (cat=system, dropped for meaningful categories)
+        audit.log(db, actor="scanner", action="skipped_cap", entity=f"SYM{i}")
+    audit.log(db, actor="auto-trader", action="auto_approve", entity="order:7")  # cat=trade
+    db.commit()
 
-    r1 = client.get("/partials/audit?page=1")
-    r2 = client.get("/partials/audit?page=2")
-    assert r1.status_code == 200
-    assert r2.status_code == 200
-    assert r1.text != r2.text
+    rt = client.get("/partials/audit?category=trade")
+    rs = client.get("/partials/audit?category=system")
+    assert rt.status_code == 200 and rs.status_code == 200
+    assert "order:7" in rt.text          # the trade event surfaces on the trade tab
+    assert "cat-trade" in rt.text
+    assert "cat-system" not in rt.text   # system noise is NOT shown on the trade tab
+    assert "cat-system" in rs.text       # but it is on the system tab
 
 
-def test_partial_audit_page_gt10_clamps(client):
-    r10 = client.get("/partials/audit?page=10")
-    r20 = client.get("/partials/audit?page=20")
-    assert r10.status_code == 200
-    assert r20.status_code == 200
-    assert r10.text == r20.text
+def test_partial_audit_bad_category_defaults_important(db, client):
+    from app import audit
+    audit.log(db, actor="auto-trader", action="auto_approve", entity="order:1")
+    db.commit()
+    r_bad = client.get("/partials/audit?category=bogus")
+    r_imp = client.get("/partials/audit?category=important")
+    assert r_bad.status_code == 200
+    assert r_bad.text == r_imp.text  # unknown category falls back to 'important'
 
 
 # ---------------------------------------------------------------------------

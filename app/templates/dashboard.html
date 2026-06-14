@@ -200,34 +200,22 @@
       </div>
     </div>
 
-    <!-- TAB: Nhật ký (Logs) — recent transactions + meaningful, categorised feed -->
+    <!-- TAB: Nhật ký (Logs) — meaningful, categorised activity feed. Category filtering is
+         SERVER-SIDE (each tab fetches its 20 most-recent events), so a sparse category is
+         never hidden behind a window of scan noise. Buttons live inside the polled partial. -->
     <div data-tab-panel="logs">
       <div class="panel mt-16">
-        <h2>Giao dịch gần nhất</h2>
-        <div class="scroll"
-             hx-get="/partials/log-trades"
-             hx-trigger="tab-shown from:closest [data-tab-panel], load, refresh-trading from:body"
-             hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
-      </div>
-      <div class="panel mt-16">
         <h2>Nhật ký hoạt động</h2>
-        <!-- #audit-wrap is OUTSIDE the hx-swap, so the category filter (a CSS class on it)
-             survives the 15s poll. -->
-        <div id="audit-wrap" class="af-important">
+        <div id="audit-wrap">
+          <!-- symbol filter indicator stays OUTSIDE the swap so its JS state survives polls -->
           <div class="audit-filters">
-            <button class="sm" data-action="auditFilter" data-id="important">Quan trọng</button>
-            <button class="sm ghost" data-action="auditFilter" data-id="trade">🟢 Giao dịch</button>
-            <button class="sm ghost" data-action="auditFilter" data-id="risk">🛑 Rủi ro</button>
-            <button class="sm ghost" data-action="auditFilter" data-id="opus">🤖 OPUS</button>
-            <button class="sm ghost" data-action="auditFilter" data-id="system">⚙️ Hệ thống</button>
-            <button class="sm ghost" data-action="auditFilter" data-id="all">Tất cả</button>
             <span id="audit-sym-filter" class="hidden">· coin: <b id="audit-sym-label"></b>
               <button class="sm ghost" data-action="auditClearSymbol">✕ bỏ lọc</button></span>
           </div>
           <div class="scroll"
-               hx-get="/partials/audit"
+               hx-get="/partials/audit?category=important"
                hx-trigger="tab-shown from:closest [data-tab-panel], load"
-               hx-swap="innerHTML"></div>
+               hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
         </div>
       </div>
     </div>

@@ -188,7 +188,46 @@ def render(row: AuditLog) -> dict:
 
 
 def audit_view(db: Session, limit: int = 300) -> list[dict]:
-    """Most-recent enriched audit rows (newest first). Category/symbol filtering is done
-    client-side so the 15s poll never loses the active filter."""
+    """Most-recent enriched audit rows (newest first)."""
     rows = db.query(AuditLog).order_by(AuditLog.id.desc()).limit(limit).all()
     return [render(r) for r in rows]
+
+
+# High-volume SYSTEM actions (scan cycles / skips). Dropped in SQL when a meaningful
+# category is requested so 20 trade/risk/opus rows are never buried under scan noise.
+_NOISE_ACTIONS = {
+    "skipped_cooldown", "skipped_concentration", "skipped_opus_owned", "skipped_cap",
+    "cycle", "scan_cycle", "candidate", "scan_start", "universe_degraded",
+}
+
+# Filter key -> Vietnamese label (drives the buttons + the empty-state text).
+CATEGORY_LABELS = {
+    "important": "Quan trọng", "trade": "Giao dịch", "risk": "Rủi ro",
+    "opus": "OPUS", "system": "Hệ thống", "all": "Tất cả",
+}
+
+
+def recent_by_category(
+    db: Session, category: str = "important", limit: int = 20, scan_cap: int = 4000
+) -> list[dict]:
+    """The `limit` most-recent audit rows whose DERIVED category matches `category`.
+
+    `important` = everything except system noise; `all` = no filter. For the meaningful
+    categories the bulk system actions are dropped in SQL first (cheap), then the exact
+    category is confirmed via render() — the single source of truth for categorisation.
+    """
+    q = db.query(AuditLog).order_by(AuditLog.id.desc())
+    if category in ("trade", "risk", "opus", "important"):
+        q = q.filter(AuditLog.action.notin_(_NOISE_ACTIONS))
+    out: list[dict] = []
+    for row in q.limit(scan_cap):
+        r = render(row)
+        if (
+            category == "all"
+            or (category == "important" and r["category"] != "system")
+            or r["category"] == category
+        ):
+            out.append(r)
+            if len(out) >= limit:
+                break
+    return out

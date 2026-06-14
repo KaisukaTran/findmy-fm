@@ -36,7 +36,6 @@ _task: asyncio.Task | None = None
 # Helpers
 # ---------------------------------------------------------------------------
 
-_API_BASE = "https://api.telegram.org/bot{token}"
 _TIMEOUT = 10.0  # seconds for alert calls
 _POLL_TIMEOUT = 30  # long-poll window (seconds) for getUpdates
 
@@ -51,9 +50,11 @@ def enabled() -> bool:
 
 
 def _base_url() -> str:
-    """Build the base API URL with the bot token. Never logged."""
+    """Build the base API URL with the bot token. Honours `telegram_api_base` so a
+    reverse-proxy (e.g. a Cloudflare Worker) can be used to bypass an SNI block. Never logged."""
     token = settings.telegram_bot_token.get_secret_value()
-    return f"https://api.telegram.org/bot{token}"
+    base = settings.telegram_api_base.rstrip("/")
+    return f"{base}/bot{token}"
 
 
 # ---------------------------------------------------------------------------

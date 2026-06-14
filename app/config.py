@@ -206,6 +206,12 @@ class Settings(BaseSettings):
     # --- Telegram remote-kill (Phase B): alerts + /pause /resume /status /freeze /reset ---
     telegram_enabled: bool = Field(default=False, description="Enable the Telegram notifier + command poller. Needs token + chat id.")
     telegram_bot_token: SecretStr = Field(default=SecretStr(""), description="Telegram bot token (from @BotFather).")
+    telegram_api_base: str = Field(
+        default="https://api.telegram.org",
+        description="Base URL for the Telegram Bot API. Point at a reverse-proxy you control "
+        "(e.g. a Cloudflare Worker) to bypass an SNI/DPI block on api.telegram.org — this "
+        "network blocks the direct host. Token is appended as /bot<token>. No trailing slash.",
+    )
     telegram_chat_id: str = Field(default="", description="Only this chat id may send commands and receive alerts.")
     telegram_poll_interval: int = Field(default=5, description="Seconds between Telegram getUpdates polls.")
     telegram_notify_trades: bool = Field(default=True, description="Push a Telegram alert on each fill (trade). Kill switch for trade alerts.")

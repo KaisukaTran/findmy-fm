@@ -18,17 +18,11 @@ Documentation for the v2 lean rebuild (`app/`). Start with the
 Working documents for in-progress or proposed features. They describe intent, not
 necessarily shipped behavior.
 
-- [plan/go-live-plan.md](plan/go-live-plan.md) — go-live hardening plan.
-- [plan/telegram-notify-plan.md](plan/telegram-notify-plan.md) — Telegram notification/control plan.
-- [plan/ux-tweaks-plan.md](plan/ux-tweaks-plan.md) — dashboard UX tweaks.
-- [plan/security-audit-2026-06-13.md](plan/security-audit-2026-06-13.md) — security audit notes.
+- [plan/live-readiness-plan.md](plan/live-readiness-plan.md) — make the OFF live path production-ready (maker orders, async fills, 5m candles).
 - [opus-orchestrator-plan.md](opus-orchestrator-plan.md) — OPUS orchestrator mode (advanced, paper-only).
 - [kss-accounting-upgrade-plan.md](kss-accounting-upgrade-plan.md) — KSS accounting-consistency proposal.
 
-## History
-
-- [devlog/](devlog/) — early development journal (day-by-day).
-- [archive/](archive/) — superseded v0.1 implementation summaries, kept for reference.
+Plans for shipped features are not kept here — progress lives in the project's working memory.
 
 ## Configuration
 

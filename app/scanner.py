@@ -475,6 +475,14 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
             audit.log(db, "scanner", "skipped_frozen", entity=c["symbol"])
         return
 
+    # Capital sizing (req a): each candidate's session reserves its full projected DCA-ladder
+    # cost — computed once here and reused for the batch saturation pre-check, the per-candidate
+    # open-gate, and the session's isolated_fund so the ladder never starves mid-way.
+    for c in to_open:
+        c["need"] = service.projected_ladder_cost(
+            c["symbol"], c["entry"], c["distance_pct"], c["max_waves"]
+        )
+
     # S5: read the active fail mode (runtime-editable; default from settings).
     fail_mode: str = runtime.get(db, "kss:grok_scanner_fail_mode") or settings.grok_scanner_fail_mode
 
@@ -485,8 +493,9 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
 
     if to_open and grok.scanner_enabled():
         # B8: skip the LLM call entirely when the concurrent/capital caps are already
-        # saturated — nothing could open even if Grok endorsed everything.
-        can, _why = _can_open(db)
+        # saturated — if even the cheapest candidate can't open, nothing could even if Grok
+        # endorsed everything.
+        can, _why = _can_open(db, min(c["need"] for c in to_open))
         if not can:
             audit.log(db, "scanner", "skipped_capped_batch", entity="grok",
                       reason=_why, symbols=len(to_open))
@@ -536,26 +545,53 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
 
         if verdict and verdict.get("reason"):
             cand.reason = (cand.reason or "") + f" | Grok: {verdict['reason']}"
-        ok, why = _can_open(db)
+        ok, why = _can_open(db, c["need"])
         if ok:
             cand.session_id = _open_session(
                 db, symbol, c["entry"], mode,
                 distance_pct=c["distance_pct"], tp_pct=c["tp_pct"], max_waves=c["max_waves"],
+                isolated_fund=c["need"],
             )
         else:
             cand.reason = (cand.reason or "") + f" | capped: {why}"
             audit.log(db, "scanner", "skipped_cap", entity=symbol, reason=why)
 
 
-def _can_open(db: Session) -> tuple[bool, str]:
-    """Capital-preservation caps: concurrent sessions, deployed capital, min notional."""
+def _session_lock(s: KssSession) -> float:
+    """Capital an ACTIVE session holds against the deployable budget.
+
+    Lend-the-idle-reservation rule (user spec): while a session has filled < 50% of its
+    planned ladder it locks only the cash actually deployed (``total_cost``) — the idle
+    reservation is freed for new sessions; once it crosses 50% filled it locks its full
+    reservation (``isolated_fund``), committed to finishing the averaging-down plan."""
+    reserved = s.isolated_fund or 0.0
+    used = s.total_cost or 0.0
+    if reserved <= 0:
+        return used
+    return used if used < 0.5 * reserved else reserved
+
+
+def _can_open(db: Session, new_need: float) -> tuple[bool, str]:
+    """Capital-preservation caps: concurrent sessions, deployable budget, min notional.
+
+    Budget = LIVE mark-to-market equity × (100 − ``equity_backup_pct``)% (a backup reserve the
+    bot never deploys). Existing sessions consume the budget via ``_session_lock`` (idle
+    reservations of lightly-filled sessions are reusable), and ``new_need`` is the candidate's
+    projected full-ladder cost. This replaces the old check that summed flat ``scan_fund``
+    reservations against static ``account_equity`` — which falsely tripped the cap while real
+    cash sat idle (see [[scanner-funding-knobs]])."""
+    from app import risk  # lazy: risk → portfolio → models; avoid an import cycle at load
+
     active = db.query(KssSession).filter(KssSession.status == SESSION_ACTIVE).all()
     if len(active) >= settings.max_concurrent_sessions:
         return False, f"max concurrent {settings.max_concurrent_sessions}"
-    deployed = sum(s.isolated_fund for s in active)
-    cap = settings.account_equity * settings.max_deployed_pct / 100
-    if deployed + settings.scan_fund > cap:
-        return False, f"deployed cap {settings.max_deployed_pct:.0f}% of equity"
+    equity = risk.account_equity(db)
+    budget = equity * (100 - settings.equity_backup_pct) / 100
+    locked = sum(_session_lock(s) for s in active)
+    if locked + new_need > budget:
+        return False, f"vượt ngân sách triển khai (giữ {settings.equity_backup_pct:.0f}% dự phòng)"
+    # Min-notional guard is unchanged from the legacy gate: it asks whether the per-session fund
+    # is tradeable at all (a coarse dust floor), independent of the new deployed-budget logic.
     if not costengine.notional_ok(settings.scan_fund):
         return False, "below min notional"
     return True, ""
@@ -649,8 +685,12 @@ def _open_session(
     distance_pct: float | None = None,
     tp_pct: float | None = None,
     max_waves: int | None = None,
+    isolated_fund: float | None = None,
 ) -> int:
     """Open a KSS session using effective (possibly hyperopt-tuned) params.
+
+    ``isolated_fund`` defaults to the projected full-ladder cost (req a) so the reservation
+    matches what the ladder will actually consume; callers may pass a precomputed value.
 
     Defaults resolve from ``settings`` at call time (not at import/definition time)
     so runtime Strategy-tab edits to ``scan_distance_pct`` / ``scan_tp_pct`` /
@@ -662,13 +702,15 @@ def _open_session(
         tp_pct = settings.scan_tp_pct
     if max_waves is None:
         max_waves = settings.scan_max_waves
+    if isolated_fund is None:
+        isolated_fund = service.projected_ladder_cost(symbol, entry, distance_pct, max_waves)
     row = service.create_session(
         db,
         symbol=symbol,
         entry_price=entry,
         distance_pct=distance_pct,
         max_waves=max_waves,
-        isolated_fund=settings.scan_fund,
+        isolated_fund=isolated_fund,
         tp_pct=tp_pct,
         # Deadline (not the intra-fill timeout) governs the hold; keep timeout long.
         timeout_x_min=float(settings.deadline_days * 1440),

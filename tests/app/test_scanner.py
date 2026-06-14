@@ -318,7 +318,7 @@ def test_second_scan_zero_ohlcv_calls(db, scan_env, monkeypatch):  # noqa: ARG00
     # cache_hits would be 0 for the wrong reason. Keep _can_open False so no session
     # opens — BTC is re-evaluated each scan and genuinely served from the warm cache.
     # (Makes the test independent of gate thresholds / .env.)
-    monkeypatch.setattr(scanner, "_can_open", lambda _db: (False, "test-no-open"))
+    monkeypatch.setattr(scanner, "_can_open", lambda *_a, **_k: (False, "test-no-open"))
 
     # Clear the cache to ensure a cold start.
     candle_cache.clear()
@@ -594,3 +594,79 @@ def test_grok_fail_mode_closed_missing_verdict_blocks(db, scan_env, monkeypatch)
     assert "grok_unverified" in (cand.reason or "")
     # Audit must record the block.
     assert db.query(models.AuditLog).filter_by(action="skipped_grok_unverified").count() >= 1
+
+
+# --- Capital accounting: projected reservation + lend-the-idle open-gate -----
+
+
+def _active_kss(db, *, reserved: float, used: float, symbol: str = "AAA") -> models.KssSession:
+    """Persist an ACTIVE KSS session with a given reservation and deployed cost."""
+    row = models.KssSession(
+        symbol=symbol, entry_price=100.0, distance_pct=2.0, max_waves=10,
+        isolated_fund=reserved, tp_pct=3.0, timeout_x_min=1440.0, gap_y_min=0.0,
+        status=models.SESSION_ACTIVE, total_cost=used,
+    )
+    db.add(row)
+    db.commit()
+    return row
+
+
+def test_session_lock_lends_idle_reservation():
+    """<50% filled locks only the deployed cash; >=50% filled locks the full reservation."""
+    shallow = models.KssSession(isolated_fund=1000.0, total_cost=200.0)  # 20% used
+    assert scanner._session_lock(shallow) == 200.0
+    deep = models.KssSession(isolated_fund=1000.0, total_cost=600.0)  # 60% used
+    assert scanner._session_lock(deep) == 1000.0
+    at_half = models.KssSession(isolated_fund=1000.0, total_cost=500.0)  # exactly 50%
+    assert scanner._session_lock(at_half) == 1000.0
+    no_reserve = models.KssSession(isolated_fund=0.0, total_cost=42.0)
+    assert scanner._session_lock(no_reserve) == 42.0
+
+
+def test_can_open_budgets_on_live_equity_minus_backup(db, monkeypatch):
+    """Budget = live equity × (100 − equity_backup_pct)%, NOT static account_equity."""
+    monkeypatch.setattr("app.risk.account_equity", lambda _db: 1000.0)
+    monkeypatch.setattr(settings, "equity_backup_pct", 25.0)
+    monkeypatch.setattr(settings, "max_concurrent_sessions", 100)
+    # No active sessions → budget is 750. 700 fits, 800 does not.
+    ok, _ = scanner._can_open(db, 700.0)
+    assert ok
+    ok, why = scanner._can_open(db, 800.0)
+    assert not ok and "dự phòng" in why
+
+
+def test_can_open_reuses_idle_reservation(db, monkeypatch):
+    """A lightly-filled session's idle reservation is lent to a new session (req b)."""
+    monkeypatch.setattr("app.risk.account_equity", lambda _db: 1000.0)
+    monkeypatch.setattr(settings, "equity_backup_pct", 25.0)  # budget 750
+    monkeypatch.setattr(settings, "max_concurrent_sessions", 100)
+    # Reserves 1000 but only used 100 (<50%) → locks 100, leaving 650 of the 750 budget.
+    _active_kss(db, reserved=1000.0, used=100.0)
+    ok, _ = scanner._can_open(db, 600.0)  # 100 + 600 = 700 <= 750
+    assert ok, "idle reservation of a <50%-filled session must be reusable"
+    # Old flat-reservation logic would have summed 1000 and blocked this outright.
+
+
+def test_can_open_locks_full_reservation_when_deep(db, monkeypatch):
+    """Once a session crosses 50% filled it locks its whole reservation (protect the DCA plan)."""
+    monkeypatch.setattr("app.risk.account_equity", lambda _db: 1000.0)
+    monkeypatch.setattr(settings, "equity_backup_pct", 25.0)  # budget 750
+    monkeypatch.setattr(settings, "max_concurrent_sessions", 100)
+    _active_kss(db, reserved=1000.0, used=600.0)  # >=50% → locks full 1000 > 750
+    ok, why = scanner._can_open(db, 10.0)
+    assert not ok and "dự phòng" in why
+
+
+def test_projected_ladder_cost_matches_pyramid(monkeypatch):
+    """The reserved fund equals the frozen pyramid's full-ladder estimate, and is positive."""
+    from app.kss import service
+    from app.kss.pyramid import PyramidSession
+
+    monkeypatch.setattr(settings, "kss_first_wave_usd", 50.0)
+    got = service.projected_ladder_cost("BTC", 100.0, 2.0, 10)
+    expected = PyramidSession(
+        symbol="BTC", entry_price=100.0, distance_pct=2.0, max_waves=10,
+        isolated_fund=1.0, tp_pct=1.0, timeout_x_min=1.0, gap_y_min=0.0,
+    ).estimate_total_cost()
+    assert got == expected
+    assert got > 0

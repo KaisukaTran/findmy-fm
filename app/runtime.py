@@ -52,6 +52,7 @@ KSS_SETTING_FIELDS: dict[str, type] = {
     "deadline_days": int,
     "max_concurrent_sessions": int,
     "max_deployed_pct": float,
+    "equity_backup_pct": float,
     "loss_streak_block_k": int,
     "loss_streak_window_days": int,
     "min_expectancy_pct": float,

@@ -137,6 +137,34 @@ def _queue_wave_if_above_sl(
 # --- lifecycle ----------------------------------------------------------
 
 
+def projected_ladder_cost(
+    symbol: str,
+    entry_price: float,
+    distance_pct: float,
+    max_waves: int,
+) -> float:
+    """USD a session's FULL DCA ladder would consume, from the frozen pyramid math:
+    Σ over waves of (wave qty × wave price) via ``PyramidSession.estimate_total_cost``.
+
+    This is the precise form of "first-wave size × số sóng × giá": it honours the
+    geometric (n+1)× qty growth, the entry×(1−d)ⁿ price decay, and the active
+    ``kss_first_wave_usd`` sizing. Used to (1) size a session's ``isolated_fund`` so the
+    ladder never starves mid-way, and (2) budget the scanner open-gate against the real
+    planned capital instead of a flat user-set ``scan_fund``.
+    """
+    probe = PyramidSession(
+        symbol=symbol,
+        entry_price=entry_price,
+        distance_pct=distance_pct,
+        max_waves=max_waves,
+        isolated_fund=1.0,  # dummy (>0 to pass validation); estimate_total_cost ignores it
+        tp_pct=1.0,
+        timeout_x_min=1.0,
+        gap_y_min=0.0,
+    )
+    return probe.estimate_total_cost()
+
+
 def create_session(db: Session, **params: Any) -> KssSession:
     """Validate params (via PyramidSession) and persist a PENDING session."""
     from app import costengine

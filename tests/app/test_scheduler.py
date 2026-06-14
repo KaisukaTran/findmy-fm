@@ -131,3 +131,32 @@ def test_fresh_veto_survives_within_ttl(db, env, monkeypatch):
     db.refresh(order)
     assert order.auto_veto
     assert order.status == models.PENDING  # still blocked, not filled
+
+
+# --- singleton lock: only one process may run the scan loop --------------------
+
+def test_singleton_lock_blocks_a_second_holder():
+    """Acquiring the lock fails while another holder binds the same port, then succeeds
+    once it is freed — this is what stops two app processes running two schedulers
+    (which race scanner._can_open and overshoot max_concurrent_sessions)."""
+    import socket as _socket
+
+    saved = scheduler._lock_sock
+    scheduler._lock_sock = None
+    # pick a free ephemeral port and hold it (simulating the OTHER process)
+    other = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    other.bind(("127.0.0.1", 0))
+    other.listen(1)
+    port = other.getsockname()[1]
+    try:
+        assert scheduler._acquire_singleton_lock(port) is False  # other holds it
+        other.close()
+        assert scheduler._acquire_singleton_lock(port) is True   # now free
+        assert scheduler._acquire_singleton_lock(port) is True   # idempotent
+    finally:
+        try:
+            other.close()
+        except OSError:
+            pass
+        scheduler._release_singleton_lock()
+        scheduler._lock_sock = saved

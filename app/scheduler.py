@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 
 from sqlalchemy.orm import Session
 
@@ -27,6 +28,39 @@ logger = logging.getLogger(__name__)
 _task: asyncio.Task | None = None
 _last_cycle_at: str | None = None
 _last_summary: dict = {}
+
+# Cross-process singleton lock. Two app processes each running this scan loop race
+# scanner._can_open (separate DB transactions) and blow past max_concurrent_sessions
+# (observed 8–9 active vs a cap of 5). A localhost-only socket is a process-wide mutex:
+# only ONE process can bind it, and the OS frees it automatically on exit (no stale lock
+# files). 8801 = 8000 (app) + a fixed offset reserved for this lock.
+_SINGLETON_PORT = 8801
+_lock_sock: socket.socket | None = None
+
+
+def _acquire_singleton_lock(port: int = _SINGLETON_PORT) -> bool:
+    """True if this process is the scheduler singleton; False if another already holds it.
+    Idempotent: a process that already holds the lock returns True. (`port` is overridable
+    for tests.)"""
+    global _lock_sock
+    if _lock_sock is not None:
+        return True
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", port))  # no SO_REUSEADDR — a 2nd bind MUST fail
+        s.listen(1)
+    except OSError:
+        s.close()
+        return False
+    _lock_sock = s
+    return True
+
+
+def _release_singleton_lock() -> None:
+    global _lock_sock
+    if _lock_sock is not None:
+        _lock_sock.close()
+        _lock_sock = None
 
 
 def status() -> dict:
@@ -195,9 +229,20 @@ async def _loop() -> None:
 
 
 def start() -> bool:
-    """Start the background loop if not already running. Returns True if started."""
+    """Start the background loop if not already running. Returns True if started.
+
+    Refuses to start (returns False) when another app process already holds the
+    singleton lock — only one process may run the scan loop, or the two race
+    scanner._can_open and overshoot max_concurrent_sessions."""
     global _task
     if _task and not _task.done():
+        return False
+    if not _acquire_singleton_lock():
+        logger.warning(
+            "scheduler NOT started — another app instance already holds the singleton lock "
+            "(127.0.0.1:%d). Run a single process, or two schedulers will overshoot the "
+            "concurrent-session cap.", _SINGLETON_PORT,
+        )
         return False
     settings.scheduler_enabled = True
     _task = asyncio.create_task(_loop())
@@ -208,12 +253,13 @@ def stop() -> bool:
     """Stop the background loop. Returns True if a running task was cancelled."""
     global _task
     settings.scheduler_enabled = False
+    cancelled = False
     if _task and not _task.done():
         _task.cancel()
-        _task = None
-        return True
+        cancelled = True
     _task = None
-    return False
+    _release_singleton_lock()  # free the lock so the same process can restart cleanly
+    return cancelled
 
 
 def is_running() -> bool:

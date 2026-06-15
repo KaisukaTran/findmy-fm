@@ -18,6 +18,8 @@
     <input name="deadline_days" type="number" step="1" min="1" value="{{ k.deadline_days }}" required></label>
   <label title="Số session KSS tối đa chạy song song. Tăng để mở thêm coin khi còn vốn.">Số session tối đa <span class="varname">max_concurrent_sessions</span>
     <input name="max_concurrent_sessions" type="number" step="1" min="1" value="{{ k.max_concurrent_sessions }}" required></label>
+  <label title="Số session KSS tối đa MỖI coin. 1 (K-1) = một thang DCA/coin nên avg session = avg Position → không trộn giá vốn (tránh 'chốt lời mà thực ra lỗ' / kẹt TP do K-2). 0 = không giới hạn. Khuyến nghị 1.">Session tối đa / coin <span class="varname">max_sessions_per_symbol</span>
+    <input name="max_sessions_per_symbol" type="number" step="1" min="0" max="20" value="{{ k.max_sessions_per_symbol }}" required></label>
   <label title="Tỷ lệ % equity (theo giá thị trường) LUÔN giữ lại làm dự phòng, không bao giờ triển khai. Ngân sách mở session = (100 − số này)% × equity. Session đã khớp <50% kế hoạch chỉ khóa phần đã mua (phần dư cho session khác mượn); ≥50% thì khóa toàn bộ kế hoạch. Giảm để dùng nhiều vốn hơn.">Dự phòng % equity <span class="varname">equity_backup_pct</span>
     <input name="equity_backup_pct" type="number" step="any" min="0" max="90" value="{{ '%.0f'|format(k.equity_backup_pct) }}" required></label>
   <label title="Chặn mở session mới cho coin đã thua K lần ĐÓNG LỆNH liên tiếp (một lần lãi sẽ phá chuỗi). Tăng để khó bị chặn hơn.">Chặn sau K lần thua <span class="varname">loss_streak_block_k</span>

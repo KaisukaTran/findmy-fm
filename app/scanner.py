@@ -545,6 +545,14 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
 
         if verdict and verdict.get("reason"):
             cand.reason = (cand.reason or "") + f" | Grok: {verdict['reason']}"
+        # Defense-in-depth: re-assert the per-symbol cap atomically against the CURRENT DB
+        # state. The to_open pre-check ran earlier (before Grok review and other opens in this
+        # same batch); a stale read there must never let a 2nd ladder open on a coin — two
+        # sessions share one Position avg → 'take-profit that realizes a loss' / K-2 TP deadlock.
+        if _symbol_at_cap(db, symbol):
+            cand.reason = (cand.reason or "") + " | capped: per-symbol"
+            audit.log(db, "scanner", "skipped_concentration", entity=symbol)
+            continue
         ok, why = _can_open(db, c["need"])
         if ok:
             cand.session_id = _open_session(

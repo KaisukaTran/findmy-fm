@@ -572,6 +572,7 @@ document.addEventListener("submit", async (e) => {
       trailing_pct: num(f.get("trailing_pct")),
       deadline_days: num(f.get("deadline_days")),
       max_concurrent_sessions: num(f.get("max_concurrent_sessions")),
+      max_sessions_per_symbol: num(f.get("max_sessions_per_symbol")),
       max_deployed_pct: num(f.get("max_deployed_pct")),
       loss_streak_block_k: num(f.get("loss_streak_block_k")),
       loss_streak_window_days: num(f.get("loss_streak_window_days")),

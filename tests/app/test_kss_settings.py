@@ -18,6 +18,15 @@ def test_set_kss_settings_persists_and_restores(db):
     assert settings.sl_pct == 12.0
 
 
+def test_max_sessions_per_symbol_persists_and_restores(db):
+    # K-1 cap is now runtime-editable (root fix for duplicate sessions per coin).
+    runtime.set_kss_settings(db, {"max_sessions_per_symbol": 1})
+    assert settings.max_sessions_per_symbol == 1
+    settings.max_sessions_per_symbol = 9  # corrupt in-memory, then restore from runtime_config
+    runtime.sync_from_db(db)
+    assert settings.max_sessions_per_symbol == 1
+
+
 def test_set_kss_settings_ignores_missing(db):
     before = settings.scan_tp_pct
     runtime.set_kss_settings(db, {"sl_pct": 9.0})  # tp not provided → unchanged

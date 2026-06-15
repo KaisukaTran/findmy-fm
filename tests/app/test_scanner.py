@@ -173,6 +173,39 @@ def test_scan_skips_pair_on_loss_streak(db, scan_env, monkeypatch):
     assert db.query(models.AuditLog).filter_by(action="skipped_loss_streak").count() == 1
 
 
+def test_scan_skips_symbol_already_at_cap(db, scan_env, monkeypatch):
+    """K-1 root fix: with max_sessions_per_symbol=1, a coin that already has an ACTIVE
+    session never gets a 2nd — two ladders would share one Position avg (blended cost
+    basis → 'take-profit that realizes a loss' / K-2 TP deadlock)."""
+    monkeypatch.setattr(settings, "max_sessions_per_symbol", 1)
+    db.add(models.KssSession(
+        symbol="BTC", entry_price=100, distance_pct=2, max_waves=5, isolated_fund=100,
+        tp_pct=3, timeout_x_min=1, gap_y_min=0, status=models.SESSION_ACTIVE,
+    ))
+    db.commit()
+    scanner.run_scan(db, mode="semi")
+    cand = db.query(models.Candidate).filter_by(symbol="BTC").one()
+    assert cand.session_id is None
+    assert "per-symbol" in (cand.reason or "")
+    assert db.query(models.AuditLog).filter_by(action="skipped_concentration").count() >= 1
+    # exactly one ACTIVE BTC session remains (no duplicate opened)
+    assert db.query(models.KssSession).filter_by(
+        symbol="BTC", status=models.SESSION_ACTIVE).count() == 1
+
+
+def test_scan_allows_second_session_when_cap_is_two(db, scan_env, monkeypatch):
+    """Sanity: cap=2 still permits a 2nd ladder (documents the knob the .env bug used)."""
+    monkeypatch.setattr(settings, "max_sessions_per_symbol", 2)
+    db.add(models.KssSession(
+        symbol="BTC", entry_price=100, distance_pct=2, max_waves=5, isolated_fund=100,
+        tp_pct=3, timeout_x_min=1, gap_y_min=0, status=models.SESSION_ACTIVE,
+    ))
+    db.commit()
+    scanner.run_scan(db, mode="semi")
+    cand = db.query(models.Candidate).filter_by(symbol="BTC").one()
+    assert cand.session_id is not None  # 1 < 2 → opens a 2nd
+
+
 # --- Grok scanner gate -------------------------------------------------------
 
 

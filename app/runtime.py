@@ -58,6 +58,7 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "trailing_pct": float,
     "deadline_days": int,
     "max_concurrent_sessions": int,
+    "max_sessions_per_symbol": int,  # K-1: 1 = one ladder per coin (no blended cost basis)
     "max_deployed_pct": float,
     "equity_backup_pct": float,
     "loss_streak_block_k": int,

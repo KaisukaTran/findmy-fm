@@ -780,7 +780,14 @@ def retrain_ml(db: Session = Depends(get_db)):
 
 @ui_router.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
-    return templates.TemplateResponse("dashboard.html", {"request": request})
+    # Mode badge so the paper (:8000) and live (:8001) dashboards are never confused.
+    if not settings.live_trading:
+        mode = {"label": "PAPER", "cls": "full-auto-off"}
+    elif settings.live_use_testnet:
+        mode = {"label": "LIVE · TESTNET", "cls": "guardian-on"}
+    else:
+        mode = {"label": "LIVE · REAL", "cls": "breaker-frozen"}
+    return templates.TemplateResponse("dashboard.html", {"request": request, "mode": mode})
 
 
 @ui_router.get("/partials/summary", response_class=HTMLResponse)

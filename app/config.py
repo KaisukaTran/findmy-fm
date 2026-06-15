@@ -99,6 +99,12 @@ class Settings(BaseSettings):
         description="LIVE only: route real orders to the exchange TESTNET (ccxt set_sandbox_mode) "
         "instead of production — validate the live path before using real keys. No effect on paper.",
     )
+    scheduler_lock_port: int = Field(
+        default=8801,
+        description="Localhost port for the single-process scheduler mutex. Give each parallel "
+        "instance (e.g. paper vs live) a DISTINCT port so both schedulers run; same port across two "
+        "processes = only one scheduler (the cross-process lock behind the concurrency-cap fix).",
+    )
 
     # --- Paper execution simulation ---
     taker_fee_pct: float = Field(default=0.1, description="Taker fee % applied per fill.")

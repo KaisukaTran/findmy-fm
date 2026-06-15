@@ -12,7 +12,8 @@
 </head>
 <body x-data="ui">
   <header>
-    <h1>FINDMY-FM <span class="muted">· KSS Pyramid DCA</span></h1>
+    <h1>FINDMY-FM <span class="muted">· KSS Pyramid DCA</span>
+      <span class="badge {{ mode.cls }}" title="Chế độ của instance này — Paper :8000 / Live :8001. Không nhầm hai bảng điều khiển.">{{ mode.label }}</span></h1>
     <div hx-get="/partials/status" hx-trigger="load, every 5s [document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML"></div>
     <div class="actions">
       <button class="ghost" @click="toggleOrder">+ Lệnh</button>

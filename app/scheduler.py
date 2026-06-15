@@ -237,11 +237,11 @@ def start() -> bool:
     global _task
     if _task and not _task.done():
         return False
-    if not _acquire_singleton_lock():
+    if not _acquire_singleton_lock(settings.scheduler_lock_port):
         logger.warning(
             "scheduler NOT started — another app instance already holds the singleton lock "
-            "(127.0.0.1:%d). Run a single process, or two schedulers will overshoot the "
-            "concurrent-session cap.", _SINGLETON_PORT,
+            "(127.0.0.1:%d). Run a single process per lock port, or give a parallel instance a "
+            "distinct scheduler_lock_port.", settings.scheduler_lock_port,
         )
         return False
     settings.scheduler_enabled = True

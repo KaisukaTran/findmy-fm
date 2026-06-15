@@ -1071,14 +1071,17 @@ def partial_performance(request: Request, period: str = "all", db: Session = Dep
 
 
 @ui_router.get("/partials/audit", response_class=HTMLResponse)
-def partial_audit(request: Request, category: str = "important", db: Session = Depends(get_db)):
-    """The 20 most-recent activity-log events of the requested category (server-side filter,
-    so a sparse category is never hidden behind a window of scan noise)."""
+def partial_audit(request: Request, category: str = "important", page: int = 1,
+                  db: Session = Depends(get_db)):
+    """A page (20 rows, up to 10 pages) of activity-log events of the requested category
+    (server-side filter, so a sparse category is never hidden behind a window of scan noise)."""
     from app import auditview
 
     if category not in auditview.CATEGORY_LABELS:
         category = "important"
-    rows = auditview.recent_by_category(db, category, limit=20)
+    page = max(1, min(page, 10))
+    offset = (page - 1) * 20
+    rows, has_next = auditview.recent_by_category(db, category, limit=20, offset=offset)
     return templates.TemplateResponse(
         "partials/audit.html",
         {
@@ -1087,6 +1090,9 @@ def partial_audit(request: Request, category: str = "important", db: Session = D
             "category": category,
             "cat_label": auditview.CATEGORY_LABELS[category],
             "filters": list(auditview.CATEGORY_LABELS.items()),
+            "page": page,
+            "has_prev": page > 1,
+            "has_next": has_next,
         },
     )
 

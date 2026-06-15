@@ -208,17 +208,21 @@ CATEGORY_LABELS = {
 
 
 def recent_by_category(
-    db: Session, category: str = "important", limit: int = 20, scan_cap: int = 4000
-) -> list[dict]:
-    """The `limit` most-recent audit rows whose DERIVED category matches `category`.
+    db: Session, category: str = "important", limit: int = 20, offset: int = 0,
+    scan_cap: int = 6000,
+) -> tuple[list[dict], bool]:
+    """One page (`offset`..`offset+limit`) of most-recent audit rows whose DERIVED category
+    matches `category`. Returns ``(rows, has_next)``.
 
     `important` = everything except system noise; `all` = no filter. For the meaningful
     categories the bulk system actions are dropped in SQL first (cheap), then the exact
     category is confirmed via render() — the single source of truth for categorisation.
+    `scan_cap` bounds the rows examined so deep pages of a sparse category stay cheap.
     """
     q = db.query(AuditLog).order_by(AuditLog.id.desc())
     if category in ("trade", "risk", "opus", "important"):
         q = q.filter(AuditLog.action.notin_(_NOISE_ACTIONS))
+    need = offset + limit + 1  # +1 sentinel so we can tell whether a next page exists
     out: list[dict] = []
     for row in q.limit(scan_cap):
         r = render(row)
@@ -228,6 +232,6 @@ def recent_by_category(
             or r["category"] == category
         ):
             out.append(r)
-            if len(out) >= limit:
+            if len(out) >= need:
                 break
-    return out
+    return out[offset: offset + limit], len(out) > offset + limit

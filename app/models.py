@@ -82,6 +82,13 @@ class PendingOrder(Base):
     auto_veto_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     auto_veto_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # Live async tracking (live-readiness 1.4). Set when the order is placed as a
+    # resting exchange order; `reconcile_live_orders()` polls fetch_order and books
+    # fills as the venue reports them (NEW→PARTIAL→FILLED). NULL on paper — paper
+    # fills synchronously, so there is nothing to reconcile.
+    exchange_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    exchange_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -104,6 +111,8 @@ class PendingOrder(Base):
             "auto_veto": self.auto_veto,
             "auto_veto_reason": self.auto_veto_reason,
             "auto_veto_at": self.auto_veto_at.isoformat() if self.auto_veto_at else None,
+            "exchange_order_id": self.exchange_order_id,
+            "exchange_status": self.exchange_status,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "decided_at": self.decided_at.isoformat() if self.decided_at else None,
         }
@@ -249,6 +258,12 @@ class KssWave(Base):
     filled_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     filled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     pending_order_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Live async tracking (live-readiness 1.4): the exchange id + last-seen status of
+    # the resting order backing this wave in live mode. The live resting model (1.5)
+    # populates these; paper waves leave them NULL.
+    exchange_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    exchange_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 

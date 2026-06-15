@@ -58,7 +58,7 @@ Precedence: this spec > Plans table.
 | 1.1 | Fix `place_live_order` phantom-fill: return real `status`/`filled`/`average`; never invent a fill `[tdd:required]` | resting/NEW order returns filled=0, not amount | - | **cc:DONE 2026-06-15** (paper-safe) |
 | 1.2 | Exchange-filter helper: round price→tickSize, qty→stepSize, enforce minNotional + PERCENT_PRICE `[tdd:required]` | unit tests vs real SOLUSDT filters pass | 1.1 | **cc:DONE 2026-06-15** (`execution.round_to_filters`) |
 | 1.3 | Maker placement: `postOnly`/LIMIT_MAKER for entry+TP; MARKET for SL/trailing/close; handle -2010 REJECTED `[tdd:required]` | maker path sets LIMIT_MAKER; risk exits stay MARKET | 1.1 | cc:TODO (needs 1.4 to be useful) |
-| 1.4 | Async order tracking: persist exchange order id + status on KssWave/PendingOrder; a `reconcile_live_orders()` scheduler step applies Fills on FILLED/PARTIAL `[tdd:required]` | a NEW→FILLED transition creates exactly one Fill + Position update | 1.1,1.3 | cc:TODO (needs DB migration — NOT paper-safe) |
+| 1.4 | Async order tracking: persist exchange order id + status on KssWave/PendingOrder; a `reconcile_live_orders()` scheduler step applies Fills on FILLED/PARTIAL `[tdd:required]` | a NEW→FILLED transition creates exactly one Fill + Position update | 1.1,1.3 | **cc:DONE 2026-06-15** — columns paper-safe via `_ADDED_COLUMNS`; `reconcile_live_orders()` gated by `live_enabled()`; 8 tests |
 | 1.5 | Live KSS/OPUS model shift: in live mode place resting waves/TP in advance (not "wait-then-market"); cancel+replace on avg/target change `[tdd:required]` | live wave rests on exchange; paper unchanged | 1.4 | cc:TODO |
 | 1.6 | Rate-limit guard: read X-MBX-USED-WEIGHT-1M + backoff; 429 honor Retry-After; 418 → halt live + alert `[tdd:required]` | guard backs off; 418 stops live | 1.1 | **cc:DONE 2026-06-15** (`used_weight_from_headers`/`weight_backoff_seconds`/`classify_rate_error`) |
 | 1.7 | 5m support: kline pagination (>1000), intraday lookback cap, scan_interval≤5 config `[tdd:required]` | 7-day 5m fetch returns >1000 bars via pagination | - | cc:TODO (touches shared candle path — deferred for paper safety) |
@@ -125,3 +125,62 @@ LIVE_TRADING stays OFF.
   (safe), but live maker is **not usable** until async reconcile (1.4) exists. Keep `LIVE_TRADING=false`.
 - **Conclusion:** the live path is SAFE while OFF. The two ⚠️ items (idempotency, reconciliation) are
   the blockers to turning it on — tracked as 1.4/1.5; revisit 1.10 after those land.
+
+## Progress — 2026-06-15 (1.4 async order tracking SHIPPED, paper-safe)
+Built on `kss-capital-auto-sizing`; paper unaffected (everything gated by `execution.live_enabled()`).
+Full `tests/app/` = **507 passed / 2 skipped** (was 498); 8 new tests in `tests/app/test_reconcile_live.py`.
+- **Columns** `exchange_order_id` + `exchange_status` added to `PendingOrder` **and** `KssWave`
+  (models + `to_dict`), registered in `db.py:_ADDED_COLUMNS` as nullable `VARCHAR` → idempotent
+  ALTER on the existing paper DB (verified: adds on an old-schema table, second pass is a no-op,
+  existing rows keep NULL). KssWave columns are for 1.5's resting model; reconcile keys off PendingOrder.
+- **`execution.fetch_live_order(pair, order_id)`** — normalised `{status, filled, average, fee, raw_id}`
+  (ccxt `fetch_order`); cumulative `filled`; never logs the secret.
+- **`orders.reconcile_live_orders(db)`** — no-op unless `live_enabled()`. Polls every PendingOrder with
+  `exchange_order_id` set and a non-terminal `exchange_status`; books the **delta** between the venue's
+  cumulative `filled` and the qty already recorded as Fills (idempotency key = `sum(Fill.quantity)` for
+  that order) → one NEW→FILLED = exactly one Fill + `_update_position`; partials accumulate; re-run = 0.
+  Fires the KSS fill hook + `notify.fill_alert` on the booked delta; marks the order EXECUTED on a
+  terminal+filled status. **Not gated by the breaker** (records a real fill, like a SELL exit — never blocked).
+- **Wiring:** `_live_execute` now stamps `exchange_order_id`/`exchange_status` after placement so a
+  later partial completes via reconcile; `scheduler.run_cycle` calls `reconcile_live_orders` FIRST
+  (before TP/scan) so positions reflect reality; `reconciled` count added to the cycle audit + summary.
+- **NOT yet wired:** placing a resting maker order without raising on filled=0 is **1.5** — until then a
+  resting order still raises "no fill price" in `_live_execute` (safe). `LIVE_TRADING` stays OFF.
+- **NEXT = 1.3** maker placement, then 1.5 resting model.
+
+## Next session — build order to a working testnet (2026-06-15)
+Validation vehicle is the **live testnet instance** (`D:\FINDMY-live` @ branch `live`, port 8001) from
+the dual-instance harness (`docs/dual-instance.md`). All code is built on `dev`/feature branches in the
+paper worktree, unit-tested (paper unaffected — everything is gated by `execution.live_enabled()`),
+merged to `live`, then run on testnet. Build order:
+
+1. **1.4 Async order tracking (DO FIRST, foundation).** Add `exchange_order_id` + `exchange_status`
+   columns to `KssWave` & `PendingOrder` — register them in `app/db.py:_ADDED_COLUMNS` (idempotent
+   ALTER → paper-safe). New scheduler step `reconcile_live_orders(db)` that runs **only when
+   `live_enabled()`**: poll `fetch_order` (or user-data WS later), and on `NEW→PARTIAL→FILLED` create
+   **exactly one** Fill + Position update (idempotent via the exchange order id). Test: one transition =
+   one Fill.
+2. **1.3 Maker placement.** In `execution.place_live_order`: entry + TP → `LIMIT_MAKER` (postOnly);
+   SL/trailing/close → MARKET; handle `-2010` rejected. Round price/qty through the existing
+   `execution.round_to_filters` first.
+3. **1.5 Live resting model** (largest). In live mode, place KSS waves + TP as resting exchange orders
+   in advance (drop wait-then-market); cancel+replace on avg/target change. Paper stays synchronous.
+4. **1.10 follow-ups** after 1.5: deterministic `clientOrderId` from `PendingOrder.id` (idempotent
+   placement) — the open finding.
+5. **1.7 5m** (optional, can come after the testnet round-trip is green): paginate klines >1000 +
+   intraday lookback cap + `scan_interval_min ≤ 5`.
+
+**Decisions needed before 1.5 (recommended defaults — confirm with user):**
+- Maker entry that never fills → use `order_fill_timeout_sec` (already a config; 0 = wait forever, fits DCA). **Default: 0.**
+- TP as resting maker placed in advance, cancel+replace as avg moves (vs trigger-then-place). **Default: resting + cancel/replace.**
+- VIP tier / pay fees in BNB? **Default: VIP0** (maker wins slippage only, not fee).
+
+**Prerequisite (user):** Binance Spot **testnet** HMAC keys from testnet.binance.vision → paste into
+`D:\FINDMY-live\.env` (`LIVE_API_KEY`/`LIVE_API_SECRET`). Without them the live instance just runs as a
+2nd paper app. Code for 1.4/1.3 can be built + unit-tested **without** keys; keys are needed only for the
+1.8 end-to-end testnet validation.
+
+**Done = testnet complete:** on testnet, the live instance runs the full round-trip — open session →
+resting `LIMIT_MAKER` → exchange fills on a dip → `reconcile_live_orders` creates the Fill → Position
+updates → TP/SL fire; filters + rate-limit guard clean. Green round-trip + user sign-off → only THEN
+consider real funds with a tiny `live_max_order_notional`.

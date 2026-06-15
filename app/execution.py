@@ -102,6 +102,27 @@ def place_live_order(
     }
 
 
+def fetch_live_order(pair: str, order_id: str) -> dict:
+    """Fetch the live status of a resting order and return a normalised dict
+    ``{status, filled, average, fee, raw_id}``.
+
+    Used by ``app.orders.reconcile_live_orders`` to book a maker order's fill
+    asynchronously (live-readiness task 1.4). ``filled`` is the venue's *cumulative*
+    filled quantity (ccxt-normalised); ``status`` is ccxt's 'open'|'closed'|'canceled'.
+    Raises on any exchange error (the caller logs + skips); never logs the secret.
+    """
+    ex = _client()
+    order = ex.fetch_order(order_id, pair)
+    status = order.get("status")
+    filled = float(order.get("filled") or 0.0)
+    avg = float(order.get("average") or 0.0)
+    if avg <= 0 and filled > 0:  # some venues report price, not average, on a fill
+        avg = float(order.get("price") or 0.0)
+    fee_obj = order.get("fee") or {}
+    fee = float(fee_obj.get("cost") or 0.0) if isinstance(fee_obj, dict) else 0.0
+    return {"status": status, "filled": filled, "average": avg, "fee": fee, "raw_id": order.get("id")}
+
+
 # --- 1.2: exchange-filter compliance (pure; live placement rounds through this) ---------
 
 

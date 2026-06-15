@@ -112,6 +112,9 @@ def run_cycle(db: Session) -> dict:
 
     from app import circuit, guardian, notify
     from app.models import PENDING, PendingOrder
+    # Live-only: book fills of resting maker orders the exchange filled since last cycle,
+    # BEFORE TP/scan run so sessions/positions reflect reality. No-op on paper.
+    reconciled = orders.reconcile_live_orders(db)
     closed = service.sweep_deadlines(db)
     tp = service.manage_open_sessions(db)
     service.manage_orphan_positions(db)  # TP/SL leftover positions no session/OPUS covers
@@ -183,8 +186,9 @@ def run_cycle(db: Session) -> dict:
     auto_approved = [] if frozen else orders.auto_approve_by_policy(db)  # self-guards on autoapprove_enabled
     audit.log(db, "scheduler", "cycle", deadlines_closed=len(closed), tp_queued=len(tp),
               candidates=len(scan["candidates"]), auto_filled=len(filled),
-              auto_approved=len(auto_approved), frozen=frozen, guardian_vetoes=guardian_vetoes,
-              veto_expired=veto_expired, hyperopt_runs=hyperopt_runs, ml_trained=ml_trained)
+              auto_approved=len(auto_approved), reconciled=len(reconciled), frozen=frozen,
+              guardian_vetoes=guardian_vetoes, veto_expired=veto_expired,
+              hyperopt_runs=hyperopt_runs, ml_trained=ml_trained)
     db.commit()
     # Periodic Telegram digest (no-op unless telegram_digest_hours>0 and the interval elapsed).
     try:
@@ -197,6 +201,7 @@ def run_cycle(db: Session) -> dict:
         "scan_id": scan["scan_id"],
         "auto_filled": filled,
         "auto_approved": auto_approved,
+        "reconciled": reconciled,
         "frozen": frozen,
         "guardian_vetoes": guardian_vetoes,
         "veto_expired": veto_expired,

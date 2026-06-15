@@ -302,6 +302,13 @@ def _live_execute(db: Session, order: PendingOrder) -> Fill:
     qty = float(result.get("quantity") or order.quantity)
     fee = float(result.get("fee") or 0.0)
 
+    # Link the order to its exchange id + last-seen status so reconcile_live_orders()
+    # (1.4) can pick up any further fills (e.g. a partial that completes later). A
+    # terminal status ('closed') means there is nothing left to reconcile.
+    if result.get("raw_id") is not None:
+        order.exchange_order_id = str(result.get("raw_id"))
+    order.exchange_status = str(result.get("status") or "") or None
+
     realized = _update_position(db, order.symbol, order.side, qty, eff, fee)
     fill = Fill(
         pending_order_id=order.id,
@@ -321,6 +328,118 @@ def _live_execute(db: Session, order: PendingOrder) -> Fill:
         "LIVE fill order %s: %s %s %s @ %s", order.id, order.side, qty, order.symbol, eff
     )
     return fill
+
+
+# --- async live reconciliation (live-readiness 1.4) ---------------------
+
+# ccxt-normalised statuses after which an order will see no further fills.
+_TERMINAL_EXCHANGE_STATUS = {"closed", "filled", "canceled", "cancelled", "expired", "rejected"}
+
+
+def _booked_qty_fee(db: Session, pending_order_id: int) -> tuple[float, float]:
+    """Sum (quantity, fee) of Fills already recorded for a pending order — the
+    idempotency key for live reconciliation, so a fill already booked is never
+    double-counted no matter how many times reconcile runs."""
+    rows = (
+        db.query(Fill.quantity, Fill.fee)
+        .filter(Fill.pending_order_id == pending_order_id)
+        .all()
+    )
+    return (sum(r[0] for r in rows), sum(r[1] for r in rows))
+
+
+def reconcile_live_orders(db: Session) -> list[int]:
+    """Poll resting live orders and book any newly-reported fills (live mode only).
+
+    The async counterpart to synchronous paper execution: a live maker order rests on
+    the exchange (status NEW/open) and fills later. Each pass fetches every tracked
+    order's status and books the *delta* between the venue's cumulative ``filled`` and
+    the quantity we have already recorded as Fills — so a NEW→FILLED transition creates
+    exactly one Fill + Position update, and re-running is idempotent (delta 0 → no-op).
+    Partial fills accumulate across passes. Paper mode no-ops (``live_enabled()`` False).
+
+    Booking reflects what the exchange already did, so it is NOT gated by the circuit
+    breaker (the breaker blocks *new* placement, never the recording of a real fill —
+    same invariant as never gating a SELL exit). Returns the ids that booked a fill.
+    """
+    from app import execution
+    from app.data.providers import live_provider
+
+    if not execution.live_enabled():
+        return []
+
+    tracked = (
+        db.query(PendingOrder)
+        .filter(
+            PendingOrder.exchange_order_id.isnot(None),
+            (PendingOrder.exchange_status.is_(None))
+            | (PendingOrder.exchange_status.notin_(_TERMINAL_EXCHANGE_STATUS)),
+        )
+        .all()
+    )
+    booked: list[int] = []
+    for order in tracked:
+        order_id = order.exchange_order_id
+        if not order_id:  # guarded by the query filter, but keep the type checker honest
+            continue
+        try:
+            pair = live_provider().pair(order.symbol)
+            res = execution.fetch_live_order(pair, order_id)
+        except Exception:  # a transient fetch error must not break the cycle — retry next pass
+            logger.exception("reconcile: fetch_order failed for %s (order %s)", order.symbol, order.id)
+            continue
+
+        status = str(res.get("status") or "").lower()
+        cum_filled = float(res.get("filled") or 0.0)
+        avg = float(res.get("average") or 0.0)
+        cum_fee = float(res.get("fee") or 0.0)
+
+        booked_qty, booked_fee = _booked_qty_fee(db, order.id)
+        delta = cum_filled - booked_qty
+        if delta > 1e-9 and avg > 0:
+            delta_fee = max(cum_fee - booked_fee, 0.0)
+            realized = _update_position(db, order.symbol, order.side, delta, avg, delta_fee)
+            fill = Fill(
+                pending_order_id=order.id,
+                symbol=order.symbol,
+                side=order.side,
+                quantity=delta,
+                price=avg,
+                fee=delta_fee,
+                slippage=0.0,
+                realized_pnl=realized,
+                source_ref=order.source_ref,
+                strategy_name=order.strategy_name,
+            )
+            db.add(fill)
+            db.flush()
+            booked.append(order.id)
+            logger.info(
+                "LIVE reconciled fill order %s: %s %s %s @ %s (status=%s)",
+                order.id, order.side, delta, order.symbol, avg, status,
+            )
+            # Advance the KSS ladder on the booked quantity (same hook approve_order fires).
+            if order.source == "kss" and order.source_ref:
+                try:
+                    from app.kss.service import handle_fill_event
+
+                    handle_fill_event(db, order.source_ref, delta, avg)
+                except Exception as exc:  # a strategy hook must never corrupt the fill
+                    logger.exception("KSS fill hook failed for %s: %s", order.source_ref, exc)
+            try:
+                from app import notify
+
+                notify.fill_alert(fill)
+            except Exception:
+                logger.debug("fill_alert failed for fill %s", fill.id)
+
+        order.exchange_status = status or order.exchange_status
+        # A fully/terminally settled order with any fill is done — mark it executed.
+        if status in _TERMINAL_EXCHANGE_STATUS and cum_filled > 0:
+            order.status = EXECUTED
+            order.decided_at = order.decided_at or datetime.utcnow()
+    db.commit()
+    return booked
 
 
 # --- paper execution ----------------------------------------------------

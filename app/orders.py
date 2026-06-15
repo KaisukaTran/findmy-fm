@@ -294,7 +294,8 @@ def _live_execute(db: Session, order: PendingOrder) -> Fill:
 
     pair = live_provider().pair(order.symbol)
     result = execution.place_live_order(
-        pair, order.side, order.quantity, order.price, order.order_type
+        pair, order.side, order.quantity, order.price, order.order_type,
+        client_order_id=execution.client_order_id(order.id),  # idempotent placement (1.10)
     )
     eff = float(result.get("price") or 0.0)
     if eff <= 0:

@@ -161,9 +161,13 @@ def test_order_placement_maps_kind_and_params():
 
 
 def test_is_post_only_reject():
-    assert execution.is_post_only_reject(Exception('binance {"code":-2010,"msg":"..."}'))
-    assert execution.is_post_only_reject(Exception("Order would immediately match and take"))
+    assert execution.is_post_only_reject(
+        Exception('binance {"code":-2010,"msg":"Order would immediately match and take."}')
+    )
+    assert execution.is_post_only_reject(Exception("post only order would take"))
     assert not execution.is_post_only_reject(Exception("Account has insufficient balance"))
+    # The bare -2010 code is ambiguous (also duplicate / insufficient balance) — must NOT match.
+    assert not execution.is_post_only_reject(Exception('{"code":-2010,"msg":"Duplicate order sent."}'))
 
 
 def test_filters_from_market_parses_binance_filters():
@@ -222,3 +226,54 @@ def test_maker_reraises_non_post_only_errors(monkeypatch):
     monkeypatch.setattr(execution, "_client", lambda: fake)
     with pytest.raises(Exception, match="insufficient balance"):
         execution.place_live_order("SOL/USDT", "BUY", 0.05, 142.0, "LIMIT", maker_orders=True)
+
+
+# --- 1.10: idempotent placement via deterministic clientOrderId ---------------
+
+
+def test_client_order_id_is_deterministic_and_valid():
+    assert execution.client_order_id(144) == execution.client_order_id(144)
+    assert execution.client_order_id(144) != execution.client_order_id(145)
+    cid = execution.client_order_id(144)
+    assert cid.startswith("fm-") and len(cid) <= 36
+
+
+def test_is_duplicate_client_order():
+    assert execution.is_duplicate_client_order(Exception('{"code":-2010,"msg":"Duplicate order sent."}'))
+    assert not execution.is_duplicate_client_order(Exception("Account has insufficient balance"))
+
+
+def test_place_live_order_sends_client_order_id(monkeypatch):
+    fake = _MakerFakeEx(order={"status": "closed", "filled": 5.0, "amount": 5.0,
+                               "average": 100.0, "id": "o1"}, market=_SOL_MARKET)
+    monkeypatch.setattr(execution, "_client", lambda: fake)
+    execution.place_live_order("SOL/USDT", "BUY", 5.0, 0.0, "MARKET", client_order_id="fm-7")
+    _, otype, _, _, _, params = fake.calls[0]
+    assert otype == "market"
+    assert params == {"clientOrderId": "fm-7"}
+
+
+class _DupFakeEx(_MakerFakeEx):
+    """create_order raises a duplicate-order error; fetch_order returns the recovered order."""
+
+    def __init__(self, recovered):
+        super().__init__(
+            raise_exc=Exception('{"code":-2010,"msg":"Duplicate order sent."}'), market=_SOL_MARKET
+        )
+        self._recovered = recovered
+        self.fetched = []
+
+    def fetch_order(self, oid, symbol=None, params=None):
+        self.fetched.append((oid, symbol, params))
+        return self._recovered
+
+
+def test_duplicate_client_order_recovers_existing_instead_of_double_placing(monkeypatch):
+    fake = _DupFakeEx({"status": "closed", "filled": 5.0, "average": 100.0,
+                       "fee": {"cost": 0.1}, "id": "EXIST1"})
+    monkeypatch.setattr(execution, "_client", lambda: fake)
+    res = execution.place_live_order("SOL/USDT", "BUY", 5.0, 0.0, "MARKET", client_order_id="fm-7")
+
+    assert res["raw_id"] == "EXIST1"     # recovered the prior order, not a new placement
+    assert res["quantity"] == 5.0 and res["price"] == 100.0
+    assert fake.fetched and fake.fetched[0][2] == {"clientOrderId": "fm-7"}

@@ -58,7 +58,7 @@ def test_live_path_used_when_enabled(db, monkeypatch):
     called = {}
     monkeypatch.setattr(
         execution, "place_live_order",
-        lambda pair, side, qty, price, ot: called.update(pair=pair, side=side)
+        lambda pair, side, qty, price, ot, **k: called.update(pair=pair, side=side)
         or {"price": 101.0, "quantity": qty, "fee": 0.2, "raw_id": "X1"},
     )
     b, _ = orders.queue_order(db, symbol="BTC", side="BUY", quantity=0.1, price=100.0)
@@ -96,7 +96,7 @@ def test_live_sell_exit_not_gated_when_frozen_or_over_cap(db, monkeypatch):
     monkeypatch.setattr(settings, "live_max_order_notional", 1.0)   # tiny — would block a BUY
     monkeypatch.setattr(
         execution, "place_live_order",
-        lambda pair, side, qty, price, ot: {"price": 100.0, "quantity": qty, "fee": 0.1, "raw_id": "S1"},
+        lambda pair, side, qty, price, ot, **k: {"price": 100.0, "quantity": qty, "fee": 0.1, "raw_id": "S1"},
     )
     runtime.freeze(db, reason="test")
     s, _ = orders.queue_order(db, symbol="BTC", side="SELL", quantity=0.1, price=100.0)

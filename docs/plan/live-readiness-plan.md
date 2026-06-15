@@ -118,9 +118,11 @@ LIVE_TRADING stays OFF.
 - ✅ **BUY re-gated, SELL never gated.** `_live_execute` re-checks the breaker freeze + `live_max_order_notional`
   on BUY; SELL exits are never blocked (drawdown-exit invariant).
 - ✅ **Phantom double-count fixed (1.1).** Resting orders are no longer recorded as full fills.
-- ⚠️ **FINDING — placement not idempotent.** A network timeout/retry after the venue accepted an order
-  could double-place (no `clientOrderId`). FIX: pass a deterministic `clientOrderId` derived from the
-  `PendingOrder.id` so a retry is recognised/no-op. Gate for go-live; implement with 1.4/1.5.
+- ✅ **RESOLVED 2026-06-15 (1.10 follow-up) — placement now idempotent.** `execution.client_order_id(id)`
+  = deterministic `fm-{PendingOrder.id}`; `place_live_order` sends it as `clientOrderId` and, on a
+  Binance 'Duplicate order' rejection (a retry after a lost response), recovers the existing order via
+  `_fetch_by_client_id` instead of double-placing. Also tightened `is_post_only_reject` to match the
+  post-only *message* (not the bare `-2010` code, which Binance reuses for duplicate/insufficient-balance).
 - ⚠️ **FINDING — no fill reconciliation yet.** With 1.1, a resting maker order raises "no fill price"
   (safe), but live maker is **not usable** until async reconcile (1.4) exists. Keep `LIVE_TRADING=false`.
 - **Conclusion:** the live path is SAFE while OFF. The two ⚠️ items (idempotency, reconciliation) are
@@ -170,6 +172,19 @@ live-gated). Full `tests/app/` = **515 passed / 2 skipped**; 8 new tests in `tes
   Risk exits (SL/trailing/deadline/OPUS-close) stay MARKET by design.
 - **NEXT = 1.5** live resting model (largest): place KSS waves (+ TP as resting LIMIT_MAKER) in advance,
   drop wait-then-market, cancel+replace on avg/target change. Paper stays synchronous.
+
+## Progress — 2026-06-15 (1.10 follow-up: idempotent clientOrderId)
+Execution-layer only; paper unaffected. Full `tests/app/` = **522 passed / 2 skipped**; 4 new tests in
+`test_execution_live.py` (+2 golive stubs updated for the new kwarg).
+- **`execution.client_order_id(order_id)`** → deterministic `fm-{id}` (Binance-legal, ≤36 chars).
+- **`place_live_order(..., client_order_id=None)`** sends it as `clientOrderId` (merged with any postOnly).
+  On a 'Duplicate order' reject (retry after a lost response) it recovers the existing order via
+  `_fetch_by_client_id(ex, pair, cid)` rather than placing a second one. `_live_execute` passes
+  `client_order_id=client_order_id(order.id)`.
+- **`is_duplicate_client_order(exc)`** classifier; **`is_post_only_reject`** tightened to the post-only
+  *message* only (the bare `-2010` code is shared by duplicate + insufficient-balance — must not be read
+  as a cross). Closes the last open 1.10 security finding.
+- **NEXT = 1.5** live resting model (largest) → 1.7 5m (optional) → 1.8 testnet e2e (needs keys).
 
 ## Next session — build order to a working testnet (2026-06-15)
 Validation vehicle is the **live testnet instance** (`D:\FINDMY-live` @ branch `live`, port 8001) from

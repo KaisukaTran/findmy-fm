@@ -63,7 +63,7 @@ def _client():
 
 def place_live_order(
     pair: str, side: str, quantity: float, price: float, order_type: str,
-    maker_orders: bool | None = None,
+    maker_orders: bool | None = None, client_order_id: str | None = None,
 ) -> dict:
     """Place a REAL order on ``settings.live_exchange`` and return a normalised fill dict
     ``{price, quantity, fee, raw_id, status}``.
@@ -75,6 +75,11 @@ def place_live_order(
     would cross is rejected by Binance (-2010) — that is surfaced as a structured
     ``status='rejected'`` (the 1.5 resting model cancels+replaces lower), not an exception.
 
+    Idempotency (1.10): when ``client_order_id`` is given it is sent as the order's
+    ``clientOrderId`` (deterministic from the PendingOrder id). If a retry after a lost
+    response hits a 'Duplicate order' rejection, the prior placement already succeeded — we
+    recover that order by clientOrderId instead of double-placing.
+
     Raises on any other exchange error — the caller must NOT fall back to a paper fill (that
     would mask a real placement failure). The API secret is never logged.
     """
@@ -82,12 +87,15 @@ def place_live_order(
     side_l = side.lower()
     if maker_orders is None:
         maker_orders = settings.maker_orders
-    ccxt_type, params = order_placement(order_type, maker_orders)
+    ccxt_type, base_params = order_placement(order_type, maker_orders)
+    params = dict(base_params)
+    if client_order_id:
+        params["clientOrderId"] = client_order_id
     qty, px = quantity, price
 
     # Maker (post-only LIMIT_MAKER): comply with the symbol's exchange filters before
     # resting — round price→tickSize, qty→stepSize, enforce minQty/minNotional/PERCENT.
-    if params:
+    if maker_orders and ccxt_type == "limit":
         try:
             filters = _market_filters(ex, pair)
         except Exception:  # market metadata unavailable — place unrounded rather than block
@@ -97,16 +105,23 @@ def place_live_order(
 
     try:
         if ccxt_type == "market" or px <= 0:
-            order = ex.create_order(pair, "market", side_l, qty)
+            order = ex.create_order(pair, "market", side_l, qty, None, params) if params \
+                else ex.create_order(pair, "market", side_l, qty)
         elif params:
             order = ex.create_order(pair, "limit", side_l, qty, px, params)
         else:
             order = ex.create_order(pair, "limit", side_l, qty, px)
     except Exception as exc:
-        if is_post_only_reject(exc):
+        # 'Duplicate order' (also code -2010): this exact clientOrderId was already accepted
+        # on a prior, lost attempt — recover it rather than place a second order.
+        if client_order_id and is_duplicate_client_order(exc):
+            logger.info("LIVE duplicate clientOrderId %s — recovering the existing order", client_order_id)
+            order = _fetch_by_client_id(ex, pair, client_order_id)
+        elif is_post_only_reject(exc):
             logger.info("LIVE post-only rejected (would cross): %s %s %s @ %s", side, qty, pair, px)
             return {"price": 0.0, "quantity": 0.0, "fee": 0.0, "raw_id": None, "status": "rejected"}
-        raise
+        else:
+            raise
 
     # 1.1 — report the TRUTH, never invent a fill. A resting maker order comes back
     # status='open'/filled=0; the old code fell back to `amount` and recorded a phantom
@@ -220,11 +235,33 @@ def order_placement(order_type: str, maker_orders: bool) -> tuple[str, dict]:
 def is_post_only_reject(exc: Exception) -> bool:
     """True when an exchange error is a post-only/LIMIT_MAKER rejection — Binance ``-2010``
     'Order would immediately match and take'. ccxt may also raise ``OrderImmediatelyFillable``.
-    Such a maker order would have crossed the book; the caller treats it as a non-fill."""
+    Such a maker order would have crossed the book; the caller treats it as a non-fill.
+
+    Matches the post-only *message* (not the bare ``-2010`` code, which Binance also returns
+    for duplicate-clientOrderId and insufficient-balance — those must NOT be read as a cross)."""
     text = str(exc).lower()
-    if "-2010" in text or "immediately match" in text or "post only" in text or "post-only" in text:
+    if "immediately match" in text or "post only" in text or "post-only" in text:
         return True
     return isinstance(exc, getattr(ccxt, "OrderImmediatelyFillable", ()))
+
+
+def client_order_id(order_id: int) -> str:
+    """Deterministic Binance ``clientOrderId`` from a PendingOrder id (1.10). A retry after a
+    lost response re-sends the SAME id, so the venue rejects the duplicate / we recover it
+    instead of double-placing. Binance allows ``[A-Za-z0-9-_.:/]``, max 36 chars."""
+    return f"fm-{order_id}"
+
+
+def is_duplicate_client_order(exc: Exception) -> bool:
+    """True when an exchange error means this exact ``clientOrderId`` was already accepted
+    (Binance 'Duplicate order sent.') — the prior placement succeeded; recover it, don't replace."""
+    text = str(exc).lower()
+    return "duplicate order" in text or "duplicate clientorderid" in text
+
+
+def _fetch_by_client_id(ex, pair: str, cid: str) -> dict:
+    """Live wrapper: fetch an order by its ``clientOrderId`` (idempotent recovery, 1.10)."""
+    return ex.fetch_order(cid, pair, {"clientOrderId": cid})
 
 
 def filters_from_market(market: dict) -> dict:

@@ -62,20 +62,51 @@ def _client():
 
 
 def place_live_order(
-    pair: str, side: str, quantity: float, price: float, order_type: str
+    pair: str, side: str, quantity: float, price: float, order_type: str,
+    maker_orders: bool | None = None,
 ) -> dict:
     """Place a REAL order on ``settings.live_exchange`` and return a normalised fill dict
-    ``{price, quantity, fee, raw_id}``.
+    ``{price, quantity, fee, raw_id, status}``.
 
-    Raises on any exchange error — the caller must NOT fall back to a paper fill (that would
-    mask a real placement failure). The API secret is never logged.
+    Order kind (1.3): MARKET → taker market order (risk exits — SL/trailing/close/OPUS —
+    always take, never slowed). LIMIT → a post-only ``LIMIT_MAKER`` when ``maker_orders``
+    is on (saves the spread; rounded to the symbol's exchange filters first), else a plain
+    limit. ``maker_orders`` defaults to ``settings.maker_orders``. A post-only order that
+    would cross is rejected by Binance (-2010) — that is surfaced as a structured
+    ``status='rejected'`` (the 1.5 resting model cancels+replaces lower), not an exception.
+
+    Raises on any other exchange error — the caller must NOT fall back to a paper fill (that
+    would mask a real placement failure). The API secret is never logged.
     """
     ex = _client()
     side_l = side.lower()
-    if order_type.upper() == "MARKET" or price <= 0:
-        order = ex.create_order(pair, "market", side_l, quantity)
-    else:
-        order = ex.create_order(pair, "limit", side_l, quantity, price)
+    if maker_orders is None:
+        maker_orders = settings.maker_orders
+    ccxt_type, params = order_placement(order_type, maker_orders)
+    qty, px = quantity, price
+
+    # Maker (post-only LIMIT_MAKER): comply with the symbol's exchange filters before
+    # resting — round price→tickSize, qty→stepSize, enforce minQty/minNotional/PERCENT.
+    if params:
+        try:
+            filters = _market_filters(ex, pair)
+        except Exception:  # market metadata unavailable — place unrounded rather than block
+            filters = {}
+        if filters:
+            px, qty = round_to_filters(px, qty, filters, ref_price=px)  # ValueError → propagate
+
+    try:
+        if ccxt_type == "market" or px <= 0:
+            order = ex.create_order(pair, "market", side_l, qty)
+        elif params:
+            order = ex.create_order(pair, "limit", side_l, qty, px, params)
+        else:
+            order = ex.create_order(pair, "limit", side_l, qty, px)
+    except Exception as exc:
+        if is_post_only_reject(exc):
+            logger.info("LIVE post-only rejected (would cross): %s %s %s @ %s", side, qty, pair, px)
+            return {"price": 0.0, "quantity": 0.0, "fee": 0.0, "raw_id": None, "status": "rejected"}
+        raise
 
     # 1.1 — report the TRUTH, never invent a fill. A resting maker order comes back
     # status='open'/filled=0; the old code fell back to `amount` and recorded a phantom
@@ -86,15 +117,15 @@ def place_live_order(
     filled = float(order.get("filled") or 0.0)
     if str(status).lower() == "closed" and filled <= 0:
         # Fully-filled (e.g. a marketable order) but the venue omitted `filled` → trust amount.
-        filled = float(order.get("amount") or quantity)
+        filled = float(order.get("amount") or qty)
     avg = float(order.get("average") or 0.0)
     if avg <= 0 and filled > 0:  # fall back to a price ONLY when something actually filled
-        avg = float(order.get("price") or price or 0.0)
+        avg = float(order.get("price") or px or 0.0)
     fee_obj = order.get("fee") or {}
     fee = float(fee_obj.get("cost") or 0.0) if isinstance(fee_obj, dict) else 0.0
     logger.info(
         "LIVE order placed: %s %s/%s %s @ %s status=%s (exch id %s)",
-        side, filled, quantity, pair, avg, status, order.get("id"),
+        side, filled, qty, pair, avg, status, order.get("id"),
     )
     return {
         "price": avg, "quantity": filled, "fee": fee,
@@ -166,6 +197,78 @@ def round_to_filters(price: float, qty: float, filters: dict, ref_price: float |
         if down is not None and adj_price < float(down) * ref_price:
             raise ValueError(f"price {adj_price} below PERCENT_PRICE floor {float(down) * ref_price}")
     return adj_price, adj_qty
+
+
+# --- 1.3: maker placement (post-only entries/TP; risk exits stay taker) -----------------
+
+
+def order_placement(order_type: str, maker_orders: bool) -> tuple[str, dict]:
+    """Map an order to its ccxt ``(type, params)``.
+
+    MARKET → ``("market", {})`` — risk exits (SL/trailing/close/OPUS) always take, never
+    slowed (see the drawdown-exit invariant). LIMIT → a post-only ``("limit", {postOnly})``
+    when ``maker_orders`` is on (Binance routes post-only limits as ``LIMIT_MAKER``), else a
+    plain ``("limit", {})``. Pure.
+    """
+    if order_type.upper() == "MARKET":
+        return "market", {}
+    if maker_orders:
+        return "limit", {"postOnly": True}
+    return "limit", {}
+
+
+def is_post_only_reject(exc: Exception) -> bool:
+    """True when an exchange error is a post-only/LIMIT_MAKER rejection — Binance ``-2010``
+    'Order would immediately match and take'. ccxt may also raise ``OrderImmediatelyFillable``.
+    Such a maker order would have crossed the book; the caller treats it as a non-fill."""
+    text = str(exc).lower()
+    if "-2010" in text or "immediately match" in text or "post only" in text or "post-only" in text:
+        return True
+    return isinstance(exc, getattr(ccxt, "OrderImmediatelyFillable", ()))
+
+
+def filters_from_market(market: dict) -> dict:
+    """Build a ``round_to_filters`` input dict from a ccxt market structure.
+
+    Prefers the raw Binance ``info.filters`` (exact ``tickSize``/``stepSize``/``minQty``/
+    ``minNotional``/PERCENT_PRICE_BY_SIDE), falling back to ccxt's normalised ``limits``.
+    Pure — unit-testable with a fake market dict.
+    """
+    out: dict = {}
+    info = market.get("info") or {}
+    for f in info.get("filters", []) or []:
+        ftype = f.get("filterType")
+        if ftype == "PRICE_FILTER":
+            out["tickSize"] = float(f.get("tickSize") or 0.0)
+        elif ftype == "LOT_SIZE":
+            out["stepSize"] = float(f.get("stepSize") or 0.0)
+            out["minQty"] = float(f.get("minQty") or 0.0)
+        elif ftype in ("NOTIONAL", "MIN_NOTIONAL"):
+            out["minNotional"] = float(f.get("minNotional") or f.get("notional") or 0.0)
+        elif ftype == "PERCENT_PRICE_BY_SIDE":
+            up = f.get("bidMultiplierUp") or f.get("multiplierUp")
+            down = f.get("bidMultiplierDown") or f.get("multiplierDown")
+            if up is not None:
+                out["percentUp"] = float(up)
+            if down is not None:
+                out["percentDown"] = float(down)
+        elif ftype == "PERCENT_PRICE":
+            if f.get("multiplierUp") is not None:
+                out["percentUp"] = float(f["multiplierUp"])
+            if f.get("multiplierDown") is not None:
+                out["percentDown"] = float(f["multiplierDown"])
+    limits = market.get("limits") or {}
+    if "minQty" not in out:
+        out["minQty"] = float((limits.get("amount") or {}).get("min") or 0.0)
+    if "minNotional" not in out:
+        out["minNotional"] = float((limits.get("cost") or {}).get("min") or 0.0)
+    return out
+
+
+def _market_filters(ex, pair: str) -> dict:
+    """Live wrapper: load a symbol's exchange filters for ``round_to_filters`` (ccxt
+    ``market`` auto-loads markets on first use)."""
+    return filters_from_market(ex.market(pair))
 
 
 # --- 1.6: rate-limit guard (Binance REQUEST_WEIGHT / 429 / 418) -------------------------

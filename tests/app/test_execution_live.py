@@ -119,3 +119,106 @@ def test_classify_rate_error():
     assert execution.classify_rate_error(Exception("HTTP 429"), retry_after=3.0) == ("retry", 3.0)
     assert execution.classify_rate_error(Exception("418 IP banned")) == ("halt", None)
     assert execution.classify_rate_error(Exception("some other error")) == ("raise", None)
+
+
+# --- 1.3: maker placement (post-only entries; risk exits stay taker) ----------
+
+_SOL_MARKET = {
+    "info": {"filters": [
+        {"filterType": "PRICE_FILTER", "tickSize": "0.0100"},
+        {"filterType": "LOT_SIZE", "stepSize": "0.00100", "minQty": "0.00100"},
+        {"filterType": "NOTIONAL", "minNotional": "5.00"},
+        {"filterType": "PERCENT_PRICE_BY_SIDE", "bidMultiplierUp": "2", "bidMultiplierDown": "0.5"},
+    ]},
+    "limits": {"amount": {"min": 0.001}, "cost": {"min": 5.0}},
+}
+
+
+class _MakerFakeEx:
+    """ccxt-like stub that records the full create_order call (incl. params) and can raise."""
+
+    def __init__(self, order=None, raise_exc=None, market=None):
+        self._order = order or {}
+        self._raise = raise_exc
+        self._market = market or {}
+        self.calls = []
+
+    def market(self, pair):
+        return self._market
+
+    def create_order(self, pair, otype, side, qty, price=None, params=None):
+        self.calls.append((pair, otype, side, qty, price, params))
+        if self._raise is not None:
+            raise self._raise
+        return self._order
+
+
+def test_order_placement_maps_kind_and_params():
+    assert execution.order_placement("MARKET", True) == ("market", {})
+    assert execution.order_placement("market", True) == ("market", {})   # case-insensitive
+    assert execution.order_placement("LIMIT", True) == ("limit", {"postOnly": True})
+    assert execution.order_placement("LIMIT", False) == ("limit", {})
+
+
+def test_is_post_only_reject():
+    assert execution.is_post_only_reject(Exception('binance {"code":-2010,"msg":"..."}'))
+    assert execution.is_post_only_reject(Exception("Order would immediately match and take"))
+    assert not execution.is_post_only_reject(Exception("Account has insufficient balance"))
+
+
+def test_filters_from_market_parses_binance_filters():
+    f = execution.filters_from_market(_SOL_MARKET)
+    assert f["tickSize"] == 0.01
+    assert f["stepSize"] == 0.001
+    assert f["minQty"] == 0.001
+    assert f["minNotional"] == 5.0
+    assert f["percentUp"] == 2.0 and f["percentDown"] == 0.5
+
+
+def test_filters_from_market_falls_back_to_limits():
+    f = execution.filters_from_market(
+        {"info": {}, "limits": {"amount": {"min": 0.01}, "cost": {"min": 10.0}}}
+    )
+    assert f["minQty"] == 0.01 and f["minNotional"] == 10.0
+
+
+def test_maker_order_is_postonly_and_filter_rounded(monkeypatch):
+    fake = _MakerFakeEx(order={"status": "open", "filled": 0.0, "id": "m1"}, market=_SOL_MARKET)
+    monkeypatch.setattr(execution, "_client", lambda: fake)
+    res = execution.place_live_order("SOL/USDT", "BUY", 0.037190, 142.3372, "LIMIT", maker_orders=True)
+
+    _, otype, _, qty, price, params = fake.calls[0]
+    assert otype == "limit"
+    assert params == {"postOnly": True}
+    assert price == 142.34   # rounded to tickSize
+    assert qty == 0.037      # floored to stepSize
+    assert res["status"] == "open" and res["quantity"] == 0.0   # resting, not a phantom fill
+
+
+def test_maker_post_only_reject_returns_rejected(monkeypatch):
+    fake = _MakerFakeEx(
+        raise_exc=Exception('binance {"code":-2010,"msg":"would immediately match and take"}'),
+        market=_SOL_MARKET,
+    )
+    monkeypatch.setattr(execution, "_client", lambda: fake)
+    res = execution.place_live_order("SOL/USDT", "BUY", 0.05, 142.0, "LIMIT", maker_orders=True)
+    assert res["status"] == "rejected"
+    assert res["quantity"] == 0.0 and res["price"] == 0.0
+
+
+def test_risk_exit_stays_taker_market_even_with_maker_on(monkeypatch):
+    fake = _MakerFakeEx(order={"status": "closed", "filled": 3.0, "amount": 3.0,
+                               "average": 50.0, "id": "x"}, market=_SOL_MARKET)
+    monkeypatch.setattr(execution, "_client", lambda: fake)
+    res = execution.place_live_order("SOL/USDT", "SELL", 3.0, 0.0, "MARKET", maker_orders=True)
+    _, otype, _, _, _, params = fake.calls[0]
+    assert otype == "market"
+    assert params is None        # no postOnly on a risk-exit market order
+    assert res["quantity"] == 3.0
+
+
+def test_maker_reraises_non_post_only_errors(monkeypatch):
+    fake = _MakerFakeEx(raise_exc=Exception("Account has insufficient balance"), market=_SOL_MARKET)
+    monkeypatch.setattr(execution, "_client", lambda: fake)
+    with pytest.raises(Exception, match="insufficient balance"):
+        execution.place_live_order("SOL/USDT", "BUY", 0.05, 142.0, "LIMIT", maker_orders=True)

@@ -57,7 +57,7 @@ Precedence: this spec > Plans table.
 |------|---------|-----|---------|--------|
 | 1.1 | Fix `place_live_order` phantom-fill: return real `status`/`filled`/`average`; never invent a fill `[tdd:required]` | resting/NEW order returns filled=0, not amount | - | **cc:DONE 2026-06-15** (paper-safe) |
 | 1.2 | Exchange-filter helper: round price→tickSize, qty→stepSize, enforce minNotional + PERCENT_PRICE `[tdd:required]` | unit tests vs real SOLUSDT filters pass | 1.1 | **cc:DONE 2026-06-15** (`execution.round_to_filters`) |
-| 1.3 | Maker placement: `postOnly`/LIMIT_MAKER for entry+TP; MARKET for SL/trailing/close; handle -2010 REJECTED `[tdd:required]` | maker path sets LIMIT_MAKER; risk exits stay MARKET | 1.1 | cc:TODO (needs 1.4 to be useful) |
+| 1.3 | Maker placement: `postOnly`/LIMIT_MAKER for entry+TP; MARKET for SL/trailing/close; handle -2010 REJECTED `[tdd:required]` | maker path sets LIMIT_MAKER; risk exits stay MARKET | 1.1 | **cc:DONE 2026-06-15** — `order_placement`/`is_post_only_reject`/`filters_from_market`; LIMIT→postOnly+filter-rounded, MARKET stays taker; -2010→`status='rejected'`; 8 tests. TP→maker waits on 1.5 (TP is still a MARKET order) |
 | 1.4 | Async order tracking: persist exchange order id + status on KssWave/PendingOrder; a `reconcile_live_orders()` scheduler step applies Fills on FILLED/PARTIAL `[tdd:required]` | a NEW→FILLED transition creates exactly one Fill + Position update | 1.1,1.3 | **cc:DONE 2026-06-15** — columns paper-safe via `_ADDED_COLUMNS`; `reconcile_live_orders()` gated by `live_enabled()`; 8 tests |
 | 1.5 | Live KSS/OPUS model shift: in live mode place resting waves/TP in advance (not "wait-then-market"); cancel+replace on avg/target change `[tdd:required]` | live wave rests on exchange; paper unchanged | 1.4 | cc:TODO |
 | 1.6 | Rate-limit guard: read X-MBX-USED-WEIGHT-1M + backoff; 429 honor Retry-After; 418 → halt live + alert `[tdd:required]` | guard backs off; 418 stops live | 1.1 | **cc:DONE 2026-06-15** (`used_weight_from_headers`/`weight_backoff_seconds`/`classify_rate_error`) |
@@ -147,6 +147,29 @@ Full `tests/app/` = **507 passed / 2 skipped** (was 498); 8 new tests in `tests/
 - **NOT yet wired:** placing a resting maker order without raising on filled=0 is **1.5** — until then a
   resting order still raises "no fill price" in `_live_execute` (safe). `LIVE_TRADING` stays OFF.
 - **NEXT = 1.3** maker placement, then 1.5 resting model.
+
+## Progress — 2026-06-15 (1.3 maker placement SHIPPED, paper-safe)
+Execution-layer only; paper unaffected (place_live_order runs only via `_live_execute`, which is
+live-gated). Full `tests/app/` = **515 passed / 2 skipped**; 8 new tests in `test_execution_live.py`.
+- **`execution.order_placement(order_type, maker_orders)`** → `(ccxt_type, params)`: MARKET → taker
+  market (risk exits never slowed); LIMIT → post-only `{"postOnly": True}` (Binance LIMIT_MAKER) when
+  `maker_orders` on, else plain limit. Pure.
+- **`execution.is_post_only_reject(exc)`** — detects Binance `-2010`/"would immediately match"/ccxt
+  `OrderImmediatelyFillable`.
+- **`execution.filters_from_market(market)`** (+ `_market_filters(ex, pair)` live wrapper) — extracts
+  tick/step/minQty/minNotional/PERCENT from a ccxt market (raw `info.filters` first, ccxt `limits`
+  fallback). Pure.
+- **`place_live_order(..., maker_orders=None)`** — defaults to `settings.maker_orders`. Maker LIMIT is
+  rounded through `round_to_filters` then placed `postOnly`; a `-2010` reject returns a structured
+  `{status:'rejected', quantity:0, price:0}` (the 1.5 resting model cancels+replaces lower) instead of
+  raising. **Maker-OFF path is byte-identical to before** (no params, no market() call) so the 1.1
+  tests are untouched. `_live_execute` already passes `order.order_type` → maker flows through config,
+  no caller change.
+- **Scope note:** this makes **DCA entries** maker. **TP is still a MARKET order** in the strategy
+  queue (`pyramid.check_tp` → order_type=MARKET); converting TP to a *resting* LIMIT_MAKER is **1.5**.
+  Risk exits (SL/trailing/deadline/OPUS-close) stay MARKET by design.
+- **NEXT = 1.5** live resting model (largest): place KSS waves (+ TP as resting LIMIT_MAKER) in advance,
+  drop wait-then-market, cancel+replace on avg/target change. Paper stays synchronous.
 
 ## Next session — build order to a working testnet (2026-06-15)
 Validation vehicle is the **live testnet instance** (`D:\FINDMY-live` @ branch `live`, port 8001) from

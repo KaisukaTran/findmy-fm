@@ -10,7 +10,6 @@ from app.config import settings
 from app.orchestrator import consensus, grok
 from app.orchestrator import models as om
 
-
 # --- consensus rules (pure) --------------------------------------------
 
 

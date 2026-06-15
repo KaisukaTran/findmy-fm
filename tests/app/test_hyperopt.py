@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from app import hyperopt, models
 from app.config import settings
 
@@ -128,7 +126,7 @@ class TestPersistAndBestParams:
             "win_rate": 70.0,
             "loss_rate": 16.7,
         }
-        row = hyperopt.persist(db, "BTC", best)
+        hyperopt.persist(db, "BTC", best)
         db.commit()
 
         fetched = hyperopt.best_params(db, "BTC")

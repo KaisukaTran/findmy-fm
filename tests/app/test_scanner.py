@@ -300,7 +300,7 @@ def test_second_scan_zero_ohlcv_calls(db, scan_env, monkeypatch):  # noqa: ARG00
             return []
 
         def get_prices(self, symbols):
-            return {s: candles_data[-1]["close"] for s in symbols}
+            return dict.fromkeys(symbols, candles_data[-1]["close"])
 
         def get_exchange_info(self, _symbol):
             return {"minQty": 0.00001, "stepSize": 0.00001, "maxQty": 10000.0}

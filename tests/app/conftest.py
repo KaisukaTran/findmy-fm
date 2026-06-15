@@ -25,8 +25,8 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_TMP_DIR}/test.db"
 os.environ["REQUIRE_AUTH"] = "false"
 
 from app import models  # noqa: E402,F401  (register models on Base)
-from app.orchestrator import models as _opus_models  # noqa: E402,F401  (register OPUS tables)
 from app.db import Base, SessionLocal, engine  # noqa: E402
+from app.orchestrator import models as _opus_models  # noqa: E402,F401  (register OPUS tables)
 
 
 @pytest.fixture(autouse=True)

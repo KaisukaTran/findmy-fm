@@ -7,7 +7,8 @@ import json
 from pydantic import SecretStr
 
 from app.config import settings
-from app.orchestrator import brain, models as om
+from app.orchestrator import brain
+from app.orchestrator import models as om
 
 
 def _enable(monkeypatch):

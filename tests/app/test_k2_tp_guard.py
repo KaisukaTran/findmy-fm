@@ -5,7 +5,7 @@ from __future__ import annotations
 from app import market
 from app.config import settings
 from app.kss import service
-from app.models import PENDING, KssSession, PendingOrder, Position
+from app.models import PENDING, PendingOrder, Position
 
 
 def test_tp_clears_cost_helper(db, monkeypatch):
@@ -47,7 +47,7 @@ def test_manage_defers_tp_below_true_cost(db, monkeypatch):
 
 def test_manage_queues_tp_above_true_cost(db, monkeypatch):
     monkeypatch.setattr(settings, "binance_max_fee_pct", 0.1)
-    row = _active_session(db, avg=90.0, qty=2.0)
+    _active_session(db, avg=90.0, qty=2.0)
     db.add(Position(symbol="BTC", quantity=2.0, avg_entry_price=100.0, total_cost=200.0))
     db.commit()
     monkeypatch.setattr(market, "get_current_prices", lambda s: {"BTC": 101.0})  # clears cost+fee
@@ -60,7 +60,7 @@ def test_manage_queues_tp_above_true_cost(db, monkeypatch):
 def test_single_owner_tp_not_affected(db, monkeypatch):
     """K-1 normal case: session avg == Position avg → TP clears and queues as before."""
     monkeypatch.setattr(settings, "binance_max_fee_pct", 0.1)
-    row = _active_session(db, avg=100.0, qty=2.0)
+    _active_session(db, avg=100.0, qty=2.0)
     db.add(Position(symbol="BTC", quantity=2.0, avg_entry_price=100.0, total_cost=200.0))
     db.commit()
     monkeypatch.setattr(market, "get_current_prices", lambda s: {"BTC": 103.5})  # avg×1.035

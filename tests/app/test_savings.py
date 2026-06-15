@@ -9,7 +9,6 @@ import pytest
 from app import savings
 from app.models import Position, SavingsHolding
 
-
 # --- write surface ------------------------------------------------------------
 
 

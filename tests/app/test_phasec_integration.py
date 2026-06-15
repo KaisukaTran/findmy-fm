@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from app import hyperopt, models, scanner
+from app import hyperopt, ml, models, scanner
 from app.agents.ml_agent import MlAgent
-from app import ml
 from app.config import settings
 
 _DAY = 86_400_000

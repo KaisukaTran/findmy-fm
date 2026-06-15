@@ -13,7 +13,6 @@ from pydantic import SecretStr
 from app import notify, notify_discord
 from app.config import settings
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

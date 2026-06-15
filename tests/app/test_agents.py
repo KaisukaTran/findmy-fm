@@ -1,12 +1,12 @@
 """Tests for quant agents and the aggregator (deterministic, synthetic candles)."""
 
 from app.agents import (
+    DEFAULT_WEIGHTS,
     BacktestAgent,
     DipAgent,
     LiquidityAgent,
     TrendAgent,
     VolatilityAgent,
-    DEFAULT_WEIGHTS,
     aggregate,
     decide,
 )

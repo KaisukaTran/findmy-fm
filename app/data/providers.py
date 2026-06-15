@@ -104,7 +104,7 @@ class CcxtProvider:
         out: dict[str, float] = {}
         try:
             tickers = self._ex.fetch_tickers(pairs)
-            for symbol, pair in zip(symbols, pairs):
+            for symbol, pair in zip(symbols, pairs, strict=False):
                 t = tickers.get(pair) or {}
                 last = t.get("last")
                 if last is not None:

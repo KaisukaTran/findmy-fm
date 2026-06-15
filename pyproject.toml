@@ -70,6 +70,8 @@ extend-exclude = '''
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.ruff.lint]
 select = [
     "E",      # pycodestyle errors
     "W",      # pycodestyle warnings
@@ -80,8 +82,9 @@ select = [
     "UP",     # pyupgrade
 ]
 ignore = [
-    "E501",   # line too long, handled by black
-    "B008",   # function call in argument defaults
+    "E501",   # line too long, handled by the formatter
+    "B008",   # function call in argument defaults (FastAPI Depends idiom)
+    "C901",   # function-too-complex is advisory; the flagged functions are deliberate
 ]
 
 [tool.mypy]

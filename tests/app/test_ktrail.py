@@ -5,7 +5,7 @@ from __future__ import annotations
 from app import market
 from app.config import settings
 from app.kss import service
-from app.models import PENDING, KssSession, PendingOrder, Position
+from app.models import PENDING, PendingOrder, Position
 
 
 def _active(db, *, avg, qty, sl=8.0, trail=3.0):
@@ -46,7 +46,7 @@ def test_trailing_below_cost_is_deferred(db, monkeypatch):
 
 def test_hard_sl_still_cuts_real_losers(db, monkeypatch):
     monkeypatch.setattr(settings, "binance_max_fee_pct", 0.1)
-    row = _active(db, avg=100.0, qty=2.0, sl=8.0)
+    _active(db, avg=100.0, qty=2.0, sl=8.0)
     _pos(db, 100.0, 2.0)
     # price 90 ≤ avg×0.92 → hard stop-loss fires (always, even below cost)
     monkeypatch.setattr(market, "get_current_prices", lambda s: {"BTC": 90.0})

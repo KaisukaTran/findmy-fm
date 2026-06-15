@@ -63,7 +63,7 @@ Precedence: this spec > Plans table.
 | 1.6 | Rate-limit guard: read X-MBX-USED-WEIGHT-1M + backoff; 429 honor Retry-After; 418 → halt live + alert `[tdd:required]` | guard backs off; 418 stops live | 1.1 | **cc:DONE 2026-06-15** (`used_weight_from_headers`/`weight_backoff_seconds`/`classify_rate_error`) |
 | 1.7 | 5m support: kline pagination (>1000), intraday lookback cap, scan_interval≤5 config `[tdd:required]` | 7-day 5m fetch returns >1000 bars via pagination | - | cc:TODO (touches shared candle path — deferred for paper safety) |
 | 1.8 | Testnet harness: `set_sandbox_mode`, `live_use_testnet` flag; end-to-end place→fill→reconcile on testnet `[tdd:skip:manual-testnet]` | full round-trip works on testnet | 1.1-1.6 | **cc:PARTIAL** — flag + `set_sandbox_mode` wired in `_client`; manual testnet e2e pending |
-| 1.9 | Config + UI knobs: `maker_orders`, `order_fill_timeout_sec`, `live_use_testnet`, BNB-fee note; Strategy-tab exposure `[tdd:skip:server-render]` | knobs load + persist | 1.3,1.7 | **cc:PARTIAL** — config fields added (load from .env); Strategy-tab UI exposure pending |
+| 1.9 | Config + UI knobs: `maker_orders`, `order_fill_timeout_sec`, `live_use_testnet`, BNB-fee note; Strategy-tab exposure `[tdd:skip:server-render]` | knobs load + persist | 1.3,1.7 | **cc:DONE 2026-06-15** — Strategy-tab "Thực thi LIVE (maker)" subform; persisted via `KSS_SETTING_FIELDS`+`_to_bool`; 3 tests |
 | 1.10 | Security pass on the live path (keys never logged, idempotent placement, no double-fill) `[tdd:skip:review-only]` | no findings | 1.5 | **cc:DONE 2026-06-15** (review below) |
 
 **Sequencing:** 1.1 → (1.2,1.3,1.6,1.7 parallel) → 1.4 → 1.5 → 1.8 → 1.9 → 1.10.

@@ -388,6 +388,10 @@ class KssSettingsBody(BaseModel):
     scan_max_symbols: int | None = Field(None, ge=1, le=500)
     min_quote_volume: float | None = Field(None, ge=0)
     kss_first_wave_usd: float | None = Field(None, ge=0)
+    # Live-readiness knobs (1.9) — LIVE only, inert on paper.
+    maker_orders: bool | None = None
+    order_fill_timeout_sec: int | None = Field(None, ge=0)
+    live_use_testnet: bool | None = None
 
 
 @api_router.get("/api/kss-settings")

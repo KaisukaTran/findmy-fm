@@ -39,6 +39,28 @@
   <button type="submit" class="ok">Lưu cấu hình KSS</button>
 </form>
 
+<div class="settings-subpanel">
+  <div class="muted fs-12 mb-8"><b>Thực thi LIVE (maker)</b> — chỉ áp dụng khi LIVE_TRADING bật + có API key.
+    Hoàn toàn vô hiệu ở chế độ paper.</div>
+  <form id="live-exec-form">
+    <label title="Đặt lệnh VÀO dạng post-only LIMIT_MAKER (tiết kiệm spread/slippage). Exit rủi ro (SL/trailing/đóng) luôn là MARKET. TP thành maker khi có 1.5.">Lệnh maker (LIMIT_MAKER) <span class="varname">maker_orders</span>
+      <select name="maker_orders" class="select-inline">
+        <option value="1" {% if k.maker_orders %}selected{% endif %}>Bật</option>
+        <option value="0" {% if not k.maker_orders %}selected{% endif %}>Tắt</option>
+      </select></label>
+    <label title="Hủy lệnh maker đang chờ nếu chưa khớp sau số giây này. 0 = chờ vô hạn (đúng kiểu DCA).">Timeout khớp lệnh (giây) <span class="varname">order_fill_timeout_sec</span>
+      <input name="order_fill_timeout_sec" type="number" step="1" min="0" value="{{ k.order_fill_timeout_sec }}"></label>
+    <label title="Định tuyến lệnh thật sang TESTNET của sàn (testnet.binance.vision) thay vì sản xuất — để kiểm thử đường live trước khi dùng key thật.">Dùng TESTNET <span class="varname">live_use_testnet</span>
+      <select name="live_use_testnet" class="select-inline">
+        <option value="1" {% if k.live_use_testnet %}selected{% endif %}>Bật (testnet)</option>
+        <option value="0" {% if not k.live_use_testnet %}selected{% endif %}>Tắt (sản xuất)</option>
+      </select></label>
+    <button type="submit" class="ok">Lưu cấu hình LIVE</button>
+  </form>
+  <div class="muted fs-12 mt-6">Phí Binance VIP0: <b>maker == taker == 0.10%</b> (bằng nhau) — maker chỉ
+    lợi <b>spread/slippage</b>, không lợi phí. Phí giảm 25% nếu trả bằng <b>BNB</b> hoặc lên <b>VIP1+</b>.</div>
+</div>
+
 <div id="consensus-weights-panel" class="settings-subpanel">
   <div class="muted fs-12 mb-8">Trọng số đồng thuận agent thị trường (S4) — backtest luôn = 0, chứng cứ backtest thuộc gate cứng.</div>
   <form id="consensus-weights-form">

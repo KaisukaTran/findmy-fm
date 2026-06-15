@@ -45,6 +45,53 @@ def test_endpoint_validates_bounds(monkeypatch):
         assert c.post("/api/kss-settings", json={"scan_max_waves": 0}).status_code == 422
 
 
+def test_live_exec_knobs_persist_and_restore(db):
+    runtime.set_kss_settings(db, {
+        "maker_orders": True, "order_fill_timeout_sec": 30, "live_use_testnet": True,
+    })
+    assert settings.maker_orders
+    assert settings.order_fill_timeout_sec == 30
+    assert settings.live_use_testnet
+    # simulate restart: reset then sync from runtime_config
+    settings.maker_orders = False
+    settings.order_fill_timeout_sec = 0
+    settings.live_use_testnet = False
+    runtime.sync_from_db(db)
+    assert settings.maker_orders
+    assert settings.order_fill_timeout_sec == 30
+    assert settings.live_use_testnet
+
+
+def test_live_bool_false_restores_as_false(db):
+    # The naive `bool("0")` cast is truthy → a disabled flag would wrongly restore True.
+    # _to_bool must round-trip a stored False back to False.
+    runtime.set_kss_settings(db, {"maker_orders": True})
+    runtime.set_kss_settings(db, {"maker_orders": False})
+    assert not settings.maker_orders
+    settings.maker_orders = True  # corrupt in-memory, then restore from DB
+    runtime.sync_from_db(db)
+    assert not settings.maker_orders
+
+
+def test_live_exec_endpoint_and_partial_render():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    with TestClient(app) as c:
+        r = c.post("/api/kss-settings", json={
+            "maker_orders": True, "live_use_testnet": True, "order_fill_timeout_sec": 45,
+        })
+        assert r.status_code == 200
+        body = r.json()
+        assert body["maker_orders"] and body["live_use_testnet"]
+        assert body["order_fill_timeout_sec"] == 45
+        html = c.get("/partials/kss-settings").text
+        assert 'name="maker_orders"' in html
+        assert 'name="live_use_testnet"' in html
+        assert 'name="order_fill_timeout_sec"' in html
+        assert "VIP0" in html  # BNB / fee-reality note is present
+
+
 def test_partial_shows_depth_warning(monkeypatch):
     from fastapi.testclient import TestClient
 

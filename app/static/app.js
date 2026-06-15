@@ -584,6 +584,16 @@ document.addEventListener("submit", async (e) => {
     });
     toast("Đã lưu cấu hình KSS — áp dụng cho phiên mới.", "success");
     refreshTrading(); refreshStatus();
+  } else if (form.id === "live-exec-form") {
+    e.preventDefault();
+    const f = new FormData(form);
+    await api("POST", "/api/kss-settings", {
+      maker_orders: f.get("maker_orders") === "1",
+      order_fill_timeout_sec: num(f.get("order_fill_timeout_sec")),
+      live_use_testnet: f.get("live_use_testnet") === "1",
+    });
+    toast("Đã lưu cấu hình LIVE.", "success");
+    refreshStatus();
   } else if (form.id === "grok-fail-mode-form") {
     e.preventDefault();
     const f = new FormData(form);

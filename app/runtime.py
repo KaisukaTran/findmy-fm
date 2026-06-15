@@ -12,6 +12,7 @@ without side-effects on the global session.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -40,9 +41,15 @@ KEY_CONSENSUS_WEIGHTS = "consensus_weights"  # S4: JSON dict of agent weights
 KEY_GROK_FAIL_MODE = "grok_scanner_fail_mode"  # S5: "open" | "closed"
 KEY_LIVE_TRADING = "live_trading"  # Phase 6: real-money master switch (default off)
 
+def _to_bool(v: object) -> bool:
+    """Bool-aware cast for the string-valued KV store. ``bool('0')`` is True (non-empty
+    string), so a plain ``bool`` cast would corrupt a restored False — use this instead."""
+    return str(v).strip().lower() in {"1", "true", "yes", "on"}
+
+
 # Master KSS strategy knobs the dashboard edits (persisted as kss:<field>). Each maps to a
 # settings field; the cast keeps them typed when restored from the string-valued KV store.
-KSS_SETTING_FIELDS: dict[str, type] = {
+KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "scan_distance_pct": float,
     "scan_tp_pct": float,
     "scan_max_waves": int,
@@ -62,6 +69,11 @@ KSS_SETTING_FIELDS: dict[str, type] = {
     "scan_max_symbols": int,
     "min_quote_volume": float,
     "kss_first_wave_usd": float,
+    # Live-readiness knobs (1.9) — LIVE only, inert on paper. maker/testnet are bool (use
+    # _to_bool, not bool, so a restored "0" stays False); timeout is seconds (0 = wait forever).
+    "maker_orders": _to_bool,
+    "order_fill_timeout_sec": int,
+    "live_use_testnet": _to_bool,
 }
 
 # ---------------------------------------------------------------------------

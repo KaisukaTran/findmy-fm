@@ -50,6 +50,7 @@ _MUTABLE_SETTINGS = (
     "sl_pct", "trailing_pct", "deadline_days",
     "scan_max_symbols", "min_quote_volume", "kss_first_wave_usd",
     "live_trading", "live_max_order_notional",
+    "maker_orders", "order_fill_timeout_sec", "live_use_testnet",
     "telegram_notify_trades", "telegram_notify_risk", "telegram_digest_hours",
 )
 

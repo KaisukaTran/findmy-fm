@@ -81,6 +81,24 @@ class Settings(BaseSettings):
         default=SecretStr(""),
         description="API secret for the live exchange. Empty = live off. Never logged.",
     )
+    # --- Live-readiness knobs (additive; inert until the live maker/async path is built) ---
+    maker_orders: bool = Field(
+        default=False,
+        description="LIVE only: place entries + take-profit as post-only LIMIT_MAKER (saves the "
+        "spread/slippage; at VIP0 maker==taker fee). Risk exits (SL/trailing/close) stay MARKET. "
+        "No effect on paper.",
+    )
+    order_fill_timeout_sec: int = Field(
+        default=0,
+        ge=0,
+        description="LIVE only: cancel a resting maker order if unfilled after this many seconds "
+        "(0 = wait indefinitely, the usual DCA behaviour). No effect on paper.",
+    )
+    live_use_testnet: bool = Field(
+        default=False,
+        description="LIVE only: route real orders to the exchange TESTNET (ccxt set_sandbox_mode) "
+        "instead of production — validate the live path before using real keys. No effect on paper.",
+    )
 
     # --- Paper execution simulation ---
     taker_fee_pct: float = Field(default=0.1, description="Taker fee % applied per fill.")

@@ -190,6 +190,45 @@ def test_queue_next_wave_after_extending_ladder(db, mock_market):
     assert row.current_wave == 2
 
 
+def test_dca_next_funds_from_idle_cash_when_reservation_exhausted(db, mock_market, monkeypatch):
+    """Manual DCA+ deploys idle account cash when the session's own isolated_fund is used up
+    (the reservation is a planning cap, not real set-aside cash)."""
+    row = service.create_session(
+        db, symbol="BTC", entry_price=50000.0, distance_pct=2.0, max_waves=6,
+        isolated_fund=100000.0, tp_pct=3.0, timeout_x_min=30.0, gap_y_min=5.0,
+    )
+    res = service.start_session(db, row.id)
+    orders.approve_order(db, res["pending_order_id"])  # fill wave 0
+    db.refresh(row)
+    row.isolated_fund = row.total_cost  # exhaust the reservation → remaining_fund = 0
+    db.commit()
+    monkeypatch.setattr("app.risk.account_equity", lambda _db: 1_000_000.0)  # plenty of idle cash
+
+    out = service.queue_next_wave(db, row.id)
+    assert out["wave_num"] == 2
+    pend = orders.list_pending(db)
+    assert any(p.source_ref == f"pyramid:{row.id}:wave:2" for p in pend)
+    db.refresh(row)
+    assert row.isolated_fund > row.total_cost  # reservation grew to fund the wave from idle cash
+    assert db.query(models.AuditLog).filter_by(action="dca_fund_topup").count() == 1
+
+
+def test_dca_next_blocked_when_no_idle_cash(db, mock_market, monkeypatch):
+    """DCA+ still refuses when neither the reservation nor idle cash can fund the wave."""
+    row = service.create_session(
+        db, symbol="BTC", entry_price=50000.0, distance_pct=2.0, max_waves=6,
+        isolated_fund=100000.0, tp_pct=3.0, timeout_x_min=30.0, gap_y_min=5.0,
+    )
+    res = service.start_session(db, row.id)
+    orders.approve_order(db, res["pending_order_id"])
+    db.refresh(row)
+    row.isolated_fund = row.total_cost
+    db.commit()
+    monkeypatch.setattr("app.risk.account_equity", lambda _db: 1.0)  # backup reserve eats it → idle 0
+    with pytest.raises(ValueError, match="nhàn rỗi"):
+        service.queue_next_wave(db, row.id)
+
+
 def test_consolidate_sessions_merges_into_one_owner(db, mock_market):
     """Two active sessions on one coin → keeper owns the whole Position; the other is removed."""
     from app.orchestrator import models as om

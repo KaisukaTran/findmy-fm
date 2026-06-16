@@ -416,6 +416,23 @@ def _handle_tp_triggered(db: Session, row: KssSession, result: dict) -> None:
         _queue(db, result["order"])  # market SELL through the approval queue
 
 
+def _idle_deployable(db: Session) -> float:
+    """Free capital the bot may still deploy RIGHT NOW — used by a manual DCA+ to fund a wave
+    beyond a session's own ``isolated_fund`` reservation (the reservation is a planning cap,
+    not real set-aside cash). = the deployable budget (LIVE mark-to-market equity minus the
+    ``equity_backup_pct`` reserve) minus cash already deployed across all open Positions.
+    Honours the same backup reserve the scanner's open-gate uses; excludes savings (separate
+    table). Never negative."""
+    from app import risk
+    from app.config import settings
+    from app.models import Position
+
+    equity = risk.account_equity(db)
+    budget = equity * (100 - settings.equity_backup_pct) / 100.0
+    deployed = sum(p.total_cost for p in db.query(Position).all())
+    return max(0.0, budget - deployed)
+
+
 def queue_next_wave(db: Session, session_id: int) -> dict:
     """
     Manually queue the next geometric DCA wave for an ACTIVE session.
@@ -424,7 +441,13 @@ def queue_next_wave(db: Session, session_id: int) -> dict:
     on a session whose ladder was already exhausted (all waves filled, nothing pending). The
     next wave is the standard geometric rung (`generate_wave(current_wave + 1)`); once it
     fills, the frozen `on_fill` auto-chains the rest. Goes through the approval queue.
+
+    Manual override (user intent): the per-session ``isolated_fund`` reservation is a PLANNING
+    cap, not real cash. When the next rung costs more than this session has left reserved, fund
+    it from idle account cash (``_idle_deployable``) and grow ``isolated_fund`` to match — so a
+    deliberate DCA+ click deploys free capital now instead of being blocked by the reservation.
     """
+    from app.config import settings
     row = _get_row(db, session_id)
     if row.status != SESSION_ACTIVE:
         raise ValueError(f"Session {session_id} not active (status={row.status})")
@@ -447,10 +470,20 @@ def queue_next_wave(db: Session, session_id: int) -> dict:
         )
     cost = next_wave.quantity * next_wave.target_price
     if cost > py.remaining_fund:
-        raise ValueError(
-            f"Insufficient fund for wave {next_wave_num}: need {cost:.2f}, "
-            f"have {py.remaining_fund:.2f}"
-        )
+        # Reservation exhausted — fund this rung from idle account cash (manual override).
+        idle = _idle_deployable(db)
+        if cost > idle:
+            raise ValueError(
+                f"Không đủ tiền nhàn rỗi cho sóng {next_wave_num}: cần {cost:.2f}, "
+                f"nhàn rỗi khả dụng {idle:.2f} (đã giữ {settings.equity_backup_pct:.0f}% dự phòng). "
+                "Giảm 'Dự phòng % equity' hoặc đóng/giảm bớt session khác."
+            )
+        added = cost - py.remaining_fund
+        row.isolated_fund = py.total_cost + cost  # grow the reservation to fund this wave now
+        py.isolated_fund = row.isolated_fund
+        audit.log(db, "kss", "dca_fund_topup", entity=f"kss:{session_id}", symbol=row.symbol,
+                  wave=next_wave_num, added=round(added, 2),
+                  new_isolated_fund=round(row.isolated_fund, 2))
     py.current_wave = next_wave_num
     next_wave.status = "sent"
     pending, risk_note = _queue(db, py._wave_to_order(next_wave))
@@ -811,13 +844,26 @@ def list_sessions(
 
 
 def summary(db: Session) -> dict:
+    from app import risk  # lazy: risk -> portfolio -> models; avoid an import cycle at load
+
     rows = db.query(KssSession).all()
     active = [r for r in rows if r.status == SESSION_ACTIVE]
+    # reserved = full projected DCA-ladder cost a session set aside (isolated_fund);
+    # deployed = cash actually spent on filled waves (total_cost). The two diverge a lot
+    # because a session reserves its whole ladder up-front but fills it wave by wave.
+    reserved = sum(r.isolated_fund for r in active)
+    deployed = sum(r.total_cost for r in active)
+    equity = risk.account_equity(db)
     return {
         "total_sessions": len(rows),
         "active_sessions": len(active),
-        "total_isolated_fund": sum(r.isolated_fund for r in active),
+        "total_isolated_fund": reserved,        # reserved across active sessions (planned ceiling)
+        "active_used_fund": deployed,           # real cash deployed in active sessions
         "total_used_fund": sum(r.total_cost for r in rows),
+        "equity": equity,
+        # reservation as a share of equity, and how far it exceeds equity (over-commit).
+        "reserved_pct_of_equity": (reserved / equity * 100.0) if equity > 0 else 0.0,
+        "over_equity_pct": (max(0.0, reserved - equity) / equity * 100.0) if equity > 0 else 0.0,
     }
 
 

@@ -5,7 +5,20 @@
 <div class="cards mb-10">
   <div class="card"><div class="label">Sessions</div><div class="value">{{ summary.total_sessions }}</div></div>
   <div class="card"><div class="label">Active</div><div class="value">{{ summary.active_sessions }}</div></div>
-  <div class="card"><div class="label">Active fund</div><div class="value">${{ summary.total_isolated_fund | money }}</div></div>
+  <div class="card" title="Tiền thật đang nằm trong các lệnh đã khớp (tổng total_cost của session active).">
+    <div class="label">Đã dùng</div><div class="value">${{ summary.active_used_fund | money }}</div>
+    <div class="sub muted">/ vốn ${{ summary.equity | money }}</div>
+  </div>
+  <div class="card" title="Tổng vốn ĐẶT TRƯỚC cho toàn bộ thang DCA dự kiến của các session active (isolated_fund) — KHÔNG phải tiền đã chi. Bằng % so với vốn (equity).">
+    <div class="label">Đặt trước</div><div class="value">${{ summary.total_isolated_fund | money }}</div>
+    <div class="sub {{ 'neg' if summary.reserved_pct_of_equity > 100 else 'muted' }}">
+      {{ summary.reserved_pct_of_equity | round(0) | int }}% vốn{% if summary.over_equity_pct > 0 %} · vượt +{{ summary.over_equity_pct | round(0) | int }}%{% endif %}
+    </div>
+  </div>
+  <div class="card" title="Tiền mặt USDT tự do có thể bơm NGAY bằng nút DCA+ thủ công (gồm cả phần dự phòng auto giữ lại). AUTO không tiêu vào đây; chỉ bạn chủ động bơm khi bấm DCA+.">
+    <div class="label">Nhàn rỗi (DCA+)</div><div class="value">${{ summary.free_cash | money }}</div>
+    <div class="sub muted">bơm thủ công</div>
+  </div>
 </div>
 {% if sessions %}
 <table class="tbl">

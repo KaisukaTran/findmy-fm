@@ -385,6 +385,7 @@ class KssSettingsBody(BaseModel):
     min_expectancy_pct: float | None = Field(None, ge=-100, le=100)
     min_win_rate: float | None = Field(None, ge=0, le=100)
     min_confidence: float | None = Field(None, ge=0, le=100)  # S4: consensus threshold
+    tp_fee_coverage: float | None = Field(None, ge=0, le=10)  # TP adds this × round-trip fee
     grok_scanner_fail_mode: str | None = Field(None, pattern=r"^(open|closed)$")  # S5
     scan_max_symbols: int | None = Field(None, ge=1, le=500)
     min_quote_volume: float | None = Field(None, ge=0)

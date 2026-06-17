@@ -26,6 +26,7 @@ main { padding: 16px 24px; max-width: 1680px; margin: 0 auto; }
 .card { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
 .card .label { color: var(--muted); font-size: 12px; }
 .card .value { font-size: 18px; font-weight: 600; margin-top: 2px; overflow-wrap: anywhere; }
+.card .sub { font-size: 11px; margin-top: 3px; }
 /* horizontal-scroll wrapper so wide tables never spill out of a panel */
 .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }

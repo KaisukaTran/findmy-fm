@@ -75,3 +75,51 @@ def test_grok_decide_parses_and_meters_cost(db, monkeypatch):
 def test_grok_disabled_is_noop(db, monkeypatch):
     monkeypatch.setattr(settings, "grok_enabled", False)
     assert grok.decide(db)["ok"] is False
+
+
+def test_scanner_review_uses_live_search_and_scaled_tokens(db, monkeypatch):
+    """review_candidates passes grok_live_search through and scales the output-token budget to
+    fit one verdict per candidate (so a long list never truncates into invalid JSON)."""
+    monkeypatch.setattr(settings, "grok_live_search", True)
+    monkeypatch.setattr(settings, "grok_max_tokens", 100)
+    monkeypatch.setattr(settings, "grok_price_in_per_mtok", 3.0)
+    monkeypatch.setattr(settings, "grok_price_out_per_mtok", 15.0)
+    monkeypatch.setattr(settings, "opus_cost_multiplier", 1.0)
+    monkeypatch.setattr(grok, "scanner_enabled", lambda: True)
+
+    captured: dict = {}
+
+    def _fake(systxt, usertxt, *, max_tokens=None, live_search=False):
+        captured["max_tokens"] = max_tokens
+        captured["live_search"] = live_search
+        return json.dumps({"reviews": []}), {"prompt_tokens": 1, "completion_tokens": 1}
+
+    monkeypatch.setattr(grok, "_call_grok", _fake)
+    grok.review_candidates(db, [{"symbol": f"C{i}"} for i in range(30)])
+    assert captured["live_search"] is True
+    assert captured["max_tokens"] >= 30 * 40  # scaled past the 100 default to fit 30 verdicts
+
+
+def test_call_grok_attaches_live_search_params(monkeypatch):
+    """_call_grok adds xAI search_parameters only when live_search=True, and honours max_tokens."""
+    monkeypatch.setattr(settings, "xai_api_key", SecretStr("k"))
+    monkeypatch.setattr(settings, "grok_search_max_results", 5)
+    captured: dict = {}
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": "{}"}}], "usage": {}}
+
+    monkeypatch.setattr(
+        "app.orchestrator.grok.httpx.post",
+        lambda url, headers=None, json=None, timeout=None: captured.update(body=json) or _Resp(),
+    )
+    grok._call_grok("sys", "usr", max_tokens=777, live_search=True)
+    assert captured["body"]["max_tokens"] == 777
+    sp = captured["body"]["search_parameters"]
+    assert sp["mode"] == "auto" and sp["max_search_results"] == 5
+    grok._call_grok("sys", "usr", live_search=False)
+    assert "search_parameters" not in captured["body"]  # off path stays a plain chat call

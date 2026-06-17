@@ -52,6 +52,7 @@ def env(monkeypatch):
     monkeypatch.setattr(settings, "min_trials", 0)
     monkeypatch.setattr(settings, "min_expectancy_pct", -100.0)
     monkeypatch.setattr(settings, "auto_trade", True)
+    monkeypatch.setattr(settings, "block_downtrend_adx", 0.0)  # off: cycle test isn't about entry timing
 
 
 def _new_session(db):

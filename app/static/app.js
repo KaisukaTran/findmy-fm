@@ -590,6 +590,8 @@ document.addEventListener("submit", async (e) => {
       min_expectancy_pct: num(f.get("min_expectancy_pct")),
       min_win_rate: num(f.get("min_win_rate")),
       min_confidence: num(f.get("min_confidence")),
+      min_trials: num(f.get("min_trials")),
+      block_downtrend_adx: num(f.get("block_downtrend_adx")),
       kss_first_wave_usd: num(f.get("kss_first_wave_usd")),
       scan_max_symbols: num(f.get("scan_max_symbols")),
       min_quote_volume: num(f.get("min_quote_volume")),
@@ -609,8 +611,13 @@ document.addEventListener("submit", async (e) => {
   } else if (form.id === "grok-fail-mode-form") {
     e.preventDefault();
     const f = new FormData(form);
-    await api("POST", "/api/kss-settings", { grok_scanner_fail_mode: f.get("grok_scanner_fail_mode") });
-    toast("Đã lưu chế độ lỗi Grok.", "success");
+    await api("POST", "/api/kss-settings", {
+      grok_scanner_fail_mode: f.get("grok_scanner_fail_mode"),
+      grok_scanner_batch_max: num(f.get("grok_scanner_batch_max")),
+      grok_live_search: f.get("grok_live_search") === "1",
+      grok_search_max_results: num(f.get("grok_search_max_results")),
+    });
+    toast("Đã lưu cấu hình Grok scanner.", "success");
   } else if (form.id === "consensus-weights-form") {
     e.preventDefault();
     const f = new FormData(form);

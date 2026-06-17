@@ -66,8 +66,13 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "min_expectancy_pct": float,
     "min_win_rate": float,
     "min_confidence": float,  # S4: consensus threshold, now decoupled from backtest
+    "min_trials": int,  # min backtest trials for a trustworthy edge (cut thin-sample noise)
+    "block_downtrend_adx": float,  # hard veto: HTF+ST down & ADX≥this (0=off) — entry timing
     "tp_fee_coverage": float,  # TP adds this × round-trip fee (1.2 = +120% of fees)
     "grok_scanner_fail_mode": str,  # S5: "open" | "closed"
+    "grok_scanner_batch_max": int,  # how many candidates Grok reviews per scan (cover them all)
+    "grok_live_search": _to_bool,  # let Grok use xAI Live Search (web+X+news) in the scan gate
+    "grok_search_max_results": int,  # cap Live Search results per scan call
     "scan_max_symbols": int,
     "min_quote_volume": float,
     "kss_first_wave_usd": float,

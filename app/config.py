@@ -149,7 +149,8 @@ class Settings(BaseSettings):
     backtest_lookback_days: int = Field(default=365, description="History window for win-rate estimate (longer = more regimes, less single-trend bias).")
     backtest_timeframe: str = Field(default="1d", description="Candle timeframe for backtest.")
     backtest_trial_spacing_days: float = Field(default=7.0, description="Min days between backtest entry points — decorrelates overlapping trials so the win-rate isn't inflated by one regime (0 = every bar).")
-    min_trials: int = Field(default=8, description="Min completed backtest trials for a trustworthy win-rate; below this a pair is skipped (a 100%% from 3 trials is noise).")
+    min_trials: int = Field(default=15, description="Min completed backtest trials for a trustworthy win-rate; below this a pair is skipped (a 100%% from a handful of trials is noise). Raised 8→15 to cut thin-sample false positives.")
+    block_downtrend_adx: float = Field(default=25.0, description="Hard entry gate: veto a 'trade' candidate when the higher-timeframe trend AND Supertrend are BOTH down with ADX ≥ this (a confirmed downtrend — avoid catching a falling knife). 0 = off. Deterministic mirror of Grok's most common veto, so it works even when Grok is off.")
 
     min_win_rate: float = Field(default=60.0, description="Min backtested win-rate %% (Wilson lower bound) to qualify. Paired with min_expectancy_pct as the primary trade rule: a pair trades when E ≥ min_expectancy_pct AND win-rate ≥ this.")
     min_confidence: float = Field(default=45.0, description="Min agent consensus %% to qualify a pair. S4: default lowered from 70 to 45 because the consensus is now a pure market-context score from {{trend,dip,volatility,liquidity,ml}} (backtest weight=0); the hard gates (E, win_lb) own the backtest evidence.")
@@ -186,6 +187,9 @@ class Settings(BaseSettings):
 
     # --- Grok scanner gate: a Grok (xAI) endorse/veto pass over qualified candidates ---
     grok_scanner_enabled: bool = Field(default=False, description="Have Grok review scanner candidates that passed every deterministic gate (one batched call/scan). Needs xai_api_key. Off = no cost, deterministic behaviour unchanged.")
+    grok_scanner_batch_max: int = Field(default=60, ge=1, le=300, description="Max candidates Grok reviews per scan (single batched call). Set high enough to cover EVERY 'trade' candidate so none opens unreviewed; the batch is sorted by expectancy so the strongest are kept if it ever truncates. Larger = more tokens/call.")
+    grok_live_search: bool = Field(default=False, description="Let the Grok scanner call use xAI Live Search (web + X + news) so it can weigh real-time trending/sentiment/major reports, not just the numeric TA bundle. Adds search cost per scan; mode='auto' so Grok only searches when useful. Needs grok_scanner_enabled.")
+    grok_search_max_results: int = Field(default=8, ge=1, le=30, description="Max Live Search results Grok may pull per scan call (caps search cost).")
     grok_scanner_fail_mode: str = Field(
         default="open",
         description=(

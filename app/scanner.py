@@ -42,12 +42,11 @@ _MIN_CANDLES = 30
 
 _PARALLEL_WORKERS = 4  # S2: parallel OHLCV fetch workers
 
-# S5: cap the Grok review batch so one fat scan cannot blow the token budget.
-# Candidates are sorted by expectancy descending; only the top N enter the LLM call.
-# Under fail_mode="closed" the dropped symbols (beyond the cap) also do not open this
-# scan because they have no explicit endorse verdict — same semantics as a Grok outage.
-# Under fail_mode="open" (default) the dropped symbols open exactly as today.
-_GROK_REVIEW_BATCH_MAX = 8
+# The Grok review batch size is the runtime setting ``grok_scanner_batch_max`` (default 60):
+# candidates are sorted by expectancy descending and the top N enter the single LLM call. Set it
+# high enough to cover every 'trade' candidate so none opens unreviewed. Under fail_mode="closed"
+# any symbol beyond the cap has no explicit endorse verdict and does NOT open this scan (same as a
+# Grok outage); under fail_mode="open" (default) it opens as before.
 
 
 def _provider_factory(exchange_id: str) -> CcxtProvider:
@@ -363,13 +362,25 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
             # Grok review actually decides on), and surface a compact tag on the reason.
             ta = ta_bundle.build(candles, db, symbol)
             cand.reason = (cand.reason or "") + f" | TA: {_ta_tag(ta)}"
-            # Defer the actual open until after the batched Grok review.
-            to_open.append({
-                "cand": cand, "symbol": symbol, "entry": candles[-1]["close"],
-                "distance_pct": distance_pct, "tp_pct": tp_pct, "max_waves": max_waves,
-                "consensus": consensus, "win_rate": wr["win_rate"],
-                "loss_rate": wr["loss_rate"], "net_edge": net_edge, "ta": ta,
-            })
+            # Hard entry-timing gate: refuse a confirmed downtrend (HTF+ST both down, strong ADX)
+            # — don't catch a falling knife. Deterministic mirror of Grok's commonest veto, so it
+            # protects entries even when the Grok gate is off. The TA evidence now blocks the open
+            # instead of only advising Grok.
+            veto = _downtrend_veto(ta)
+            if veto:
+                cand.decision = d["decision"] = "skip"
+                cand.reason = (cand.reason or "") + f" | chặn: {veto}"
+                audit.log(db, "scanner", "skipped_downtrend", entity=symbol, reason=veto,
+                          htf=ta.get("htf"), st=ta.get("st"), adx=ta.get("adx"))
+            else:
+                # Defer the actual open until after the batched Grok review.
+                to_open.append({
+                    "cand": cand, "symbol": symbol, "entry": candles[-1]["close"],
+                    "distance_pct": distance_pct, "tp_pct": tp_pct, "max_waves": max_waves,
+                    "consensus": consensus, "win_rate": wr["win_rate"],
+                    "loss_rate": wr["loss_rate"], "net_edge": net_edge,
+                    "expectancy": wr["expectancy"], "ta": ta,
+                })
         candidates.append(cand)
 
     # B6: one compact audit entry per scan listing all thin/failed symbols together.
@@ -436,6 +447,20 @@ def _ta_tag(ta: dict) -> str:
             f"sup-{ta['sr_sup']:.1f}%/res+{ta['sr_res']:.1f}%")
 
 
+def _downtrend_veto(ta: dict) -> str | None:
+    """Hard entry-timing gate. Returns a reason to SKIP a 'trade' candidate sitting in a
+    confirmed downtrend — higher-timeframe trend AND Supertrend both ``down`` with ADX at/above
+    ``block_downtrend_adx`` — else None. This is exactly the "htf+st both down strong adx" pattern
+    the Grok gate vetoes most often; running it deterministically protects entry timing even when
+    Grok is disabled. ``block_downtrend_adx = 0`` disables the gate (back to old behaviour)."""
+    adx_min = settings.block_downtrend_adx
+    if adx_min <= 0:
+        return None
+    if ta.get("htf") == "down" and ta.get("st") == "down" and ta.get("adx", 0.0) >= adx_min:
+        return f"downtrend khung lớn (HTF+ST down, ADX {ta.get('adx', 0.0):.0f}≥{adx_min:.0f})"
+    return None
+
+
 def _trade_block_reason(db: Session, symbol: str) -> str | None:
     """Deterministic skip gates for a 'trade' candidate. Returns a reason string to skip,
     or None to proceed. Audits each block."""
@@ -500,13 +525,18 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
             audit.log(db, "scanner", "skipped_capped_batch", entity="grok",
                       reason=_why, symbols=len(to_open))
         else:
-            # S5 item 2: sort by expectancy descending and cap at _GROK_REVIEW_BATCH_MAX.
+            # Sort by EXPECTANCY descending (coin-specific edge) and cap at the runtime
+            # grok_scanner_batch_max so Grok reviews EVERY trade candidate when the cap covers
+            # them (default 60 ≥ a normal scan's count). net_edge was the old key but it is
+            # ~constant across candidates (tp_pct − fixed cost), so it never actually ranked them
+            # — the strongest pairs are kept now if the batch ever truncates.
             # SECURITY: items payload is numeric/enum-only — no free-text from market data.
             # Fields: symbol (our own key), consensus/win_rate/loss_rate/net_edge/price
             # (all floats from backtest), ta (numeric/enum indicator bundle from ta_bundle).
-            sorted_candidates = sorted(to_open, key=lambda c: c.get("net_edge", 0.0), reverse=True)
-            batch = sorted_candidates[:_GROK_REVIEW_BATCH_MAX]
-            dropped = sorted_candidates[_GROK_REVIEW_BATCH_MAX:]
+            batch_max = settings.grok_scanner_batch_max
+            sorted_candidates = sorted(to_open, key=lambda c: c.get("expectancy", 0.0), reverse=True)
+            batch = sorted_candidates[:batch_max]
+            dropped = sorted_candidates[batch_max:]
             if dropped:
                 audit.log(db, "scanner", "grok_batch_truncated",
                           kept=len(batch), dropped=len(dropped),

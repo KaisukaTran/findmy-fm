@@ -54,6 +54,7 @@ def client(monkeypatch):
     monkeypatch.setattr(settings, "min_trials", 0)
     monkeypatch.setattr(settings, "min_expectancy_pct", -100.0)
     monkeypatch.setattr(settings, "auto_trade", False)
+    monkeypatch.setattr(settings, "block_downtrend_adx", 0.0)  # off: this tests the endpoint, not entry timing
     with TestClient(fastapi_app) as c:
         yield c
 

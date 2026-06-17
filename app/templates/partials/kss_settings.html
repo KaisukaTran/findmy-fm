@@ -34,6 +34,10 @@
     <input name="min_win_rate" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.min_win_rate) }}" required></label>
   <label title="Ngưỡng đồng thuận tối thiểu của 5 agent thị trường (trend/dip/volatility/liquidity/ml). S4: backtest bị loại khỏi điểm đồng thuận — chứng cứ backtest thuộc về các gate cứng (E, win_lb). Giá trị mặc định mới: 45%.">Đồng thuận tối thiểu % <span class="varname">min_confidence</span>
     <input name="min_confidence" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.min_confidence) }}" required></label>
+  <label title="Số lần thử backtest TỐI THIỂU để edge đáng tin (win-rate 100% từ vài lần thử là nhiễu). Tăng để lọc mẫu mỏng. Mặc định 15.">Số lần thử tối thiểu <span class="varname">min_trials</span>
+    <input name="min_trials" type="number" step="1" min="1" max="200" value="{{ k.min_trials }}" required></label>
+  <label title="GATE THỜI ĐIỂM VÀO: chặn mở coin đang DOWNTREND xác nhận — khung lớn (HTF) VÀ Supertrend đều xuống VÀ ADX ≥ ngưỡng này (tránh 'bắt dao rơi'). 0 = tắt. Đây là bản deterministic của veto hay gặp nhất của Grok, hoạt động cả khi Grok tắt. Mặc định 25.">Chặn downtrend (ADX≥) <span class="varname">block_downtrend_adx</span>
+    <input name="block_downtrend_adx" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.block_downtrend_adx) }}" required></label>
   <label title="Notional sóng đầu mỗi session. >0 = đặt cỡ lệnh đầu theo USD (dùng nhiều vốn hơn); 0 = cỡ pip mặc định (rất nhỏ).">Giá trị lệnh đầu (USD) <span class="varname">kss_first_wave_usd</span>
     <input name="kss_first_wave_usd" type="number" step="any" min="0" value="{{ '%.2f'|format(k.kss_first_wave_usd) }}"></label>
   <label title="Trần số coin mỗi lần quét. Tăng để quét nhiều coin hơn (mặc định 50).">Số coin quét tối đa <span class="varname">scan_max_symbols</span>
@@ -93,12 +97,21 @@
   <div class="muted fs-12 mt-6">Khi bật, Grok cho lý do cụ thể vì sao chọn/bỏ từng coin (xem panel scanner & Nhật ký). Lỗi API → bỏ qua, dùng quyết định deterministic (không chặn lệnh).</div>
   <div class="mt-8">
     <form id="grok-fail-mode-form">
-      <label title="open (mặc định): lỗi/timeout Grok → coin vẫn mở (fail-open, ưu tiên sẵn sàng). closed: coin KHÔNG có verdict rõ ràng từ Grok sẽ bị bỏ qua lần quét này (ưu tiên bảo toàn vốn khi full-auto). Batch cap (top 8) cũng áp dụng: coin bị loại vì vượt cap thì: open → vẫn mở; closed → bị chặn.">Chế độ lỗi Grok <span class="varname">grok_scanner_fail_mode</span>
+      <label title="open (mặc định): lỗi/timeout Grok → coin vẫn mở (fail-open, ưu tiên sẵn sàng). closed: coin KHÔNG có verdict rõ ràng từ Grok sẽ bị bỏ qua lần quét này (ưu tiên bảo toàn vốn khi full-auto). Coin vượt batch cap cũng vậy: open → vẫn mở; closed → bị chặn.">Chế độ lỗi Grok <span class="varname">grok_scanner_fail_mode</span>
         <select name="grok_scanner_fail_mode" class="select-inline">
           <option value="open" {% if k.grok_scanner_fail_mode == 'open' %}selected{% endif %}>open (fail-open)</option>
           <option value="closed" {% if k.grok_scanner_fail_mode == 'closed' %}selected{% endif %}>closed (bảo toàn vốn)</option>
         </select>
       </label>
+      <label title="Số coin TỐI ĐA Grok duyệt mỗi lần quét (một call gộp). Đặt ≥ số coin 'trade' thường thấy để KHÔNG coin nào mở mà chưa qua Grok (sắp theo expectancy nên nếu có cắt thì giữ coin mạnh nhất). Mặc định 60.">Grok duyệt tối đa/lần quét <span class="varname">grok_scanner_batch_max</span>
+        <input name="grok_scanner_batch_max" type="number" step="1" min="1" max="300" value="{{ k.grok_scanner_batch_max }}" required></label>
+      <label title="Cho Grok dùng xAI Live Search (web + X + tin tức) trong cổng quét để cân nhắc trending/sentiment/báo cáo lớn theo thời gian thực, không chỉ số liệu TA. Tốn thêm phí tìm kiếm mỗi lần quét; mode='auto' nên Grok chỉ tìm khi cần. Cần bật Grok scanner.">Live Search (web/X/news) <span class="varname">grok_live_search</span>
+        <select name="grok_live_search" class="select-inline">
+          <option value="1" {% if k.grok_live_search %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.grok_live_search %}selected{% endif %}>Tắt</option>
+        </select></label>
+      <label title="Số kết quả Live Search tối đa Grok được kéo mỗi lần quét (giới hạn chi phí tìm kiếm). Mặc định 8.">Live Search tối đa <span class="varname">grok_search_max_results</span>
+        <input name="grok_search_max_results" type="number" step="1" min="1" max="30" value="{{ k.grok_search_max_results }}" required></label>
       <button type="submit" class="sm ok mt-4">Lưu</button>
     </form>
   </div>

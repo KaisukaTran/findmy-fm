@@ -385,8 +385,13 @@ class KssSettingsBody(BaseModel):
     min_expectancy_pct: float | None = Field(None, ge=-100, le=100)
     min_win_rate: float | None = Field(None, ge=0, le=100)
     min_confidence: float | None = Field(None, ge=0, le=100)  # S4: consensus threshold
+    min_trials: int | None = Field(None, ge=1, le=200)  # thin-sample guard
+    block_downtrend_adx: float | None = Field(None, ge=0, le=100)  # entry-timing veto (0=off)
     tp_fee_coverage: float | None = Field(None, ge=0, le=10)  # TP adds this × round-trip fee
     grok_scanner_fail_mode: str | None = Field(None, pattern=r"^(open|closed)$")  # S5
+    grok_scanner_batch_max: int | None = Field(None, ge=1, le=300)  # Grok reviews up to N/scan
+    grok_live_search: bool | None = None  # Grok scan gate uses xAI Live Search (web+X+news)
+    grok_search_max_results: int | None = Field(None, ge=1, le=30)
     scan_max_symbols: int | None = Field(None, ge=1, le=500)
     min_quote_volume: float | None = Field(None, ge=0)
     kss_first_wave_usd: float | None = Field(None, ge=0)

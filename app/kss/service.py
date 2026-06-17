@@ -451,20 +451,24 @@ def _handle_tp_triggered(db: Session, row: KssSession, result: dict) -> None:
 
 
 def _idle_deployable(db: Session) -> float:
-    """Free capital the bot may still deploy RIGHT NOW — used by a manual DCA+ to fund a wave
-    beyond a session's own ``isolated_fund`` reservation (the reservation is a planning cap,
-    not real set-aside cash). = the deployable budget (LIVE mark-to-market equity minus the
-    ``equity_backup_pct`` reserve) minus cash already deployed across all open Positions.
-    Honours the same backup reserve the scanner's open-gate uses; excludes savings (separate
-    table). Never negative."""
-    from app import risk
-    from app.config import settings
-    from app.models import Position
+    """Free USDT cash available to deploy RIGHT NOW — used by a manual DCA+ to fund a wave
+    beyond a session's ``isolated_fund`` reservation (the reservation is a planning cap, not
+    real set-aside cash). This is exactly the ``cash`` the portfolio summary shows:
+    ``account_equity − cost of open positions + realized PnL``.
 
-    equity = risk.account_equity(db)
-    budget = equity * (100 - settings.equity_backup_pct) / 100.0
-    deployed = sum(p.total_cost for p in db.query(Position).all())
-    return max(0.0, budget - deployed)
+    It is the REAL free balance, NOT reduced by the ``equity_backup_pct`` reserve: that reserve
+    gates the AUTO scanner's new-session opens, whereas a manual DCA+ is the user deliberately
+    choosing to deploy their idle cash now. (The old formula subtracted the full cost basis from
+    a 75%-of-equity budget, which wrongly returned 0 whenever a lot was already deployed even
+    with real cash sitting idle.)"""
+    from sqlalchemy import func
+
+    from app.config import settings
+    from app.models import Fill, Position
+
+    invested = sum(p.total_cost for p in db.query(Position).all())
+    realized = float(db.query(func.coalesce(func.sum(Fill.realized_pnl), 0.0)).scalar() or 0.0)
+    return max(0.0, settings.account_equity - invested + realized)
 
 
 def queue_next_wave(db: Session, session_id: int) -> dict:
@@ -481,7 +485,6 @@ def queue_next_wave(db: Session, session_id: int) -> dict:
     it from idle account cash (``_idle_deployable``) and grow ``isolated_fund`` to match — so a
     deliberate DCA+ click deploys free capital now instead of being blocked by the reservation.
     """
-    from app.config import settings
     row = _get_row(db, session_id)
     if row.status != SESSION_ACTIVE:
         raise ValueError(f"Session {session_id} not active (status={row.status})")
@@ -513,9 +516,8 @@ def queue_next_wave(db: Session, session_id: int) -> dict:
         idle = _idle_deployable(db)
         if cost > idle:
             raise ValueError(
-                f"Không đủ tiền nhàn rỗi cho sóng {next_wave_num}: cần {cost:.2f}, "
-                f"nhàn rỗi khả dụng {idle:.2f} (đã giữ {settings.equity_backup_pct:.0f}% dự phòng). "
-                "Giảm 'Dự phòng % equity' hoặc đóng/giảm bớt session khác."
+                f"Không đủ tiền mặt cho sóng {next_wave_num}: cần {cost:.2f}, "
+                f"tiền nhàn rỗi {idle:.2f}. Đóng/giảm bớt session khác để giải phóng vốn."
             )
         added = cost - py.remaining_fund
         row.isolated_fund = py.total_cost + cost  # grow the reservation to fund this wave now

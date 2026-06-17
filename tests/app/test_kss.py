@@ -203,7 +203,7 @@ def test_dca_next_funds_from_idle_cash_when_reservation_exhausted(db, mock_marke
     db.refresh(row)
     row.isolated_fund = row.total_cost  # exhaust the reservation → remaining_fund = 0
     db.commit()
-    monkeypatch.setattr("app.risk.account_equity", lambda _db: 1_000_000.0)  # plenty of idle cash
+    monkeypatch.setattr(settings, "account_equity", 1_000_000.0)  # plenty of free cash
     monkeypatch.setattr("app.market.get_current_prices", lambda syms: {"BTC": 100000.0})
 
     out = service.queue_next_wave(db, row.id)
@@ -226,9 +226,10 @@ def test_dca_next_blocked_when_no_idle_cash(db, mock_market, monkeypatch):
     db.refresh(row)
     row.isolated_fund = row.total_cost
     db.commit()
-    monkeypatch.setattr("app.risk.account_equity", lambda _db: 1.0)  # backup reserve eats it → idle 0
+    # Starting capital ≈ already deployed → free cash ~0 → no idle to fund the wave.
+    monkeypatch.setattr(settings, "account_equity", 1.0)
     monkeypatch.setattr("app.market.get_current_prices", lambda syms: {"BTC": 100000.0})
-    with pytest.raises(ValueError, match="nhàn rỗi"):
+    with pytest.raises(ValueError, match="tiền nhàn rỗi"):
         service.queue_next_wave(db, row.id)
 
 

@@ -66,6 +66,7 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "min_expectancy_pct": float,
     "min_win_rate": float,
     "min_confidence": float,  # S4: consensus threshold, now decoupled from backtest
+    "tp_fee_coverage": float,  # TP adds this × round-trip fee (1.2 = +120% of fees)
     "grok_scanner_fail_mode": str,  # S5: "open" | "closed"
     "scan_max_symbols": int,
     "min_quote_volume": float,

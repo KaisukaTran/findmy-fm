@@ -566,6 +566,7 @@ document.addEventListener("submit", async (e) => {
     await api("POST", "/api/kss-settings", {
       scan_distance_pct: num(f.get("scan_distance_pct")),
       scan_tp_pct: num(f.get("scan_tp_pct")),
+      tp_fee_coverage: num(f.get("tp_fee_coverage")),
       scan_max_waves: num(f.get("scan_max_waves")),
       scan_fund: num(f.get("scan_fund")),
       sl_pct: num(f.get("sl_pct")),

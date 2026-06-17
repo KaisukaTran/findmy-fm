@@ -6,6 +6,8 @@
     <input name="scan_distance_pct" type="number" step="0.1" min="0.1" value="{{ '%.2f'|format(k.scan_distance_pct) }}" required></label>
   <label title="Chốt lời: bán toàn bộ khi giá ≥ avg×(1+TP%).">TP % <span class="varname">scan_tp_pct</span>
     <input name="scan_tp_pct" type="number" step="0.1" min="0.1" value="{{ '%.2f'|format(k.scan_tp_pct) }}" required></label>
+  <label title="Mỗi mục tiêu chốt lời cộng thêm bao nhiêu LẦN phí khứ hồi (mua+bán = 2×phí sàn cao nhất) lên trên TP%, để TP luôn vượt phí có biên an toàn. 1.2 = +120% phí; 1.5 = +150% phí; 1.0 = vừa đủ phí. Áp dụng cả paper lẫn live.">Phủ phí khi TP (×phí) <span class="varname">tp_fee_coverage</span>
+    <input name="tp_fee_coverage" type="number" step="0.1" min="0" max="10" value="{{ '%.2f'|format(k.tp_fee_coverage) }}" required></label>
   <label title="Số sóng DCA tối đa mỗi session.">Số sóng (max) <span class="varname">scan_max_waves</span>
     <input name="scan_max_waves" type="number" step="1" min="1" value="{{ k.scan_max_waves }}" required></label>
   <label title="(cũ) Vốn cô lập đặt cứng mỗi session. Không còn dùng cho scanner: mỗi session giờ TỰ tính vốn = tổng chi phí cả thang DCA (sóng đầu × số sóng × giá). Vẫn dùng cho session tạo thủ công.">Vốn/session $ (cũ) <span class="varname">scan_fund</span>

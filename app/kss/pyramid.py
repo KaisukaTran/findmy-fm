@@ -180,12 +180,20 @@ class PyramidSession:
             return settings.kss_first_wave_usd / self.entry_price
         return settings.pip_multiplier * self._min_qty
 
+    def _tp_target_pct(self) -> float:
+        """Effective take-profit %: the session's ``tp_pct`` PLUS a fee buffer so every TP
+        clears its round-trip fee with a margin (``costengine.tp_fee_buffer_pct`` — default
+        +120% of the total buy+sell fee). Applies to BOTH paper and live."""
+        from app import costengine
+
+        return self.tp_pct + costengine.tp_fee_buffer_pct()
+
     @property
     def estimated_tp_price(self) -> float:
-        """Calculate estimated TP price based on current avg price."""
-        if self.avg_price <= 0:
-            return self.entry_price * (1 + self.tp_pct / 100)
-        return self.avg_price * (1 + self.tp_pct / 100)
+        """Estimated TP price = avg (or entry) × (1 + effective TP %), where the effective TP
+        adds the fee buffer on top of tp_pct (see _tp_target_pct)."""
+        base = self.avg_price if self.avg_price > 0 else self.entry_price
+        return base * (1 + self._tp_target_pct() / 100)
 
     @property
     def used_fund(self) -> float:
@@ -377,14 +385,14 @@ class PyramidSession:
         if current_market_price <= 0:
             return None
 
-        tp_price = self.avg_price * (1 + self.tp_pct / 100)
+        tp_price = self.avg_price * (1 + self._tp_target_pct() / 100)
 
         if current_market_price >= tp_price:
             self.status = PyramidSessionStatus.TP_TRIGGERED
 
             logger.info(
                 f"Pyramid {self.id} TP triggered: market {current_market_price} >= "
-                f"TP {tp_price:.4f} (avg={self.avg_price:.4f}, tp%={self.tp_pct})"
+                f"TP {tp_price:.4f} (avg={self.avg_price:.4f}, tp%={self.tp_pct}+fee buffer)"
             )
 
             # Generate market sell order (bypass wave limit, taker)

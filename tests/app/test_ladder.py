@@ -36,9 +36,11 @@ def test_ladder_status_enriches(db, monkeypatch):
     db.add(KssWave(session_id=row.id, wave_num=1, quantity=1.0, target_price=98.0, status="sent"))
     db.commit()
     st = service.ladder_status(db, row.id)
+    from app import costengine
+    eff_tp = 100.0 * (1 + (3.0 + costengine.tp_fee_buffer_pct()) / 100)  # tp% + fee buffer
     assert st["sl_price"] == pytest.approx(92.0)        # 100 × (1 − 8%)
     assert st["next_wave_price"] == 98.0
-    assert st["estimated_tp_price"] == pytest.approx(103.0)  # 100 × (1 + 3%)
+    assert st["estimated_tp_price"] == pytest.approx(eff_tp)
 
 
 def test_ladder_partial_by_symbol_without_session(monkeypatch):

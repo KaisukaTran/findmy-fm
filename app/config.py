@@ -115,6 +115,13 @@ class Settings(BaseSettings):
         "2x this — a session's tp_pct is raised to it so TP never fires on a gain that "
         "wouldn't even clear a round-trip's worth of the highest fee.",
     )
+    tp_fee_coverage: float = Field(
+        default=1.2,
+        ge=0,
+        description="Every take-profit target adds this multiple of the round-trip fee "
+        "(buy + sell = 2x binance_max_fee_pct) on top of the session's tp_pct, so a TP always "
+        "clears its fees with a margin. 1.2 = +120% of the total fee. Applies to paper AND live.",
+    )
 
     # --- Market data ---
     price_cache_ttl: int = Field(default=60, description="Seconds to cache live prices.")

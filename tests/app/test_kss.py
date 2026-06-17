@@ -89,9 +89,30 @@ class TestPyramid:
         assert session.status == PyramidSessionStatus.STOPPED
 
     def test_estimated_tp_price(self, session):
-        assert abs(session.estimated_tp_price - 50000.0 * 1.03) < 0.01
+        from app import costengine
+        eff = 1 + (3.0 + costengine.tp_fee_buffer_pct()) / 100  # tp_pct + fee buffer
+        assert abs(session.estimated_tp_price - 50000.0 * eff) < 0.01
         session.avg_price = 48000.0
-        assert abs(session.estimated_tp_price - 48000.0 * 1.03) < 0.01
+        assert abs(session.estimated_tp_price - 48000.0 * eff) < 0.01
+
+
+def test_tp_always_adds_120pct_of_round_trip_fee(mock_market):
+    """User rule: every TP target adds 120% of the round-trip fee (buy + sell) on top of
+    tp_pct, so a take-profit always clears its fees with a margin (paper AND live)."""
+    from app import costengine
+
+    s = PyramidSession(symbol="BTC", entry_price=100.0, distance_pct=2.0, max_waves=5,
+                       isolated_fund=1000.0, tp_pct=4.0, timeout_x_min=30.0, gap_y_min=5.0)
+    s.avg_price = 100.0
+    s.total_filled_qty = 1.0
+
+    buffer = costengine.tp_fee_buffer_pct()
+    assert buffer == pytest.approx(1.2 * 2 * settings.binance_max_fee_pct)  # 120% of buy+sell fee
+    target = 100.0 * (1 + (4.0 + buffer) / 100)                            # avg × (1 + tp% + buffer)
+    assert s.estimated_tp_price == pytest.approx(target)
+    assert s.check_tp(target - 0.001) is None                             # below → no TP
+    res = s.check_tp(target)                                              # at/above → TP
+    assert res is not None and res["action"] == "tp_triggered"
 
 
 def test_waveinfo_to_dict():

@@ -17,6 +17,19 @@ def round_trip_cost_pct() -> float:
     return 2 * settings.taker_fee_pct + 2 * settings.slippage_pct
 
 
+def round_trip_fee_pct() -> float:
+    """Total exchange FEE for a round trip (buy + sell), in percent of notional — fees only,
+    no slippage. = 2x the highest Binance spot fee."""
+    return 2 * settings.binance_max_fee_pct
+
+
+def tp_fee_buffer_pct() -> float:
+    """Extra take-profit % added on top of a session's tp_pct so every TP clears its fees with
+    a margin: ``tp_fee_coverage`` (default 1.2 = 120%) x the round-trip fee. Applies to BOTH
+    paper and live (the strategy's TP target/trigger add this)."""
+    return settings.tp_fee_coverage * round_trip_fee_pct()
+
+
 def net_edge_pct(tp_pct: float) -> float:
     """Take-profit target minus round-trip cost — the realistic edge."""
     return tp_pct - round_trip_cost_pct()

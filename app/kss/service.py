@@ -112,13 +112,47 @@ def _sl_floor_price(py: PyramidSession) -> float:
     return py.avg_price * (1 - py.sl_pct / 100.0)
 
 
+def _anchor_dca_price(
+    db: Session, session_id: int, symbol: str, distance_pct: float,
+    fallback_price: float, entry_price: float,
+) -> float:
+    """Re-anchor a DCA BUY rung to the LIVE market so it is NEVER queued above the current
+    price. An entry-anchored geometric rung (``entry×(1−d)ⁿ``) drifts ABOVE the market after a
+    fast drop; a BUY limit above market fills immediately at an OVERPAY instead of averaging
+    down (seen live: STG wave 5 filled 0.2257 while the market was 0.2123). Returns
+    ``min(current_market, previous_wave_price) × (1 − distance%)`` — the wave-step % below the
+    lower of the current price and the previous wave (so it is below BOTH). When no live price
+    is available (offline) ``min`` falls back to the previous wave → ``prev × (1−d)`` ≈ the
+    geometric rung, preserving the legacy ladder. Shared by manual DCA+ and the auto-chain."""
+    from app.market import get_current_prices
+
+    mkt = get_current_prices([symbol]).get(symbol) or 0.0
+    last = (
+        db.query(KssWave)
+        .filter(KssWave.session_id == session_id)
+        .order_by(KssWave.wave_num.desc())
+        .first()
+    )
+    prev = last.target_price if last is not None else entry_price
+    anchors = [p for p in (mkt, prev) if p > 0]
+    if not anchors:
+        return fallback_price
+    return round(min(anchors) * (1 - distance_pct / 100.0), 8)
+
+
 def _queue_wave_if_above_sl(
     db: Session, py: PyramidSession, session_id: int, symbol: str, order_dict: dict
 ) -> bool:
     """Queue the next DCA wave (+ its KssWave row) and return True, or skip+audit and return
     False when the rung sits at/below the SL — a dead order the SL would pre-empt. Shared by the
-    auto-chain (handle_fill_event) and the rescue adoption so both honour the SL floor."""
+    auto-chain (handle_fill_event) and the rescue adoption so both honour the SL floor.
+
+    The rung is first re-anchored to the live market (``_anchor_dca_price``) so the auto-chain
+    never queues a buy above the current price (which would fill at an overpay, not a dip)."""
     nwn = int(order_dict["source_ref"].split(":")[-1])
+    order_dict["price"] = _anchor_dca_price(
+        db, session_id, symbol, py.distance_pct, order_dict["price"], py.entry_price
+    )
     floor = _sl_floor_price(py)
     if floor > 0 and order_dict["price"] <= floor:
         audit.log(db, "kss", "wave_below_sl", entity=f"kss:{session_id}", symbol=symbol,
@@ -461,6 +495,11 @@ def queue_next_wave(db: Session, session_id: int) -> dict:
     if _wave_row(db, session_id, next_wave_num) is not None:
         raise ValueError(f"Wave {next_wave_num} already queued")
     next_wave = py.generate_wave(next_wave_num)
+    # User rule: a DCA+ rung must sit BELOW the live market by the step %, AND below the
+    # previous wave — never above market (see _anchor_dca_price).
+    next_wave.target_price = _anchor_dca_price(
+        db, session_id, row.symbol, py.distance_pct, next_wave.target_price, py.entry_price
+    )
     floor = _sl_floor_price(py)
     if floor > 0 and next_wave.target_price <= floor:
         raise ValueError(

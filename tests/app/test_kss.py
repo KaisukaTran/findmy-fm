@@ -9,6 +9,7 @@ that exercises app.kss.service + app.orders together.
 import pytest
 
 from app import models, orders
+from app.config import settings
 from app.kss import service
 from app.kss.pyramid import PyramidSession, PyramidSessionStatus, WaveInfo
 
@@ -203,6 +204,7 @@ def test_dca_next_funds_from_idle_cash_when_reservation_exhausted(db, mock_marke
     row.isolated_fund = row.total_cost  # exhaust the reservation → remaining_fund = 0
     db.commit()
     monkeypatch.setattr("app.risk.account_equity", lambda _db: 1_000_000.0)  # plenty of idle cash
+    monkeypatch.setattr("app.market.get_current_prices", lambda syms: {"BTC": 100000.0})
 
     out = service.queue_next_wave(db, row.id)
     assert out["wave_num"] == 2
@@ -225,8 +227,27 @@ def test_dca_next_blocked_when_no_idle_cash(db, mock_market, monkeypatch):
     row.isolated_fund = row.total_cost
     db.commit()
     monkeypatch.setattr("app.risk.account_equity", lambda _db: 1.0)  # backup reserve eats it → idle 0
+    monkeypatch.setattr("app.market.get_current_prices", lambda syms: {"BTC": 100000.0})
     with pytest.raises(ValueError, match="nhàn rỗi"):
         service.queue_next_wave(db, row.id)
+
+
+def test_dca_next_anchors_rung_below_market_not_above(db, mock_market, monkeypatch):
+    """A DCA+ rung is re-anchored BELOW the live market by the step %, never above it — an
+    entry-anchored geometric rung drifts above price after a fast drop and would overpay."""
+    monkeypatch.setattr(settings, "sl_pct", 0.0)  # isolate the anchoring from the SL floor
+    row = service.create_session(
+        db, symbol="BTC", entry_price=50000.0, distance_pct=2.0, max_waves=10,
+        isolated_fund=100000.0, tp_pct=3.0, timeout_x_min=30.0, gap_y_min=5.0,
+    )
+    res = service.start_session(db, row.id)
+    orders.approve_order(db, res["pending_order_id"])  # fill wave 0 → auto-queues wave 1
+    # Price has crashed far below the entry-anchored ladder (geometric wave 2 ≈ 48020).
+    monkeypatch.setattr("app.market.get_current_prices", lambda syms: {"BTC": 40000.0})
+
+    out = service.queue_next_wave(db, row.id)
+    assert out["price"] < 40000.0                      # below the live market
+    assert abs(out["price"] - 40000.0 * 0.98) < 1.0    # exactly the step % below market
 
 
 def test_consolidate_sessions_merges_into_one_owner(db, mock_market):

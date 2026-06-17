@@ -272,6 +272,49 @@ def test_dca_next_anchors_rung_below_market_not_above(db, mock_market, monkeypat
     assert abs(out["price"] - 40000.0 * 0.98) < 1.0    # exactly the step % below market
 
 
+def test_dca_next_custom_amount_deploys_chosen_usd(db, mock_market, monkeypatch):
+    """Manual DCA+ with amount_usd deploys exactly that USD slice (qty = amount/price) instead of
+    the fixed geometric rung — the user's lever to put remaining idle cash to work on demand."""
+    monkeypatch.setattr(settings, "sl_pct", 0.0)  # isolate from the SL floor
+    row = service.create_session(
+        db, symbol="BTC", entry_price=50000.0, distance_pct=2.0, max_waves=6,
+        isolated_fund=100000.0, tp_pct=3.0, timeout_x_min=30.0, gap_y_min=5.0,
+    )
+    res = service.start_session(db, row.id)
+    orders.approve_order(db, res["pending_order_id"])  # fill wave 0
+    monkeypatch.setattr(settings, "account_equity", 1_000_000.0)  # plenty of free cash
+    monkeypatch.setattr("app.market.get_current_prices", lambda syms: {"BTC": 50000.0})
+
+    out = service.queue_next_wave(db, row.id, amount_usd=500.0)
+    assert abs(out["quantity"] * out["price"] - 500.0) < 1.0  # ~$500 deployed, not the pip rung
+    assert abs(out["cost"] - 500.0) < 1.0
+
+
+def test_dca_next_custom_amount_extends_full_ladder(db, mock_market, monkeypatch):
+    """A custom-amount manual DCA+ extends the ladder by one when it's full — a deliberate user
+    deploy must not be blocked by max_waves (a plain DCA+ still refuses, see other test)."""
+    monkeypatch.setattr(settings, "sl_pct", 0.0)
+    row = service.create_session(
+        db, symbol="BTC", entry_price=50000.0, distance_pct=2.0, max_waves=2,
+        isolated_fund=100000.0, tp_pct=3.0, timeout_x_min=30.0, gap_y_min=5.0,
+    )
+    res = service.start_session(db, row.id)
+    orders.approve_order(db, res["pending_order_id"])  # fill wave 0 → auto-queues wave 1
+    w1 = next(p for p in orders.list_pending(db) if p.source_ref == f"pyramid:{row.id}:wave:1")
+    orders.approve_order(db, w1.id)  # fill wave 1 → ladder full (max_waves=2)
+    monkeypatch.setattr(settings, "account_equity", 1_000_000.0)
+    monkeypatch.setattr("app.market.get_current_prices", lambda syms: {"BTC": 50000.0})
+
+    # Plain DCA+ still refuses on a full ladder; the custom-amount deploy extends it by one.
+    with pytest.raises(ValueError, match="Ladder exhausted"):
+        service.queue_next_wave(db, row.id)
+    out = service.queue_next_wave(db, row.id, amount_usd=300.0)
+    assert out["wave_num"] == 2
+    db.refresh(row)
+    assert row.max_waves == 3  # extended by one for the manual deploy
+    assert db.query(models.AuditLog).filter_by(action="dca_extend_ladder").count() == 1
+
+
 def test_consolidate_sessions_merges_into_one_owner(db, mock_market):
     """Two active sessions on one coin → keeper owns the whole Position; the other is removed."""
     from app.orchestrator import models as om

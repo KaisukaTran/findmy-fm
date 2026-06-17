@@ -15,6 +15,10 @@
       {{ summary.reserved_pct_of_equity | round(0) | int }}% vốn{% if summary.over_equity_pct > 0 %} · vượt +{{ summary.over_equity_pct | round(0) | int }}%{% endif %}
     </div>
   </div>
+  <div class="card" title="Tiền mặt USDT tự do có thể bơm NGAY bằng nút DCA+ thủ công (gồm cả phần dự phòng auto giữ lại). AUTO không tiêu vào đây; chỉ bạn chủ động bơm khi bấm DCA+.">
+    <div class="label">Nhàn rỗi (DCA+)</div><div class="value">${{ summary.free_cash | money }}</div>
+    <div class="sub muted">bơm thủ công</div>
+  </div>
 </div>
 {% if sessions %}
 <table class="tbl">

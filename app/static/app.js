@@ -247,9 +247,19 @@ const actions = {
     refreshTrading(); refreshStatus();
   },
   async kssDcaNext(id) {
-    if (!confirm("Đặt lệnh DCA sóng tiếp theo cho session " + id + "?")) return;
-    const r = await api("POST", `/api/kss/sessions/${id}/dca-next`);
-    toast(`Đã đưa sóng ${r.wave_num} vào hàng chờ: LIMIT BUY ${r.quantity} @ ${r.price}.`, "success");
+    const raw = prompt(
+      "DCA+ thủ công — session " + id + ".\n" +
+      "Nhập số USD muốn bơm từ tiền nhàn rỗi (gồm cả phần dự phòng).\n" +
+      "Để TRỐNG = rung mặc định theo ladder.", "");
+    if (raw === null) return;  // user cancelled
+    const txt = raw.trim();
+    const amount = txt === "" ? null : Number(txt);
+    if (amount !== null && (!isFinite(amount) || amount <= 0)) {
+      toast("Số USD không hợp lệ.", "error"); return;
+    }
+    const r = await api("POST", `/api/kss/sessions/${id}/dca-next`,
+      amount !== null ? { amount_usd: amount } : undefined);
+    toast(`Đã đưa sóng ${r.wave_num} vào hàng chờ: LIMIT BUY ${r.quantity} @ ${r.price} (~$${r.cost}).`, "success");
     refreshTrading(); refreshStatus();
   },
   async scan() {

@@ -471,9 +471,9 @@ def _idle_deployable(db: Session) -> float:
     return max(0.0, settings.account_equity - invested + realized)
 
 
-def queue_next_wave(db: Session, session_id: int) -> dict:
+def queue_next_wave(db: Session, session_id: int, amount_usd: float | None = None) -> dict:
     """
-    Manually queue the next geometric DCA wave for an ACTIVE session.
+    Manually queue the next DCA wave for an ACTIVE session (the DCA+ button).
 
     Bootstraps DCA when the wave chain has gone dormant — e.g. after extending `max_waves`
     on a session whose ladder was already exhausted (all waves filled, nothing pending). The
@@ -484,17 +484,35 @@ def queue_next_wave(db: Session, session_id: int) -> dict:
     cap, not real cash. When the next rung costs more than this session has left reserved, fund
     it from idle account cash (``_idle_deployable``) and grow ``isolated_fund`` to match — so a
     deliberate DCA+ click deploys free capital now instead of being blocked by the reservation.
+    ``_idle_deployable`` is the REAL free balance and is NOT reduced by the ``equity_backup_pct``
+    reserve: a manual DCA+ is the user deliberately choosing to spend remaining cash (incl. the
+    auto-backup) — exactly the lever the backup exists for. The AUTO path (handle_fill_event /
+    scanner) is untouched and still honours the backup + lend-idle budget.
+
+    ``amount_usd`` (optional, manual lever): deploy a user-chosen USD slice this wave
+    (qty = amount/anchored price) instead of the fixed geometric rung — so the user can put a
+    meaningful amount of idle cash to work on demand. A custom-amount click also extends the
+    ladder by one when it is full (a deliberate deploy must not be blocked by ``max_waves``).
     """
     row = _get_row(db, session_id)
     if row.status != SESSION_ACTIVE:
         raise ValueError(f"Session {session_id} not active (status={row.status})")
+    if amount_usd is not None and amount_usd <= 0:
+        raise ValueError("amount_usd phải > 0")
     py = _to_pyramid(row)
     next_wave_num = py.current_wave + 1
     if next_wave_num >= py.max_waves:
-        raise ValueError(
-            f"Ladder exhausted (current_wave={py.current_wave}, max_waves={py.max_waves}); "
-            "raise max_waves first"
-        )
+        # A plain DCA+ refuses on a full ladder (raise max_waves first); a deliberate custom-USD
+        # deploy extends the ladder by one so the user is never blocked from putting cash to work.
+        if amount_usd is None:
+            raise ValueError(
+                f"Ladder exhausted (current_wave={py.current_wave}, max_waves={py.max_waves}); "
+                "raise max_waves first"
+            )
+        py.max_waves = next_wave_num + 1
+        row.max_waves = py.max_waves
+        audit.log(db, "kss", "dca_extend_ladder", entity=f"kss:{session_id}",
+                  symbol=row.symbol, max_waves=py.max_waves)
     if _wave_row(db, session_id, next_wave_num) is not None:
         raise ValueError(f"Wave {next_wave_num} already queued")
     next_wave = py.generate_wave(next_wave_num)
@@ -503,6 +521,9 @@ def queue_next_wave(db: Session, session_id: int) -> dict:
     next_wave.target_price = _anchor_dca_price(
         db, session_id, row.symbol, py.distance_pct, next_wave.target_price, py.entry_price
     )
+    if amount_usd is not None and next_wave.target_price > 0:
+        # Size the wave to deploy the chosen USD at the anchored price (manual override).
+        next_wave.quantity = round(amount_usd / next_wave.target_price, 8)
     floor = _sl_floor_price(py)
     if floor > 0 and next_wave.target_price <= floor:
         raise ValueError(
@@ -536,13 +557,15 @@ def queue_next_wave(db: Session, session_id: int) -> dict:
         )
     )
     audit.log(db, "kss", "dca_next", entity=f"kss:{session_id}", symbol=row.symbol,
-              wave=next_wave_num, price=next_wave.target_price, qty=next_wave.quantity)
+              wave=next_wave_num, price=next_wave.target_price, qty=next_wave.quantity,
+              amount_usd=round(amount_usd, 2) if amount_usd is not None else None)
     db.commit()
     return {
         "message": f"Queued wave {next_wave_num} @ {next_wave.target_price}",
         "wave_num": next_wave_num,
         "price": next_wave.target_price,
         "quantity": next_wave.quantity,
+        "cost": round(next_wave.quantity * next_wave.target_price, 2),
         "pending_order_id": pending.id,
         "risk_note": risk_note,
     }
@@ -902,6 +925,8 @@ def summary(db: Session) -> dict:
         "active_used_fund": deployed,           # real cash deployed in active sessions
         "total_used_fund": sum(r.total_cost for r in rows),
         "equity": equity,
+        # real free USDT a manual DCA+ can deploy right now (incl. the auto-backup reserve).
+        "free_cash": _idle_deployable(db),
         # reservation as a share of equity, and how far it exceeds equity (over-commit).
         "reserved_pct_of_equity": (reserved / equity * 100.0) if equity > 0 else 0.0,
         "over_equity_pct": (max(0.0, reserved - equity) / equity * 100.0) if equity > 0 else 0.0,

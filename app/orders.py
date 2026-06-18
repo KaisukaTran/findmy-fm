@@ -507,10 +507,21 @@ def reconcile_live_orders(db: Session) -> list[int]:
 
 
 def _paper_execute(db: Session, order: PendingOrder) -> Fill:
-    """Simulate a fill with slippage + taker fee and update the position."""
-    ref_price = order.price if order.price > 0 else (
-        get_current_prices([order.symbol]).get(order.symbol) or 0.0
-    )
+    """Simulate a fill with slippage + taker fee and update the position.
+
+    A LIMIT order fills at the **marketable** price a real exchange would give — never worse
+    than the live market: a BUY at ``min(limit, market)`` (so a DCA rung the market has gapped
+    BELOW is bought at the current market, not at the now-too-high limit = no overpay), a SELL
+    at ``max(limit, market)``. A MARKET order fills at the live price. Offline (no market
+    price) falls back to the limit, preserving legacy/offline-test behaviour."""
+    mkt = get_current_prices([order.symbol]).get(order.symbol) or 0.0
+    if order.price > 0:  # LIMIT — marketable fill, never worse than market
+        if mkt > 0:
+            ref_price = min(order.price, mkt) if order.side == "BUY" else max(order.price, mkt)
+        else:
+            ref_price = order.price  # offline fallback = the limit
+    else:  # MARKET
+        ref_price = mkt
     if ref_price <= 0:
         raise ValueError(f"No price available to execute {order.symbol}")
 

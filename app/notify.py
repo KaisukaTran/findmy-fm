@@ -63,7 +63,7 @@ def _base_url() -> str:
 # ---------------------------------------------------------------------------
 
 _INSTANCES = ("paper", "live")
-_LABELS = {"live": "🔴 LIVE", "paper": "🧪 PAPER"}
+_LABELS = {"live": "[LIVE]", "paper": "[PAPER]"}
 
 
 def instance_name() -> str:
@@ -166,7 +166,12 @@ def event(kind: str, text: str, *, throttle_key: str | None = None, cooldown: fl
 
     kind="trade" → gated by telegram_notify_trades; kind="risk" → telegram_notify_risk.
     Risk events are never throttled (an SL/breaker alert must always go out).
+
+    All proactive pushes are first gated by the master telegram_push_enabled switch — when
+    it is off (default) the bot stays silent and only replies to commands you send.
     """
+    if not settings.telegram_push_enabled:
+        return False
     if kind == "trade" and not settings.telegram_notify_trades:
         return False
     if kind == "risk" and not settings.telegram_notify_risk:
@@ -217,7 +222,10 @@ def build_digest(db) -> str:
 
 def maybe_send_digest(db) -> bool:
     """Push a digest if `telegram_digest_hours` has elapsed since the last one. No-op when
-    disabled (0) or Telegram off. Tracks the last send in-process."""
+    proactive push is off (master switch), the interval is 0, or Telegram off. Tracks the
+    last send in-process."""
+    if not settings.telegram_push_enabled:
+        return False
     hours = settings.telegram_digest_hours
     if hours <= 0 or not any_channel_enabled():
         return False

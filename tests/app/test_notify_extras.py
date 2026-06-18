@@ -16,7 +16,11 @@ from app.config import settings
 
 @pytest.fixture(autouse=True)
 def _no_network(monkeypatch):
-    """Capture every outbound push instead of hitting Telegram; reset throttle state."""
+    """Capture every outbound push instead of hitting Telegram; reset throttle state.
+
+    These tests assert proactive-push behaviour, so the master push switch is forced ON
+    (it defaults OFF — see test_notify_routing.py for the silent-by-default rule)."""
+    monkeypatch.setattr(settings, "telegram_push_enabled", True)
     sent: list[str] = []
     monkeypatch.setattr(notify, "send", lambda text: sent.append(text) or True)
     notify._last_event.clear()

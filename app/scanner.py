@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -41,6 +42,16 @@ logger = logging.getLogger(__name__)
 _MIN_CANDLES = 30
 
 _PARALLEL_WORKERS = 4  # S2: parallel OHLCV fetch workers
+
+# Only one scan may run at a time. A full scan holds a long write transaction (hundreds of
+# candidates + votes + audit rows); a second concurrent scan — e.g. a manual /api/scan landing
+# during the scheduler's cycle — collided on the SQLite writer and raised "database is locked".
+# A non-blocking mutex makes the second caller fail fast with ScanInProgress instead.
+_scan_lock = threading.Lock()
+
+
+class ScanInProgress(RuntimeError):
+    """Raised by run_scan when another scan already holds the scan lock."""
 
 # The Grok review batch size is the runtime setting ``grok_scanner_batch_max`` (default 60):
 # candidates are sorted by expectancy descending and the top N enter the single LLM call. Set it
@@ -216,7 +227,19 @@ def _effective_params(db: Session, symbol: str) -> tuple[float, float, int]:
 
 
 def run_scan(db: Session, mode: str | None = None) -> dict:
-    """Run one full scan; returns {scan_id, mode, candidates:[...]}."""
+    """Run one full scan; returns {scan_id, mode, candidates:[...]}.
+
+    Serialised by `_scan_lock`: raises ScanInProgress if another scan is already running
+    (prevents two scans colliding on the SQLite writer — 'database is locked')."""
+    if not _scan_lock.acquire(blocking=False):
+        raise ScanInProgress("a scan is already in progress")
+    try:
+        return _run_scan_locked(db, mode)
+    finally:
+        _scan_lock.release()
+
+
+def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
     _scan_start_mono = time.monotonic()  # S2: wall-clock for scan_duration_ms
     provider = data_provider()
     mode = mode or ("auto" if settings.auto_trade else "semi")
@@ -380,6 +403,7 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
                     "consensus": consensus, "win_rate": wr["win_rate"],
                     "loss_rate": wr["loss_rate"], "net_edge": net_edge,
                     "expectancy": wr["expectancy"], "ta": ta,
+                    "win_rate_lb": wr["win_rate_lb"], "trials": wr["trials"],
                 })
         candidates.append(cand)
 
@@ -550,7 +574,19 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
             } for c in batch]
             reviews = grok.review_candidates(db, items)
 
-    for c in to_open:
+    # Open best-first: within the concurrent/per-scan caps, prefer the most trustworthy edge
+    # (Wilson lower-bound win-rate, then trial count, then expectancy) rather than universe
+    # (volume) order — when a bull market floods the gate with look-alike candidates this is
+    # what actually decides which ones get capital.
+    ranked = sorted(
+        to_open,
+        key=lambda c: (c.get("win_rate_lb", 0.0), c.get("trials", 0), c.get("expectancy", 0.0)),
+        reverse=True,
+    )
+    # Cap NEW opens per scan (0 = no limit) so exposure ramps gradually.
+    per_scan_cap = settings.max_new_sessions_per_scan
+    opened = 0
+    for c in ranked:
         cand, symbol = c["cand"], c["symbol"]
         verdict = reviews.get(symbol)
         if verdict and not verdict["endorse"]:
@@ -583,6 +619,12 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
             cand.reason = (cand.reason or "") + " | capped: per-symbol"
             audit.log(db, "scanner", "skipped_concentration", entity=symbol)
             continue
+        # Per-scan ramp cap: once this scan has opened its quota, defer the rest to the next
+        # cycle (they remain ranked best-first, so the strongest open first).
+        if per_scan_cap and opened >= per_scan_cap:
+            cand.reason = (cand.reason or "") + f" | hoãn: đạt cap {per_scan_cap} phiên/scan"
+            audit.log(db, "scanner", "skipped_per_scan_cap", entity=symbol, cap=per_scan_cap)
+            continue
         ok, why = _can_open(db, c["need"])
         if ok:
             cand.session_id = _open_session(
@@ -590,6 +632,7 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
                 distance_pct=c["distance_pct"], tp_pct=c["tp_pct"], max_waves=c["max_waves"],
                 isolated_fund=c["need"],
             )
+            opened += 1
         else:
             cand.reason = (cand.reason or "") + f" | capped: {why}"
             audit.log(db, "scanner", "skipped_cap", entity=symbol, reason=why)

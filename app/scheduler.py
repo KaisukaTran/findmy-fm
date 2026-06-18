@@ -118,7 +118,14 @@ def run_cycle(db: Session) -> dict:
     closed = service.sweep_deadlines(db)
     tp = service.manage_open_sessions(db)
     service.manage_orphan_positions(db)  # TP/SL leftover positions no session/OPUS covers
-    scan = scanner.run_scan(db)
+    scan: dict
+    try:
+        scan = scanner.run_scan(db)
+    except scanner.ScanInProgress:
+        # A manual /api/scan is mid-flight; skip this cycle's scan rather than collide on the
+        # SQLite writer. The rest of the cycle (TP, breaker, auto-fill) still runs.
+        logger.info("run_cycle: scan already in progress, skipping scan this cycle")
+        scan = {"scan_id": None, "candidates": []}
     breaker = circuit.evaluate(db)
     frozen = breaker["frozen"]
 

@@ -185,6 +185,7 @@ class Settings(BaseSettings):
     min_net_edge: float = Field(default=0.5, description="Min TP%% above round-trip cost to trade (micro-trade guard).")
     walk_forward_split: float = Field(default=0.5, description="Fraction of history used in-sample; metric is out-of-sample.")
     max_concurrent_sessions: int = Field(default=10, description="Cap on simultaneously active sessions.")
+    max_new_sessions_per_scan: int = Field(default=5, ge=0, description="Cap on NEW KSS sessions opened in a single scan (0 = no limit). Ramps exposure gradually instead of opening the whole concurrent budget at once; within the cap the highest win-rate-lower-bound / most-tried candidates open first.")
     max_deployed_pct: float = Field(default=50.0, description="(legacy) Cap total isolated funds as %% of equity. The KSS open-gate now uses equity_backup_pct instead.")
     equity_backup_pct: float = Field(default=25.0, description="Reserve %% of LIVE equity the bot never deploys (backup). KSS open-gate budget = (100 − this)%% × equity.")
     scan_min_notional: float = Field(default=10.0, description="Skip dust micro-trades below this USD notional/wave.")

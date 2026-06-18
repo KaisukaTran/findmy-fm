@@ -29,13 +29,13 @@ from app.config import settings
 def test_instance_name_paper_by_default(monkeypatch):
     monkeypatch.setattr(settings, "live_trading", False)
     assert notify.instance_name() == "paper"
-    assert notify._label("paper") == "🧪 PAPER"
+    assert notify._label("paper") == "[PAPER]"
 
 
 def test_instance_name_live_when_live_trading(monkeypatch):
     monkeypatch.setattr(settings, "live_trading", True)
     assert notify.instance_name() == "live"
-    assert notify._label("live") == "🔴 LIVE"
+    assert notify._label("live") == "[LIVE]"
 
 
 # ---------------------------------------------------------------------------
@@ -55,7 +55,7 @@ def test_send_prefixes_local_label(monkeypatch):
     monkeypatch.setattr(settings, "live_trading", False)
     sent = _capture_telegram(monkeypatch)
     notify.send("hello")
-    assert sent == ["🧪 PAPER hello"]
+    assert sent == ["[PAPER] hello"]
 
 
 def test_send_instance_override_labels_target(monkeypatch):
@@ -63,7 +63,41 @@ def test_send_instance_override_labels_target(monkeypatch):
     monkeypatch.setattr(settings, "live_trading", False)  # we are paper…
     sent = _capture_telegram(monkeypatch)
     notify.send("vị thế live", instance="live")  # …but relaying a live reply
-    assert sent == ["🔴 LIVE vị thế live"]
+    assert sent == ["[LIVE] vị thế live"]
+
+
+# ---------------------------------------------------------------------------
+# Silent-by-default rule: telegram_push_enabled gates PROACTIVE pushes only
+# ---------------------------------------------------------------------------
+
+
+def test_push_disabled_by_default(monkeypatch):
+    """event() must stay silent when the master push switch is off — even with the
+    per-category trade/risk switches on. This is the 'reply only when asked' rule."""
+    monkeypatch.setattr(settings, "telegram_push_enabled", False)
+    monkeypatch.setattr(settings, "telegram_notify_trades", True)
+    monkeypatch.setattr(settings, "telegram_notify_risk", True)
+    sent = _capture_telegram(monkeypatch)
+    assert notify.event("trade", "BUY 1 BTC") is False
+    assert notify.event("risk", "SL hit") is False
+    assert sent == []
+
+
+def test_digest_blocked_when_push_disabled(monkeypatch):
+    monkeypatch.setattr(settings, "telegram_push_enabled", False)
+    monkeypatch.setattr(notify, "enabled", lambda: True)
+    monkeypatch.setattr(settings, "telegram_digest_hours", 6)
+    notify._last_event.clear()
+    assert notify.maybe_send_digest(db=None) is False
+
+
+def test_command_reply_still_sends_when_push_disabled(monkeypatch):
+    """send() (the command-reply path) is NEVER gated by the push switch — asking still works."""
+    monkeypatch.setattr(settings, "telegram_push_enabled", False)
+    monkeypatch.setattr(settings, "live_trading", False)
+    sent = _capture_telegram(monkeypatch)
+    assert notify.send("reply to /summary") is True
+    assert sent == ["[PAPER] reply to /summary"]
 
 
 # ---------------------------------------------------------------------------

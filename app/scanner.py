@@ -775,9 +775,14 @@ def _open_session(
                                   symbol=symbol, session=row.id)
                         _vetoed = True
             if not _vetoed:
-                orders.approve_order(db, oid, reviewer="auto-trader")
-                audit.log(db, "auto-trader", "auto_approve", entity=f"order:{oid}",
-                          symbol=symbol, session=row.id)
+                try:
+                    orders.approve_order(db, oid, reviewer="auto-trader")
+                    audit.log(db, "auto-trader", "auto_approve", entity=f"order:{oid}",
+                              symbol=symbol, session=row.id)
+                except orders.InsufficientCashError:
+                    # No cash to fund even wave 0 — leave it pending; it fills when cash frees.
+                    audit.log(db, "scanner", "open_underfunded", entity=f"order:{oid}",
+                              symbol=symbol, session=row.id)
         else:
             audit.log(db, "scanner", "auto_skip_frozen",
                       entity=f"order:{started['pending_order_id']}", symbol=symbol, session=row.id)

@@ -106,6 +106,15 @@ class Settings(BaseSettings):
         "processes = only one scheduler (the cross-process lock behind the concurrency-cap fix).",
     )
 
+    # --- Execution capital guard ---
+    cash_floor_usd: float = Field(
+        default=0.0, ge=0,
+        description="HARD floor: account cash may never drop below this. Every BUY is "
+        "partial-filled down to the cash that's actually available (or rejected if even a "
+        "min-notional slice won't fit), so cash can never go negative. 0 = cash ≥ 0 always. "
+        "SELL exits are never gated. Applies to paper AND live.",
+    )
+
     # --- Paper execution simulation ---
     taker_fee_pct: float = Field(default=0.1, description="Taker fee % applied per fill.")
     slippage_pct: float = Field(default=0.05, description="Simulated slippage % on market fills.")

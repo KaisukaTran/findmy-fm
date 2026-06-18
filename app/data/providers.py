@@ -89,7 +89,10 @@ class CcxtProvider:
     def __init__(self, exchange_id: str, quote: str | None = None):
         self.exchange_id = exchange_id
         self.quote = quote or _QUOTES.get(exchange_id, "USDT")
-        self._ex = getattr(ccxt, exchange_id)()
+        # enableRateLimit makes ccxt pace requests to the exchange's per-IP limit (≈20 req/s for
+        # Binance). It defaults to True in current ccxt, but set it explicitly so an upstream
+        # default change can never silently remove our only client-side throttle → IP ban risk.
+        self._ex = getattr(ccxt, exchange_id)({"enableRateLimit": True})
 
     def pair(self, symbol: str) -> str:
         """Map a base symbol (e.g. 'BTC') to this exchange's pair (e.g. 'BTC/USD')."""

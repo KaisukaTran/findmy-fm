@@ -259,6 +259,8 @@ class Settings(BaseSettings):
     )
     telegram_chat_id: str = Field(default="", description="Only this chat id may send commands and receive alerts.")
     telegram_poll_interval: int = Field(default=5, description="Seconds between Telegram getUpdates polls.")
+    telegram_poll_commands: bool = Field(default=True, description="Run the getUpdates command poller on THIS instance. When paper + live share one bot, only ONE may poll (Telegram delivers each update once); set false on the secondary (e.g. live) so it sends labelled alerts but never steals the command stream.")
+    telegram_sibling_url: str = Field(default="", description="Base URL of the sibling instance (e.g. http://127.0.0.1:8001) used to route targeted commands like '/pause live'. Empty = no cross-instance routing (targeted commands reply that it is unconfigured).")
     telegram_notify_trades: bool = Field(default=True, description="Push a Telegram alert on each fill (trade). Kill switch for trade alerts.")
     telegram_notify_risk: bool = Field(default=True, description="Push Telegram alerts on risk events (SL/trailing exits, breaker freeze, guardian veto).")
     telegram_digest_hours: int = Field(default=0, ge=0, description="Hours between periodic Telegram digest pushes (equity + today's P&L + open counts). 0 = off.")

@@ -207,7 +207,10 @@ def _latest_candidates(db: Session) -> list[dict]:
 @api_router.post("/api/scan", dependencies=[Depends(require_api_key)])
 def run_scan(db: Session = Depends(get_db)):
     """Run one multi-agent scan; creates sessions per the current auto-trade mode."""
-    return scanner.run_scan(db)
+    try:
+        return scanner.run_scan(db)
+    except scanner.ScanInProgress as exc:
+        raise HTTPException(status_code=409, detail="a scan is already in progress") from exc
 
 
 @api_router.get("/api/candidates")
@@ -395,6 +398,7 @@ class KssSettingsBody(BaseModel):
     grok_live_search: bool | None = None  # Grok scan gate uses xAI Live Search (web+X+news)
     grok_search_max_results: int | None = Field(None, ge=1, le=30)
     scan_max_symbols: int | None = Field(None, ge=1, le=500)
+    max_new_sessions_per_scan: int | None = Field(None, ge=0, le=100)  # cap NEW opens/scan (0=off)
     min_quote_volume: float | None = Field(None, ge=0)
     kss_first_wave_usd: float | None = Field(None, ge=0)
     # Live-readiness knobs (1.9) — LIVE only, inert on paper.

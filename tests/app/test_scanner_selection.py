@@ -93,3 +93,21 @@ def test_per_scan_cap_zero_means_no_limit(db, monkeypatch, _open_env):
     scanner._review_and_open(db, to_open, "auto")
     assert set(_open_env) == {"A", "B", "C"}
     assert _open_env[0] == "B"  # still best-first
+
+
+def test_grok_batch_reviews_same_best_first_order(db, monkeypatch, _open_env):
+    """Grok must review the SAME top candidates the open loop opens (win_lb→trials→E),
+    not an expectancy-only order that can diverge from what actually opens."""
+    monkeypatch.setattr(settings, "max_new_sessions_per_scan", 0)
+    monkeypatch.setattr(settings, "grok_scanner_batch_max", 10)
+    monkeypatch.setattr("app.orchestrator.grok.scanner_enabled", lambda: True)
+    captured: dict = {}
+
+    def _fake_review(db, items):
+        captured["order"] = [it["symbol"] for it in items]
+        return {}  # no verdicts → fail-open, opens proceed
+
+    monkeypatch.setattr("app.orchestrator.grok.review_candidates", _fake_review)
+    to_open = [_mk("LOW", 60.0, 20, 3.0), _mk("HIGH", 90.0, 52, 3.7), _mk("MID", 75.0, 30, 3.5)]
+    scanner._review_and_open(db, to_open, "auto")
+    assert captured["order"] == ["HIGH", "MID", "LOW"]

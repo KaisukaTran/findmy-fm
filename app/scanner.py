@@ -41,7 +41,9 @@ logger = logging.getLogger(__name__)
 
 _MIN_CANDLES = 30
 
-_PARALLEL_WORKERS = 4  # S2: parallel OHLCV fetch workers
+# Parallel OHLCV fetch workers: runtime-configurable via settings.scan_fetch_workers. Each
+# worker owns an independent ccxt client (its own rate limiter), so this directly scales the
+# burst rate against the exchange's per-IP weight limit — keep it modest.
 
 # Only one scan may run at a time. A full scan holds a long write transaction (hundreds of
 # candidates + votes + audit rows); a second concurrent scan — e.g. a manual /api/scan landing
@@ -83,7 +85,7 @@ def _prefetch_candles(
     Returns a dict ``symbol -> (candles, was_hit)`` for every symbol in the
     input list.  Cache-hit symbols are resolved immediately without spawning a
     thread; only cache-miss symbols are fetched in the thread pool (up to
-    ``_PARALLEL_WORKERS`` concurrent threads).
+    ``settings.scan_fetch_workers`` concurrent threads).
 
     Any individual symbol failure returns ``([], False)`` — the caller treats
     that as thin data and audits via *skipped_thin_data* (unchanged behaviour).
@@ -110,7 +112,7 @@ def _prefetch_candles(
         )
         return sym, candles, hit
 
-    with ThreadPoolExecutor(max_workers=_PARALLEL_WORKERS) as pool:
+    with ThreadPoolExecutor(max_workers=max(1, settings.scan_fetch_workers)) as pool:
         futures = {pool.submit(_fetch, sym): sym for sym in misses}
         for future in as_completed(futures):
             sym, candles, hit = future.result()
@@ -549,16 +551,20 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
             audit.log(db, "scanner", "skipped_capped_batch", entity="grok",
                       reason=_why, symbols=len(to_open))
         else:
-            # Sort by EXPECTANCY descending (coin-specific edge) and cap at the runtime
-            # grok_scanner_batch_max so Grok reviews EVERY trade candidate when the cap covers
-            # them (default 60 ≥ a normal scan's count). net_edge was the old key but it is
-            # ~constant across candidates (tp_pct − fixed cost), so it never actually ranked them
-            # — the strongest pairs are kept now if the batch ever truncates.
+            # Rank EXACTLY like the open loop (win_rate_lb → trials → expectancy) and cap at the
+            # runtime grok_scanner_batch_max, so Grok reviews the SAME top candidates that will
+            # actually be opened. Expectancy alone is near-constant in a bull market (most pairs
+            # tie at tp − cost), which left the batch order ~random and could send Grok a different
+            # set than the one opened (under fail_mode="open" unreviewed pairs still open).
             # SECURITY: items payload is numeric/enum-only — no free-text from market data.
             # Fields: symbol (our own key), consensus/win_rate/loss_rate/net_edge/price
             # (all floats from backtest), ta (numeric/enum indicator bundle from ta_bundle).
             batch_max = settings.grok_scanner_batch_max
-            sorted_candidates = sorted(to_open, key=lambda c: c.get("expectancy", 0.0), reverse=True)
+            sorted_candidates = sorted(
+                to_open,
+                key=lambda c: (c.get("win_rate_lb", 0.0), c.get("trials", 0), c.get("expectancy", 0.0)),
+                reverse=True,
+            )
             batch = sorted_candidates[:batch_max]
             dropped = sorted_candidates[batch_max:]
             if dropped:

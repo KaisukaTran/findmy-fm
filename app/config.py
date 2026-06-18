@@ -171,7 +171,8 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = Field(
         default=False, description="Run the background scan/manage loop. Off by default."
     )
-    scan_interval_min: int = Field(default=15, description="Minutes between scheduler cycles.")
+    scan_interval_min: int = Field(default=15, description="Minutes between scheduler cycles. On a daily timeframe the backtest barely changes within an hour, so a longer interval cuts CPU + exchange weight + Grok cost without losing accuracy.")
+    scan_fetch_workers: int = Field(default=2, ge=1, le=8, description="Parallel OHLCV fetch threads in a cold-cache scan. Each thread owns its own ccxt client with an INDEPENDENT rate limiter, so N workers burst at ~N×20 req/s — keep low to stay under the exchange's per-IP weight limit (esp. with a long lookback and/or paper+live sharing one IP).")
 
     # Default KSS parameters used when the scanner proposes a session
     scan_distance_pct: float = Field(default=2.0, description="Distance %% per wave for proposed sessions.")

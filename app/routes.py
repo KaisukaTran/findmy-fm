@@ -8,9 +8,10 @@ either JSON or an HTML fragment. No business logic lives here.
 from __future__ import annotations
 
 import asyncio
+import hmac
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -619,6 +620,24 @@ def set_telegram(body: TelegramBody):
 @api_router.post("/api/telegram/test", dependencies=[Depends(require_api_key)])
 def test_telegram():
     return {"sent": notify.send("FINDMY-FM test alert")}
+
+
+class InternalCmdBody(BaseModel):
+    text: str
+
+
+@api_router.post("/internal/telegram/command")
+def internal_telegram_command(body: InternalCmdBody, x_fm_internal: str = Header(default="")):
+    """Run a Telegram command on behalf of a sibling instance (cross-instance routing).
+
+    The app binds to 127.0.0.1, so this is localhost-only; on top of that the caller must
+    present X-FM-Internal == sha256(bot token). Both instances share one bot token, so this
+    proves the caller is a sibling. A blank token leaves the endpoint closed (signature == '').
+    """
+    expected = notify._internal_signature()
+    if not expected or not hmac.compare_digest(x_fm_internal, expected):
+        raise HTTPException(status_code=403, detail="forbidden")
+    return {"reply": notify.handle_command(body.text)}
 
 
 # --- Discord endpoints --------------------------------------------------

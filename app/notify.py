@@ -17,6 +17,7 @@ from an unknown chat is silently dropped.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 
@@ -58,6 +59,36 @@ def _base_url() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Instance identity (paper vs live) — for labelling alerts + command routing
+# ---------------------------------------------------------------------------
+
+_INSTANCES = ("paper", "live")
+_LABELS = {"live": "🔴 LIVE", "paper": "🧪 PAPER"}
+
+
+def instance_name() -> str:
+    """'live' or 'paper' for THIS instance, derived from settings.live_trading.
+
+    Both instances may share one bot; this tag tells paper and live apart in every
+    outbound message and is the target keyword for routed commands ('/pause live')."""
+    return "live" if settings.live_trading else "paper"
+
+
+def _label(name: str) -> str:
+    """The chat-visible tag for an instance name (falls back to upper-case)."""
+    return _LABELS.get(name, name.upper())
+
+
+def _internal_signature() -> str:
+    """Shared secret for the cross-instance command endpoint: sha256 of the bot token.
+
+    Both instances share the same bot token (one bot), so this proves a caller is a
+    sibling without any extra config. Empty token → empty string (endpoint stays closed)."""
+    token = settings.telegram_bot_token.get_secret_value()
+    return hashlib.sha256(token.encode()).hexdigest() if token else ""
+
+
+# ---------------------------------------------------------------------------
 # Alert sender
 # ---------------------------------------------------------------------------
 
@@ -88,12 +119,17 @@ def any_channel_enabled() -> bool:
         return False
 
 
-def send(text: str) -> bool:
+def send(text: str, *, instance: str | None = None) -> bool:
     """Broadcast *text* to every configured alert channel (Telegram + Discord).
+
+    The message is tagged with an instance label (🧪 PAPER / 🔴 LIVE) so paper and live
+    are distinguishable when they share one bot. The tag is THIS instance's by default;
+    pass `instance` to label a reply relayed on behalf of the sibling (routed commands).
 
     Returns True if at least one channel accepted it. Never raises; a failure on one
     channel never suppresses the others.
     """
+    text = f"{_label(instance or instance_name())} {text}"
     sent = _telegram_send(text)
     try:
         from app import notify_discord
@@ -206,7 +242,8 @@ _HELP_TEXT = (
     "  /resume    — bật Full-Auto + scheduler\n"
     "  /freeze    — đóng băng breaker (chặn auto-approve)\n"
     "  /reset     — mở băng breaker\n"
-    "  /help      — hiện trợ giúp"
+    "  /help      — hiện trợ giúp\n"
+    "Thêm 'paper' hoặc 'live' ngay sau lệnh để chọn instance, vd: /summary live, /pause live."
 )
 
 
@@ -367,6 +404,46 @@ def handle_command(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Cross-instance command routing (paper polls; '/pause live' reaches the sibling)
+# ---------------------------------------------------------------------------
+
+
+def _split_target(text: str) -> tuple[str | None, str]:
+    """Pull an optional instance target ('paper'/'live') sitting right after the command.
+
+    '/pause live'      -> ('live', '/pause')
+    '/summary'         -> (None,   '/summary')
+    '/fullauto on'     -> (None,   '/fullauto on')      ('on' is an arg, not a target)
+    '/fullauto live on'-> ('live', '/fullauto on')
+    """
+    parts = text.split()
+    if len(parts) >= 2 and parts[1].lower() in _INSTANCES:
+        return parts[1].lower(), " ".join([parts[0], *parts[2:]])
+    return None, text
+
+
+def _proxy_command(target: str, cmd_text: str) -> str:
+    """Run *cmd_text* on the sibling instance via its internal endpoint and return its raw
+    reply (the caller labels it with *target*'s tag). Never raises — returns an error string."""
+    base = settings.telegram_sibling_url.rstrip("/")
+    if not base:
+        return f"Chưa cấu hình telegram_sibling_url → không định tuyến được tới '{target}'."
+    try:
+        resp = httpx.post(
+            f"{base}/internal/telegram/command",
+            json={"text": cmd_text},
+            headers={"X-FM-Internal": _internal_signature()},
+            timeout=_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return f"Instance '{target}' trả lỗi HTTP {resp.status_code}."
+        return resp.json().get("reply") or "(instance không trả nội dung)"
+    except Exception:
+        logger.warning("notify: proxy command to %s failed (sibling unreachable)", target)
+        return f"Không liên lạc được instance '{target}'."
+
+
+# ---------------------------------------------------------------------------
 # Async command poller
 # ---------------------------------------------------------------------------
 
@@ -418,13 +495,20 @@ async def _loop() -> None:
                 if not msg_text.startswith("/"):
                     continue  # ignore plain messages; only slash-commands are acted on
 
-                try:
-                    reply = handle_command(msg_text)
-                except Exception:
-                    logger.exception("handle_command raised for text=%r", msg_text)
-                    reply = "Internal error processing command."
-
-                send(reply)
+                target, cmd_text = _split_target(msg_text)
+                if target is None or target == instance_name():
+                    # Command for THIS instance: handle locally, reply with our own label.
+                    try:
+                        reply = handle_command(cmd_text)
+                    except Exception:
+                        logger.exception("handle_command raised for text=%r", cmd_text)
+                        reply = "Internal error processing command."
+                    send(reply)
+                else:
+                    # Command targets the sibling: relay over localhost, label the reply
+                    # with the TARGET's tag (off-thread so the poll loop never blocks).
+                    reply = await asyncio.to_thread(_proxy_command, target, cmd_text)
+                    send(reply, instance=target)
 
         except Exception as exc:
             # Log only the type, not the traceback — the bot-token lives in the
@@ -441,10 +525,15 @@ async def _loop() -> None:
 def start() -> bool:
     """Start the background command poller if Telegram is enabled and not running.
 
-    Returns True if a new task was created, False if disabled or already running.
+    Returns True if a new task was created, False if disabled, already running, or this
+    instance is configured alerts-only (telegram_poll_commands=false) — the latter lets a
+    secondary instance (e.g. live) push labelled alerts without stealing the command stream.
     """
     global _task
     if not enabled():
+        return False
+    if not settings.telegram_poll_commands:
+        logger.info("notify: command poller disabled here (telegram_poll_commands=false); alerts-only")
         return False
     if _task and not _task.done():
         return False

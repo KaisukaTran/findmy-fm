@@ -117,7 +117,9 @@ def test_send_swallows_network_error(monkeypatch):
 
 def test_notify_send_fans_out_to_discord(monkeypatch):
     # Telegram off (default) but Discord webhook on → notify.send must still deliver.
+    # The instance label (🧪 PAPER / 🔴 LIVE) is prefixed for every channel, Discord included.
     _enable_webhook(monkeypatch)
+    monkeypatch.setattr(settings, "live_trading", False)
     seen = {}
 
     def fake_discord_send(text):
@@ -128,7 +130,7 @@ def test_notify_send_fans_out_to_discord(monkeypatch):
     monkeypatch.setattr("app.notify_discord.send", fake_discord_send)
 
     assert notify.send("breaker frozen") is True
-    assert seen["text"] == "breaker frozen"
+    assert seen["text"] == "🧪 PAPER breaker frozen"
 
 
 def test_any_channel_enabled_true_for_discord_only(monkeypatch):

@@ -188,8 +188,8 @@ class Settings(BaseSettings):
     # --- Grok scanner gate: a Grok (xAI) endorse/veto pass over qualified candidates ---
     grok_scanner_enabled: bool = Field(default=False, description="Have Grok review scanner candidates that passed every deterministic gate (one batched call/scan). Needs xai_api_key. Off = no cost, deterministic behaviour unchanged.")
     grok_scanner_batch_max: int = Field(default=60, ge=1, le=300, description="Max candidates Grok reviews per scan (single batched call). Set high enough to cover EVERY 'trade' candidate so none opens unreviewed; the batch is sorted by expectancy so the strongest are kept if it ever truncates. Larger = more tokens/call.")
-    grok_live_search: bool = Field(default=False, description="Let the Grok scanner call use xAI Live Search (web + X + news) so it can weigh real-time trending/sentiment/major reports, not just the numeric TA bundle. Adds search cost per scan; mode='auto' so Grok only searches when useful. Needs grok_scanner_enabled.")
-    grok_search_max_results: int = Field(default=8, ge=1, le=30, description="Max Live Search results Grok may pull per scan call (caps search cost).")
+    grok_live_search: bool = Field(default=False, description="Route the Grok scanner gate through the xAI Agent-Tools API (/v1/responses) with server-side web_search + x_search, so Grok weighs real-time trending/sentiment/major catalysts, not just the numeric TA bundle. Grok decides when to search; adds search cost per scan. Needs grok_scanner_enabled. (The old chat 'Live Search' params were retired by xAI — 410.)")
+    grok_search_max_results: int = Field(default=8, ge=1, le=30, description="Max web/x search results Grok may pull per scan call (caps search cost).")
     grok_scanner_fail_mode: str = Field(
         default="open",
         description=(

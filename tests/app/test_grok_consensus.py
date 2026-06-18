@@ -77,9 +77,9 @@ def test_grok_disabled_is_noop(db, monkeypatch):
     assert grok.decide(db)["ok"] is False
 
 
-def test_scanner_review_uses_live_search_and_scaled_tokens(db, monkeypatch):
-    """review_candidates passes grok_live_search through and scales the output-token budget to
-    fit one verdict per candidate (so a long list never truncates into invalid JSON)."""
+def test_scanner_review_routes_to_live_search_and_scales_tokens(db, monkeypatch):
+    """When grok_live_search is on, review_candidates uses the Agent-Tools (search) path and
+    scales the output-token budget to fit one verdict per candidate (no JSON truncation)."""
     monkeypatch.setattr(settings, "grok_live_search", True)
     monkeypatch.setattr(settings, "grok_max_tokens", 100)
     monkeypatch.setattr(settings, "grok_price_in_per_mtok", 3.0)
@@ -89,19 +89,25 @@ def test_scanner_review_uses_live_search_and_scaled_tokens(db, monkeypatch):
 
     captured: dict = {}
 
-    def _fake(systxt, usertxt, *, max_tokens=None, live_search=False):
+    def _fake_search(systxt, usertxt, *, max_tokens=None):
+        captured["called"] = "search"
         captured["max_tokens"] = max_tokens
-        captured["live_search"] = live_search
         return json.dumps({"reviews": []}), {"prompt_tokens": 1, "completion_tokens": 1}
 
-    monkeypatch.setattr(grok, "_call_grok", _fake)
+    def _fake_chat(systxt, usertxt, *, max_tokens=None):
+        captured["called"] = "chat"
+        return json.dumps({"reviews": []}), {"prompt_tokens": 1, "completion_tokens": 1}
+
+    monkeypatch.setattr(grok, "_call_grok_search", _fake_search)
+    monkeypatch.setattr(grok, "_call_grok", _fake_chat)
     grok.review_candidates(db, [{"symbol": f"C{i}"} for i in range(30)])
-    assert captured["live_search"] is True
-    assert captured["max_tokens"] >= 30 * 40  # scaled past the 100 default to fit 30 verdicts
+    assert captured["called"] == "search"            # live-search path taken
+    assert captured["max_tokens"] >= 30 * 40          # scaled past the 100 default to fit 30 verdicts
 
 
-def test_call_grok_attaches_live_search_params(monkeypatch):
-    """_call_grok adds xAI search_parameters only when live_search=True, and honours max_tokens."""
+def test_call_grok_search_uses_responses_api_with_tools(monkeypatch):
+    """_call_grok_search posts to /v1/responses with the web_search + x_search server-side tools,
+    honours max_output_tokens, and extracts the final message text + normalised usage."""
     monkeypatch.setattr(settings, "xai_api_key", SecretStr("k"))
     monkeypatch.setattr(settings, "grok_search_max_results", 5)
     captured: dict = {}
@@ -111,15 +117,24 @@ def test_call_grok_attaches_live_search_params(monkeypatch):
             pass
 
         def json(self):
-            return {"choices": [{"message": {"content": "{}"}}], "usage": {}}
+            return {
+                "output": [
+                    {"type": "reasoning"},
+                    {"type": "web_search_call"},
+                    {"type": "message",
+                     "content": [{"type": "output_text", "text": '{"reviews":[]}'}]},
+                ],
+                "usage": {"input_tokens": 10, "output_tokens": 3},
+            }
 
     monkeypatch.setattr(
         "app.orchestrator.grok.httpx.post",
-        lambda url, headers=None, json=None, timeout=None: captured.update(body=json) or _Resp(),
+        lambda url, headers=None, json=None, timeout=None:
+            captured.update(url=url, body=json) or _Resp(),
     )
-    grok._call_grok("sys", "usr", max_tokens=777, live_search=True)
-    assert captured["body"]["max_tokens"] == 777
-    sp = captured["body"]["search_parameters"]
-    assert sp["mode"] == "auto" and sp["max_search_results"] == 5
-    grok._call_grok("sys", "usr", live_search=False)
-    assert "search_parameters" not in captured["body"]  # off path stays a plain chat call
+    raw, usage = grok._call_grok_search("sys", "usr", max_tokens=777)
+    assert captured["url"].endswith("/v1/responses")
+    assert {t["type"] for t in captured["body"]["tools"]} >= {"web_search", "x_search"}
+    assert captured["body"]["max_output_tokens"] == 777
+    assert raw == '{"reviews":[]}'
+    assert usage == {"prompt_tokens": 10, "completion_tokens": 3}

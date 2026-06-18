@@ -16,9 +16,10 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app import runtime
+from app import audit, runtime
 from app.config import settings
 from app.market import get_current_prices
 from app.models import (
@@ -33,6 +34,56 @@ from app.models import (
 from app.risk import calculate_order_qty, check_all_risks
 
 logger = logging.getLogger(__name__)
+
+
+class InsufficientCashError(ValueError):
+    """A BUY can't be funded without driving account cash below the floor. Subclasses
+    ValueError so existing callers that skip on ValueError (approve_all, the manual-approve
+    route → HTTP 400) keep working unchanged."""
+
+
+# --- cash floor (hard guard: account cash may never go negative) ---------
+
+
+def _free_cash(db: Session) -> float:
+    """Real free USDT = starting capital + realized PnL − cost of open positions. This is
+    exactly the 'Cash' the portfolio summary shows (portfolio.summary_view)."""
+    invested = float(db.query(func.coalesce(func.sum(Position.total_cost), 0.0)).scalar() or 0.0)
+    realized = float(db.query(func.coalesce(func.sum(Fill.realized_pnl), 0.0)).scalar() or 0.0)
+    return settings.account_equity + realized - invested
+
+
+def _apply_cash_cap(db: Session, order: PendingOrder) -> None:
+    """HARD floor for BUYs: shrink ``order.quantity`` to the qty the available cash can fund
+    (partial fill), so a fill can never push cash below ``cash_floor_usd``. Raise
+    InsufficientCashError when not even a min-notional slice fits. No-op for SELL (exits are
+    never gated) and when no reference price is available (downstream raises 'no price').
+
+    Sizing uses the SAME cost model as the paper fill — ref×(1+slippage)×(1+taker_fee) per unit —
+    so the resulting cash is ≥ floor exactly (a tiny epsilon guards float rounding). For live the
+    real fill differs slightly, but the exchange independently rejects an over-balance order."""
+    if order.side != "BUY":
+        return
+    free = _free_cash(db) - settings.cash_floor_usd
+    ref = order.price if order.price > 0 else (get_current_prices([order.symbol]).get(order.symbol) or 0.0)
+    if ref <= 0:
+        return  # let _execute raise the explicit "no price" error
+    unit_cost = ref * (1 + settings.slippage_pct / 100.0) * (1 + settings.taker_fee_pct / 100.0)
+    if unit_cost <= 0:
+        return
+    affordable = (free / unit_cost) * (1 - 1e-9)  # epsilon: never round up over the floor
+    if affordable >= order.quantity:
+        return  # full order fits within cash
+    if affordable <= 0 or affordable * ref < settings.scan_min_notional:
+        raise InsufficientCashError(
+            f"thiếu tiền mặt: còn ${free:.2f} (giữ Cash ≥ ${settings.cash_floor_usd:.0f}) — "
+            f"không đủ mua {order.symbol}; lệnh bị giữ lại."
+        )
+    requested = order.quantity
+    order.quantity = affordable
+    audit.log(db, "orders", "partial_fill_cash", entity=order.symbol,
+              requested=round(requested, 8), filled=round(affordable, 8),
+              free_cash=round(free, 2), source_ref=order.source_ref)
 
 
 # --- queue --------------------------------------------------------------
@@ -171,7 +222,10 @@ def auto_approve_by_policy(db: Session) -> list[int]:
             due = o.price > 0 and mkt >= o.price
         if not due:
             continue
-        approve_order(db, o.id, reviewer="auto-approver")
+        try:
+            approve_order(db, o.id, reviewer="auto-approver")
+        except ValueError:  # insufficient cash / no price — skip, retry next tick
+            continue
         approved.append(o.id)
     return approved
 
@@ -208,7 +262,10 @@ def auto_fill_due_orders(db: Session) -> list[int]:
             or (o.side == "SELL" and o.price > 0 and price >= o.price)
         )
         if due:
-            approve_order(db, o.id, reviewer="auto-trader")
+            try:
+                approve_order(db, o.id, reviewer="auto-trader")
+            except ValueError:  # insufficient cash / no price — skip, retry next tick
+                continue
             approved.append(o.id)
     return approved
 
@@ -223,6 +280,9 @@ def approve_order(db: Session, order_id: int, reviewer: str | None = None) -> Fi
     if reviewer in AUTO_REVIEWERS and runtime.is_frozen(db):
         raise ValueError(f"automation frozen — {reviewer} blocked")
     order = _get_pending(db, order_id)
+    # HARD cash floor: partial-fill a BUY down to available cash (or reject) BEFORE any state
+    # change, so cash can never go negative and a reject leaves the order untouched (PENDING).
+    _apply_cash_cap(db, order)
     order.status = APPROVED
     order.reviewer = reviewer
     order.decided_at = datetime.utcnow()

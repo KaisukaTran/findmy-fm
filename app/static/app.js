@@ -585,6 +585,8 @@ document.addEventListener("submit", async (e) => {
       max_concurrent_sessions: num(f.get("max_concurrent_sessions")),
       max_sessions_per_symbol: num(f.get("max_sessions_per_symbol")),
       max_deployed_pct: num(f.get("max_deployed_pct")),
+      equity_backup_pct: num(f.get("equity_backup_pct")),
+      cash_floor_usd: num(f.get("cash_floor_usd")),
       loss_streak_block_k: num(f.get("loss_streak_block_k")),
       loss_streak_window_days: num(f.get("loss_streak_window_days")),
       min_expectancy_pct: num(f.get("min_expectancy_pct")),

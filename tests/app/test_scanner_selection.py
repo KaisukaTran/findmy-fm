@@ -111,3 +111,35 @@ def test_grok_batch_reviews_same_best_first_order(db, monkeypatch, _open_env):
     to_open = [_mk("LOW", 60.0, 20, 3.0), _mk("HIGH", 90.0, 52, 3.7), _mk("MID", 75.0, 30, 3.5)]
     scanner._review_and_open(db, to_open, "auto")
     assert captured["order"] == ["HIGH", "MID", "LOW"]
+
+
+# ---------------------------------------------------------------------------
+# Pre-scan capacity gate: skip the whole scan when capital is saturated
+# ---------------------------------------------------------------------------
+
+
+def test_has_open_capacity_reflects_can_open(db, monkeypatch):
+    monkeypatch.setattr(scanner.service, "projected_ladder_cost", lambda *a, **k: 100.0)
+    monkeypatch.setattr(scanner, "_can_open", lambda db, need: (False, "vượt ngân sách"))
+    ok, why = scanner._has_open_capacity(db)
+    assert ok is False and "ngân sách" in why
+    monkeypatch.setattr(scanner, "_can_open", lambda db, need: (True, ""))
+    assert scanner._has_open_capacity(db)[0] is True
+
+
+def test_scan_skipped_when_no_capacity(db, monkeypatch):
+    """When nothing can open, run_scan records ONE skipped ScanRun and does NOT fetch/backtest."""
+    from app.models import ScanRun
+
+    monkeypatch.setattr(scanner, "data_provider", lambda: object())
+    monkeypatch.setattr(scanner, "_has_open_capacity", lambda db: (False, "vượt ngân sách"))
+
+    def _boom(*a, **k):
+        raise AssertionError("universe scanned despite no open capacity")
+
+    monkeypatch.setattr(scanner, "_universe", _boom)
+    out = scanner.run_scan(db)
+    assert out["candidates"] == []
+    assert out.get("skipped") == "vượt ngân sách"
+    row = db.query(ScanRun).filter(ScanRun.id == out["scan_id"]).one()
+    assert row.universe_size == 0

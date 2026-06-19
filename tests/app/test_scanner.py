@@ -355,6 +355,9 @@ def test_second_scan_zero_ohlcv_calls(db, scan_env, monkeypatch):  # noqa: ARG00
     # opens — BTC is re-evaluated each scan and genuinely served from the warm cache.
     # (Makes the test independent of gate thresholds / .env.)
     monkeypatch.setattr(scanner, "_can_open", lambda *_a, **_k: (False, "test-no-open"))
+    # …but let the scan RUN (the pre-scan capacity gate also consults _can_open; bypass it here
+    # so we still exercise the fetch→cache path rather than short-circuiting the whole scan).
+    monkeypatch.setattr(scanner, "_has_open_capacity", lambda *_a, **_k: (True, ""))
 
     # Clear the cache to ensure a cold start.
     candle_cache.clear()

@@ -41,6 +41,7 @@ class SimResult:
     hit_deadline: bool
     pnl_pct: float  # realized net %: TP→tp−cost, SL→−sl−cost, deadline→(last−avg)/avg−cost
     stopped: bool = False  # hard stop-loss exit (a realized loss, distinct from incomplete)
+    mae_pct: float = 0.0  # max adverse excursion: deepest unrealized dip vs running avg (≤ 0, %)
 
 
 def _targets(entry: float, distance_pct: float, max_waves: int) -> list[float]:
@@ -101,6 +102,7 @@ def simulate_kss(
     filled = 1  # wave 0 fills at entry
     tp_threshold_factor = 1 + tp_pct / 100
     sl_threshold_factor = 1 - sl_pct / 100
+    mae_pct = 0.0  # deepest unrealized dip vs the running avg (≤ 0), tracked until exit
 
     def avg_price(k: int) -> float:
         num = sum(fill_prices[i] * weights[i] for i in range(k))
@@ -121,22 +123,33 @@ def simulate_kss(
 
         avg = avg_price(filled)
 
+        # Track the worst unrealized drawdown vs the (DCA-lowered) avg before any exit. A coin
+        # that "always recovers +tp%" but plunges deep first is worse than one that recovers
+        # shallowly — this is the metric that DISCRIMINATES, since win-rate saturates near 100%.
+        if avg > 0:
+            dd = (bar["low"] - avg) / avg * 100.0
+            if dd < mae_pct:
+                mae_pct = dd
+
         # Hard stop-loss first (pessimistic intrabar ordering).
         if sl_pct > 0 and bar["low"] <= avg * sl_threshold_factor:
-            return SimResult(False, None, filled, False, round(-sl_pct - cost_pct, 4), stopped=True)
+            return SimResult(False, None, filled, False, round(-sl_pct - cost_pct, 4),
+                             stopped=True, mae_pct=round(mae_pct, 4))
 
         if bar["high"] >= avg * tp_threshold_factor:
-            return SimResult(True, round(days, 2), filled, False, round(tp_pct - cost_pct, 4))
+            return SimResult(True, round(days, 2), filled, False, round(tp_pct - cost_pct, 4),
+                             mae_pct=round(mae_pct, 4))
 
         if days >= deadline_days:
             last = bar["close"]
             return SimResult(False, None, filled, True,
-                             round((last - avg) / avg * 100 - cost_pct, 4))
+                             round((last - avg) / avg * 100 - cost_pct, 4), mae_pct=round(mae_pct, 4))
 
     # Ran out of data before deadline or any exit — incomplete trial.
     last = candles[-1]["close"]
     avg = avg_price(filled)
-    return SimResult(False, None, filled, False, round((last - avg) / avg * 100 - cost_pct, 4))
+    return SimResult(False, None, filled, False, round((last - avg) / avg * 100 - cost_pct, 4),
+                     mae_pct=round(mae_pct, 4))
 
 
 def _wilson_lower_bound(wins: int, n: int, z: float = 1.96) -> float:
@@ -187,7 +200,8 @@ def estimate_win_rate(
     """
     empty = {"win_rate": 0.0, "win_rate_lb": 0.0, "loss_rate": 0.0, "flat_rate": 0.0,
              "expectancy": 0.0, "trials": 0, "wins": 0, "losses": 0, "flats": 0,
-             "stops": 0, "avg_days_to_tp": None, "bar_days": 0.0}
+             "stops": 0, "avg_days_to_tp": None, "bar_days": 0.0,
+             "avg_mae": 0.0, "worst_mae": 0.0}
     if not candles:
         return empty
 
@@ -202,6 +216,8 @@ def estimate_win_rate(
     wins = losses = flats = stops = trials = 0
     days_sum = 0.0
     pnl_sum = 0.0
+    mae_sum = 0.0
+    worst_mae = 0.0
     for start in range(start_at, len(candles) - 1, eff_step):
         res = simulate_kss(candles, start, distance_pct, max_waves, tp_pct, deadline_days,
                            sl_pct=sl_pct, cost_pct=cost_pct)
@@ -209,6 +225,8 @@ def estimate_win_rate(
             continue  # incomplete look-ahead
         trials += 1
         pnl_sum += res.pnl_pct
+        mae_sum += res.mae_pct
+        worst_mae = min(worst_mae, res.mae_pct)
         if res.tp_hit:
             wins += 1
             days_sum += res.days_to_tp or 0.0
@@ -240,4 +258,8 @@ def estimate_win_rate(
         "stops": stops,
         "avg_days_to_tp": round(avg_days, 2) if avg_days is not None else None,
         "bar_days": round(span_days, 4),
+        # Drawdown discrimination: avg_mae = mean deepest dip vs avg per trial (≤ 0); worst_mae =
+        # the single worst across trials. Shallower (closer to 0) = safer entry → ranked higher.
+        "avg_mae": round(mae_sum / trials, 4) if trials else 0.0,
+        "worst_mae": round(worst_mae, 4),
     }

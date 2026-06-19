@@ -160,6 +160,7 @@ class Settings(BaseSettings):
     backtest_trial_spacing_days: float = Field(default=7.0, description="Min days between backtest entry points — decorrelates overlapping trials so the win-rate isn't inflated by one regime (0 = every bar).")
     min_trials: int = Field(default=15, description="Min completed backtest trials for a trustworthy win-rate; below this a pair is skipped (a 100%% from a handful of trials is noise). Raised 8→15 to cut thin-sample false positives.")
     block_downtrend_adx: float = Field(default=25.0, description="Hard entry gate: veto a 'trade' candidate when the higher-timeframe trend AND Supertrend are BOTH down with ADX ≥ this (a confirmed downtrend — avoid catching a falling knife). 0 = off. Deterministic mirror of Grok's most common veto, so it works even when Grok is off.")
+    entry_momentum_gate: bool = Field(default=True, description="Tighter entry-timing gate than block_downtrend_adx: veto a 'trade' candidate whose SHORT-TERM momentum is falling (Supertrend down AND MACD histogram < 0) so a DCA ladder is not opened into a coin actively dropping (it would just sit red until a bounce). Catches mild/short-term drops the downtrend gate (which needs HTF+ST+ADX all confirming) lets through. False = off.")
 
     min_win_rate: float = Field(default=60.0, description="Min backtested win-rate %% (Wilson lower bound) to qualify. Paired with min_expectancy_pct as the primary trade rule: a pair trades when E ≥ min_expectancy_pct AND win-rate ≥ this.")
     min_confidence: float = Field(default=45.0, description="Min agent consensus %% to qualify a pair. S4: default lowered from 70 to 45 because the consensus is now a pure market-context score from {{trend,dip,volatility,liquidity,ml}} (backtest weight=0); the hard gates (E, win_lb) own the backtest evidence.")
@@ -183,6 +184,7 @@ class Settings(BaseSettings):
     # --- Loss-minimizing / cost-aware gates (capital preservation) ---
     min_expectancy_pct: float = Field(default=3.0, description="PRIMARY gate: min mean net expected PnL %% per backtested trade (after stop-loss + round-trip cost). Paired with min_win_rate as the trade rule: trade when E ≥ this AND win-rate ≥ min_win_rate.")
     max_loss_rate: float = Field(default=20.0, description="Max backtested loss-rate %% to qualify.")
+    max_avg_mae_pct: float = Field(default=0.0, description="Drawdown gate: skip a candidate whose backtested mean max-adverse-excursion (avg_mae — the typical deepest unrealized dip below the running avg before exit) is DEEPER than this %% (e.g. 12 = reject coins that historically plunge >12%% before recovering). 0 = off (still used for ranking: shallower drawdown ranks higher). Discriminates coins the saturated ~100%% win-rate cannot.")
     min_net_edge: float = Field(default=0.5, description="Min TP%% above round-trip cost to trade (micro-trade guard).")
     walk_forward_split: float = Field(default=0.5, description="Fraction of history used in-sample; metric is out-of-sample.")
     max_concurrent_sessions: int = Field(default=10, description="Cap on simultaneously active sessions.")

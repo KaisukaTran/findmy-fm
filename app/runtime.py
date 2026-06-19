@@ -66,10 +66,12 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "loss_streak_block_k": int,
     "loss_streak_window_days": int,
     "min_expectancy_pct": float,
+    "max_avg_mae_pct": float,  # drawdown gate (0=off) + ranking: shallower backtest dip = better
     "min_win_rate": float,
     "min_confidence": float,  # S4: consensus threshold, now decoupled from backtest
     "min_trials": int,  # min backtest trials for a trustworthy edge (cut thin-sample noise)
     "block_downtrend_adx": float,  # hard veto: HTF+ST down & ADX≥this (0=off) — entry timing
+    "entry_momentum_gate": _to_bool,  # veto open when ST down & MACDh<0 (don't buy a falling knife)
     "tp_fee_coverage": float,  # TP adds this × round-trip fee (1.2 = +120% of fees)
     "grok_scanner_fail_mode": str,  # S5: "open" | "closed"
     "grok_scanner_batch_max": int,  # how many candidates Grok reviews per scan (cover them all)

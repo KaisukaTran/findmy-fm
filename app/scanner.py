@@ -410,11 +410,30 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
             # protects entries even when the Grok gate is off. The TA evidence now blocks the open
             # instead of only advising Grok.
             veto = _downtrend_veto(ta)
+            knife = None if veto else _falling_knife_veto(ta)
+            # Drawdown gate (off when max_avg_mae_pct=0): reject coins whose backtested typical
+            # deepest dip below avg is worse than the limit. avg_mae is ≤ 0, so "deeper" = more
+            # negative than −max_avg_mae_pct.
+            mae_block = None
+            if not veto and not knife and settings.max_avg_mae_pct > 0 \
+                    and wr["avg_mae"] < -settings.max_avg_mae_pct:
+                mae_block = (f"drawdown lịch sử TB {wr['avg_mae']:.1f}% "
+                             f"sâu hơn -{settings.max_avg_mae_pct:.0f}%")
             if veto:
                 cand.decision = d["decision"] = "skip"
                 cand.reason = (cand.reason or "") + f" | chặn: {veto}"
                 audit.log(db, "scanner", "skipped_downtrend", entity=symbol, reason=veto,
                           htf=ta.get("htf"), st=ta.get("st"), adx=ta.get("adx"))
+            elif knife:
+                cand.decision = d["decision"] = "skip"
+                cand.reason = (cand.reason or "") + f" | chặn: {knife}"
+                audit.log(db, "scanner", "skipped_entry_timing", entity=symbol, reason=knife,
+                          st=ta.get("st"), macd_h=ta.get("macd_h"))
+            elif mae_block:
+                cand.decision = d["decision"] = "skip"
+                cand.reason = (cand.reason or "") + f" | chặn: {mae_block}"
+                audit.log(db, "scanner", "skipped_entry_timing", entity=symbol, reason=mae_block,
+                          avg_mae=wr["avg_mae"])
             else:
                 # Defer the actual open until after the batched Grok review.
                 to_open.append({
@@ -424,6 +443,7 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
                     "loss_rate": wr["loss_rate"], "net_edge": net_edge,
                     "expectancy": wr["expectancy"], "ta": ta,
                     "win_rate_lb": wr["win_rate_lb"], "trials": wr["trials"],
+                    "avg_mae": wr["avg_mae"],
                 })
         candidates.append(cand)
 
@@ -505,6 +525,19 @@ def _downtrend_veto(ta: dict) -> str | None:
     return None
 
 
+def _falling_knife_veto(ta: dict) -> str | None:
+    """Tighter entry-timing gate than ``_downtrend_veto``. Returns a reason to SKIP a 'trade'
+    candidate whose SHORT-TERM momentum is falling — Supertrend ``down`` AND MACD histogram < 0 —
+    i.e. don't open a DCA ladder into a coin actively dropping (it would just sit red until a
+    bounce). This catches the mild/short-term drops the downtrend gate lets through (that one needs
+    HTF+ST+ADX all confirming). Toggle with ``settings.entry_momentum_gate``."""
+    if not settings.entry_momentum_gate:
+        return None
+    if ta.get("st") == "down" and ta.get("macd_h", 0.0) < 0:
+        return f"momentum ngắn hạn xuống (ST down, MACDh {ta.get('macd_h', 0.0):+.2f})"
+    return None
+
+
 def _trade_block_reason(db: Session, symbol: str) -> str | None:
     """Deterministic skip gates for a 'trade' candidate. Returns a reason string to skip,
     or None to proceed. Audits each block."""
@@ -523,6 +556,24 @@ def _trade_block_reason(db: Session, symbol: str) -> str | None:
         audit.log(db, "scanner", "skipped_opus_owned", entity=symbol)
         return "OPUS đang giữ coin này"
     return None
+
+
+def _open_rank_key(c: dict) -> tuple:
+    """Best-first ranking key for opens AND the Grok batch (kept identical so Grok reviews exactly
+    the candidates that will open). Sorted descending.
+
+    Leads with CONSENSUS — the market-context score {trend,dip,volatility,liquidity,ml} that
+    actually varies across coins (≈46–80) — because the backtest metrics saturate: a 4%-TP DCA
+    with a 30-day deadline "wins" ~100% of historical trials for nearly every liquid coin, so
+    win_rate_lb≈93% and expectancy≈tp−cost are near-constant and cannot rank. ``avg_mae`` (the
+    mean adverse excursion, signed ≤ 0 — see backtest) then breaks ties toward shallower-drawdown
+    (safer) entries; win_rate_lb and expectancy are last-resort tiebreaks."""
+    return (
+        c.get("consensus", 0.0),
+        c.get("avg_mae", 0.0),
+        c.get("win_rate_lb", 0.0),
+        c.get("expectancy", 0.0),
+    )
 
 
 def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
@@ -569,20 +620,17 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
             audit.log(db, "scanner", "skipped_capped_batch", entity="grok",
                       reason=_why, symbols=len(to_open))
         else:
-            # Rank EXACTLY like the open loop (win_rate_lb → trials → expectancy) and cap at the
-            # runtime grok_scanner_batch_max, so Grok reviews the SAME top candidates that will
-            # actually be opened. Expectancy alone is near-constant in a bull market (most pairs
-            # tie at tp − cost), which left the batch order ~random and could send Grok a different
-            # set than the one opened (under fail_mode="open" unreviewed pairs still open).
+            # Rank EXACTLY like the open loop (_open_rank_key: consensus → avg_mae → win_rate_lb →
+            # expectancy) and cap at the runtime grok_scanner_batch_max, so Grok reviews the SAME
+            # top candidates that will actually be opened. The backtest metrics saturate in a long
+            # lookback (most pairs tie at ~100% win / tp−cost), so leading with consensus keeps the
+            # batch order meaningful and aligned with what opens (under fail_mode="open" unreviewed
+            # pairs still open).
             # SECURITY: items payload is numeric/enum-only — no free-text from market data.
             # Fields: symbol (our own key), consensus/win_rate/loss_rate/net_edge/price
             # (all floats from backtest), ta (numeric/enum indicator bundle from ta_bundle).
             batch_max = settings.grok_scanner_batch_max
-            sorted_candidates = sorted(
-                to_open,
-                key=lambda c: (c.get("win_rate_lb", 0.0), c.get("trials", 0), c.get("expectancy", 0.0)),
-                reverse=True,
-            )
+            sorted_candidates = sorted(to_open, key=_open_rank_key, reverse=True)
             batch = sorted_candidates[:batch_max]
             dropped = sorted_candidates[batch_max:]
             if dropped:
@@ -598,15 +646,11 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
             } for c in batch]
             reviews = grok.review_candidates(db, items)
 
-    # Open best-first: within the concurrent/per-scan caps, prefer the most trustworthy edge
-    # (Wilson lower-bound win-rate, then trial count, then expectancy) rather than universe
-    # (volume) order — when a bull market floods the gate with look-alike candidates this is
-    # what actually decides which ones get capital.
-    ranked = sorted(
-        to_open,
-        key=lambda c: (c.get("win_rate_lb", 0.0), c.get("trials", 0), c.get("expectancy", 0.0)),
-        reverse=True,
-    )
+    # Open best-first (_open_rank_key): within the concurrent/per-scan caps, prefer the highest
+    # market-context consensus, then the shallowest backtest drawdown (avg_mae) — rather than the
+    # saturated win_rate_lb/expectancy or universe (volume) order. When the gate floods with
+    # look-alike candidates this is what actually decides which ones get capital.
+    ranked = sorted(to_open, key=_open_rank_key, reverse=True)
     # Cap NEW opens per scan (0 = no limit) so exposure ramps gradually.
     per_scan_cap = settings.max_new_sessions_per_scan
     opened = 0

@@ -87,6 +87,16 @@ def test_per_scan_cap_opens_best_first(db, monkeypatch, _open_env):
     assert _open_env == ["HIGH", "MID"]
 
 
+def test_opens_ranked_by_consensus_first(db, monkeypatch, _open_env):
+    """Consensus leads the ranking now (the saturated win_rate_lb can't): a LOW-win_rate_lb /
+    HIGH-consensus pair must open before a HIGH-win_rate_lb / LOW-consensus one."""
+    monkeypatch.setattr(settings, "max_new_sessions_per_scan", 0)
+    hi_cons = _mk("HICONS", 60.0, 20, 3.0); hi_cons["consensus"] = 80.0
+    hi_wr = _mk("HIWR", 95.0, 52, 3.7);     hi_wr["consensus"] = 50.0
+    scanner._review_and_open(db, [hi_wr, hi_cons], "auto")
+    assert _open_env[0] == "HICONS"  # consensus wins despite lower win_rate_lb
+
+
 def test_per_scan_cap_zero_means_no_limit(db, monkeypatch, _open_env):
     monkeypatch.setattr(settings, "max_new_sessions_per_scan", 0)
     to_open = [_mk("A", 60.0, 20, 3.0), _mk("B", 90.0, 52, 3.7), _mk("C", 75.0, 30, 3.5)]

@@ -715,7 +715,7 @@ def manage_orphan_positions(db: Session) -> list[str]:
     """
     from app.config import settings
     from app.market import get_current_prices
-    from app.models import Position
+    from app.models import APPROVED, PENDING, PendingOrder, Position
     from app.orchestrator.models import OPUS_RIDE, OPUS_WATCH, OpusPosition
 
     positions = db.query(Position).filter(Position.quantity > 0).all()
@@ -724,7 +724,18 @@ def manage_orphan_positions(db: Session) -> list[str]:
     kss_syms = {s.symbol for s in db.query(KssSession).filter(KssSession.status == SESSION_ACTIVE)}
     opus_syms = {p.symbol for p in db.query(OpusPosition).filter(
         OpusPosition.state.in_((OPUS_WATCH, OPUS_RIDE)))}
-    managed = kss_syms | opus_syms
+    # A symbol with an exit (SELL) already queued/approved is NOT an orphan: its position is about
+    # to be sold by that in-flight order. The classic case is a KSS TP — the session queues its
+    # SELL and goes inactive in the SAME cycle, but the SELL has not filled yet, so the leftover
+    # qty would be mistaken for an orphan and sold a SECOND time (phantom fill + double-counted
+    # fee, and pre-guard double-realized P&L). Defer; a genuine leftover remainder is swept on a
+    # later cycle once no SELL is in flight.
+    pending_sell_syms = {
+        sym for (sym,) in db.query(PendingOrder.symbol).filter(
+            PendingOrder.status.in_((PENDING, APPROVED)), PendingOrder.side == "SELL"
+        )
+    }
+    managed = kss_syms | opus_syms | pending_sell_syms
 
     orphans = [p for p in positions if p.symbol not in managed and p.avg_entry_price > 0]
     if not orphans:

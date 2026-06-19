@@ -248,6 +248,24 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
 
     service.sweep_deadlines(db)  # housekeeping: close anything past its deadline
 
+    # Pre-scan capacity gate (user req): if NO new session can open — the concurrency cap is hit
+    # or the deployable budget / 25% backup reserve is exhausted — skip the WHOLE scan. Otherwise
+    # we fetch+backtest ~300 coins only to record a wall of "Bỏ qua: vượt ngân sách" Candidate
+    # rows + audit lines (junk data + log spam) when nothing can open anyway. TP/SL management
+    # earlier in the cycle frees capital, so the next cycle re-checks. Fail-open on a probe error
+    # so a transient glitch never silently halts scanning.
+    try:
+        can_open, why = _has_open_capacity(db)
+    except Exception:  # never let the probe block a scan
+        can_open, why = True, ""
+    if not can_open:
+        scan = ScanRun(mode=mode, universe_size=0, params=json.dumps(_thresholds()))
+        db.add(scan)
+        db.flush()
+        audit.log(db, "scanner", "scan_skipped", entity=f"run:{scan.id}", reason=why)
+        db.commit()
+        return {"scan_id": scan.id, "mode": mode, "candidates": [], "skipped": why}
+
     # Load ML model once for the whole scan; None when ml disabled.
     ml_model = ml.load_latest(db) if settings.ml_enabled else None
 
@@ -682,6 +700,18 @@ def _can_open(db: Session, new_need: float) -> tuple[bool, str]:
     if not costengine.notional_ok(settings.scan_fund):
         return False, "below min notional"
     return True, ""
+
+
+def _has_open_capacity(db: Session) -> tuple[bool, str]:
+    """True if at least one NEW KSS session could plausibly open right now — reuses ``_can_open``
+    against a representative full-ladder cost (the same scan params every new session uses). Lets
+    the scanner skip the WHOLE cycle when capital is saturated (concurrency cap hit OR the
+    deployable budget / equity_backup_pct reserve is exhausted) instead of fetch+backtesting the
+    whole universe only to record a wall of 'vượt ngân sách' skips."""
+    probe = service.projected_ladder_cost(
+        "PROBE", 1.0, settings.scan_distance_pct, settings.scan_max_waves
+    )
+    return _can_open(db, probe)
 
 
 def _in_stop_cooldown(db: Session, symbol: str) -> bool:

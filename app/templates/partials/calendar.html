@@ -1,0 +1,91 @@
+<div class="cal-head">
+  <div class="cal-nav">
+    {% if ctx.view == 'month' %}
+    <button class="sm ghost" aria-label="Tháng trước"
+            hx-get="/partials/calendar?view=month&year={{ ctx.prev.year }}&month={{ ctx.prev.month }}"
+            hx-target="#calendar-wrap" hx-swap="innerHTML">‹</button>
+    <b>{{ ctx.month_name }}</b>
+    <button class="sm ghost" aria-label="Tháng sau"
+            hx-get="/partials/calendar?view=month&year={{ ctx.next.year }}&month={{ ctx.next.month }}"
+            hx-target="#calendar-wrap" hx-swap="innerHTML">›</button>
+    {% else %}
+    <button class="sm ghost" aria-label="Năm trước"
+            hx-get="/partials/calendar?view=year&year={{ ctx.prev.year }}"
+            hx-target="#calendar-wrap" hx-swap="innerHTML">‹</button>
+    <b>{{ ctx.year }}</b>
+    <button class="sm ghost" aria-label="Năm sau"
+            hx-get="/partials/calendar?view=year&year={{ ctx.next.year }}"
+            hx-target="#calendar-wrap" hx-swap="innerHTML">›</button>
+    {% endif %}
+  </div>
+
+  <div class="cal-toggle">
+    <button class="sm {{ '' if ctx.view == 'month' else 'ghost' }}"
+            hx-get="/partials/calendar?view=month&year={{ ctx.year }}&month={{ ctx.month or 1 }}"
+            hx-target="#calendar-wrap" hx-swap="innerHTML">Tháng</button>
+    <button class="sm {{ '' if ctx.view == 'year' else 'ghost' }}"
+            hx-get="/partials/calendar?view=year&year={{ ctx.year }}"
+            hx-target="#calendar-wrap" hx-swap="innerHTML">Năm</button>
+  </div>
+
+  <div class="cal-total muted">
+    Tổng đã chốt:
+    <span class="{{ 'pos' if ctx.total >= 0 else 'neg' }}">${{ ctx.total | money }}</span>
+    · {{ ctx.closed }} lệnh · thắng {{ ctx.win_rate }}%
+  </div>
+</div>
+
+{% if ctx.view == 'month' %}
+<table class="cal-grid">
+  <thead>
+    <tr>
+      {% for wd in ctx.weekday_labels %}<th>{{ wd }}</th>{% endfor %}
+      <th class="cal-wk-h">Tuần</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for wk in ctx.weeks %}
+    <tr>
+      {% for c in wk.cells %}
+      <td class="cal-cell{{ ' cal-out' if not c.in_month }}{{ ' cal-today' if c.today }}{{ ' cal-pos' if c.pnl > 0 else (' cal-neg' if c.pnl < 0 else '') }}{{ ' cal-click' if c.has }}"
+          {% if c.has %}role="button" tabindex="0"
+          hx-get="/partials/calendar/day?d={{ c.date }}"
+          hx-target="#calendar-day" hx-swap="innerHTML"{% endif %}>
+        <div class="cal-day">{{ c.day }}</div>
+        {% if c.has %}
+        <div class="cal-pnl {{ 'pos' if c.pnl >= 0 else 'neg' }}">{{ '%+.2f' | format(c.pnl) }}</div>
+        <div class="cal-cnt muted">{{ c.closed }} lệnh</div>
+        {% endif %}
+      </td>
+      {% endfor %}
+      <td class="cal-wk {{ 'pos' if wk.pnl >= 0 else 'neg' }}">
+        {{ '%+.0f' | format(wk.pnl) if wk.closed else '·' }}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<div id="calendar-day" class="cal-drill"></div>
+{% else %}
+<div class="scroll">
+  <table class="tbl cal-year">
+    <thead>
+      <tr><th>Tháng</th><th>P&amp;L</th><th>Lệnh chốt</th><th>Thắng</th><th>Thua</th></tr>
+    </thead>
+    <tbody>
+      {% for m in ctx.months %}
+      <tr class="{{ 'cal-click' if m.closed }}"
+          {% if m.closed %}role="button" tabindex="0"
+          hx-get="/partials/calendar?view=month&year={{ ctx.year }}&month={{ m.month }}"
+          hx-target="#calendar-wrap" hx-swap="innerHTML"{% endif %}>
+        <td>{{ m.name }}</td>
+        <td class="{{ 'pos' if m.pnl >= 0 else 'neg' }}">{{ '%+.2f' | format(m.pnl) }}</td>
+        <td>{{ m.closed }}</td>
+        <td class="pos">{{ m.wins }}</td>
+        <td class="neg">{{ m.losses }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}

@@ -133,10 +133,16 @@ def check_tp(session_id: int, current_price: float | None = None, db: Session = 
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+class DcaNext(BaseModel):
+    # Optional manual lever: deploy this many USD of idle cash this wave (None = geometric rung).
+    amount_usd: float | None = Field(None, gt=0)
+
+
 @router.post("/sessions/{session_id}/dca-next", dependencies=[Depends(require_api_key)])
-def dca_next(session_id: int, db: Session = Depends(get_db)):
-    """Manually queue the next DCA wave (bootstraps a dormant ladder after raising max_waves)."""
+def dca_next(session_id: int, body: DcaNext | None = None, db: Session = Depends(get_db)):
+    """Manually queue the next DCA wave. ``amount_usd`` deploys a chosen USD slice of idle cash
+    (incl. the auto-backup) and extends the ladder if full; omit it for the geometric rung."""
     try:
-        return service.queue_next_wave(db, session_id)
+        return service.queue_next_wave(db, session_id, amount_usd=body.amount_usd if body else None)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

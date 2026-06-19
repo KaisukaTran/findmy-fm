@@ -47,10 +47,73 @@ class Settings(BaseSettings):
 
     # --- KSS / risk / pip sizing ---
     pip_multiplier: float = Field(default=2.0, description="1 pip = pip_multiplier × minQty.")
+    kss_first_wave_usd: float = Field(
+        default=0.0,
+        ge=0,
+        description="Target notional (USD) of a KSS session's FIRST wave. >0 sizes pip_size = "
+        "first_wave_usd/entry so wave-0 ≈ this value (later waves keep the (n+1)× pyramid shape); "
+        "0 = legacy pip_multiplier×minQty sizing. Raise to deploy more idle capital per session.",
+    )
     max_position_size_pct: float = Field(default=10.0, description="Max position as % of equity.")
     max_daily_loss_pct: float = Field(default=5.0, description="Max daily loss as % of equity.")
     demo_isolated_fund: float = Field(default=10000.0, description="Default demo isolated fund (USD).")
     account_equity: float = Field(default=10000.0, description="Notional account equity for risk checks.")
+
+    # --- Go-live execution (SHIPPED OFF — operator flips it) ---
+    live_trading: bool = Field(
+        default=False,
+        description="Master switch for REAL-money order placement. Off = paper everywhere. "
+        "When on AND exchange API keys are set, approved orders place real orders on "
+        "`live_exchange`. New-exposure BUYs are still gated by the circuit breaker and "
+        "`live_max_order_notional`; SELL exits are never gated.",
+    )
+    live_max_order_notional: float = Field(
+        default=25.0,
+        gt=0,
+        description="Per-order notional cap (quote ccy) for live BUYs — a real BUY above this "
+        "is refused. A small default keeps the first live orders tiny.",
+    )
+    live_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="API key for the live exchange (private trading endpoints). Empty = live off.",
+    )
+    live_api_secret: SecretStr = Field(
+        default=SecretStr(""),
+        description="API secret for the live exchange. Empty = live off. Never logged.",
+    )
+    # --- Live-readiness knobs (additive; inert until the live maker/async path is built) ---
+    maker_orders: bool = Field(
+        default=False,
+        description="LIVE only: place entries + take-profit as post-only LIMIT_MAKER (saves the "
+        "spread/slippage; at VIP0 maker==taker fee). Risk exits (SL/trailing/close) stay MARKET. "
+        "No effect on paper.",
+    )
+    order_fill_timeout_sec: int = Field(
+        default=0,
+        ge=0,
+        description="LIVE only: cancel a resting maker order if unfilled after this many seconds "
+        "(0 = wait indefinitely, the usual DCA behaviour). No effect on paper.",
+    )
+    live_use_testnet: bool = Field(
+        default=False,
+        description="LIVE only: route real orders to the exchange TESTNET (ccxt set_sandbox_mode) "
+        "instead of production — validate the live path before using real keys. No effect on paper.",
+    )
+    scheduler_lock_port: int = Field(
+        default=8801,
+        description="Localhost port for the single-process scheduler mutex. Give each parallel "
+        "instance (e.g. paper vs live) a DISTINCT port so both schedulers run; same port across two "
+        "processes = only one scheduler (the cross-process lock behind the concurrency-cap fix).",
+    )
+
+    # --- Execution capital guard ---
+    cash_floor_usd: float = Field(
+        default=0.0, ge=0,
+        description="HARD floor: account cash may never drop below this. Every BUY is "
+        "partial-filled down to the cash that's actually available (or rejected if even a "
+        "min-notional slice won't fit), so cash can never go negative. 0 = cash ≥ 0 always. "
+        "SELL exits are never gated. Applies to paper AND live.",
+    )
 
     # --- Paper execution simulation ---
     taker_fee_pct: float = Field(default=0.1, description="Taker fee % applied per fill.")
@@ -61,6 +124,13 @@ class Settings(BaseSettings):
         "2x this — a session's tp_pct is raised to it so TP never fires on a gain that "
         "wouldn't even clear a round-trip's worth of the highest fee.",
     )
+    tp_fee_coverage: float = Field(
+        default=1.2,
+        ge=0,
+        description="Every take-profit target adds this multiple of the round-trip fee "
+        "(buy + sell = 2x binance_max_fee_pct) on top of the session's tp_pct, so a TP always "
+        "clears its fees with a margin. 1.2 = +120% of the total fee. Applies to paper AND live.",
+    )
 
     # --- Market data ---
     price_cache_ttl: int = Field(default=60, description="Seconds to cache live prices.")
@@ -69,7 +139,7 @@ class Settings(BaseSettings):
         description="Display timezone offset from UTC (Vietnam = +7). Storage stays UTC; this "
         "only shifts timestamps shown in the dashboard/charts.",
     )
-    live_exchange: str = Field(default="kraken", description="ccxt exchange id for live prices (public, no key — e.g. kraken/okx/bybit; binance.com is geo/network-blocked here).")
+    live_exchange: str = Field(default="kraken", description="ccxt exchange id for live prices (public, no key — e.g. binance/kraken/gateio/okx/bybit). NOTE: binance.com is reachable from this machine (re-verified 2026-06-13); override via .env LIVE_EXCHANGE.")
     data_exchange: str = Field(
         default="kraken",
         description="ccxt exchange id for backtest/scan history (public, no key — e.g. kraken/coinbase).",
@@ -88,7 +158,8 @@ class Settings(BaseSettings):
     backtest_lookback_days: int = Field(default=365, description="History window for win-rate estimate (longer = more regimes, less single-trend bias).")
     backtest_timeframe: str = Field(default="1d", description="Candle timeframe for backtest.")
     backtest_trial_spacing_days: float = Field(default=7.0, description="Min days between backtest entry points — decorrelates overlapping trials so the win-rate isn't inflated by one regime (0 = every bar).")
-    min_trials: int = Field(default=8, description="Min completed backtest trials for a trustworthy win-rate; below this a pair is skipped (a 100%% from 3 trials is noise).")
+    min_trials: int = Field(default=15, description="Min completed backtest trials for a trustworthy win-rate; below this a pair is skipped (a 100%% from a handful of trials is noise). Raised 8→15 to cut thin-sample false positives.")
+    block_downtrend_adx: float = Field(default=25.0, description="Hard entry gate: veto a 'trade' candidate when the higher-timeframe trend AND Supertrend are BOTH down with ADX ≥ this (a confirmed downtrend — avoid catching a falling knife). 0 = off. Deterministic mirror of Grok's most common veto, so it works even when Grok is off.")
 
     min_win_rate: float = Field(default=60.0, description="Min backtested win-rate %% (Wilson lower bound) to qualify. Paired with min_expectancy_pct as the primary trade rule: a pair trades when E ≥ min_expectancy_pct AND win-rate ≥ this.")
     min_confidence: float = Field(default=45.0, description="Min agent consensus %% to qualify a pair. S4: default lowered from 70 to 45 because the consensus is now a pure market-context score from {{trend,dip,volatility,liquidity,ml}} (backtest weight=0); the hard gates (E, win_lb) own the backtest evidence.")
@@ -100,7 +171,8 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = Field(
         default=False, description="Run the background scan/manage loop. Off by default."
     )
-    scan_interval_min: int = Field(default=15, description="Minutes between scheduler cycles.")
+    scan_interval_min: int = Field(default=15, description="Minutes between scheduler cycles. On a daily timeframe the backtest barely changes within an hour, so a longer interval cuts CPU + exchange weight + Grok cost without losing accuracy.")
+    scan_fetch_workers: int = Field(default=2, ge=1, le=8, description="Parallel OHLCV fetch threads in a cold-cache scan. Each thread owns its own ccxt client with an INDEPENDENT rate limiter, so N workers burst at ~N×20 req/s — keep low to stay under the exchange's per-IP weight limit (esp. with a long lookback and/or paper+live sharing one IP).")
 
     # Default KSS parameters used when the scanner proposes a session
     scan_distance_pct: float = Field(default=2.0, description="Distance %% per wave for proposed sessions.")
@@ -114,7 +186,9 @@ class Settings(BaseSettings):
     min_net_edge: float = Field(default=0.5, description="Min TP%% above round-trip cost to trade (micro-trade guard).")
     walk_forward_split: float = Field(default=0.5, description="Fraction of history used in-sample; metric is out-of-sample.")
     max_concurrent_sessions: int = Field(default=10, description="Cap on simultaneously active sessions.")
-    max_deployed_pct: float = Field(default=50.0, description="Cap total isolated funds as %% of equity.")
+    max_new_sessions_per_scan: int = Field(default=5, ge=0, description="Cap on NEW KSS sessions opened in a single scan (0 = no limit). Ramps exposure gradually instead of opening the whole concurrent budget at once; within the cap the highest win-rate-lower-bound / most-tried candidates open first.")
+    max_deployed_pct: float = Field(default=50.0, description="(legacy) Cap total isolated funds as %% of equity. The KSS open-gate now uses equity_backup_pct instead.")
+    equity_backup_pct: float = Field(default=25.0, description="Reserve %% of LIVE equity the bot never deploys (backup). KSS open-gate budget = (100 − this)%% × equity.")
     scan_min_notional: float = Field(default=10.0, description="Skip dust micro-trades below this USD notional/wave.")
 
     # --- Loss-streak block: skip re-trading a pair on a recent losing streak ---
@@ -124,6 +198,9 @@ class Settings(BaseSettings):
 
     # --- Grok scanner gate: a Grok (xAI) endorse/veto pass over qualified candidates ---
     grok_scanner_enabled: bool = Field(default=False, description="Have Grok review scanner candidates that passed every deterministic gate (one batched call/scan). Needs xai_api_key. Off = no cost, deterministic behaviour unchanged.")
+    grok_scanner_batch_max: int = Field(default=60, ge=1, le=300, description="Max candidates Grok reviews per scan (single batched call). Set high enough to cover EVERY 'trade' candidate so none opens unreviewed; the batch is sorted by expectancy so the strongest are kept if it ever truncates. Larger = more tokens/call.")
+    grok_live_search: bool = Field(default=False, description="Route the Grok scanner gate through the xAI Agent-Tools API (/v1/responses) with server-side web_search + x_search, so Grok weighs real-time trending/sentiment/major catalysts, not just the numeric TA bundle. Grok decides when to search; adds search cost per scan. Needs grok_scanner_enabled. (The old chat 'Live Search' params were retired by xAI — 410.)")
+    grok_search_max_results: int = Field(default=8, ge=1, le=30, description="Max web/x search results Grok may pull per scan call (caps search cost).")
     grok_scanner_fail_mode: str = Field(
         default="open",
         description=(
@@ -176,8 +253,29 @@ class Settings(BaseSettings):
     # --- Telegram remote-kill (Phase B): alerts + /pause /resume /status /freeze /reset ---
     telegram_enabled: bool = Field(default=False, description="Enable the Telegram notifier + command poller. Needs token + chat id.")
     telegram_bot_token: SecretStr = Field(default=SecretStr(""), description="Telegram bot token (from @BotFather).")
+    telegram_api_base: str = Field(
+        default="https://api.telegram.org",
+        description="Base URL for the Telegram Bot API. Point at a reverse-proxy you control "
+        "(e.g. a Cloudflare Worker) to bypass an SNI/DPI block on api.telegram.org — this "
+        "network blocks the direct host. Token is appended as /bot<token>. No trailing slash.",
+    )
     telegram_chat_id: str = Field(default="", description="Only this chat id may send commands and receive alerts.")
     telegram_poll_interval: int = Field(default=5, description="Seconds between Telegram getUpdates polls.")
+    telegram_poll_commands: bool = Field(default=True, description="Run the getUpdates command poller on THIS instance. When paper + live share one bot, only ONE may poll (Telegram delivers each update once); set false on the secondary (e.g. live) so it sends labelled alerts but never steals the command stream.")
+    telegram_sibling_url: str = Field(default="", description="Base URL of the sibling instance (e.g. http://127.0.0.1:8001) used to route targeted commands like '/pause live'. Empty = no cross-instance routing (targeted commands reply that it is unconfigured).")
+    telegram_push_enabled: bool = Field(default=False, description="MASTER switch for PROACTIVE pushes (trade/risk fills + periodic digest). Default False = the bot only REPLIES to commands you send, never pushes unsolicited messages. The per-category telegram_notify_trades/_risk + digest knobs only matter when this is True. Command replies and the manual /api/telegram/test are never gated by this.")
+    telegram_notify_trades: bool = Field(default=True, description="Push a Telegram alert on each fill (trade). Kill switch for trade alerts (only applies when telegram_push_enabled=True).")
+    telegram_notify_risk: bool = Field(default=True, description="Push Telegram alerts on risk events (SL/trailing exits, breaker freeze, guardian veto).")
+    telegram_digest_hours: int = Field(default=0, ge=0, description="Hours between periodic Telegram digest pushes (equity + today's P&L + open counts). 0 = off.")
+
+    # --- Discord notifier (alternative to Telegram; works where TG is SNI/DPI-blocked) ---
+    # Push alerts via a channel webhook (no bot needed); optional 2-way commands via a bot
+    # gateway (NAT-friendly outbound WebSocket, like Telegram long-poll). Shares the
+    # telegram_notify_* kill switches + telegram_digest_hours (channel-agnostic categories).
+    discord_enabled: bool = Field(default=False, description="Enable the Discord notifier. Needs discord_webhook_url (alerts) and/or discord_bot_token+discord_channel_id (commands).")
+    discord_webhook_url: SecretStr = Field(default=SecretStr(""), description="Discord channel webhook URL for pushing alerts. Empty = no Discord push. Never logged.")
+    discord_bot_token: SecretStr = Field(default=SecretStr(""), description="Discord bot token for the 2-way command gateway. Requires the privileged MESSAGE CONTENT intent enabled in the Developer Portal. Empty = no inbound commands.")
+    discord_channel_id: str = Field(default="", description="Only messages in this Discord channel id are accepted as commands (auth boundary). Empty = commands off.")
 
     # --- Phase C: per-pair hyperopt + ML win-rate (off by default) ---
     hyperopt_enabled: bool = Field(default=False, description="Tune KSS params per pair (grid search; falls back to global scan_* when off).")
@@ -221,6 +319,16 @@ class Settings(BaseSettings):
     grok_price_in_per_mtok: float = Field(default=3.0, description="Grok input price (USD per million tokens) for cost metering.")
     grok_price_out_per_mtok: float = Field(default=15.0, description="Grok output price (USD per million tokens).")
     grok_role: str = Field(default="risk", description="Grok's mandate: 'risk' (skeptical second opinion) or 'peer' (equal alpha agent).")
+
+    # --- Operating-cost tracking (trade fee + withdrawal fee + VAT + AI cost) ---
+    # Withdrawal fee = (withdrawal_fee_pct + withdrawal_fee_tolerance_pct) × amount; VAT =
+    # vat_pct × amount. Both are booked ONLY when a withdrawal is recorded. AI cost reads the
+    # metered OpusCostLedger first and falls back to these monthly estimates for empty periods.
+    withdrawal_fee_pct: float = Field(default=0.0, ge=0, description="Exchange (Binance) withdrawal fee, %% of the withdrawn amount. Operator sets the real rate.")
+    withdrawal_fee_tolerance_pct: float = Field(default=0.05, ge=0, description="Safety buffer %% added on top of withdrawal_fee_pct (dung sai).")
+    vat_pct: float = Field(default=10.0, ge=0, description="VAT %% charged on the withdrawn amount, per withdrawal.")
+    ai_monthly_claude_usd: float = Field(default=25.0, ge=0, description="Fallback estimate of Claude (Anthropic) API spend per month, used when a period has no metered cost.")
+    ai_monthly_grok_usd: float = Field(default=20.0, ge=0, description="Fallback estimate of Grok (xAI) API spend per month, used when a period has no metered cost.")
 
 
 settings = Settings()

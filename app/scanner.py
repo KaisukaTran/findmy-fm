@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -40,14 +41,25 @@ logger = logging.getLogger(__name__)
 
 _MIN_CANDLES = 30
 
-_PARALLEL_WORKERS = 4  # S2: parallel OHLCV fetch workers
+# Parallel OHLCV fetch workers: runtime-configurable via settings.scan_fetch_workers. Each
+# worker owns an independent ccxt client (its own rate limiter), so this directly scales the
+# burst rate against the exchange's per-IP weight limit — keep it modest.
 
-# S5: cap the Grok review batch so one fat scan cannot blow the token budget.
-# Candidates are sorted by expectancy descending; only the top N enter the LLM call.
-# Under fail_mode="closed" the dropped symbols (beyond the cap) also do not open this
-# scan because they have no explicit endorse verdict — same semantics as a Grok outage.
-# Under fail_mode="open" (default) the dropped symbols open exactly as today.
-_GROK_REVIEW_BATCH_MAX = 8
+# Only one scan may run at a time. A full scan holds a long write transaction (hundreds of
+# candidates + votes + audit rows); a second concurrent scan — e.g. a manual /api/scan landing
+# during the scheduler's cycle — collided on the SQLite writer and raised "database is locked".
+# A non-blocking mutex makes the second caller fail fast with ScanInProgress instead.
+_scan_lock = threading.Lock()
+
+
+class ScanInProgress(RuntimeError):
+    """Raised by run_scan when another scan already holds the scan lock."""
+
+# The Grok review batch size is the runtime setting ``grok_scanner_batch_max`` (default 60):
+# candidates are sorted by expectancy descending and the top N enter the single LLM call. Set it
+# high enough to cover every 'trade' candidate so none opens unreviewed. Under fail_mode="closed"
+# any symbol beyond the cap has no explicit endorse verdict and does NOT open this scan (same as a
+# Grok outage); under fail_mode="open" (default) it opens as before.
 
 
 def _provider_factory(exchange_id: str) -> CcxtProvider:
@@ -73,7 +85,7 @@ def _prefetch_candles(
     Returns a dict ``symbol -> (candles, was_hit)`` for every symbol in the
     input list.  Cache-hit symbols are resolved immediately without spawning a
     thread; only cache-miss symbols are fetched in the thread pool (up to
-    ``_PARALLEL_WORKERS`` concurrent threads).
+    ``settings.scan_fetch_workers`` concurrent threads).
 
     Any individual symbol failure returns ``([], False)`` — the caller treats
     that as thin data and audits via *skipped_thin_data* (unchanged behaviour).
@@ -100,7 +112,7 @@ def _prefetch_candles(
         )
         return sym, candles, hit
 
-    with ThreadPoolExecutor(max_workers=_PARALLEL_WORKERS) as pool:
+    with ThreadPoolExecutor(max_workers=max(1, settings.scan_fetch_workers)) as pool:
         futures = {pool.submit(_fetch, sym): sym for sym in misses}
         for future in as_completed(futures):
             sym, candles, hit = future.result()
@@ -217,12 +229,42 @@ def _effective_params(db: Session, symbol: str) -> tuple[float, float, int]:
 
 
 def run_scan(db: Session, mode: str | None = None) -> dict:
-    """Run one full scan; returns {scan_id, mode, candidates:[...]}."""
+    """Run one full scan; returns {scan_id, mode, candidates:[...]}.
+
+    Serialised by `_scan_lock`: raises ScanInProgress if another scan is already running
+    (prevents two scans colliding on the SQLite writer — 'database is locked')."""
+    if not _scan_lock.acquire(blocking=False):
+        raise ScanInProgress("a scan is already in progress")
+    try:
+        return _run_scan_locked(db, mode)
+    finally:
+        _scan_lock.release()
+
+
+def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
     _scan_start_mono = time.monotonic()  # S2: wall-clock for scan_duration_ms
     provider = data_provider()
     mode = mode or ("auto" if settings.auto_trade else "semi")
 
     service.sweep_deadlines(db)  # housekeeping: close anything past its deadline
+
+    # Pre-scan capacity gate (user req): if NO new session can open — the concurrency cap is hit
+    # or the deployable budget / 25% backup reserve is exhausted — skip the WHOLE scan. Otherwise
+    # we fetch+backtest ~300 coins only to record a wall of "Bỏ qua: vượt ngân sách" Candidate
+    # rows + audit lines (junk data + log spam) when nothing can open anyway. TP/SL management
+    # earlier in the cycle frees capital, so the next cycle re-checks. Fail-open on a probe error
+    # so a transient glitch never silently halts scanning.
+    try:
+        can_open, why = _has_open_capacity(db)
+    except Exception:  # never let the probe block a scan
+        can_open, why = True, ""
+    if not can_open:
+        scan = ScanRun(mode=mode, universe_size=0, params=json.dumps(_thresholds()))
+        db.add(scan)
+        db.flush()
+        audit.log(db, "scanner", "scan_skipped", entity=f"run:{scan.id}", reason=why)
+        db.commit()
+        return {"scan_id": scan.id, "mode": mode, "candidates": [], "skipped": why}
 
     # Load ML model once for the whole scan; None when ml disabled.
     ml_model = ml.load_latest(db) if settings.ml_enabled else None
@@ -363,13 +405,26 @@ def run_scan(db: Session, mode: str | None = None) -> dict:
             # Grok review actually decides on), and surface a compact tag on the reason.
             ta = ta_bundle.build(candles, db, symbol)
             cand.reason = (cand.reason or "") + f" | TA: {_ta_tag(ta)}"
-            # Defer the actual open until after the batched Grok review.
-            to_open.append({
-                "cand": cand, "symbol": symbol, "entry": candles[-1]["close"],
-                "distance_pct": distance_pct, "tp_pct": tp_pct, "max_waves": max_waves,
-                "consensus": consensus, "win_rate": wr["win_rate"],
-                "loss_rate": wr["loss_rate"], "net_edge": net_edge, "ta": ta,
-            })
+            # Hard entry-timing gate: refuse a confirmed downtrend (HTF+ST both down, strong ADX)
+            # — don't catch a falling knife. Deterministic mirror of Grok's commonest veto, so it
+            # protects entries even when the Grok gate is off. The TA evidence now blocks the open
+            # instead of only advising Grok.
+            veto = _downtrend_veto(ta)
+            if veto:
+                cand.decision = d["decision"] = "skip"
+                cand.reason = (cand.reason or "") + f" | chặn: {veto}"
+                audit.log(db, "scanner", "skipped_downtrend", entity=symbol, reason=veto,
+                          htf=ta.get("htf"), st=ta.get("st"), adx=ta.get("adx"))
+            else:
+                # Defer the actual open until after the batched Grok review.
+                to_open.append({
+                    "cand": cand, "symbol": symbol, "entry": candles[-1]["close"],
+                    "distance_pct": distance_pct, "tp_pct": tp_pct, "max_waves": max_waves,
+                    "consensus": consensus, "win_rate": wr["win_rate"],
+                    "loss_rate": wr["loss_rate"], "net_edge": net_edge,
+                    "expectancy": wr["expectancy"], "ta": ta,
+                    "win_rate_lb": wr["win_rate_lb"], "trials": wr["trials"],
+                })
         candidates.append(cand)
 
     # B6: one compact audit entry per scan listing all thin/failed symbols together.
@@ -436,6 +491,20 @@ def _ta_tag(ta: dict) -> str:
             f"sup-{ta['sr_sup']:.1f}%/res+{ta['sr_res']:.1f}%")
 
 
+def _downtrend_veto(ta: dict) -> str | None:
+    """Hard entry-timing gate. Returns a reason to SKIP a 'trade' candidate sitting in a
+    confirmed downtrend — higher-timeframe trend AND Supertrend both ``down`` with ADX at/above
+    ``block_downtrend_adx`` — else None. This is exactly the "htf+st both down strong adx" pattern
+    the Grok gate vetoes most often; running it deterministically protects entry timing even when
+    Grok is disabled. ``block_downtrend_adx = 0`` disables the gate (back to old behaviour)."""
+    adx_min = settings.block_downtrend_adx
+    if adx_min <= 0:
+        return None
+    if ta.get("htf") == "down" and ta.get("st") == "down" and ta.get("adx", 0.0) >= adx_min:
+        return f"downtrend khung lớn (HTF+ST down, ADX {ta.get('adx', 0.0):.0f}≥{adx_min:.0f})"
+    return None
+
+
 def _trade_block_reason(db: Session, symbol: str) -> str | None:
     """Deterministic skip gates for a 'trade' candidate. Returns a reason string to skip,
     or None to proceed. Audits each block."""
@@ -475,6 +544,14 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
             audit.log(db, "scanner", "skipped_frozen", entity=c["symbol"])
         return
 
+    # Capital sizing (req a): each candidate's session reserves its full projected DCA-ladder
+    # cost — computed once here and reused for the batch saturation pre-check, the per-candidate
+    # open-gate, and the session's isolated_fund so the ladder never starves mid-way.
+    for c in to_open:
+        c["need"] = service.projected_ladder_cost(
+            c["symbol"], c["entry"], c["distance_pct"], c["max_waves"]
+        )
+
     # S5: read the active fail mode (runtime-editable; default from settings).
     fail_mode: str = runtime.get(db, "kss:grok_scanner_fail_mode") or settings.grok_scanner_fail_mode
 
@@ -485,19 +562,29 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
 
     if to_open and grok.scanner_enabled():
         # B8: skip the LLM call entirely when the concurrent/capital caps are already
-        # saturated — nothing could open even if Grok endorsed everything.
-        can, _why = _can_open(db)
+        # saturated — if even the cheapest candidate can't open, nothing could even if Grok
+        # endorsed everything.
+        can, _why = _can_open(db, min(c["need"] for c in to_open))
         if not can:
             audit.log(db, "scanner", "skipped_capped_batch", entity="grok",
                       reason=_why, symbols=len(to_open))
         else:
-            # S5 item 2: sort by expectancy descending and cap at _GROK_REVIEW_BATCH_MAX.
+            # Rank EXACTLY like the open loop (win_rate_lb → trials → expectancy) and cap at the
+            # runtime grok_scanner_batch_max, so Grok reviews the SAME top candidates that will
+            # actually be opened. Expectancy alone is near-constant in a bull market (most pairs
+            # tie at tp − cost), which left the batch order ~random and could send Grok a different
+            # set than the one opened (under fail_mode="open" unreviewed pairs still open).
             # SECURITY: items payload is numeric/enum-only — no free-text from market data.
             # Fields: symbol (our own key), consensus/win_rate/loss_rate/net_edge/price
             # (all floats from backtest), ta (numeric/enum indicator bundle from ta_bundle).
-            sorted_candidates = sorted(to_open, key=lambda c: c.get("net_edge", 0.0), reverse=True)
-            batch = sorted_candidates[:_GROK_REVIEW_BATCH_MAX]
-            dropped = sorted_candidates[_GROK_REVIEW_BATCH_MAX:]
+            batch_max = settings.grok_scanner_batch_max
+            sorted_candidates = sorted(
+                to_open,
+                key=lambda c: (c.get("win_rate_lb", 0.0), c.get("trials", 0), c.get("expectancy", 0.0)),
+                reverse=True,
+            )
+            batch = sorted_candidates[:batch_max]
+            dropped = sorted_candidates[batch_max:]
             if dropped:
                 audit.log(db, "scanner", "grok_batch_truncated",
                           kept=len(batch), dropped=len(dropped),
@@ -511,7 +598,19 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
             } for c in batch]
             reviews = grok.review_candidates(db, items)
 
-    for c in to_open:
+    # Open best-first: within the concurrent/per-scan caps, prefer the most trustworthy edge
+    # (Wilson lower-bound win-rate, then trial count, then expectancy) rather than universe
+    # (volume) order — when a bull market floods the gate with look-alike candidates this is
+    # what actually decides which ones get capital.
+    ranked = sorted(
+        to_open,
+        key=lambda c: (c.get("win_rate_lb", 0.0), c.get("trials", 0), c.get("expectancy", 0.0)),
+        reverse=True,
+    )
+    # Cap NEW opens per scan (0 = no limit) so exposure ramps gradually.
+    per_scan_cap = settings.max_new_sessions_per_scan
+    opened = 0
+    for c in ranked:
         cand, symbol = c["cand"], c["symbol"]
         verdict = reviews.get(symbol)
         if verdict and not verdict["endorse"]:
@@ -536,29 +635,83 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
 
         if verdict and verdict.get("reason"):
             cand.reason = (cand.reason or "") + f" | Grok: {verdict['reason']}"
-        ok, why = _can_open(db)
+        # Defense-in-depth: re-assert the per-symbol cap atomically against the CURRENT DB
+        # state. The to_open pre-check ran earlier (before Grok review and other opens in this
+        # same batch); a stale read there must never let a 2nd ladder open on a coin — two
+        # sessions share one Position avg → 'take-profit that realizes a loss' / K-2 TP deadlock.
+        if _symbol_at_cap(db, symbol):
+            cand.reason = (cand.reason or "") + " | capped: per-symbol"
+            audit.log(db, "scanner", "skipped_concentration", entity=symbol)
+            continue
+        # Per-scan ramp cap: once this scan has opened its quota, defer the rest to the next
+        # cycle (they remain ranked best-first, so the strongest open first).
+        if per_scan_cap and opened >= per_scan_cap:
+            cand.reason = (cand.reason or "") + f" | hoãn: đạt cap {per_scan_cap} phiên/scan"
+            audit.log(db, "scanner", "skipped_per_scan_cap", entity=symbol, cap=per_scan_cap)
+            continue
+        ok, why = _can_open(db, c["need"])
         if ok:
             cand.session_id = _open_session(
                 db, symbol, c["entry"], mode,
                 distance_pct=c["distance_pct"], tp_pct=c["tp_pct"], max_waves=c["max_waves"],
+                isolated_fund=c["need"],
             )
+            opened += 1
         else:
             cand.reason = (cand.reason or "") + f" | capped: {why}"
             audit.log(db, "scanner", "skipped_cap", entity=symbol, reason=why)
 
 
-def _can_open(db: Session) -> tuple[bool, str]:
-    """Capital-preservation caps: concurrent sessions, deployed capital, min notional."""
+def _session_lock(s: KssSession) -> float:
+    """Capital an ACTIVE session holds against the deployable budget.
+
+    Lend-the-idle-reservation rule (user spec): while a session has filled < 50% of its
+    planned ladder it locks only the cash actually deployed (``total_cost``) — the idle
+    reservation is freed for new sessions; once it crosses 50% filled it locks its full
+    reservation (``isolated_fund``), committed to finishing the averaging-down plan."""
+    reserved = s.isolated_fund or 0.0
+    used = s.total_cost or 0.0
+    if reserved <= 0:
+        return used
+    return used if used < 0.5 * reserved else reserved
+
+
+def _can_open(db: Session, new_need: float) -> tuple[bool, str]:
+    """Capital-preservation caps: concurrent sessions, deployable budget, min notional.
+
+    Budget = LIVE mark-to-market equity × (100 − ``equity_backup_pct``)% (a backup reserve the
+    bot never deploys). Existing sessions consume the budget via ``_session_lock`` (idle
+    reservations of lightly-filled sessions are reusable), and ``new_need`` is the candidate's
+    projected full-ladder cost. This replaces the old check that summed flat ``scan_fund``
+    reservations against static ``account_equity`` — which falsely tripped the cap while real
+    cash sat idle (see [[scanner-funding-knobs]])."""
+    from app import risk  # lazy: risk → portfolio → models; avoid an import cycle at load
+
     active = db.query(KssSession).filter(KssSession.status == SESSION_ACTIVE).all()
     if len(active) >= settings.max_concurrent_sessions:
         return False, f"max concurrent {settings.max_concurrent_sessions}"
-    deployed = sum(s.isolated_fund for s in active)
-    cap = settings.account_equity * settings.max_deployed_pct / 100
-    if deployed + settings.scan_fund > cap:
-        return False, f"deployed cap {settings.max_deployed_pct:.0f}% of equity"
+    equity = risk.account_equity(db)
+    budget = equity * (100 - settings.equity_backup_pct) / 100
+    locked = sum(_session_lock(s) for s in active)
+    if locked + new_need > budget:
+        return False, f"vượt ngân sách triển khai (giữ {settings.equity_backup_pct:.0f}% dự phòng)"
+    # Min-notional guard is unchanged from the legacy gate: it asks whether the per-session fund
+    # is tradeable at all (a coarse dust floor), independent of the new deployed-budget logic.
     if not costengine.notional_ok(settings.scan_fund):
         return False, "below min notional"
     return True, ""
+
+
+def _has_open_capacity(db: Session) -> tuple[bool, str]:
+    """True if at least one NEW KSS session could plausibly open right now — reuses ``_can_open``
+    against a representative full-ladder cost (the same scan params every new session uses). Lets
+    the scanner skip the WHOLE cycle when capital is saturated (concurrency cap hit OR the
+    deployable budget / equity_backup_pct reserve is exhausted) instead of fetch+backtesting the
+    whole universe only to record a wall of 'vượt ngân sách' skips."""
+    probe = service.projected_ladder_cost(
+        "PROBE", 1.0, settings.scan_distance_pct, settings.scan_max_waves
+    )
+    return _can_open(db, probe)
 
 
 def _in_stop_cooldown(db: Session, symbol: str) -> bool:
@@ -649,8 +802,12 @@ def _open_session(
     distance_pct: float | None = None,
     tp_pct: float | None = None,
     max_waves: int | None = None,
+    isolated_fund: float | None = None,
 ) -> int:
     """Open a KSS session using effective (possibly hyperopt-tuned) params.
+
+    ``isolated_fund`` defaults to the projected full-ladder cost (req a) so the reservation
+    matches what the ladder will actually consume; callers may pass a precomputed value.
 
     Defaults resolve from ``settings`` at call time (not at import/definition time)
     so runtime Strategy-tab edits to ``scan_distance_pct`` / ``scan_tp_pct`` /
@@ -662,13 +819,15 @@ def _open_session(
         tp_pct = settings.scan_tp_pct
     if max_waves is None:
         max_waves = settings.scan_max_waves
+    if isolated_fund is None:
+        isolated_fund = service.projected_ladder_cost(symbol, entry, distance_pct, max_waves)
     row = service.create_session(
         db,
         symbol=symbol,
         entry_price=entry,
         distance_pct=distance_pct,
         max_waves=max_waves,
-        isolated_fund=settings.scan_fund,
+        isolated_fund=isolated_fund,
         tp_pct=tp_pct,
         # Deadline (not the intra-fill timeout) governs the hold; keep timeout long.
         timeout_x_min=float(settings.deadline_days * 1440),
@@ -695,9 +854,14 @@ def _open_session(
                                   symbol=symbol, session=row.id)
                         _vetoed = True
             if not _vetoed:
-                orders.approve_order(db, oid, reviewer="auto-trader")
-                audit.log(db, "auto-trader", "auto_approve", entity=f"order:{oid}",
-                          symbol=symbol, session=row.id)
+                try:
+                    orders.approve_order(db, oid, reviewer="auto-trader")
+                    audit.log(db, "auto-trader", "auto_approve", entity=f"order:{oid}",
+                              symbol=symbol, session=row.id)
+                except orders.InsufficientCashError:
+                    # No cash to fund even wave 0 — leave it pending; it fills when cash frees.
+                    audit.log(db, "scanner", "open_underfunded", entity=f"order:{oid}",
+                              symbol=symbol, session=row.id)
         else:
             audit.log(db, "scanner", "auto_skip_frozen",
                       entity=f"order:{started['pending_order_id']}", symbol=symbol, session=row.id)

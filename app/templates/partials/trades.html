@@ -1,7 +1,11 @@
+<div id="trades-pane" class="scroll"
+     hx-get="/partials/trades?page={{ page }}"
+     hx-trigger="every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body"
+     hx-target="this" hx-swap="outerHTML">
 {% if rows %}
 <table class="tbl">
   <thead><tr>
-    <th title="Thời điểm khớp lệnh (giờ:phút:giây, giờ VN GMT+7).">Time</th>
+    <th title="Thời điểm khớp lệnh (ngày giờ VN GMT+7, YYYY-MM-DD HH:MM:SS).">Time</th>
     <th title="Mã coin.">Sym</th>
     <th title="Hướng: BUY (mua) / SELL (bán).">Side</th>
     <th title="Khối lượng khớp.">Qty</th>
@@ -13,7 +17,7 @@
   <tbody>
     {% for r in rows %}
     <tr>
-      <td class="muted">{{ r.executed_at | hms }}</td>
+      <td class="muted">{{ r.executed_at | localdt }}</td>
       <td>{{ r.symbol }}</td>
       <td class="{{ 'pos' if r.side == 'BUY' else 'neg' }}">{{ r.side }}</td>
       <td>{{ r.quantity | qty }}</td>
@@ -26,3 +30,13 @@
   </tbody>
 </table>
 {% else %}<p class="muted">No trades yet.</p>{% endif %}
+<div class="page-nav">
+  <button class="sm ghost" {{ 'disabled' if not has_prev }}
+          hx-get="/partials/trades?page={{ page - 1 }}"
+          hx-target="#trades-pane" hx-swap="outerHTML">&#8249; Trước</button>
+  <span class="muted">Trang {{ page }}</span>
+  <button class="sm ghost" {{ 'disabled' if not has_next }}
+          hx-get="/partials/trades?page={{ page + 1 }}"
+          hx-target="#trades-pane" hx-swap="outerHTML">Sau &#8250;</button>
+</div>
+</div>

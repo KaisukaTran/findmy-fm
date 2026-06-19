@@ -16,9 +16,10 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app import runtime
+from app import audit, runtime
 from app.config import settings
 from app.market import get_current_prices
 from app.models import (
@@ -33,6 +34,56 @@ from app.models import (
 from app.risk import calculate_order_qty, check_all_risks
 
 logger = logging.getLogger(__name__)
+
+
+class InsufficientCashError(ValueError):
+    """A BUY can't be funded without driving account cash below the floor. Subclasses
+    ValueError so existing callers that skip on ValueError (approve_all, the manual-approve
+    route → HTTP 400) keep working unchanged."""
+
+
+# --- cash floor (hard guard: account cash may never go negative) ---------
+
+
+def _free_cash(db: Session) -> float:
+    """Real free USDT = starting capital + realized PnL − cost of open positions. This is
+    exactly the 'Cash' the portfolio summary shows (portfolio.summary_view)."""
+    invested = float(db.query(func.coalesce(func.sum(Position.total_cost), 0.0)).scalar() or 0.0)
+    realized = float(db.query(func.coalesce(func.sum(Fill.realized_pnl), 0.0)).scalar() or 0.0)
+    return settings.account_equity + realized - invested
+
+
+def _apply_cash_cap(db: Session, order: PendingOrder) -> None:
+    """HARD floor for BUYs: shrink ``order.quantity`` to the qty the available cash can fund
+    (partial fill), so a fill can never push cash below ``cash_floor_usd``. Raise
+    InsufficientCashError when not even a min-notional slice fits. No-op for SELL (exits are
+    never gated) and when no reference price is available (downstream raises 'no price').
+
+    Sizing uses the SAME cost model as the paper fill — ref×(1+slippage)×(1+taker_fee) per unit —
+    so the resulting cash is ≥ floor exactly (a tiny epsilon guards float rounding). For live the
+    real fill differs slightly, but the exchange independently rejects an over-balance order."""
+    if order.side != "BUY":
+        return
+    free = _free_cash(db) - settings.cash_floor_usd
+    ref = order.price if order.price > 0 else (get_current_prices([order.symbol]).get(order.symbol) or 0.0)
+    if ref <= 0:
+        return  # let _execute raise the explicit "no price" error
+    unit_cost = ref * (1 + settings.slippage_pct / 100.0) * (1 + settings.taker_fee_pct / 100.0)
+    if unit_cost <= 0:
+        return
+    affordable = (free / unit_cost) * (1 - 1e-9)  # epsilon: never round up over the floor
+    if affordable >= order.quantity:
+        return  # full order fits within cash
+    if affordable <= 0 or affordable * ref < settings.scan_min_notional:
+        raise InsufficientCashError(
+            f"thiếu tiền mặt: còn ${free:.2f} (giữ Cash ≥ ${settings.cash_floor_usd:.0f}) — "
+            f"không đủ mua {order.symbol}; lệnh bị giữ lại."
+        )
+    requested = order.quantity
+    order.quantity = affordable
+    audit.log(db, "orders", "partial_fill_cash", entity=order.symbol,
+              requested=round(requested, 8), filled=round(affordable, 8),
+              free_cash=round(free, 2), source_ref=order.source_ref)
 
 
 # --- queue --------------------------------------------------------------
@@ -87,11 +138,11 @@ def queue_order(
     return order, risk_note
 
 
-def list_pending(db: Session, status: str | None = None, limit: int = 100) -> list[PendingOrder]:
+def list_pending(db: Session, status: str | None = None, limit: int = 100, offset: int = 0) -> list[PendingOrder]:
     """List orders, optionally filtered by status (defaults to pending)."""
     q = db.query(PendingOrder)
     q = q.filter(PendingOrder.status == (status or PENDING))
-    return q.order_by(PendingOrder.created_at.desc()).limit(limit).all()
+    return q.order_by(PendingOrder.created_at.desc()).offset(offset).limit(limit).all()
 
 
 # --- decisions ----------------------------------------------------------
@@ -171,7 +222,10 @@ def auto_approve_by_policy(db: Session) -> list[int]:
             due = o.price > 0 and mkt >= o.price
         if not due:
             continue
-        approve_order(db, o.id, reviewer="auto-approver")
+        try:
+            approve_order(db, o.id, reviewer="auto-approver")
+        except ValueError:  # insufficient cash / no price — skip, retry next tick
+            continue
         approved.append(o.id)
     return approved
 
@@ -208,7 +262,10 @@ def auto_fill_due_orders(db: Session) -> list[int]:
             or (o.side == "SELL" and o.price > 0 and price >= o.price)
         )
         if due:
-            approve_order(db, o.id, reviewer="auto-trader")
+            try:
+                approve_order(db, o.id, reviewer="auto-trader")
+            except ValueError:  # insufficient cash / no price — skip, retry next tick
+                continue
             approved.append(o.id)
     return approved
 
@@ -223,12 +280,15 @@ def approve_order(db: Session, order_id: int, reviewer: str | None = None) -> Fi
     if reviewer in AUTO_REVIEWERS and runtime.is_frozen(db):
         raise ValueError(f"automation frozen — {reviewer} blocked")
     order = _get_pending(db, order_id)
+    # HARD cash floor: partial-fill a BUY down to available cash (or reject) BEFORE any state
+    # change, so cash can never go negative and a reject leaves the order untouched (PENDING).
+    _apply_cash_cap(db, order)
     order.status = APPROVED
     order.reviewer = reviewer
     order.decided_at = datetime.utcnow()
     db.flush()
 
-    fill = _paper_execute(db, order)
+    fill = _execute(db, order)
     order.status = EXECUTED
     db.commit()
     db.refresh(fill)
@@ -242,17 +302,226 @@ def approve_order(db: Session, order_id: int, reviewer: str | None = None) -> Fi
         except Exception as exc:  # a strategy hook must never corrupt the fill
             logger.exception("KSS fill hook failed for %s: %s", order.source_ref, exc)
 
+    # Best-effort Telegram trade/risk alert — must never break or delay the fill.
+    try:
+        from app import notify
+
+        notify.fill_alert(fill)
+    except Exception:  # network/notify error is non-fatal
+        logger.debug("fill_alert failed for fill %s", fill.id)
+
     return fill
+
+
+# --- execution dispatch (paper by default; live only when explicitly on) ---
+
+
+def _execute(db: Session, order: PendingOrder) -> Fill:
+    """Route an approved order to live placement when go-live is active, else paper.
+
+    Paper is the default everywhere — live runs ONLY when `execution.live_enabled()`
+    (master flag + API keys). See app/execution.py.
+    """
+    from app import execution
+
+    if execution.live_enabled():
+        return _live_execute(db, order)
+    return _paper_execute(db, order)
+
+
+def _live_execute(db: Session, order: PendingOrder) -> Fill:
+    """Place a REAL order, re-gating new-exposure BUYs (breaker + notional cap). SELL
+    exits are never gated. Raises (never silently papers) if a guard or the exchange fails."""
+    from app import execution
+    from app.data.providers import live_provider
+
+    ref_price = order.price if order.price > 0 else (
+        get_current_prices([order.symbol]).get(order.symbol) or 0.0
+    )
+    if ref_price <= 0:
+        raise ValueError(f"No price available to execute {order.symbol}")
+
+    # New exposure (BUY) is gated; exits (SELL) are never blocked.
+    if order.side == "BUY":
+        if runtime.is_frozen(db):
+            raise ValueError("circuit-breaker frozen — live BUY blocked")
+        notional = ref_price * order.quantity
+        if notional > settings.live_max_order_notional:
+            raise ValueError(
+                f"live BUY notional {notional:.2f} exceeds cap "
+                f"{settings.live_max_order_notional:.2f}"
+            )
+
+    pair = live_provider().pair(order.symbol)
+    result = execution.place_live_order(
+        pair, order.side, order.quantity, order.price, order.order_type,
+        client_order_id=execution.client_order_id(order.id),  # idempotent placement (1.10)
+    )
+    eff = float(result.get("price") or 0.0)
+    if eff <= 0:
+        raise ValueError("live order returned no fill price")
+    qty = float(result.get("quantity") or order.quantity)
+    fee = float(result.get("fee") or 0.0)
+
+    # Link the order to its exchange id + last-seen status so reconcile_live_orders()
+    # (1.4) can pick up any further fills (e.g. a partial that completes later). A
+    # terminal status ('closed') means there is nothing left to reconcile.
+    if result.get("raw_id") is not None:
+        order.exchange_order_id = str(result.get("raw_id"))
+    order.exchange_status = str(result.get("status") or "") or None
+
+    realized = _update_position(db, order.symbol, order.side, qty, eff, fee)
+    fill = Fill(
+        pending_order_id=order.id,
+        symbol=order.symbol,
+        side=order.side,
+        quantity=qty,
+        price=eff,
+        fee=fee,
+        slippage=0.0,
+        realized_pnl=realized,
+        source_ref=order.source_ref,
+        strategy_name=order.strategy_name,
+    )
+    db.add(fill)
+    db.flush()
+    logger.info(
+        "LIVE fill order %s: %s %s %s @ %s", order.id, order.side, qty, order.symbol, eff
+    )
+    return fill
+
+
+# --- async live reconciliation (live-readiness 1.4) ---------------------
+
+# ccxt-normalised statuses after which an order will see no further fills.
+_TERMINAL_EXCHANGE_STATUS = {"closed", "filled", "canceled", "cancelled", "expired", "rejected"}
+
+
+def _booked_qty_fee(db: Session, pending_order_id: int) -> tuple[float, float]:
+    """Sum (quantity, fee) of Fills already recorded for a pending order — the
+    idempotency key for live reconciliation, so a fill already booked is never
+    double-counted no matter how many times reconcile runs."""
+    rows = (
+        db.query(Fill.quantity, Fill.fee)
+        .filter(Fill.pending_order_id == pending_order_id)
+        .all()
+    )
+    return (sum(r[0] for r in rows), sum(r[1] for r in rows))
+
+
+def reconcile_live_orders(db: Session) -> list[int]:
+    """Poll resting live orders and book any newly-reported fills (live mode only).
+
+    The async counterpart to synchronous paper execution: a live maker order rests on
+    the exchange (status NEW/open) and fills later. Each pass fetches every tracked
+    order's status and books the *delta* between the venue's cumulative ``filled`` and
+    the quantity we have already recorded as Fills — so a NEW→FILLED transition creates
+    exactly one Fill + Position update, and re-running is idempotent (delta 0 → no-op).
+    Partial fills accumulate across passes. Paper mode no-ops (``live_enabled()`` False).
+
+    Booking reflects what the exchange already did, so it is NOT gated by the circuit
+    breaker (the breaker blocks *new* placement, never the recording of a real fill —
+    same invariant as never gating a SELL exit). Returns the ids that booked a fill.
+    """
+    from app import execution
+    from app.data.providers import live_provider
+
+    if not execution.live_enabled():
+        return []
+
+    tracked = (
+        db.query(PendingOrder)
+        .filter(
+            PendingOrder.exchange_order_id.isnot(None),
+            (PendingOrder.exchange_status.is_(None))
+            | (PendingOrder.exchange_status.notin_(_TERMINAL_EXCHANGE_STATUS)),
+        )
+        .all()
+    )
+    booked: list[int] = []
+    for order in tracked:
+        order_id = order.exchange_order_id
+        if not order_id:  # guarded by the query filter, but keep the type checker honest
+            continue
+        try:
+            pair = live_provider().pair(order.symbol)
+            res = execution.fetch_live_order(pair, order_id)
+        except Exception:  # a transient fetch error must not break the cycle — retry next pass
+            logger.exception("reconcile: fetch_order failed for %s (order %s)", order.symbol, order.id)
+            continue
+
+        status = str(res.get("status") or "").lower()
+        cum_filled = float(res.get("filled") or 0.0)
+        avg = float(res.get("average") or 0.0)
+        cum_fee = float(res.get("fee") or 0.0)
+
+        booked_qty, booked_fee = _booked_qty_fee(db, order.id)
+        delta = cum_filled - booked_qty
+        if delta > 1e-9 and avg > 0:
+            delta_fee = max(cum_fee - booked_fee, 0.0)
+            realized = _update_position(db, order.symbol, order.side, delta, avg, delta_fee)
+            fill = Fill(
+                pending_order_id=order.id,
+                symbol=order.symbol,
+                side=order.side,
+                quantity=delta,
+                price=avg,
+                fee=delta_fee,
+                slippage=0.0,
+                realized_pnl=realized,
+                source_ref=order.source_ref,
+                strategy_name=order.strategy_name,
+            )
+            db.add(fill)
+            db.flush()
+            booked.append(order.id)
+            logger.info(
+                "LIVE reconciled fill order %s: %s %s %s @ %s (status=%s)",
+                order.id, order.side, delta, order.symbol, avg, status,
+            )
+            # Advance the KSS ladder on the booked quantity (same hook approve_order fires).
+            if order.source == "kss" and order.source_ref:
+                try:
+                    from app.kss.service import handle_fill_event
+
+                    handle_fill_event(db, order.source_ref, delta, avg)
+                except Exception as exc:  # a strategy hook must never corrupt the fill
+                    logger.exception("KSS fill hook failed for %s: %s", order.source_ref, exc)
+            try:
+                from app import notify
+
+                notify.fill_alert(fill)
+            except Exception:
+                logger.debug("fill_alert failed for fill %s", fill.id)
+
+        order.exchange_status = status or order.exchange_status
+        # A fully/terminally settled order with any fill is done — mark it executed.
+        if status in _TERMINAL_EXCHANGE_STATUS and cum_filled > 0:
+            order.status = EXECUTED
+            order.decided_at = order.decided_at or datetime.utcnow()
+    db.commit()
+    return booked
 
 
 # --- paper execution ----------------------------------------------------
 
 
 def _paper_execute(db: Session, order: PendingOrder) -> Fill:
-    """Simulate a fill with slippage + taker fee and update the position."""
-    ref_price = order.price if order.price > 0 else (
-        get_current_prices([order.symbol]).get(order.symbol) or 0.0
-    )
+    """Simulate a fill with slippage + taker fee and update the position.
+
+    A LIMIT order fills at the **marketable** price a real exchange would give — never worse
+    than the live market: a BUY at ``min(limit, market)`` (so a DCA rung the market has gapped
+    BELOW is bought at the current market, not at the now-too-high limit = no overpay), a SELL
+    at ``max(limit, market)``. A MARKET order fills at the live price. Offline (no market
+    price) falls back to the limit, preserving legacy/offline-test behaviour."""
+    mkt = get_current_prices([order.symbol]).get(order.symbol) or 0.0
+    if order.price > 0:  # LIMIT — marketable fill, never worse than market
+        if mkt > 0:
+            ref_price = min(order.price, mkt) if order.side == "BUY" else max(order.price, mkt)
+        else:
+            ref_price = order.price  # offline fallback = the limit
+    else:  # MARKET
+        ref_price = mkt
     if ref_price <= 0:
         raise ValueError(f"No price available to execute {order.symbol}")
 

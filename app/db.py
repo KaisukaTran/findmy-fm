@@ -28,6 +28,10 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("pending_orders", "auto_veto", "BOOLEAN NOT NULL DEFAULT 0"),
     ("pending_orders", "auto_veto_reason", "TEXT"),
     ("pending_orders", "auto_veto_at", "DATETIME"),
+    ("pending_orders", "exchange_order_id", "VARCHAR(64)"),
+    ("pending_orders", "exchange_status", "VARCHAR(16)"),
+    ("kss_waves", "exchange_order_id", "VARCHAR(64)"),
+    ("kss_waves", "exchange_status", "VARCHAR(16)"),
     ("candidates", "win_rate_lb", "FLOAT NOT NULL DEFAULT 0.0"),
     ("candidates", "expectancy", "FLOAT NOT NULL DEFAULT 0.0"),
     ("candidates", "trials", "INTEGER NOT NULL DEFAULT 0"),
@@ -61,6 +65,21 @@ _connect_args = (
 
 engine = create_engine(settings.database_url, connect_args=_connect_args, future=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+
+
+if settings.database_url.startswith("sqlite"):
+    from sqlalchemy import event
+
+    @event.listens_for(engine, "connect")
+    def _sqlite_pragmas(dbapi_conn, _record):  # noqa: ANN001
+        """WAL so readers never block the writer (the dashboard polls constantly while the
+        scheduler/OPUS/withdrawals write) + a busy_timeout so a writer waits for the lock
+        instead of raising 'database is locked'. Set per-connection on connect."""
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA busy_timeout=30000")
+        cur.execute("PRAGMA synchronous=NORMAL")
+        cur.close()
 
 
 def get_db() -> Iterator[Session]:

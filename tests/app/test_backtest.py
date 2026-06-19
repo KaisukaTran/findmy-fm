@@ -1,6 +1,6 @@
 """Deterministic backtest tests on synthetic candles (no network)."""
 
-from app.backtest import estimate_win_rate, simulate_kss, _fill_price
+from app.backtest import _fill_price, estimate_win_rate, simulate_kss
 
 _DAY = 86_400_000
 

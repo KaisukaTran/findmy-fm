@@ -52,10 +52,20 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
-    if settings.scheduler_enabled:
+    # Log the go-live posture at boot (never logs secrets). Paper unless explicitly armed.
+    from app import execution
+    live_msg = execution.validate_at_boot()
+    if live_msg:
+        logging.getLogger("app.main").warning(live_msg)
+
+    # Start the scan loop when it is explicitly enabled OR when full-auto is active
+    # (persisted via runtime_config or set in .env) — full-auto without a running
+    # scheduler would never scan, so the two must boot together.
+    if settings.scheduler_enabled or settings.full_auto:
         scheduler.start()
-    from app import notify
+    from app import notify, notify_discord
     notify.start()
+    notify_discord.start()
     if settings.opus_mode:
         from app.orchestrator import loop as opus_loop
 
@@ -65,6 +75,7 @@ async def lifespan(app: FastAPI):
     finally:
         scheduler.stop()
         notify.stop()
+        notify_discord.stop()
         from app.orchestrator import loop as opus_loop
 
         opus_loop.stop()

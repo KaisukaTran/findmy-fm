@@ -16,6 +16,9 @@ header h1 { font-size: 18px; margin: 0; }
 header .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 main { padding: 16px 24px; max-width: 1680px; margin: 0 auto; }
 .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+/* grid-2: a fixed 2-column grid (e.g. the Trading 2×2), collapsing to 1 col when narrow. */
+.grid.grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 760px) { .grid.grid-2 { grid-template-columns: 1fr; } }
 /* min-width:0 lets grid/flex items shrink instead of overflowing their track */
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-width: 0; overflow: hidden; }
 .panel h2 { font-size: 14px; margin: 0 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
@@ -23,6 +26,7 @@ main { padding: 16px 24px; max-width: 1680px; margin: 0 auto; }
 .card { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
 .card .label { color: var(--muted); font-size: 12px; }
 .card .value { font-size: 18px; font-weight: 600; margin-top: 2px; overflow-wrap: anywhere; }
+.card .sub { font-size: 11px; margin-top: 3px; }
 /* horizontal-scroll wrapper so wide tables never spill out of a panel */
 .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -59,6 +63,10 @@ button.sm { padding: 3px 8px; font-size: 12px; }
 .modal { margin-top: 12px; padding: 12px; border: 1px dashed var(--line); border-radius: 8px; background: var(--bg); }
 .modal form { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); align-items: end; }
 label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+/* The config-key (variable) name shown under each Strategy-tab label so an operator can map
+   an explanation that uses the variable name to the control they need to change. */
+.varname { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px;
+  font-weight: 400; color: var(--muted); opacity: 0.6; letter-spacing: -0.2px; margin-top: -1px; }
 input, select {
   width: 100%; max-width: 100%; box-sizing: border-box;
   background: var(--panel); border: 1px solid var(--line); color: var(--fg);
@@ -111,6 +119,73 @@ button { white-space: nowrap; }
   color: var(--fg); background: var(--panel);
   border-color: var(--line); border-bottom: 1px solid var(--panel); margin-bottom: -1px;
 }
+
+/* --- Phase 3: sidebar layout + KPI strip (tables stay tables) ---------- */
+.layout { display: flex; gap: 20px; align-items: flex-start; }
+.sidebar { position: sticky; top: 16px; flex: 0 0 196px; }
+.content { flex: 1 1 0; min-width: 0; }
+.sidebar-nav { display: flex; flex-direction: column; gap: 2px; }
+.sidebar-nav .tab {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  justify-content: flex-start; text-align: left; margin: 0;
+  padding: 9px 12px; border: 1px solid transparent; border-radius: 8px;
+  background: transparent; color: var(--muted); font-size: 13px; font-weight: 500;
+}
+.sidebar-nav .tab .nav-ico { width: 18px; text-align: center; font-size: 14px; opacity: .85; }
+.sidebar-nav .tab:hover { color: var(--fg); background: var(--panel); }
+.sidebar-nav .tab.active {
+  color: var(--fg); background: var(--panel);
+  border-color: var(--line); margin-bottom: 0;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+/* Narrow screens: sidebar folds to a horizontal wrap above the content. */
+@media (max-width: 900px) {
+  .layout { flex-direction: column; }
+  .sidebar { position: static; flex: none; width: 100%; }
+  .sidebar-nav { flex-direction: row; flex-wrap: wrap; gap: 4px; }
+  .sidebar-nav .tab { width: auto; }
+}
+
+/* Phase 3.4 token polish: tabular numerics so dense $/% columns line up. */
+.card .value, .tbl td { font-variant-numeric: tabular-nums; }
+
+/* --- Phase 4: PnL calendar -------------------------------------------- */
+.cal-head { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-bottom: 10px; }
+.cal-nav { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.cal-toggle { display: flex; gap: 4px; }
+.cal-total { margin-left: auto; font-size: 12px; }
+.cal-grid { width: 100%; border-collapse: separate; border-spacing: 4px; table-layout: fixed; }
+.cal-grid th { color: var(--muted); font-size: 11px; font-weight: 500; text-align: center; padding: 2px; }
+.cal-grid th.cal-wk-h { width: 56px; }
+.cal-cell {
+  height: 62px; vertical-align: top; padding: 4px 6px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.cal-cell .cal-day { font-size: 11px; color: var(--muted); }
+.cal-cell .cal-pnl { font-size: 13px; font-weight: 600; margin-top: 4px; }
+.cal-cell .cal-cnt { font-size: 10px; }
+.cal-out { opacity: .35; }
+.cal-today { outline: 1px solid var(--accent); }
+.cal-pos { background: rgba(46,160,67,.14); border-color: rgba(46,160,67,.4); }
+.cal-neg { background: rgba(229,83,75,.14); border-color: rgba(229,83,75,.4); }
+.cal-click { cursor: pointer; }
+.cal-click:hover { border-color: var(--accent); }
+.cal-wk { text-align: right; font-size: 12px; font-weight: 600; vertical-align: middle;
+          background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; }
+.cal-drill { margin-top: 12px; }
+.cal-day-panel h3 { font-size: 13px; margin: 0 0 8px; color: var(--muted); }
+.cal-year tr.cal-click td { cursor: pointer; }
+
+/* --- Phase 5: performance panel --------------------------------------- */
+.perf-period { display: flex; gap: 4px; margin-bottom: 10px; }
+.perf-curve { width: 100%; }
+.perf-stats { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-top: 6px; }
+.perf-winloss { flex: 0 0 300px; max-width: 100%; }
+.perf-econ { flex: 1 1 240px; }
+
+/* --- Phase 6: go-live control ----------------------------------------- */
+.live-box .live-state { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
 
 /* --- Hover tooltips ---
    Two mechanisms by context:
@@ -187,9 +262,6 @@ button { white-space: nowrap; }
   display: block; padding: 8px 0; color: var(--muted);
   font-size: 12px; text-align: center;
 }
-.loading-chip {
-  font-size: 11px; color: var(--muted); padding: 0 6px;
-}
 
 /* --- S6: Scanner stats footer table ----------------------------------- */
 .scan-stats-tbl { font-size: 12px; margin-top: 8px; border-top: 1px solid var(--line); }
@@ -260,6 +332,13 @@ button { white-space: nowrap; }
 /* --- audit table column constraints ----------------------------------- */
 .td-nowrap { white-space: nowrap; }
 .td-shrink { width: 1%; }
+
+/* --- pagination nav (Task 3.2) ---------------------------------------- */
+.page-nav {
+  display: flex; gap: 8px; align-items: center;
+  margin-top: 8px; font-size: 12px;
+}
+.page-nav button[disabled] { opacity: .4; cursor: default; }
 
 /* --- ladder price-level color badges ---------------------------------- */
 /* avg price — amber */

@@ -9,6 +9,7 @@ that exercises app.kss.service + app.orders together.
 import pytest
 
 from app import models, orders
+from app.config import settings
 from app.kss import service
 from app.kss.pyramid import PyramidSession, PyramidSessionStatus, WaveInfo
 
@@ -88,9 +89,30 @@ class TestPyramid:
         assert session.status == PyramidSessionStatus.STOPPED
 
     def test_estimated_tp_price(self, session):
-        assert abs(session.estimated_tp_price - 50000.0 * 1.03) < 0.01
+        from app import costengine
+        eff = 1 + (3.0 + costengine.tp_fee_buffer_pct()) / 100  # tp_pct + fee buffer
+        assert abs(session.estimated_tp_price - 50000.0 * eff) < 0.01
         session.avg_price = 48000.0
-        assert abs(session.estimated_tp_price - 48000.0 * 1.03) < 0.01
+        assert abs(session.estimated_tp_price - 48000.0 * eff) < 0.01
+
+
+def test_tp_always_adds_120pct_of_round_trip_fee(mock_market):
+    """User rule: every TP target adds 120% of the round-trip fee (buy + sell) on top of
+    tp_pct, so a take-profit always clears its fees with a margin (paper AND live)."""
+    from app import costengine
+
+    s = PyramidSession(symbol="BTC", entry_price=100.0, distance_pct=2.0, max_waves=5,
+                       isolated_fund=1000.0, tp_pct=4.0, timeout_x_min=30.0, gap_y_min=5.0)
+    s.avg_price = 100.0
+    s.total_filled_qty = 1.0
+
+    buffer = costengine.tp_fee_buffer_pct()
+    assert buffer == pytest.approx(1.2 * 2 * settings.binance_max_fee_pct)  # 120% of buy+sell fee
+    target = 100.0 * (1 + (4.0 + buffer) / 100)                            # avg × (1 + tp% + buffer)
+    assert s.estimated_tp_price == pytest.approx(target)
+    assert s.check_tp(target - 0.001) is None                             # below → no TP
+    res = s.check_tp(target)                                              # at/above → TP
+    assert res is not None and res["action"] == "tp_triggered"
 
 
 def test_waveinfo_to_dict():
@@ -188,6 +210,109 @@ def test_queue_next_wave_after_extending_ladder(db, mock_market):
     assert any(p.source_ref == f"pyramid:{row.id}:wave:2" for p in pend)
     db.refresh(row)
     assert row.current_wave == 2
+
+
+def test_dca_next_funds_from_idle_cash_when_reservation_exhausted(db, mock_market, monkeypatch):
+    """Manual DCA+ deploys idle account cash when the session's own isolated_fund is used up
+    (the reservation is a planning cap, not real set-aside cash)."""
+    row = service.create_session(
+        db, symbol="BTC", entry_price=50000.0, distance_pct=2.0, max_waves=6,
+        isolated_fund=100000.0, tp_pct=3.0, timeout_x_min=30.0, gap_y_min=5.0,
+    )
+    res = service.start_session(db, row.id)
+    orders.approve_order(db, res["pending_order_id"])  # fill wave 0
+    db.refresh(row)
+    row.isolated_fund = row.total_cost  # exhaust the reservation → remaining_fund = 0
+    db.commit()
+    monkeypatch.setattr(settings, "account_equity", 1_000_000.0)  # plenty of free cash
+    monkeypatch.setattr("app.market.get_current_prices", lambda syms: {"BTC": 100000.0})
+
+    out = service.queue_next_wave(db, row.id)
+    assert out["wave_num"] == 2
+    pend = orders.list_pending(db)
+    assert any(p.source_ref == f"pyramid:{row.id}:wave:2" for p in pend)
+    db.refresh(row)
+    assert row.isolated_fund > row.total_cost  # reservation grew to fund the wave from idle cash
+    assert db.query(models.AuditLog).filter_by(action="dca_fund_topup").count() == 1
+
+
+def test_dca_next_blocked_when_no_idle_cash(db, mock_market, monkeypatch):
+    """DCA+ still refuses when neither the reservation nor idle cash can fund the wave."""
+    row = service.create_session(
+        db, symbol="BTC", entry_price=50000.0, distance_pct=2.0, max_waves=6,
+        isolated_fund=100000.0, tp_pct=3.0, timeout_x_min=30.0, gap_y_min=5.0,
+    )
+    res = service.start_session(db, row.id)
+    orders.approve_order(db, res["pending_order_id"])
+    db.refresh(row)
+    row.isolated_fund = row.total_cost
+    db.commit()
+    # Starting capital ≈ already deployed → free cash ~0 → no idle to fund the wave.
+    monkeypatch.setattr(settings, "account_equity", 1.0)
+    monkeypatch.setattr("app.market.get_current_prices", lambda syms: {"BTC": 100000.0})
+    with pytest.raises(ValueError, match="tiền nhàn rỗi"):
+        service.queue_next_wave(db, row.id)
+
+
+def test_dca_next_anchors_rung_below_market_not_above(db, mock_market, monkeypatch):
+    """A DCA+ rung is re-anchored BELOW the live market by the step %, never above it — an
+    entry-anchored geometric rung drifts above price after a fast drop and would overpay."""
+    monkeypatch.setattr(settings, "sl_pct", 0.0)  # isolate the anchoring from the SL floor
+    row = service.create_session(
+        db, symbol="BTC", entry_price=50000.0, distance_pct=2.0, max_waves=10,
+        isolated_fund=100000.0, tp_pct=3.0, timeout_x_min=30.0, gap_y_min=5.0,
+    )
+    res = service.start_session(db, row.id)
+    orders.approve_order(db, res["pending_order_id"])  # fill wave 0 → auto-queues wave 1
+    # Price has crashed far below the entry-anchored ladder (geometric wave 2 ≈ 48020).
+    monkeypatch.setattr("app.market.get_current_prices", lambda syms: {"BTC": 40000.0})
+
+    out = service.queue_next_wave(db, row.id)
+    assert out["price"] < 40000.0                      # below the live market
+    assert abs(out["price"] - 40000.0 * 0.98) < 1.0    # exactly the step % below market
+
+
+def test_dca_next_custom_amount_deploys_chosen_usd(db, mock_market, monkeypatch):
+    """Manual DCA+ with amount_usd deploys exactly that USD slice (qty = amount/price) instead of
+    the fixed geometric rung — the user's lever to put remaining idle cash to work on demand."""
+    monkeypatch.setattr(settings, "sl_pct", 0.0)  # isolate from the SL floor
+    row = service.create_session(
+        db, symbol="BTC", entry_price=50000.0, distance_pct=2.0, max_waves=6,
+        isolated_fund=100000.0, tp_pct=3.0, timeout_x_min=30.0, gap_y_min=5.0,
+    )
+    res = service.start_session(db, row.id)
+    orders.approve_order(db, res["pending_order_id"])  # fill wave 0
+    monkeypatch.setattr(settings, "account_equity", 1_000_000.0)  # plenty of free cash
+    monkeypatch.setattr("app.market.get_current_prices", lambda syms: {"BTC": 50000.0})
+
+    out = service.queue_next_wave(db, row.id, amount_usd=500.0)
+    assert abs(out["quantity"] * out["price"] - 500.0) < 1.0  # ~$500 deployed, not the pip rung
+    assert abs(out["cost"] - 500.0) < 1.0
+
+
+def test_dca_next_custom_amount_extends_full_ladder(db, mock_market, monkeypatch):
+    """A custom-amount manual DCA+ extends the ladder by one when it's full — a deliberate user
+    deploy must not be blocked by max_waves (a plain DCA+ still refuses, see other test)."""
+    monkeypatch.setattr(settings, "sl_pct", 0.0)
+    row = service.create_session(
+        db, symbol="BTC", entry_price=50000.0, distance_pct=2.0, max_waves=2,
+        isolated_fund=100000.0, tp_pct=3.0, timeout_x_min=30.0, gap_y_min=5.0,
+    )
+    res = service.start_session(db, row.id)
+    orders.approve_order(db, res["pending_order_id"])  # fill wave 0 → auto-queues wave 1
+    w1 = next(p for p in orders.list_pending(db) if p.source_ref == f"pyramid:{row.id}:wave:1")
+    orders.approve_order(db, w1.id)  # fill wave 1 → ladder full (max_waves=2)
+    monkeypatch.setattr(settings, "account_equity", 1_000_000.0)
+    monkeypatch.setattr("app.market.get_current_prices", lambda syms: {"BTC": 50000.0})
+
+    # Plain DCA+ still refuses on a full ladder; the custom-amount deploy extends it by one.
+    with pytest.raises(ValueError, match="Ladder exhausted"):
+        service.queue_next_wave(db, row.id)
+    out = service.queue_next_wave(db, row.id, amount_usd=300.0)
+    assert out["wave_num"] == 2
+    db.refresh(row)
+    assert row.max_waves == 3  # extended by one for the manual deploy
+    assert db.query(models.AuditLog).filter_by(action="dca_extend_ladder").count() == 1
 
 
 def test_consolidate_sessions_merges_into_one_owner(db, mock_market):

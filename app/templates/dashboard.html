@@ -12,9 +12,9 @@
 </head>
 <body x-data="ui">
   <header>
-    <h1>FINDMY-FM <span class="muted">· KSS Pyramid DCA</span></h1>
-    <div hx-get="/partials/status" hx-trigger="load, every 5s [document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML" hx-indicator="#global-indicator"></div>
-    <span id="global-indicator" class="htmx-indicator loading-chip" aria-hidden="true">Đang tải…</span>
+    <h1>FINDMY-FM <span class="muted">· KSS Pyramid DCA</span>
+      <span class="badge {{ mode.cls }}" title="Chế độ của instance này — Paper :8000 / Live :8001. Không nhầm hai bảng điều khiển.">{{ mode.label }}</span></h1>
+    <div hx-get="/partials/status" hx-trigger="load, every 5s [document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML"></div>
     <div class="actions">
       <button class="ghost" @click="toggleOrder">+ Lệnh</button>
       <button class="ghost" @click="toggleKss">+ Phiên KSS</button>
@@ -24,7 +24,25 @@
   </header>
 
   <main>
-    <!-- Summary cards -->
+    <div class="layout">
+      <!-- Left sidebar nav. data-tab drives app.js showTab — presentation-only,
+           no JS change: showTab toggles .active on [data-tab] and shows the panel. -->
+      <aside class="sidebar">
+        <nav class="sidebar-nav" role="tablist" aria-label="Điều hướng">
+          <button class="tab active" data-tab="overview" role="tab" aria-selected="true"><span class="nav-ico" aria-hidden="true">▦</span><span>Tổng quan</span></button>
+          <button class="tab" data-tab="trading" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">⇅</span><span>Giao dịch</span></button>
+          <button class="tab" data-tab="opus" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">◈</span><span>OPUS</span></button>
+          <button class="tab" data-tab="losses" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">⚠</span><span>Phân tích lỗ</span></button>
+          <button class="tab" data-tab="calendar" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">⊞</span><span>Lịch P&amp;L</span></button>
+          <button class="tab" data-tab="costs" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">₫</span><span>Chi phí</span></button>
+          <button class="tab" data-tab="savings" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">◆</span><span>Tích trữ</span></button>
+          <button class="tab" data-tab="strategy" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">⚙</span><span>Chiến lược</span></button>
+          <button class="tab" data-tab="logs" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">☰</span><span>Nhật ký</span></button>
+        </nav>
+      </aside>
+      <div class="content">
+
+    <!-- Summary cards (KPI strip — overview only; all detail stays in tables) -->
     <div hx-get="/partials/summary" hx-trigger="load, every 15s [document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML">
       <span class="htmx-indicator loading-row">Đang tải…</span>
     </div>
@@ -84,21 +102,13 @@
       <div id="preview-output"></div>
     </div>
 
-    <!-- Tab navigation (plain-JS controlled; see app.js showTab) -->
-    <nav class="tabs" role="tablist">
-      <button class="tab" data-tab="overview" role="tab" aria-selected="true">Tổng quan</button>
-      <button class="tab" data-tab="trading" role="tab" aria-selected="false">Giao dịch</button>
-      <button class="tab" data-tab="opus" role="tab" aria-selected="false">OPUS</button>
-      <button class="tab" data-tab="losses" role="tab" aria-selected="false">Phân tích lỗ</button>
-      <button class="tab" data-tab="strategy" role="tab" aria-selected="false">Chiến lược</button>
-      <button class="tab" data-tab="logs" role="tab" aria-selected="false">Nhật ký</button>
-    </nav>
-
     <!-- TAB: Tổng quan (Overview) -->
     <div data-tab-panel="overview">
       <div class="panel mt-16">
         <h2>Hiệu suất (Performance)</h2>
-        <div hx-get="/partials/performance" hx-trigger="load, tab-shown from:closest [data-tab-panel], every 20s [tabActive(this) && document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML"></div>
+        <!-- Initial lazy load only; the returned #perf partial owns its own polling
+             so the period toggle survives refreshes (it bakes ?period into its hx-get). -->
+        <div hx-get="/partials/performance" hx-trigger="load, tab-shown from:closest [data-tab-panel]" hx-swap="innerHTML"></div>
       </div>
       <div class="panel mt-16">
         <h2>Agent Scanner</h2>
@@ -109,22 +119,35 @@
 
     <!-- TAB: Giao dịch (Trading) -->
     <div data-tab-panel="trading">
-      <div class="grid mt-16">
-        <div class="panel">
-          <h2>KSS Sessions</h2>
-          <div class="scroll" hx-get="/partials/kss" hx-trigger="tab-shown from:closest [data-tab-panel], every 10s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body" hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
-        </div>
+      <!-- 2×2 cards: top = Pending + Positions, bottom = KSS + Trades (≤20 rows each). -->
+      <div class="grid grid-2 mt-16">
         <div class="panel">
           <h2>Hàng chờ duyệt (Pending)</h2>
-          <div class="scroll" hx-get="/partials/pending" hx-trigger="tab-shown from:closest [data-tab-panel], every 10s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body" hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
+          <div class="scroll"
+               hx-get="/partials/pending"
+               hx-trigger="tab-shown from:closest [data-tab-panel], load"
+               hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
         </div>
         <div class="panel">
           <h2>Vị thế (Positions)</h2>
-          <div class="scroll" hx-get="/partials/positions" hx-trigger="tab-shown from:closest [data-tab-panel], every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body" hx-swap="innerHTML"></div>
+          <div class="scroll"
+               hx-get="/partials/positions"
+               hx-trigger="tab-shown from:closest [data-tab-panel], load"
+               hx-swap="innerHTML"></div>
+        </div>
+        <div class="panel">
+          <h2>KSS Sessions</h2>
+          <div class="scroll"
+               hx-get="/partials/kss"
+               hx-trigger="tab-shown from:closest [data-tab-panel], load"
+               hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
         </div>
         <div class="panel">
           <h2>Lịch sử giao dịch (Trades)</h2>
-          <div class="scroll" hx-get="/partials/trades" hx-trigger="tab-shown from:closest [data-tab-panel], every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body" hx-swap="innerHTML"></div>
+          <div class="scroll"
+               hx-get="/partials/trades"
+               hx-trigger="tab-shown from:closest [data-tab-panel], load"
+               hx-swap="innerHTML"></div>
         </div>
       </div>
     </div>
@@ -145,6 +168,34 @@
       </div>
     </div>
 
+    <!-- TAB: Lịch P&L (PnL Calendar) — realized PnL by day/week/month -->
+    <div data-tab-panel="calendar">
+      <div class="panel mt-16">
+        <h2>Lịch lãi/lỗ đã chốt (PnL Calendar)</h2>
+        <div id="calendar-wrap" hx-get="/partials/calendar" hx-trigger="tab-shown from:closest [data-tab-panel]" hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
+      </div>
+    </div>
+
+    <!-- TAB: Chi phí (operating costs — trade/withdraw/VAT/AI) -->
+    <div data-tab-panel="costs">
+      <div class="panel mt-16">
+        <h2>Chi phí vận hành</h2>
+        <div hx-get="/partials/costs?period=month"
+             hx-trigger="tab-shown from:closest [data-tab-panel], load"
+             hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
+      </div>
+    </div>
+
+    <!-- TAB: Tích trữ (KAI savings — protected holdings the bot never sells) -->
+    <div data-tab-panel="savings">
+      <div class="panel mt-16">
+        <h2>Tích trữ (KAI) — bot không bán</h2>
+        <div hx-get="/partials/savings"
+             hx-trigger="tab-shown from:closest [data-tab-panel], load"
+             hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
+      </div>
+    </div>
+
     <!-- TAB: Chiến lược (Strategy / Params) -->
     <div data-tab-panel="strategy">
       <div class="grid mt-16">
@@ -154,34 +205,34 @@
                editing (it would clobber unsaved input). Saving keeps the typed values. -->
           <div hx-get="/partials/kss-settings" hx-trigger="load" hx-swap="innerHTML"></div>
         </div>
-        <div class="panel" id="params-panel">
-          <h2>Hyperopt &amp; ML Params</h2>
-          {% include "partials/params.html" %}
+        <div class="panel">
+          <h2>Go-live (PAPER / LIVE)</h2>
+          <div hx-get="/partials/live-trading" hx-trigger="load, tab-shown from:closest [data-tab-panel], refresh-live from:body, refresh-status from:body" hx-swap="innerHTML"></div>
         </div>
       </div>
     </div>
 
-    <!-- TAB: Nhật ký (Logs) — meaningful, categorised feed -->
+    <!-- TAB: Nhật ký (Logs) — meaningful, categorised activity feed. Category filtering is
+         SERVER-SIDE (each tab fetches its 20 most-recent events), so a sparse category is
+         never hidden behind a window of scan noise. Buttons live inside the polled partial. -->
     <div data-tab-panel="logs">
       <div class="panel mt-16">
         <h2>Nhật ký hoạt động</h2>
-        <!-- #audit-wrap is OUTSIDE the hx-swap, so the category filter (a CSS class on it)
-             survives the 15s poll. -->
-        <div id="audit-wrap" class="af-important">
+        <div id="audit-wrap">
+          <!-- symbol filter indicator stays OUTSIDE the swap so its JS state survives polls -->
           <div class="audit-filters">
-            <button class="sm" data-action="auditFilter" data-id="important">Quan trọng</button>
-            <button class="sm ghost" data-action="auditFilter" data-id="trade">🟢 Giao dịch</button>
-            <button class="sm ghost" data-action="auditFilter" data-id="risk">🛑 Rủi ro</button>
-            <button class="sm ghost" data-action="auditFilter" data-id="opus">🤖 OPUS</button>
-            <button class="sm ghost" data-action="auditFilter" data-id="system">⚙️ Hệ thống</button>
-            <button class="sm ghost" data-action="auditFilter" data-id="all">Tất cả</button>
             <span id="audit-sym-filter" class="hidden">· coin: <b id="audit-sym-label"></b>
               <button class="sm ghost" data-action="auditClearSymbol">✕ bỏ lọc</button></span>
           </div>
-          <div class="scroll" hx-get="/partials/audit" hx-trigger="tab-shown from:closest [data-tab-panel], every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-audit from:body" hx-swap="innerHTML"></div>
+          <div class="scroll"
+               hx-get="/partials/audit?category=important"
+               hx-trigger="tab-shown from:closest [data-tab-panel], load"
+               hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
         </div>
       </div>
     </div>
+      </div><!-- /.content -->
+    </div><!-- /.layout -->
   </main>
 
   <!-- Click-to-view price ladder modal (plain JS — works on HTMX-swapped rows) -->

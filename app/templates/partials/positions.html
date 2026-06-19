@@ -1,3 +1,7 @@
+<div id="positions-pane" class="scroll"
+     hx-get="/partials/positions?page={{ page }}"
+     hx-trigger="every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body"
+     hx-target="this" hx-swap="outerHTML">
 {% if rows %}
 <table class="tbl">
   <thead><tr>
@@ -33,3 +37,13 @@
   </tbody>
 </table>
 {% else %}<p class="muted">No open positions.</p>{% endif %}
+<div class="page-nav">
+  <button class="sm ghost" {{ 'disabled' if not has_prev }}
+          hx-get="/partials/positions?page={{ page - 1 }}"
+          hx-target="#positions-pane" hx-swap="outerHTML">&#8249; Trước</button>
+  <span class="muted">Trang {{ page }}</span>
+  <button class="sm ghost" {{ 'disabled' if not has_next }}
+          hx-get="/partials/positions?page={{ page + 1 }}"
+          hx-target="#positions-pane" hx-swap="outerHTML">Sau &#8250;</button>
+</div>
+</div>

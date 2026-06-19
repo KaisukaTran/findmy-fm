@@ -8,9 +8,10 @@ either JSON or an HTML fragment. No business logic lives here.
 from __future__ import annotations
 
 import asyncio
+import hmac
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -19,13 +20,18 @@ from sqlalchemy.orm import Session
 from app import (
     charts,
     circuit,
+    costs,
+    execution,
     guardian,
     hyperopt,
     ml,
     notify,
+    notify_discord,
     orders,
+    pnlcal,
     portfolio,
     runtime,
+    savings,
     scanner,
     scheduler,
     timefmt,
@@ -201,7 +207,10 @@ def _latest_candidates(db: Session) -> list[dict]:
 @api_router.post("/api/scan", dependencies=[Depends(require_api_key)])
 def run_scan(db: Session = Depends(get_db)):
     """Run one multi-agent scan; creates sessions per the current auto-trade mode."""
-    return scanner.run_scan(db)
+    try:
+        return scanner.run_scan(db)
+    except scanner.ScanInProgress as exc:
+        raise HTTPException(status_code=409, detail="a scan is already in progress") from exc
 
 
 @api_router.get("/api/candidates")
@@ -238,11 +247,14 @@ def _automation_state(db: Session) -> dict:
         "open_sessions": active,
         "guardian": guardian.enabled(),
         "telegram": notify.is_running(),
+        "discord": notify_discord.is_running() or notify_discord.webhook_enabled(),
         "hyperopt": settings.hyperopt_enabled,
         "ml": settings.ml_enabled,
         "grok_scanner": settings.grok_scanner_enabled,
         "ta_lib": settings.ta_lib_enabled,
         "ta_external": settings.ta_external_enabled,
+        "live_trading": settings.live_trading,
+        "live_keys": execution.live_key_present(),
     }
 
 
@@ -286,6 +298,53 @@ async def set_full_auto(body: FullAutoBody, db: Session = Depends(get_db)):
     return {**runtime.state(db), "scheduler_running": scheduler.is_running()}
 
 
+class LiveTradingBody(BaseModel):
+    enabled: bool
+    confirm: str | None = None
+
+
+_LIVE_CONFIRM_PHRASE = "LIVE-TRADING"
+
+
+@api_router.get("/api/live-trading")
+def get_live_trading(db: Session = Depends(get_db)):
+    """Current go-live state: master flag, whether exchange keys are present, breaker."""
+    return {
+        "live_trading": settings.live_trading,
+        "live_keys": execution.live_key_present(),
+        "exchange": settings.live_exchange,
+        "max_notional": settings.live_max_order_notional,
+        "frozen": runtime.is_frozen(db),
+        "confirm_phrase": _LIVE_CONFIRM_PHRASE,
+    }
+
+
+@api_router.post("/api/live-trading", dependencies=[Depends(require_api_key)])
+def set_live_trading(body: LiveTradingBody, db: Session = Depends(get_db)):
+    """Flip the real-money master switch.
+
+    Enabling requires a typed confirmation phrase AND configured exchange keys AND an
+    armed circuit breaker (a tripped breaker blocks going live). Disabling is always
+    allowed and immediate.
+    """
+    if body.enabled:
+        if (body.confirm or "").strip() != _LIVE_CONFIRM_PHRASE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Type '{_LIVE_CONFIRM_PHRASE}' to confirm real-money trading",
+            )
+        if not execution.live_key_present():
+            raise HTTPException(
+                status_code=400, detail="Exchange API key/secret not configured — cannot go live"
+            )
+        if runtime.is_frozen(db):
+            raise HTTPException(
+                status_code=409, detail="Circuit-breaker frozen — resolve it before going live"
+            )
+    runtime.set_live_trading(db, body.enabled)
+    return get_live_trading(db)
+
+
 class CloseBody(BaseModel):
     symbol: str
 
@@ -322,13 +381,30 @@ class KssSettingsBody(BaseModel):
     trailing_pct: float | None = Field(None, ge=0, le=100)
     deadline_days: int | None = Field(None, ge=1, le=365)
     max_concurrent_sessions: int | None = Field(None, ge=1, le=100)
+    max_sessions_per_symbol: int | None = Field(None, ge=0, le=20)
     max_deployed_pct: float | None = Field(None, gt=0, le=100)
+    equity_backup_pct: float | None = Field(None, ge=0, le=90)
+    cash_floor_usd: float | None = Field(None, ge=0)  # hard cash floor (0 = never negative)
     loss_streak_block_k: int | None = Field(None, ge=1, le=20)
     loss_streak_window_days: int | None = Field(None, ge=1, le=365)
     min_expectancy_pct: float | None = Field(None, ge=-100, le=100)
     min_win_rate: float | None = Field(None, ge=0, le=100)
     min_confidence: float | None = Field(None, ge=0, le=100)  # S4: consensus threshold
+    min_trials: int | None = Field(None, ge=1, le=200)  # thin-sample guard
+    block_downtrend_adx: float | None = Field(None, ge=0, le=100)  # entry-timing veto (0=off)
+    tp_fee_coverage: float | None = Field(None, ge=0, le=10)  # TP adds this × round-trip fee
     grok_scanner_fail_mode: str | None = Field(None, pattern=r"^(open|closed)$")  # S5
+    grok_scanner_batch_max: int | None = Field(None, ge=1, le=300)  # Grok reviews up to N/scan
+    grok_live_search: bool | None = None  # Grok scan gate uses xAI Live Search (web+X+news)
+    grok_search_max_results: int | None = Field(None, ge=1, le=30)
+    scan_max_symbols: int | None = Field(None, ge=1, le=500)
+    max_new_sessions_per_scan: int | None = Field(None, ge=0, le=100)  # cap NEW opens/scan (0=off)
+    min_quote_volume: float | None = Field(None, ge=0)
+    kss_first_wave_usd: float | None = Field(None, ge=0)
+    # Live-readiness knobs (1.9) — LIVE only, inert on paper.
+    maker_orders: bool | None = None
+    order_fill_timeout_sec: int | None = Field(None, ge=0)
+    live_use_testnet: bool | None = None
 
 
 @api_router.get("/api/kss-settings")
@@ -550,6 +626,145 @@ def test_telegram():
     return {"sent": notify.send("FINDMY-FM test alert")}
 
 
+class InternalCmdBody(BaseModel):
+    text: str
+
+
+@api_router.post("/internal/telegram/command")
+def internal_telegram_command(body: InternalCmdBody, x_fm_internal: str = Header(default="")):
+    """Run a Telegram command on behalf of a sibling instance (cross-instance routing).
+
+    The app binds to 127.0.0.1, so this is localhost-only; on top of that the caller must
+    present X-FM-Internal == sha256(bot token). Both instances share one bot token, so this
+    proves the caller is a sibling. A blank token leaves the endpoint closed (signature == '').
+    """
+    expected = notify._internal_signature()
+    if not expected or not hmac.compare_digest(x_fm_internal, expected):
+        raise HTTPException(status_code=403, detail="forbidden")
+    return {"reply": notify.handle_command(body.text)}
+
+
+# --- Discord endpoints --------------------------------------------------
+
+
+class DiscordBody(BaseModel):
+    enabled: bool
+
+
+def _discord_state() -> dict:
+    return {
+        "enabled": settings.discord_enabled,
+        "running": notify_discord.is_running(),  # command gateway alive
+        "webhook": notify_discord.webhook_enabled(),  # push configured
+        "commands": notify_discord.command_enabled(),  # 2-way configured
+    }
+
+
+@api_router.get("/api/discord")
+def get_discord():
+    return _discord_state()
+
+
+@api_router.post("/api/discord", dependencies=[Depends(require_api_key)])
+def set_discord(body: DiscordBody):
+    settings.discord_enabled = body.enabled
+    if body.enabled:
+        notify_discord.start()  # no-op unless a bot token + channel id are set
+    else:
+        notify_discord.stop()
+    return _discord_state()
+
+
+@api_router.post("/api/discord/test", dependencies=[Depends(require_api_key)])
+def test_discord():
+    return {"sent": notify_discord.send("FINDMY-FM test alert")}
+
+
+# --- Cost endpoints (trade fee + withdrawal + VAT + AI) -----------------
+
+
+class WithdrawalBody(BaseModel):
+    amount: float = Field(..., gt=0, description="Withdrawn amount in USD.")
+    note: str | None = Field(None, max_length=200)
+
+
+@api_router.post("/api/withdrawals", dependencies=[Depends(require_api_key)])
+def create_withdrawal(body: WithdrawalBody, db: Session = Depends(get_db)):
+    try:
+        w = costs.record_withdrawal(db, body.amount, note=body.note)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"withdrawal": w.to_dict()}
+
+
+@api_router.get("/api/withdrawals")
+def list_withdrawals(limit: int = 50, db: Session = Depends(get_db)):
+    return {"rows": [w.to_dict() for w in costs.list_withdrawals(db, limit=limit)]}
+
+
+@api_router.get("/api/costs")
+def get_costs(period: str = "month", buckets: int = 12, db: Session = Depends(get_db)):
+    return costs.cost_summary(db, period=period, buckets=buckets)
+
+
+@ui_router.get("/partials/costs", response_class=HTMLResponse)
+def partial_costs(request: Request, period: str = "month", db: Session = Depends(get_db)):
+    buckets = {"week": 12, "month": 12, "year": 5}.get(period, 12)
+    summary = costs.cost_summary(db, period=period, buckets=buckets)
+    recent = [w.to_dict() for w in costs.list_withdrawals(db, limit=10)]
+    return templates.TemplateResponse(
+        "partials/costs.html",
+        {
+            "request": request,
+            "s": summary,
+            "period": period,
+            "withdrawals": recent,
+            "fee_pct": settings.withdrawal_fee_pct + settings.withdrawal_fee_tolerance_pct,
+            "vat_pct": settings.vat_pct,
+            "ai_claude_est": settings.ai_monthly_claude_usd,
+            "ai_grok_est": settings.ai_monthly_grok_usd,
+        },
+    )
+
+
+# --- Savings (KAI) holdings — protected, never auto-sold ----------------
+
+
+class SavingsBody(BaseModel):
+    symbol: str = Field(..., min_length=1, max_length=20)
+    quantity: float = Field(..., gt=0)
+    avg_cost: float = Field(..., ge=0, description="USD price/unit of this buy.")
+    note: str | None = Field(None, max_length=200)
+    mode: str = Field("add", pattern="^(add|set)$", description="add = accumulate; set = overwrite.")
+
+
+@api_router.post("/api/savings", dependencies=[Depends(require_api_key)])
+def create_savings(body: SavingsBody, db: Session = Depends(get_db)):
+    try:
+        fn = savings.set_holding if body.mode == "set" else savings.add_holding
+        h = fn(db, body.symbol, body.quantity, body.avg_cost, note=body.note)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"holding": h.to_dict()}
+
+
+@api_router.delete("/api/savings/{symbol}", dependencies=[Depends(require_api_key)])
+def delete_savings(symbol: str, db: Session = Depends(get_db)):
+    return {"removed": savings.remove_holding(db, symbol)}
+
+
+@api_router.get("/api/savings")
+def get_savings(db: Session = Depends(get_db)):
+    return savings.summary(db)
+
+
+@ui_router.get("/partials/savings", response_class=HTMLResponse)
+def partial_savings(request: Request, db: Session = Depends(get_db)):
+    return templates.TemplateResponse(
+        "partials/savings.html", {"request": request, "s": savings.summary(db)}
+    )
+
+
 # --- Phase C: hyperopt + ML endpoints -----------------------------------
 
 
@@ -600,7 +815,14 @@ def retrain_ml(db: Session = Depends(get_db)):
 
 @ui_router.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
-    return templates.TemplateResponse("dashboard.html", {"request": request})
+    # Mode badge so the paper (:8000) and live (:8001) dashboards are never confused.
+    if not settings.live_trading:
+        mode = {"label": "PAPER", "cls": "full-auto-off"}
+    elif settings.live_use_testnet:
+        mode = {"label": "LIVE · TESTNET", "cls": "guardian-on"}
+    else:
+        mode = {"label": "LIVE · REAL", "cls": "breaker-frozen"}
+    return templates.TemplateResponse("dashboard.html", {"request": request, "mode": mode})
 
 
 @ui_router.get("/partials/summary", response_class=HTMLResponse)
@@ -611,28 +833,53 @@ def partial_summary(request: Request, db: Session = Depends(get_db)):
 
 
 @ui_router.get("/partials/positions", response_class=HTMLResponse)
-def partial_positions(request: Request, db: Session = Depends(get_db)):
+def partial_positions(request: Request, page: int = 1, db: Session = Depends(get_db)):
+    # Trading tab: page size 20, up to 10 pages.
+    page = max(1, min(page, 10))
+    offset = (page - 1) * 20
+    all_rows = portfolio.positions_view(db)
+    rows = all_rows[offset: offset + 20]
     return templates.TemplateResponse(
-        "partials/positions.html", {"request": request, "rows": portfolio.positions_view(db)}
+        "partials/positions.html",
+        {
+            "request": request,
+            "rows": rows,
+            "page": page,
+            "has_prev": page > 1,
+            "has_next": len(all_rows) > offset + 20,
+        },
     )
 
 
 @ui_router.get("/partials/trades", response_class=HTMLResponse)
-def partial_trades(request: Request, db: Session = Depends(get_db)):
+def partial_trades(request: Request, page: int = 1, db: Session = Depends(get_db)):
+    page = max(1, min(page, 10))
+    offset = (page - 1) * 20
+    rows = portfolio.trades_view(db, limit=20, offset=offset)
     return templates.TemplateResponse(
-        "partials/trades.html", {"request": request, "rows": portfolio.trades_view(db)}
+        "partials/trades.html",
+        {
+            "request": request,
+            "rows": rows,
+            "page": page,
+            "has_prev": page > 1,
+            "has_next": len(rows) == 20,
+        },
     )
 
 
 @ui_router.get("/partials/pending", response_class=HTMLResponse)
-def partial_pending(request: Request, db: Session = Depends(get_db)):
-    pend = orders.list_pending(db)
+def partial_pending(request: Request, page: int = 1, db: Session = Depends(get_db)):
+    page = max(1, min(page, 10))
+    offset = (page - 1) * 20
+    pend = orders.list_pending(db, limit=20, offset=offset)
     prices = portfolio.get_current_prices(list({o.symbol for o in pend})) if pend else {}
     rows = []
     for o in pend:
         d = o.to_dict()
         ref = o.price if o.price > 0 else (prices.get(o.symbol) or 0.0)
         mkt = prices.get(o.symbol) or 0.0
+        d["mkt"] = mkt  # current market price (for the "Giá hiện tại" column)
         d["notional"] = o.quantity * ref
         # eligible to auto-clear by size+source; "due" = its limit price is reached now.
         d["auto"] = (o.source in settings.autoapprove_sources
@@ -651,6 +898,9 @@ def partial_pending(request: Request, db: Session = Depends(get_db)):
             "aa_enabled": settings.autoapprove_enabled,
             "aa_max": settings.autoapprove_max_notional,
             "aa_sources": ",".join(settings.autoapprove_sources),
+            "page": page,
+            "has_prev": page > 1,
+            "has_next": len(rows) == 20,
         },
     )
 
@@ -672,6 +922,46 @@ def api_losses(db: Session = Depends(get_db)):
 def partial_losses(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         "partials/losses.html", {"request": request, "L": portfolio.loss_analysis(db)}
+    )
+
+
+@ui_router.get("/partials/live-trading", response_class=HTMLResponse)
+def partial_live_trading(request: Request, db: Session = Depends(get_db)):
+    """Go-live control: current paper/live posture + the typed-confirm toggle."""
+    return templates.TemplateResponse(
+        "partials/live_trading.html", {"request": request, "lt": get_live_trading(db)}
+    )
+
+
+@ui_router.get("/partials/calendar", response_class=HTMLResponse)
+def partial_calendar(
+    request: Request,
+    view: str = "month",
+    year: int | None = None,
+    month: int | None = None,
+    db: Session = Depends(get_db),
+):
+    """PnL calendar partial — month grid (day/week subtotals) or year (per-month) view."""
+    ctx = pnlcal.calendar_view(db, view=view, year=year, month=month)
+    return templates.TemplateResponse(
+        "partials/calendar.html", {"request": request, "ctx": ctx}
+    )
+
+
+@ui_router.get("/partials/calendar/day", response_class=HTMLResponse)
+def partial_calendar_day(request: Request, d: str, db: Session = Depends(get_db)):
+    """Drilldown: the closed-trade fills for one local calendar day (d=YYYY-MM-DD)."""
+    from datetime import date
+
+    try:
+        day = date.fromisoformat(d)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid date") from exc
+    rows = pnlcal.day_fills(db, day)
+    total = round(sum(f.realized_pnl for f in rows), 2)
+    return templates.TemplateResponse(
+        "partials/calendar_day.html",
+        {"request": request, "d": d, "rows": rows, "total": total},
     )
 
 
@@ -751,13 +1041,20 @@ def partial_opus(request: Request, db: Session = Depends(get_db)):
 
 
 @ui_router.get("/partials/kss", response_class=HTMLResponse)
-def partial_kss(request: Request, db: Session = Depends(get_db)):
+def partial_kss(request: Request, page: int = 1, db: Session = Depends(get_db)):
+    page = max(1, min(page, 10))
+    offset = (page - 1) * 20
+    all_sessions = kss_service.list_sessions(db, limit=offset + 21)
+    sessions = all_sessions[offset: offset + 20]
     return templates.TemplateResponse(
         "partials/kss.html",
         {
             "request": request,
-            "sessions": kss_service.list_sessions(db),
+            "sessions": sessions,
             "summary": kss_service.summary(db),
+            "page": page,
+            "has_prev": page > 1,
+            "has_next": len(all_sessions) > offset + 20,
         },
     )
 
@@ -799,13 +1096,16 @@ def partial_scanner_stats(request: Request, db: Session = Depends(get_db)):
 
 
 @ui_router.get("/partials/performance", response_class=HTMLResponse)
-def partial_performance(request: Request, db: Session = Depends(get_db)):
-    p = portfolio.performance_view(db)
+def partial_performance(request: Request, period: str = "all", db: Session = Depends(get_db)):
+    if period not in ("24h", "7d", "30d", "all"):
+        period = "all"
+    p = portfolio.performance_view(db, period=period)
     return templates.TemplateResponse(
         "partials/performance.html",
         {
             "request": request,
             "p": p,
+            "period": period,
             "equity_svg": charts.equity_curve_svg(p["equity_curve"], p["equity_times"]),
             "winloss_svg": charts.winloss_bars_svg(p["wins"], p["losses"]),
         },
@@ -813,11 +1113,29 @@ def partial_performance(request: Request, db: Session = Depends(get_db)):
 
 
 @ui_router.get("/partials/audit", response_class=HTMLResponse)
-def partial_audit(request: Request, db: Session = Depends(get_db)):
+def partial_audit(request: Request, category: str = "important", page: int = 1,
+                  db: Session = Depends(get_db)):
+    """A page (20 rows, up to 10 pages) of activity-log events of the requested category
+    (server-side filter, so a sparse category is never hidden behind a window of scan noise)."""
     from app import auditview
 
+    if category not in auditview.CATEGORY_LABELS:
+        category = "important"
+    page = max(1, min(page, 10))
+    offset = (page - 1) * 20
+    rows, has_next = auditview.recent_by_category(db, category, limit=20, offset=offset)
     return templates.TemplateResponse(
-        "partials/audit.html", {"request": request, "rows": auditview.audit_view(db, limit=300)}
+        "partials/audit.html",
+        {
+            "request": request,
+            "rows": rows,
+            "category": category,
+            "cat_label": auditview.CATEGORY_LABELS[category],
+            "filters": list(auditview.CATEGORY_LABELS.items()),
+            "page": page,
+            "has_prev": page > 1,
+            "has_next": has_next,
+        },
     )
 
 

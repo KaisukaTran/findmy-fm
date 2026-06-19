@@ -56,6 +56,9 @@ def scan_env(monkeypatch):
     monkeypatch.setattr(settings, "min_trials", 0)
     monkeypatch.setattr(settings, "min_expectancy_pct", -100.0)
     monkeypatch.setattr(settings, "auto_trade", False)
+    # Neutralise the entry-timing downtrend gate here (it has its own tests) so these
+    # mechanics tests aren't affected by the synthetic candles' trend.
+    monkeypatch.setattr(settings, "block_downtrend_adx", 0.0)
 
 
 def test_scan_persists_audit_and_creates_pending_session(db, scan_env):
@@ -171,6 +174,39 @@ def test_scan_skips_pair_on_loss_streak(db, scan_env, monkeypatch):
     cand = db.query(models.Candidate).filter_by(symbol="BTC").one()
     assert cand.session_id is None and "thua 2 lần liên tiếp" in cand.reason
     assert db.query(models.AuditLog).filter_by(action="skipped_loss_streak").count() == 1
+
+
+def test_scan_skips_symbol_already_at_cap(db, scan_env, monkeypatch):
+    """K-1 root fix: with max_sessions_per_symbol=1, a coin that already has an ACTIVE
+    session never gets a 2nd — two ladders would share one Position avg (blended cost
+    basis → 'take-profit that realizes a loss' / K-2 TP deadlock)."""
+    monkeypatch.setattr(settings, "max_sessions_per_symbol", 1)
+    db.add(models.KssSession(
+        symbol="BTC", entry_price=100, distance_pct=2, max_waves=5, isolated_fund=100,
+        tp_pct=3, timeout_x_min=1, gap_y_min=0, status=models.SESSION_ACTIVE,
+    ))
+    db.commit()
+    scanner.run_scan(db, mode="semi")
+    cand = db.query(models.Candidate).filter_by(symbol="BTC").one()
+    assert cand.session_id is None
+    assert "per-symbol" in (cand.reason or "")
+    assert db.query(models.AuditLog).filter_by(action="skipped_concentration").count() >= 1
+    # exactly one ACTIVE BTC session remains (no duplicate opened)
+    assert db.query(models.KssSession).filter_by(
+        symbol="BTC", status=models.SESSION_ACTIVE).count() == 1
+
+
+def test_scan_allows_second_session_when_cap_is_two(db, scan_env, monkeypatch):
+    """Sanity: cap=2 still permits a 2nd ladder (documents the knob the .env bug used)."""
+    monkeypatch.setattr(settings, "max_sessions_per_symbol", 2)
+    db.add(models.KssSession(
+        symbol="BTC", entry_price=100, distance_pct=2, max_waves=5, isolated_fund=100,
+        tp_pct=3, timeout_x_min=1, gap_y_min=0, status=models.SESSION_ACTIVE,
+    ))
+    db.commit()
+    scanner.run_scan(db, mode="semi")
+    cand = db.query(models.Candidate).filter_by(symbol="BTC").one()
+    assert cand.session_id is not None  # 1 < 2 → opens a 2nd
 
 
 # --- Grok scanner gate -------------------------------------------------------
@@ -300,7 +336,7 @@ def test_second_scan_zero_ohlcv_calls(db, scan_env, monkeypatch):  # noqa: ARG00
             return []
 
         def get_prices(self, symbols):
-            return {s: candles_data[-1]["close"] for s in symbols}
+            return dict.fromkeys(symbols, candles_data[-1]["close"])
 
         def get_exchange_info(self, _symbol):
             return {"minQty": 0.00001, "stepSize": 0.00001, "maxQty": 10000.0}
@@ -318,7 +354,10 @@ def test_second_scan_zero_ohlcv_calls(db, scan_env, monkeypatch):  # noqa: ARG00
     # cache_hits would be 0 for the wrong reason. Keep _can_open False so no session
     # opens — BTC is re-evaluated each scan and genuinely served from the warm cache.
     # (Makes the test independent of gate thresholds / .env.)
-    monkeypatch.setattr(scanner, "_can_open", lambda _db: (False, "test-no-open"))
+    monkeypatch.setattr(scanner, "_can_open", lambda *_a, **_k: (False, "test-no-open"))
+    # …but let the scan RUN (the pre-scan capacity gate also consults _can_open; bypass it here
+    # so we still exercise the fetch→cache path rather than short-circuiting the whole scan).
+    monkeypatch.setattr(scanner, "_has_open_capacity", lambda *_a, **_k: (True, ""))
 
     # Clear the cache to ensure a cold start.
     candle_cache.clear()
@@ -513,10 +552,12 @@ def _make_multi_candidate_provider(n_symbols: int, candles_fn=None):
     return _P(), syms
 
 
-def test_grok_batch_capped_at_8_and_audited(db, monkeypatch):
-    """S5 item 2: when >8 candidates qualify, only the top 8 are sent to Grok and the
-    truncation is audited as 'grok_batch_truncated'."""
+def test_grok_batch_capped_and_audited(db, monkeypatch):
+    """When more candidates qualify than grok_scanner_batch_max, only the top-N (by expectancy)
+    are sent to Grok and the truncation is audited as 'grok_batch_truncated'."""
     provider, syms = _make_multi_candidate_provider(12)
+    monkeypatch.setattr(settings, "grok_scanner_batch_max", 8)  # force truncation at 8 of 12
+    monkeypatch.setattr(settings, "block_downtrend_adx", 0.0)
 
     # Patch both data_provider (for _universe + sequential path) and _provider_factory
     # (for the S2 parallel candle-cache workers) so no real network calls are made.
@@ -561,6 +602,68 @@ def test_grok_batch_capped_at_8_and_audited(db, monkeypatch):
     assert detail["dropped"] >= 1
 
 
+def test_grok_reviews_all_when_batch_max_covers(db, monkeypatch):
+    """With grok_scanner_batch_max ≥ the candidate count, EVERY 'trade' candidate is sent to
+    Grok in the one batched call (no truncation) — so none can open unreviewed."""
+    provider, syms = _make_multi_candidate_provider(12)
+    monkeypatch.setattr(scanner, "data_provider", lambda: provider)
+    monkeypatch.setattr(scanner, "_provider_factory", lambda _xid: provider)
+    monkeypatch.setattr("app.kss.pyramid.get_exchange_info",
+                        lambda s: {"minQty": 0.00001, "stepSize": 0.00001, "maxQty": 10000.0})
+    monkeypatch.setattr("app.kss.pyramid.get_current_prices", lambda s: dict.fromkeys(s, 1.0))
+    monkeypatch.setattr("app.orders.get_current_prices", lambda s: dict.fromkeys(s, 1.0))
+    monkeypatch.setattr(settings, "watchlist", syms)
+    monkeypatch.setattr(settings, "scan_top_n", 0)
+    monkeypatch.setattr(settings, "min_confidence", 0.0)
+    monkeypatch.setattr(settings, "min_win_rate", 0.0)
+    monkeypatch.setattr(settings, "backtest_trial_spacing_days", 0.0)
+    monkeypatch.setattr(settings, "min_trials", 0)
+    monkeypatch.setattr(settings, "min_expectancy_pct", -100.0)
+    monkeypatch.setattr(settings, "auto_trade", False)
+    monkeypatch.setattr(settings, "block_downtrend_adx", 0.0)
+    monkeypatch.setattr(settings, "grok_scanner_batch_max", 60)  # covers all 12
+    candle_cache.clear()
+
+    captured: dict = {}
+    monkeypatch.setattr("app.orchestrator.grok.scanner_enabled", lambda: True)
+    monkeypatch.setattr("app.orchestrator.grok.review_candidates",
+                        lambda _db, items: captured.update(items=items) or {})
+    scanner.run_scan(db, mode="semi")
+    assert len(captured.get("items", [])) == 12, "every candidate must reach Grok when cap covers them"
+    assert db.query(models.AuditLog).filter_by(action="grok_batch_truncated").count() == 0
+
+
+_DOWNTREND_TA = {
+    "rsi": 45.0, "macd_h": -0.5, "bb_pct": 0.2, "bb_w": 5.0, "adx": 40.0, "di": "down",
+    "atr_pct": 6.0, "st": "down", "htf": "down", "sr_res": 3.0, "sr_sup": 1.0,
+    "vtrend": "down", "vol_r": 1.0,
+}
+
+
+def test_downtrend_veto_unit(monkeypatch):
+    """_downtrend_veto fires only when HTF+ST are BOTH down AND ADX ≥ threshold; 0 disables it."""
+    monkeypatch.setattr(settings, "block_downtrend_adx", 25.0)
+    assert scanner._downtrend_veto(_DOWNTREND_TA) is not None
+    assert scanner._downtrend_veto({**_DOWNTREND_TA, "htf": "up"}) is None   # HTF not down
+    assert scanner._downtrend_veto({**_DOWNTREND_TA, "st": "up"}) is None    # ST not down
+    assert scanner._downtrend_veto({**_DOWNTREND_TA, "adx": 10.0}) is None   # weak trend
+    monkeypatch.setattr(settings, "block_downtrend_adx", 0.0)
+    assert scanner._downtrend_veto(_DOWNTREND_TA) is None                    # gate disabled
+
+
+def test_scan_skips_confirmed_downtrend(db, scan_env, monkeypatch):
+    """A 'trade' candidate in a confirmed downtrend (HTF+ST down, strong ADX) is blocked by the
+    hard entry-timing gate, never opens, and is audited as 'skipped_downtrend'."""
+    monkeypatch.setattr(settings, "block_downtrend_adx", 25.0)
+    monkeypatch.setattr(scanner.ta_bundle, "build", lambda *a, **k: dict(_DOWNTREND_TA))
+    scanner.run_scan(db, mode="semi")
+    cand = db.query(models.Candidate).filter_by(symbol="BTC").one()
+    assert cand.decision == "skip"
+    assert cand.session_id is None
+    assert "downtrend" in (cand.reason or "")
+    assert db.query(models.AuditLog).filter_by(action="skipped_downtrend").count() >= 1
+
+
 def test_grok_fail_mode_open_missing_verdict_opens(db, scan_env, monkeypatch):
     """S5 item 3 (a): fail_mode='open' — a symbol absent from the Grok verdict map
     is treated as endorsed and the session opens (today's behaviour preserved)."""
@@ -594,3 +697,79 @@ def test_grok_fail_mode_closed_missing_verdict_blocks(db, scan_env, monkeypatch)
     assert "grok_unverified" in (cand.reason or "")
     # Audit must record the block.
     assert db.query(models.AuditLog).filter_by(action="skipped_grok_unverified").count() >= 1
+
+
+# --- Capital accounting: projected reservation + lend-the-idle open-gate -----
+
+
+def _active_kss(db, *, reserved: float, used: float, symbol: str = "AAA") -> models.KssSession:
+    """Persist an ACTIVE KSS session with a given reservation and deployed cost."""
+    row = models.KssSession(
+        symbol=symbol, entry_price=100.0, distance_pct=2.0, max_waves=10,
+        isolated_fund=reserved, tp_pct=3.0, timeout_x_min=1440.0, gap_y_min=0.0,
+        status=models.SESSION_ACTIVE, total_cost=used,
+    )
+    db.add(row)
+    db.commit()
+    return row
+
+
+def test_session_lock_lends_idle_reservation():
+    """<50% filled locks only the deployed cash; >=50% filled locks the full reservation."""
+    shallow = models.KssSession(isolated_fund=1000.0, total_cost=200.0)  # 20% used
+    assert scanner._session_lock(shallow) == 200.0
+    deep = models.KssSession(isolated_fund=1000.0, total_cost=600.0)  # 60% used
+    assert scanner._session_lock(deep) == 1000.0
+    at_half = models.KssSession(isolated_fund=1000.0, total_cost=500.0)  # exactly 50%
+    assert scanner._session_lock(at_half) == 1000.0
+    no_reserve = models.KssSession(isolated_fund=0.0, total_cost=42.0)
+    assert scanner._session_lock(no_reserve) == 42.0
+
+
+def test_can_open_budgets_on_live_equity_minus_backup(db, monkeypatch):
+    """Budget = live equity × (100 − equity_backup_pct)%, NOT static account_equity."""
+    monkeypatch.setattr("app.risk.account_equity", lambda _db: 1000.0)
+    monkeypatch.setattr(settings, "equity_backup_pct", 25.0)
+    monkeypatch.setattr(settings, "max_concurrent_sessions", 100)
+    # No active sessions → budget is 750. 700 fits, 800 does not.
+    ok, _ = scanner._can_open(db, 700.0)
+    assert ok
+    ok, why = scanner._can_open(db, 800.0)
+    assert not ok and "dự phòng" in why
+
+
+def test_can_open_reuses_idle_reservation(db, monkeypatch):
+    """A lightly-filled session's idle reservation is lent to a new session (req b)."""
+    monkeypatch.setattr("app.risk.account_equity", lambda _db: 1000.0)
+    monkeypatch.setattr(settings, "equity_backup_pct", 25.0)  # budget 750
+    monkeypatch.setattr(settings, "max_concurrent_sessions", 100)
+    # Reserves 1000 but only used 100 (<50%) → locks 100, leaving 650 of the 750 budget.
+    _active_kss(db, reserved=1000.0, used=100.0)
+    ok, _ = scanner._can_open(db, 600.0)  # 100 + 600 = 700 <= 750
+    assert ok, "idle reservation of a <50%-filled session must be reusable"
+    # Old flat-reservation logic would have summed 1000 and blocked this outright.
+
+
+def test_can_open_locks_full_reservation_when_deep(db, monkeypatch):
+    """Once a session crosses 50% filled it locks its whole reservation (protect the DCA plan)."""
+    monkeypatch.setattr("app.risk.account_equity", lambda _db: 1000.0)
+    monkeypatch.setattr(settings, "equity_backup_pct", 25.0)  # budget 750
+    monkeypatch.setattr(settings, "max_concurrent_sessions", 100)
+    _active_kss(db, reserved=1000.0, used=600.0)  # >=50% → locks full 1000 > 750
+    ok, why = scanner._can_open(db, 10.0)
+    assert not ok and "dự phòng" in why
+
+
+def test_projected_ladder_cost_matches_pyramid(monkeypatch):
+    """The reserved fund equals the frozen pyramid's full-ladder estimate, and is positive."""
+    from app.kss import service
+    from app.kss.pyramid import PyramidSession
+
+    monkeypatch.setattr(settings, "kss_first_wave_usd", 50.0)
+    got = service.projected_ladder_cost("BTC", 100.0, 2.0, 10)
+    expected = PyramidSession(
+        symbol="BTC", entry_price=100.0, distance_pct=2.0, max_waves=10,
+        isolated_fund=1.0, tp_pct=1.0, timeout_x_min=1.0, gap_y_min=0.0,
+    ).estimate_total_cost()
+    assert got == expected
+    assert got > 0

@@ -31,6 +31,28 @@ _QUOTES = {
     "bitstamp": "USD",
 }
 
+# Bases with no crypto directional alpha — dropped from the scan universe so they don't
+# waste scan budget or pollute the "top by volume" list (stables/fiat dominate volume).
+#   * Stablecoins / pegged USD tokens — a stable-vs-stable peg (e.g. USDC/USDT, FDUSD/USDT).
+#   * Fiat / forex currencies — an FX pair, not crypto (e.g. EUR/USDT, GBP/USDT, AUD/USDT).
+_STABLES = {
+    "USDT", "USDC", "USD1", "FDUSD", "TUSD", "BUSD", "DAI", "USDP", "USDD",
+    "PYUSD", "GUSD", "USDE", "USTC", "SUSD", "LUSD", "USDS", "FRAX", "USDJ",
+    "CUSD", "USDX", "XUSD", "EURT", "EURS", "AEUR", "EURI",
+}
+_FIAT = {
+    "EUR", "GBP", "AUD", "JPY", "CHF", "CAD", "NZD", "CNY", "TRY", "BRL", "RUB",
+    "ZAR", "MXN", "ARS", "PLN", "RON", "UAH", "IDR", "NGN", "VND", "KRW", "INR",
+    "SGD", "HKD", "THB", "PHP", "MYR", "CZK", "HUF", "BGN", "DKK", "SEK", "NOK",
+}
+
+
+def _is_excluded_base(base: str) -> bool:
+    """True for stablecoins and fiat/FX bases — pairs carrying no crypto directional alpha."""
+    b = base.upper()
+    return b in _STABLES or b in _FIAT
+
+
 _DEFAULT_INFO = {
     "symbol": "",
     "minQty": 0.00001,
@@ -67,7 +89,10 @@ class CcxtProvider:
     def __init__(self, exchange_id: str, quote: str | None = None):
         self.exchange_id = exchange_id
         self.quote = quote or _QUOTES.get(exchange_id, "USDT")
-        self._ex = getattr(ccxt, exchange_id)()
+        # enableRateLimit makes ccxt pace requests to the exchange's per-IP limit (≈20 req/s for
+        # Binance). It defaults to True in current ccxt, but set it explicitly so an upstream
+        # default change can never silently remove our only client-side throttle → IP ban risk.
+        self._ex = getattr(ccxt, exchange_id)({"enableRateLimit": True})
 
     def pair(self, symbol: str) -> str:
         """Map a base symbol (e.g. 'BTC') to this exchange's pair (e.g. 'BTC/USD')."""
@@ -82,7 +107,7 @@ class CcxtProvider:
         out: dict[str, float] = {}
         try:
             tickers = self._ex.fetch_tickers(pairs)
-            for symbol, pair in zip(symbols, pairs):
+            for symbol, pair in zip(symbols, pairs, strict=False):
                 t = tickers.get(pair) or {}
                 last = t.get("last")
                 if last is not None:
@@ -120,8 +145,11 @@ class CcxtProvider:
         for pair, t in tickers.items():
             if not pair.endswith(suffix):
                 continue
+            base = pair[: -len(suffix)]
+            if _is_excluded_base(base):
+                continue
             vol = t.get("quoteVolume") or 0.0
-            rows.append((pair[: -len(suffix)], float(vol)))
+            rows.append((base, float(vol)))
         rows.sort(key=lambda r: r[1], reverse=True)
         return [sym for sym, _ in rows[:n]]
 
@@ -137,10 +165,13 @@ class CcxtProvider:
         for pair, t in tickers.items():
             if not pair.endswith(suffix):
                 continue
+            base = pair[: -len(suffix)]
+            if _is_excluded_base(base):
+                continue
             vol = float(t.get("quoteVolume") or 0.0)
             if vol < min_quote_volume:
                 continue
-            rows.append((pair[: -len(suffix)], vol))
+            rows.append((base, vol))
         rows.sort(key=lambda r: r[1], reverse=True)
         return [sym for sym, _ in rows]
 

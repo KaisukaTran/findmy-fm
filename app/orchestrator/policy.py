@@ -78,7 +78,14 @@ def _open(db: Session, intent: dict, allowed: set[str], result: dict) -> None:
         source="opus", source_ref=f"opus:{pos.id}:open", strategy_name="OPUS",
         note=(intent.get("reason") or "")[:200],
     )
-    fill = orders.approve_order(db, order.id, reviewer="opus")
+    try:
+        fill = orders.approve_order(db, order.id, reviewer="opus")
+    except orders.InsufficientCashError:
+        # Not enough cash to open — drop the just-created watch row, skip this intent.
+        db.delete(pos)
+        db.flush()
+        audit.log(db, "opus", "open_underfunded", entity=symbol, symbol=symbol)
+        return
     pos.qty = fill.quantity
     pos.avg_price = fill.price
     pos.entry_price = fill.price

@@ -51,12 +51,15 @@ def test_wave_order_shape_frozen(session):
 
 
 def test_on_fill_avg_and_tp_frozen(session):
+    from app import costengine
+
     session.start()
     session.on_fill(0, 0.00002, 50000.0, current_market_price=50000.0)
     assert session.avg_price == pytest.approx(50000.0)
-    # TP triggers exactly at avg × (1 + tp/100) = 51500
-    assert session.check_tp(51499.99) is None
-    res = session.check_tp(51500.0)
+    # TP triggers at avg × (1 + (tp + fee buffer)/100): tp 3% + 120% of the round-trip fee.
+    tp_price = 50000.0 * (1 + (3.0 + costengine.tp_fee_buffer_pct()) / 100)
+    assert session.check_tp(tp_price - 0.01) is None
+    res = session.check_tp(tp_price)
     assert res["action"] == "tp_triggered"
     assert res["order"]["side"] == "SELL" and res["order"]["order_type"] == "MARKET"
     assert res["order"]["source_ref"] == "pyramid:7:tp"

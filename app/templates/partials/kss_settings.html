@@ -2,36 +2,74 @@
   Lưu bền qua restart. (Session đang chạy giữ tham số cũ, trừ SL/Trailing đọc động.)</p>
 
 <form id="kss-settings-form">
-  <label title="Khoảng cách giá giữa các sóng DCA. Giá sóng n = entry×(1−d%)^n.">Distance %
+  <label title="Khoảng cách giá giữa các sóng DCA. Giá sóng n = entry×(1−d%)^n.">Distance % <span class="varname">scan_distance_pct</span>
     <input name="scan_distance_pct" type="number" step="0.1" min="0.1" value="{{ '%.2f'|format(k.scan_distance_pct) }}" required></label>
-  <label title="Chốt lời: bán toàn bộ khi giá ≥ avg×(1+TP%).">TP %
+  <label title="Chốt lời: bán toàn bộ khi giá ≥ avg×(1+TP%).">TP % <span class="varname">scan_tp_pct</span>
     <input name="scan_tp_pct" type="number" step="0.1" min="0.1" value="{{ '%.2f'|format(k.scan_tp_pct) }}" required></label>
-  <label title="Số sóng DCA tối đa mỗi session.">Số sóng (max)
+  <label title="Mỗi mục tiêu chốt lời cộng thêm bao nhiêu LẦN phí khứ hồi (mua+bán = 2×phí sàn cao nhất) lên trên TP%, để TP luôn vượt phí có biên an toàn. 1.2 = +120% phí; 1.5 = +150% phí; 1.0 = vừa đủ phí. Áp dụng cả paper lẫn live.">Phủ phí khi TP (×phí) <span class="varname">tp_fee_coverage</span>
+    <input name="tp_fee_coverage" type="number" step="0.1" min="0" max="10" value="{{ '%.2f'|format(k.tp_fee_coverage) }}" required></label>
+  <label title="Số sóng DCA tối đa mỗi session.">Số sóng (max) <span class="varname">scan_max_waves</span>
     <input name="scan_max_waves" type="number" step="1" min="1" value="{{ k.scan_max_waves }}" required></label>
-  <label title="Vốn cô lập mỗi session (USD).">Vốn/session $
+  <label title="(cũ) Vốn cô lập đặt cứng mỗi session. Không còn dùng cho scanner: mỗi session giờ TỰ tính vốn = tổng chi phí cả thang DCA (sóng đầu × số sóng × giá). Vẫn dùng cho session tạo thủ công.">Vốn/session $ (cũ) <span class="varname">scan_fund</span>
     <input name="scan_fund" type="number" step="any" min="1" value="{{ '%.0f'|format(k.scan_fund) }}" required></label>
-  <label title="Cắt lỗ: bán toàn bộ khi giá ≤ avg×(1−SL%). 0 = tắt.">SL %
+  <label title="Cắt lỗ: bán toàn bộ khi giá ≤ avg×(1−SL%). 0 = tắt.">SL % <span class="varname">sl_pct</span>
     <input name="sl_pct" type="number" step="0.1" min="0" value="{{ '%.2f'|format(k.sl_pct) }}" required></label>
-  <label title="Trailing stop: khi có lãi, bán nếu giá ≤ đỉnh×(1−Trail%). 0 = tắt.">Trailing %
+  <label title="Trailing stop: khi có lãi, bán nếu giá ≤ đỉnh×(1−Trail%). 0 = tắt.">Trailing % <span class="varname">trailing_pct</span>
     <input name="trailing_pct" type="number" step="0.1" min="0" value="{{ '%.2f'|format(k.trailing_pct) }}" required></label>
-  <label title="Số ngày tối đa chờ TP trước khi đóng session.">Deadline (ngày)
+  <label title="Số ngày tối đa chờ TP trước khi đóng session.">Deadline (ngày) <span class="varname">deadline_days</span>
     <input name="deadline_days" type="number" step="1" min="1" value="{{ k.deadline_days }}" required></label>
-  <label title="Số session KSS tối đa chạy song song. Tăng để mở thêm coin khi còn vốn.">Số session tối đa
+  <label title="Số session KSS tối đa chạy song song. Tăng để mở thêm coin khi còn vốn.">Số session tối đa <span class="varname">max_concurrent_sessions</span>
     <input name="max_concurrent_sessions" type="number" step="1" min="1" value="{{ k.max_concurrent_sessions }}" required></label>
-  <label title="Trần % vốn được triển khai (Σ quỹ session ≤ % × equity). Tăng để dùng nhiều vốn hơn.">Trần vốn %
-    <input name="max_deployed_pct" type="number" step="any" min="1" max="100" value="{{ '%.0f'|format(k.max_deployed_pct) }}" required></label>
-  <label title="Chặn mở session mới cho coin đã thua K lần ĐÓNG LỆNH liên tiếp (một lần lãi sẽ phá chuỗi). Tăng để khó bị chặn hơn.">Chặn sau K lần thua
+  <label title="Số session KSS tối đa MỖI coin. 1 (K-1) = một thang DCA/coin nên avg session = avg Position → không trộn giá vốn (tránh 'chốt lời mà thực ra lỗ' / kẹt TP do K-2). 0 = không giới hạn. Khuyến nghị 1.">Session tối đa / coin <span class="varname">max_sessions_per_symbol</span>
+    <input name="max_sessions_per_symbol" type="number" step="1" min="0" max="20" value="{{ k.max_sessions_per_symbol }}" required></label>
+  <label title="Tỷ lệ % equity (theo giá thị trường) LUÔN giữ lại làm dự phòng, không bao giờ triển khai. Ngân sách mở session = (100 − số này)% × equity. Session đã khớp <50% kế hoạch chỉ khóa phần đã mua (phần dư cho session khác mượn); ≥50% thì khóa toàn bộ kế hoạch. Giảm để dùng nhiều vốn hơn.">Dự phòng % equity <span class="varname">equity_backup_pct</span>
+    <input name="equity_backup_pct" type="number" step="any" min="0" max="90" value="{{ '%.0f'|format(k.equity_backup_pct) }}" required></label>
+  <label title="CHẶN CỨNG: tiền mặt tài khoản không bao giờ được xuống dưới mức này. Mỗi lệnh MUA bị khớp một phần đúng bằng tiền còn lại (hoặc bị giữ lại nếu không đủ cả lát tối thiểu) → Cash không bao giờ âm. 0 = Cash luôn ≥ 0. Lệnh BÁN không bị chặn.">Sàn tiền mặt $ <span class="varname">cash_floor_usd</span>
+    <input name="cash_floor_usd" type="number" step="any" min="0" value="{{ '%.0f'|format(k.cash_floor_usd) }}" required></label>
+  <label title="Chặn mở session mới cho coin đã thua K lần ĐÓNG LỆNH liên tiếp (một lần lãi sẽ phá chuỗi). Tăng để khó bị chặn hơn.">Chặn sau K lần thua <span class="varname">loss_streak_block_k</span>
     <input name="loss_streak_block_k" type="number" step="1" min="1" max="20" value="{{ k.loss_streak_block_k }}" required></label>
-  <label title="Chỉ tính các lần đóng lệnh trong N ngày gần nhất — lỗ cũ trôi ra ngoài cửa sổ thì coin tự được giao dịch lại.">Cửa sổ lỗ (ngày)
+  <label title="Chỉ tính các lần đóng lệnh trong N ngày gần nhất — lỗ cũ trôi ra ngoài cửa sổ thì coin tự được giao dịch lại.">Cửa sổ lỗ (ngày) <span class="varname">loss_streak_window_days</span>
     <input name="loss_streak_window_days" type="number" step="1" min="1" max="365" value="{{ k.loss_streak_window_days }}" required></label>
-  <label title="Gate CHÍNH: kỳ vọng net trung bình mỗi lệnh backtest (đã trừ SL + phí). Coin chỉ trade khi E ≥ ngưỡng này VÀ win-rate ≥ ngưỡng dưới.">Kỳ vọng tối thiểu E %
+  <label title="Gate CHÍNH: kỳ vọng net trung bình mỗi lệnh backtest (đã trừ SL + phí). Coin chỉ trade khi E ≥ ngưỡng này VÀ win-rate ≥ ngưỡng dưới.">Kỳ vọng tối thiểu E % <span class="varname">min_expectancy_pct</span>
     <input name="min_expectancy_pct" type="number" step="0.1" min="-100" max="100" value="{{ '%.1f'|format(k.min_expectancy_pct) }}" required></label>
-  <label title="Win-rate tối thiểu (cận dưới Wilson) để đủ điều kiện trade. Cặp với gate kỳ vọng tạo thành quy tắc: trade khi E ≥ ngưỡng VÀ win-rate ≥ ngưỡng này.">Win-rate tối thiểu %
+  <label title="Win-rate tối thiểu (cận dưới Wilson) để đủ điều kiện trade. Cặp với gate kỳ vọng tạo thành quy tắc: trade khi E ≥ ngưỡng VÀ win-rate ≥ ngưỡng này.">Win-rate tối thiểu % <span class="varname">min_win_rate</span>
     <input name="min_win_rate" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.min_win_rate) }}" required></label>
-  <label title="Ngưỡng đồng thuận tối thiểu của 5 agent thị trường (trend/dip/volatility/liquidity/ml). S4: backtest bị loại khỏi điểm đồng thuận — chứng cứ backtest thuộc về các gate cứng (E, win_lb). Giá trị mặc định mới: 45%.">Đồng thuận tối thiểu %
+  <label title="Ngưỡng đồng thuận tối thiểu của 5 agent thị trường (trend/dip/volatility/liquidity/ml). S4: backtest bị loại khỏi điểm đồng thuận — chứng cứ backtest thuộc về các gate cứng (E, win_lb). Giá trị mặc định mới: 45%.">Đồng thuận tối thiểu % <span class="varname">min_confidence</span>
     <input name="min_confidence" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.min_confidence) }}" required></label>
+  <label title="Số lần thử backtest TỐI THIỂU để edge đáng tin (win-rate 100% từ vài lần thử là nhiễu). Tăng để lọc mẫu mỏng. Mặc định 15.">Số lần thử tối thiểu <span class="varname">min_trials</span>
+    <input name="min_trials" type="number" step="1" min="1" max="200" value="{{ k.min_trials }}" required></label>
+  <label title="GATE THỜI ĐIỂM VÀO: chặn mở coin đang DOWNTREND xác nhận — khung lớn (HTF) VÀ Supertrend đều xuống VÀ ADX ≥ ngưỡng này (tránh 'bắt dao rơi'). 0 = tắt. Đây là bản deterministic của veto hay gặp nhất của Grok, hoạt động cả khi Grok tắt. Mặc định 25.">Chặn downtrend (ADX≥) <span class="varname">block_downtrend_adx</span>
+    <input name="block_downtrend_adx" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.block_downtrend_adx) }}" required></label>
+  <label title="Notional sóng đầu mỗi session. >0 = đặt cỡ lệnh đầu theo USD (dùng nhiều vốn hơn); 0 = cỡ pip mặc định (rất nhỏ).">Giá trị lệnh đầu (USD) <span class="varname">kss_first_wave_usd</span>
+    <input name="kss_first_wave_usd" type="number" step="any" min="0" value="{{ '%.2f'|format(k.kss_first_wave_usd) }}"></label>
+  <label title="Trần số coin mỗi lần quét. Tăng để quét nhiều coin hơn (mặc định 50).">Số coin quét tối đa <span class="varname">scan_max_symbols</span>
+    <input name="scan_max_symbols" type="number" step="1" min="1" value="{{ k.scan_max_symbols }}"></label>
+  <label title="Chỉ quét coin có quote-volume ≥ ngưỡng này. Giảm để quét thêm coin nhỏ (mặc định 1,000,000).">Thanh khoản tối thiểu (quote vol) <span class="varname">min_quote_volume</span>
+    <input name="min_quote_volume" type="number" step="any" min="0" value="{{ '%.0f'|format(k.min_quote_volume) }}"></label>
   <button type="submit" class="ok">Lưu cấu hình KSS</button>
 </form>
+
+<div class="settings-subpanel">
+  <div class="muted fs-12 mb-8"><b>Thực thi LIVE (maker)</b> — chỉ áp dụng khi LIVE_TRADING bật + có API key.
+    Hoàn toàn vô hiệu ở chế độ paper.</div>
+  <form id="live-exec-form">
+    <label title="Đặt lệnh VÀO dạng post-only LIMIT_MAKER (tiết kiệm spread/slippage). Exit rủi ro (SL/trailing/đóng) luôn là MARKET. TP thành maker khi có 1.5.">Lệnh maker (LIMIT_MAKER) <span class="varname">maker_orders</span>
+      <select name="maker_orders" class="select-inline">
+        <option value="1" {% if k.maker_orders %}selected{% endif %}>Bật</option>
+        <option value="0" {% if not k.maker_orders %}selected{% endif %}>Tắt</option>
+      </select></label>
+    <label title="Hủy lệnh maker đang chờ nếu chưa khớp sau số giây này. 0 = chờ vô hạn (đúng kiểu DCA).">Timeout khớp lệnh (giây) <span class="varname">order_fill_timeout_sec</span>
+      <input name="order_fill_timeout_sec" type="number" step="1" min="0" value="{{ k.order_fill_timeout_sec }}"></label>
+    <label title="Định tuyến lệnh thật sang TESTNET của sàn (testnet.binance.vision) thay vì sản xuất — để kiểm thử đường live trước khi dùng key thật.">Dùng TESTNET <span class="varname">live_use_testnet</span>
+      <select name="live_use_testnet" class="select-inline">
+        <option value="1" {% if k.live_use_testnet %}selected{% endif %}>Bật (testnet)</option>
+        <option value="0" {% if not k.live_use_testnet %}selected{% endif %}>Tắt (sản xuất)</option>
+      </select></label>
+    <button type="submit" class="ok">Lưu cấu hình LIVE</button>
+  </form>
+  <div class="muted fs-12 mt-6">Phí Binance VIP0: <b>maker == taker == 0.10%</b> (bằng nhau) — maker chỉ
+    lợi <b>spread/slippage</b>, không lợi phí. Phí giảm 25% nếu trả bằng <b>BNB</b> hoặc lên <b>VIP1+</b>.</div>
+</div>
 
 <div id="consensus-weights-panel" class="settings-subpanel">
   <div class="muted fs-12 mb-8">Trọng số đồng thuận agent thị trường (S4) — backtest luôn = 0, chứng cứ backtest thuộc gate cứng.</div>
@@ -61,12 +99,21 @@
   <div class="muted fs-12 mt-6">Khi bật, Grok cho lý do cụ thể vì sao chọn/bỏ từng coin (xem panel scanner & Nhật ký). Lỗi API → bỏ qua, dùng quyết định deterministic (không chặn lệnh).</div>
   <div class="mt-8">
     <form id="grok-fail-mode-form">
-      <label title="open (mặc định): lỗi/timeout Grok → coin vẫn mở (fail-open, ưu tiên sẵn sàng). closed: coin KHÔNG có verdict rõ ràng từ Grok sẽ bị bỏ qua lần quét này (ưu tiên bảo toàn vốn khi full-auto). Batch cap (top 8) cũng áp dụng: coin bị loại vì vượt cap thì: open → vẫn mở; closed → bị chặn.">Chế độ lỗi Grok
+      <label title="open (mặc định): lỗi/timeout Grok → coin vẫn mở (fail-open, ưu tiên sẵn sàng). closed: coin KHÔNG có verdict rõ ràng từ Grok sẽ bị bỏ qua lần quét này (ưu tiên bảo toàn vốn khi full-auto). Coin vượt batch cap cũng vậy: open → vẫn mở; closed → bị chặn.">Chế độ lỗi Grok <span class="varname">grok_scanner_fail_mode</span>
         <select name="grok_scanner_fail_mode" class="select-inline">
           <option value="open" {% if k.grok_scanner_fail_mode == 'open' %}selected{% endif %}>open (fail-open)</option>
           <option value="closed" {% if k.grok_scanner_fail_mode == 'closed' %}selected{% endif %}>closed (bảo toàn vốn)</option>
         </select>
       </label>
+      <label title="Số coin TỐI ĐA Grok duyệt mỗi lần quét (một call gộp). Đặt ≥ số coin 'trade' thường thấy để KHÔNG coin nào mở mà chưa qua Grok (sắp theo expectancy nên nếu có cắt thì giữ coin mạnh nhất). Mặc định 60.">Grok duyệt tối đa/lần quét <span class="varname">grok_scanner_batch_max</span>
+        <input name="grok_scanner_batch_max" type="number" step="1" min="1" max="300" value="{{ k.grok_scanner_batch_max }}" required></label>
+      <label title="Cho Grok dùng xAI Live Search (web + X + tin tức) trong cổng quét để cân nhắc trending/sentiment/báo cáo lớn theo thời gian thực, không chỉ số liệu TA. Tốn thêm phí tìm kiếm mỗi lần quét; mode='auto' nên Grok chỉ tìm khi cần. Cần bật Grok scanner.">Live Search (web/X/news) <span class="varname">grok_live_search</span>
+        <select name="grok_live_search" class="select-inline">
+          <option value="1" {% if k.grok_live_search %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.grok_live_search %}selected{% endif %}>Tắt</option>
+        </select></label>
+      <label title="Số kết quả Live Search tối đa Grok được kéo mỗi lần quét (giới hạn chi phí tìm kiếm). Mặc định 8.">Live Search tối đa <span class="varname">grok_search_max_results</span>
+        <input name="grok_search_max_results" type="number" step="1" min="1" max="30" value="{{ k.grok_search_max_results }}" required></label>
       <button type="submit" class="sm ok mt-4">Lưu</button>
     </form>
   </div>

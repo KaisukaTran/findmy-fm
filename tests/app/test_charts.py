@@ -42,3 +42,33 @@ def test_performance_view(db, monkeypatch):
     assert len(p["equity_times"]) == len(p["equity_curve"])  # aligned for the time axis
     assert p["realized_pnl"] > 0
     assert p["max_drawdown_pct"] >= 0.0
+
+
+def test_performance_view_expectancy_and_period(db, monkeypatch):
+    """Phase 5: expectancy/profit-factor maths + the period window filter."""
+    from datetime import datetime, timedelta
+
+    from app.models import Fill
+
+    monkeypatch.setattr("app.portfolio.get_current_prices", lambda syms: dict.fromkeys(syms, 1000.0))
+    now = datetime.utcnow()
+    # two recent closed trades (+200, -50) inside the 24h window
+    db.add(Fill(symbol="ETH", side="SELL", quantity=1.0, price=1200.0, fee=0.0,
+                realized_pnl=200.0, executed_at=now - timedelta(hours=1)))
+    db.add(Fill(symbol="ETH", side="SELL", quantity=1.0, price=900.0, fee=0.0,
+                realized_pnl=-50.0, executed_at=now - timedelta(hours=2)))
+    # an old win (+999) outside the 24h window
+    db.add(Fill(symbol="BTC", side="SELL", quantity=1.0, price=100.0, fee=0.0,
+                realized_pnl=999.0, executed_at=now - timedelta(days=10)))
+    db.commit()
+
+    allp = portfolio.performance_view(db, period="all")
+    assert allp["wins"] == 2 and allp["losses"] == 1
+    assert allp["expectancy"] == round((200 - 50 + 999) / 3, 2)
+    assert allp["profit_factor"] == round((200 + 999) / 50, 2)
+    assert allp["avg_win"] == round((200 + 999) / 2, 2)
+    assert allp["avg_loss"] == -50.0
+
+    win24 = portfolio.performance_view(db, period="24h")
+    assert win24["wins"] == 1 and win24["losses"] == 1 and win24["closed"] == 2
+    assert win24["expectancy"] == 75.0  # (200 - 50) / 2

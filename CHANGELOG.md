@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v2.0.0] – 2026-06-13 – LEAN REBUILD
+
+A from-scratch, lean rebuild into a single `app/` package. The KSS Pyramid DCA
+math is preserved verbatim; the surrounding architecture is dramatically
+simplified. See [docs/REBUILD.md](docs/REBUILD.md).
+
+### Changed
+- **Single package** — replaced `src/findmy/` + `services/` (SOT/TS split, two
+  DBs) with one `app/` package and one SQLite database (`data/findmy.db`).
+- **Auth** — dropped JWT/refresh/scopes for a single optional API key (`X-API-Key`).
+- **Caching/metrics** — dropped the L1/L2 cache service and Prometheus; one TTL
+  cache for prices, `/health` for liveness.
+- **UI** — server-rendered HTMX partials + Alpine (CSP build) under a tight CSP,
+  with zero-JS SVG charts.
+
+### Added
+- **Multi-agent scanner** — deterministic `trend`/`dip`/`volatility`/`liquidity`
+  agents + backtested win-rate gate open KSS sessions (semi- or full-auto). See
+  [docs/AGENTS.md](docs/AGENTS.md).
+- **Autonomy & safety** — background scheduler, circuit breaker, AI Guardian veto
+  layer, loss-streak block, and pending-queue auto-approval (all OFF by default).
+- **Telegram** — alerts + remote commands (`/status /summary /pending /positions
+  /kss /fullauto /pause /resume /freeze /reset`). See [docs/telegram-setup.md](docs/telegram-setup.md).
+- **Go-live path** — real-money execution via `ccxt` private endpoints, capped
+  per order and breaker-gated, **shipped OFF**. See [docs/go-live.md](docs/go-live.md).
+- **OPUS orchestrator mode** — advanced, independent full-auto (paper-only, OFF).
+
+### Docs
+- README rewritten for the v2 architecture; documentation consolidated to a
+  README-first, English-only set; stale v1 reference docs removed.
+
+---
+
 ## [v1.0] – 2026-01-12 – STABLE RELEASE 🎉
 
 ### 🎯 Complete KSS Pyramid Strategy Implementation

@@ -1,10 +1,22 @@
+<div id="audit-pane"
+     hx-get="/partials/audit?category={{ category }}&page={{ page }}"
+     hx-trigger="every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-audit from:body"
+     hx-target="this" hx-swap="outerHTML">
+{% set icons = {'important':'⭐','trade':'🟢','risk':'🛑','opus':'🤖','system':'⚙️','all':'≡'} %}
 {% set sev = {'good':'pos','danger':'neg','warn':'audit-warn','info':'muted'} %}
+<div class="audit-filters">
+  {% for key, label in filters %}
+  <button class="sm {{ '' if category == key else 'ghost' }}"
+          hx-get="/partials/audit?category={{ key }}" hx-target="#audit-pane" hx-swap="outerHTML"
+          title="Sự kiện “{{ label }}” (phân trang, 20 dòng/trang)">{{ icons[key] }} {{ label }}</button>
+  {% endfor %}
+</div>
 {% if rows %}
 <table class="tbl audit-tbl">
   <tbody>
     {% for r in rows %}
     <tr class="audit-row cat-{{ r.category }} sev-{{ r.severity }}" data-symbol="{{ r.symbol }}">
-      <td class="muted td-nowrap">{{ r.time }}</td>
+      <td class="muted td-nowrap">{{ r.full_time }}</td>
       <td class="td-shrink">{{ r.icon }}</td>
       <td class="{{ sev.get(r.severity,'') }}" title="{{ r.actor }} · {{ r.action }} | {{ r.detail }}">{{ r.message }}</td>
       <td class="td-shrink">
@@ -14,5 +26,18 @@
     {% endfor %}
   </tbody>
 </table>
-<p class="muted fs-11 mt-6">Hiện {{ rows|length }} sự kiện gần nhất. Di chuột vào dòng để xem chi tiết thô.</p>
-{% else %}<p class="muted">Chưa có hoạt động nào.</p>{% endif %}
+<div class="page-nav">
+  <button class="sm ghost" {{ 'disabled' if not has_prev }}
+          hx-get="/partials/audit?category={{ category }}&page={{ page - 1 }}"
+          hx-target="#audit-pane" hx-swap="outerHTML">&#8249; Trước</button>
+  <span class="muted">Trang {{ page }}</span>
+  <button class="sm ghost" {{ 'disabled' if not has_next }}
+          hx-get="/partials/audit?category={{ category }}&page={{ page + 1 }}"
+          hx-target="#audit-pane" hx-swap="outerHTML">Sau &#8250;</button>
+</div>
+<p class="muted fs-11 mt-6">Trang {{ page }} · {{ rows | length }} sự kiện “{{ cat_label }}”. Di chuột vào dòng để xem chi tiết thô.</p>
+{% else %}<p class="muted">Chưa có sự kiện “{{ cat_label }}” nào{{ ' ở trang này' if page > 1 else '' }}.</p>
+{% if page > 1 %}<div class="page-nav"><button class="sm ghost"
+   hx-get="/partials/audit?category={{ category }}&page={{ page - 1 }}"
+   hx-target="#audit-pane" hx-swap="outerHTML">&#8249; Trước</button></div>{% endif %}{% endif %}
+</div>

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 
 from sqlalchemy.orm import Session
 
@@ -27,6 +28,39 @@ logger = logging.getLogger(__name__)
 _task: asyncio.Task | None = None
 _last_cycle_at: str | None = None
 _last_summary: dict = {}
+
+# Cross-process singleton lock. Two app processes each running this scan loop race
+# scanner._can_open (separate DB transactions) and blow past max_concurrent_sessions
+# (observed 8–9 active vs a cap of 5). A localhost-only socket is a process-wide mutex:
+# only ONE process can bind it, and the OS frees it automatically on exit (no stale lock
+# files). 8801 = 8000 (app) + a fixed offset reserved for this lock.
+_SINGLETON_PORT = 8801
+_lock_sock: socket.socket | None = None
+
+
+def _acquire_singleton_lock(port: int = _SINGLETON_PORT) -> bool:
+    """True if this process is the scheduler singleton; False if another already holds it.
+    Idempotent: a process that already holds the lock returns True. (`port` is overridable
+    for tests.)"""
+    global _lock_sock
+    if _lock_sock is not None:
+        return True
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", port))  # no SO_REUSEADDR — a 2nd bind MUST fail
+        s.listen(1)
+    except OSError:
+        s.close()
+        return False
+    _lock_sock = s
+    return True
+
+
+def _release_singleton_lock() -> None:
+    global _lock_sock
+    if _lock_sock is not None:
+        _lock_sock.close()
+        _lock_sock = None
 
 
 def status() -> dict:
@@ -78,10 +112,20 @@ def run_cycle(db: Session) -> dict:
 
     from app import circuit, guardian, notify
     from app.models import PENDING, PendingOrder
+    # Live-only: book fills of resting maker orders the exchange filled since last cycle,
+    # BEFORE TP/scan run so sessions/positions reflect reality. No-op on paper.
+    reconciled = orders.reconcile_live_orders(db)
     closed = service.sweep_deadlines(db)
     tp = service.manage_open_sessions(db)
     service.manage_orphan_positions(db)  # TP/SL leftover positions no session/OPUS covers
-    scan = scanner.run_scan(db)
+    scan: dict
+    try:
+        scan = scanner.run_scan(db)
+    except scanner.ScanInProgress:
+        # A manual /api/scan is mid-flight; skip this cycle's scan rather than collide on the
+        # SQLite writer. The rest of the cycle (TP, breaker, auto-fill) still runs.
+        logger.info("run_cycle: scan already in progress, skipping scan this cycle")
+        scan = {"scan_id": None, "candidates": []}
     breaker = circuit.evaluate(db)
     frozen = breaker["frozen"]
 
@@ -137,7 +181,7 @@ def run_cycle(db: Session) -> dict:
                     order.auto_veto_reason = reason
                     order.auto_veto_at = datetime.utcnow()
                     audit.log(db, "guardian", "veto", entity=f"order:{oid}", reason=reason)
-                    notify.send(f"Guardian vetoed order {oid} ({order.symbol}): {reason}")
+                    notify.event("risk", f"⛔ Guardian vetoed order {oid} ({order.symbol}): {reason}")
                     guardian_vetoes += 1
 
     # Phase C: periodic per-pair hyperopt + ML retrain (time-gated, never blocks).
@@ -149,15 +193,22 @@ def run_cycle(db: Session) -> dict:
     auto_approved = [] if frozen else orders.auto_approve_by_policy(db)  # self-guards on autoapprove_enabled
     audit.log(db, "scheduler", "cycle", deadlines_closed=len(closed), tp_queued=len(tp),
               candidates=len(scan["candidates"]), auto_filled=len(filled),
-              auto_approved=len(auto_approved), frozen=frozen, guardian_vetoes=guardian_vetoes,
-              veto_expired=veto_expired, hyperopt_runs=hyperopt_runs, ml_trained=ml_trained)
+              auto_approved=len(auto_approved), reconciled=len(reconciled), frozen=frozen,
+              guardian_vetoes=guardian_vetoes, veto_expired=veto_expired,
+              hyperopt_runs=hyperopt_runs, ml_trained=ml_trained)
     db.commit()
+    # Periodic Telegram digest (no-op unless telegram_digest_hours>0 and the interval elapsed).
+    try:
+        notify.maybe_send_digest(db)
+    except Exception:
+        logger.debug("maybe_send_digest failed")
     summary = {
         "deadlines_closed": closed,
         "tp_queued": tp,
         "scan_id": scan["scan_id"],
         "auto_filled": filled,
         "auto_approved": auto_approved,
+        "reconciled": reconciled,
         "frozen": frozen,
         "guardian_vetoes": guardian_vetoes,
         "veto_expired": veto_expired,
@@ -190,9 +241,20 @@ async def _loop() -> None:
 
 
 def start() -> bool:
-    """Start the background loop if not already running. Returns True if started."""
+    """Start the background loop if not already running. Returns True if started.
+
+    Refuses to start (returns False) when another app process already holds the
+    singleton lock — only one process may run the scan loop, or the two race
+    scanner._can_open and overshoot max_concurrent_sessions."""
     global _task
     if _task and not _task.done():
+        return False
+    if not _acquire_singleton_lock(settings.scheduler_lock_port):
+        logger.warning(
+            "scheduler NOT started — another app instance already holds the singleton lock "
+            "(127.0.0.1:%d). Run a single process per lock port, or give a parallel instance a "
+            "distinct scheduler_lock_port.", settings.scheduler_lock_port,
+        )
         return False
     settings.scheduler_enabled = True
     _task = asyncio.create_task(_loop())
@@ -203,12 +265,13 @@ def stop() -> bool:
     """Stop the background loop. Returns True if a running task was cancelled."""
     global _task
     settings.scheduler_enabled = False
+    cancelled = False
     if _task and not _task.done():
         _task.cancel()
-        _task = None
-        return True
+        cancelled = True
     _task = None
-    return False
+    _release_singleton_lock()  # free the lock so the same process can restart cleanly
+    return cancelled
 
 
 def is_running() -> bool:

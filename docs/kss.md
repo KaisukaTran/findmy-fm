@@ -1,7 +1,7 @@
 # KSS (Kai Strategy Service) - Pyramid DCA Strategy
 
-> **Version**: v0.10.0  
-> **Module**: `src/findmy/kss/`
+> **Version**: v2.0.0  
+> **Module**: `app/kss/` — the wave math is frozen in `app/kss/pyramid.py`.
 
 ## Overview
 
@@ -58,7 +58,7 @@ Entry Price ━━━━━━━━━━━━━━━━━━━━━━ W
 
 ### Global Settings
 
-In `src/findmy/config.py`:
+In `app/config.py`:
 
 ```python
 # KSS Configuration
@@ -147,10 +147,12 @@ total_cost = Σ price(n) × qty(n)  for n = 0 to max_waves-1
 
 ## API Endpoints
 
+All KSS routes are served under the `/api/kss` prefix.
+
 ### Create Session
 
 ```http
-POST /kss/sessions
+POST /api/kss/sessions
 
 {
   "symbol": "BTC",
@@ -179,7 +181,7 @@ Response:
 ### Start Session
 
 ```http
-POST /kss/sessions/{id}/start
+POST /api/kss/sessions/{id}/start
 ```
 
 Response:
@@ -198,7 +200,7 @@ Response:
 ### Stop Session
 
 ```http
-POST /kss/sessions/{id}/stop
+POST /api/kss/sessions/{id}/stop
 
 {
   "reason": "manual"  // optional
@@ -208,7 +210,7 @@ POST /kss/sessions/{id}/stop
 ### Adjust Parameters
 
 ```http
-PATCH /kss/sessions/{id}
+PATCH /api/kss/sessions/{id}
 
 {
   "max_waves": 15,
@@ -219,13 +221,13 @@ PATCH /kss/sessions/{id}
 ### List Sessions
 
 ```http
-GET /kss/sessions?symbol=BTC&status=active
+GET /api/kss/sessions?symbol=BTC&status=active
 ```
 
 ### Check Take Profit
 
 ```http
-POST /kss/sessions/{id}/check-tp
+POST /api/kss/sessions/{id}/check-tp
 
 {
   "current_price": 52000.0
@@ -235,13 +237,13 @@ POST /kss/sessions/{id}/check-tp
 ### Delete Session
 
 ```http
-DELETE /kss/sessions/{id}
+DELETE /api/kss/sessions/{id}
 ```
 
 ### Get Summary
 
 ```http
-GET /kss/summary
+GET /api/kss/summary
 ```
 
 Response:
@@ -453,7 +455,7 @@ CREATE TABLE kss_waves (
 
 ## Related Documentation
 
-- [Pending Orders](./SOT.md) - Order approval workflow
-- [Risk Management](./risk-management.md) - Position limits
-- [Configuration](./configuration.md) - Global settings
-- [API Reference](./api.md) - Full endpoint documentation
+- [REBUILD.md](./REBUILD.md) — v2 architecture and the order-safety invariant.
+- [AGENTS.md](./AGENTS.md) — how the scanner proposes and opens KSS sessions.
+- [go-live.md](./go-live.md) — arming real-money execution (shipped OFF).
+- [`.env.example`](../.env.example) — all KSS/risk/scanner settings, commented.

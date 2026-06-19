@@ -51,15 +51,33 @@ def _time_label(iso: str) -> str:
     return dt.strftime("%H:%M") if "T" in iso else dt.strftime("%m-%d")
 
 
+def _date_time_label(iso: str) -> str:
+    """ISO timestamp -> 'MM-DD HH:MM' axis label in the display zone (date + time)."""
+    from app.timefmt import to_local
+
+    dt = to_local(iso)
+    if dt is None:
+        return (iso or "")[:10]
+    return dt.strftime("%m-%d %H:%M") if "T" in iso else dt.strftime("%m-%d")
+
+
 def equity_curve_svg(
-    values: list[float], times: list[str] | None = None, w: int = 520, h: int = 180
+    values: list[float], times: list[str] | None = None, w: int = 860, h: int = 300
 ) -> str:
-    """Professional equity curve: gridlines, right-edge value ticks, time axis, area fill."""
+    """Large equity curve: gridlines, right-edge value ticks, time axis, area fill,
+    plus a running-peak line and a shaded *drawdown band* (the underwater region
+    between peak and equity). Zero JS — pure inline SVG."""
     if not values:
         return '<p class="muted">No equity history yet.</p>'
-    lo, hi = min(values), max(values)
+    # running peak → the drawdown (underwater) band is the gap below it
+    peaks: list[float] = []
+    pk = values[0]
+    for v in values:
+        pk = max(pk, v)
+        peaks.append(pk)
+    lo, hi = min(values), max(peaks)
     span = (hi - lo) or 1.0
-    x0, x1, y0, y1 = 8, w - 66, 12, h - 22  # plot rect (room for ticks + time axis)
+    x0, x1, y0, y1 = 8, w - 72, 12, h - 24  # plot rect (room for ticks + time axis)
     n = len(values)
     xstep = (x1 - x0) / max(n - 1, 1)
 
@@ -70,6 +88,7 @@ def equity_curve_svg(
         return y1 - (v - lo) / span * (y1 - y0)
 
     pts = " ".join(f"{px(i):.1f},{py(v):.1f}" for i, v in enumerate(values))
+    peak_pts = " ".join(f"{px(i):.1f},{py(v):.1f}" for i, v in enumerate(peaks))
     color = _GREEN if values[-1] >= values[0] else _RED
 
     parts = [f'<svg width="100%" height="{h}" viewBox="0 0 {w} {h}" role="img">']
@@ -81,9 +100,15 @@ def equity_curve_svg(
                      f'stroke="{_LINE}" stroke-width="0.5"/>')
         parts.append(f'<text x="{x1+4}" y="{gy+3:.1f}" fill="{_MUTED}" font-size="10">'
                      f'${gval:,.2f}</text>')
-    # area fill under the line
-    parts.append(f'<polygon fill="{color}" fill-opacity="0.08" '
+    # drawdown band: peak line forward, equity line back → shaded red (underwater)
+    dd_back = " ".join(f"{px(i):.1f},{py(v):.1f}" for i, v in reversed(list(enumerate(values))))
+    parts.append(f'<polygon fill="{_RED}" fill-opacity="0.07" points="{peak_pts} {dd_back}"/>')
+    # area fill under the equity line
+    parts.append(f'<polygon fill="{color}" fill-opacity="0.10" '
                  f'points="{px(0):.1f},{y1:.1f} {pts} {px(n-1):.1f},{y1:.1f}"/>')
+    # running-peak reference (muted dashed)
+    parts.append(f'<polyline fill="none" stroke="{_MUTED}" stroke-width="1" '
+                 f'stroke-dasharray="4 3" points="{peak_pts}"/>')
     # the equity line
     parts.append(f'<polyline fill="none" stroke="{color}" stroke-width="2" points="{pts}"/>')
     # time axis labels (start / middle / end)
@@ -91,12 +116,12 @@ def equity_curve_svg(
         for i in (0, n // 2, n - 1):
             anchor = "start" if i == 0 else ("end" if i == n - 1 else "middle")
             parts.append(f'<text x="{px(i):.1f}" y="{h-6}" fill="{_MUTED}" font-size="10" '
-                         f'text-anchor="{anchor}">{_time_label(times[i])}</text>')
+                         f'text-anchor="{anchor}">{_date_time_label(times[i])}</text>')
     parts.append("</svg>")
     return "".join(parts)
 
 
-def winloss_bars_svg(wins: int, losses: int, w: int = 220, h: int = 90) -> str:
+def winloss_bars_svg(wins: int, losses: int, w: int = 300, h: int = 110) -> str:
     total = wins + losses
     if total == 0:
         return '<p class="muted">No closed trades yet.</p>'

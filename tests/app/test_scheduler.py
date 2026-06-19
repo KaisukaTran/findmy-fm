@@ -52,6 +52,7 @@ def env(monkeypatch):
     monkeypatch.setattr(settings, "min_trials", 0)
     monkeypatch.setattr(settings, "min_expectancy_pct", -100.0)
     monkeypatch.setattr(settings, "auto_trade", True)
+    monkeypatch.setattr(settings, "block_downtrend_adx", 0.0)  # off: cycle test isn't about entry timing
 
 
 def _new_session(db):
@@ -131,3 +132,79 @@ def test_fresh_veto_survives_within_ttl(db, env, monkeypatch):
     db.refresh(order)
     assert order.auto_veto
     assert order.status == models.PENDING  # still blocked, not filled
+
+
+# --- singleton lock: only one process may run the scan loop --------------------
+
+def test_singleton_lock_blocks_a_second_holder():
+    """Acquiring the lock fails while another holder binds the same port, then succeeds
+    once it is freed — this is what stops two app processes running two schedulers
+    (which race scanner._can_open and overshoot max_concurrent_sessions)."""
+    import socket as _socket
+
+    saved = scheduler._lock_sock
+    scheduler._lock_sock = None
+    # pick a free ephemeral port and hold it (simulating the OTHER process)
+    other = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    other.bind(("127.0.0.1", 0))
+    other.listen(1)
+    port = other.getsockname()[1]
+    try:
+        assert scheduler._acquire_singleton_lock(port) is False  # other holds it
+        other.close()
+        assert scheduler._acquire_singleton_lock(port) is True   # now free
+        assert scheduler._acquire_singleton_lock(port) is True   # idempotent
+    finally:
+        try:
+            other.close()
+        except OSError:
+            pass
+        scheduler._release_singleton_lock()
+        scheduler._lock_sock = saved
+
+
+def test_distinct_lock_ports_allow_parallel_instances():
+    """Two instances (paper vs live) each with a DISTINCT scheduler_lock_port can BOTH hold a lock —
+    the mutex is per-port, so different ports never collide. This is what lets paper + live run side
+    by side with both schedulers active."""
+    import socket as _socket
+
+    saved = scheduler._lock_sock
+    scheduler._lock_sock = None
+    # instance A (paper) holds an ephemeral port; instance B (live) takes a different one.
+    a = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    a.bind(("127.0.0.1", 0))
+    a.listen(1)
+    port_a = a.getsockname()[1]
+    probe = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    probe.bind(("127.0.0.1", 0))
+    port_b = probe.getsockname()[1]
+    probe.close()
+    try:
+        assert port_a != port_b
+        assert scheduler._acquire_singleton_lock(port_b) is True   # B gets its own lock
+        # A's port is still independently held — different port = different mutex.
+        s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        with pytest.raises(OSError):
+            s.bind(("127.0.0.1", port_a))
+        s.close()
+    finally:
+        a.close()
+        scheduler._release_singleton_lock()
+        scheduler._lock_sock = saved
+
+
+def test_start_uses_configured_lock_port(monkeypatch):
+    """scheduler.start() must lock on settings.scheduler_lock_port (not the hardcoded default),
+    so each instance's env-set port is honoured."""
+    captured = {}
+
+    def _fake_acquire(port=scheduler._SINGLETON_PORT):
+        captured["port"] = port
+        return False  # False → start() returns without creating an asyncio task
+
+    monkeypatch.setattr(scheduler, "_task", None)
+    monkeypatch.setattr(scheduler, "_acquire_singleton_lock", _fake_acquire)
+    monkeypatch.setattr(settings, "scheduler_lock_port", 8802)
+    assert scheduler.start() is False
+    assert captured["port"] == 8802

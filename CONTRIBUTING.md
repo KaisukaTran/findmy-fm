@@ -27,21 +27,23 @@ cd findmy-fm
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-# Install dependencies
-pip install -r requirements.txt
-pip install -e .  # Install in development mode
+# Install runtime dependencies
+pip install -r requirements-app.txt
 
-# Install dev dependencies
-pip install pytest pytest-cov black flake8 mypy
+# Install dev tooling
+pip install pytest ruff
 ```
 
 ### 3. Verify Setup
 ```bash
-# Run tests
-pytest tests/ -v
+# Run the v2 test suite (isolated from the legacy tree)
+pytest tests/app -c tests/app/pytest.ini
 
-# Start API
-./scripts/start_api.sh
+# Lint
+ruff check app tests/app
+
+# Start the app
+uvicorn app.main:app --reload --port 8000
 # Should see "Uvicorn running on http://127.0.0.1:8000"
 ```
 
@@ -79,16 +81,11 @@ test/execution-engine-determinism
 
 3. **Test changes**:
    ```bash
-   # Unit tests
-   pytest tests/ -v
-   
-   # Coverage check
-   pytest tests/ --cov=findmy --cov-report=html
-   
-   # Code style
-   black findmy/
-   flake8 findmy/
-   mypy findmy/ --strict
+   # Tests
+   pytest tests/app -c tests/app/pytest.ini
+
+   # Lint
+   ruff check app tests/app
    ```
 
 4. **Commit with clear message**:
@@ -113,19 +110,17 @@ test/execution-engine-determinism
 
 ### Python Style Guide
 
-Follow **PEP 8** with these tools:
-- `black` for formatting (10 line max, 88 char width)
-- `flake8` for linting
-- `mypy` for type checking
+Follow **PEP 8**. The project uses **`ruff`** for both linting and formatting.
 
 ### Formatting
 
 ```bash
-# Auto-format code
-black findmy/ tests/
-
 # Check style
-flake8 findmy/ tests/
+ruff check app tests/app
+
+# Auto-fix and format
+ruff check --fix app tests/app
+ruff format app tests/app
 ```
 
 ### Type Hints
@@ -208,8 +203,8 @@ import pandas as pd
 from sqlalchemy import Column, String
 
 # 3. Local
-from findmy.api.schemas import ExecutionResponse
-from findmy.execution.paper_execution import Order
+from app.config import settings
+from app.models import PendingOrder
 ```
 
 ---
@@ -221,7 +216,7 @@ from findmy.execution.paper_execution import Order
 All new functions must have tests:
 
 ```bash
-pytest tests/ -v
+pytest tests/app -c tests/app/pytest.ini
 ```
 
 **Example test**:
@@ -253,7 +248,7 @@ def test_execute_invalid_qty():
 - Critical paths (execution, SOT): **≥ 90%**
 
 ```bash
-pytest tests/ --cov=findmy --cov-report=term-missing --cov-fail-under=80
+pytest tests/app -c tests/app/pytest.ini --cov=app --cov-report=term-missing
 ```
 
 ### Integration Tests
@@ -291,7 +286,7 @@ def test_paper_execution_e2e(tmp_path):
 5. **Explicit Errors**: Custom exceptions, meaningful messages
 6. **Auditability**: All decisions recorded in append-only log
 
-See [rules.md](docs/rules.md) for detailed enforcement.
+See [docs/REBUILD.md](docs/REBUILD.md) for the order-safety invariant and module boundaries.
 
 ---
 
@@ -354,13 +349,12 @@ If PR adds/changes features, also update:
 Before submitting a pull request, verify:
 
 - [ ] **Code Quality**
-  - [ ] `black` formatted
-  - [ ] `flake8` no errors
-  - [ ] `mypy` type checking passes
+  - [ ] `ruff check app tests/app` clean
+  - [ ] `ruff format` applied
   - [ ] No unused imports
 
 - [ ] **Testing**
-  - [ ] All tests pass (`pytest tests/`)
+  - [ ] All tests pass (`pytest tests/app -c tests/app/pytest.ini`)
   - [ ] New tests for new code (≥80% coverage)
   - [ ] No flaky tests
   - [ ] Integration tests pass
@@ -463,12 +457,12 @@ Related to #42
 
 ### Run Tests with Output
 ```bash
-pytest tests/test_execution.py -v -s  # -s shows print statements
+pytest tests/app -c tests/app/pytest.ini -s  # -s shows print statements
 ```
 
 ### Run Single Test
 ```bash
-pytest tests/test_execution.py::test_buy_order -v
+pytest tests/app/test_kss_invariants.py -c tests/app/pytest.ini -v
 ```
 
 ### Debug with PDB
@@ -484,11 +478,13 @@ import pdb; pdb.set_trace()  # Breakpoint
 
 ### Check Database State
 ```python
-from services.sot import repository
+from app.db import SessionLocal
+from app.models import PendingOrder
 
-orders = repository.query_all_orders()
-for order in orders:
+db = SessionLocal()
+for order in db.query(PendingOrder).all():
     print(f"{order.id}: {order.symbol} {order.qty}")
+db.close()
 ```
 
 ### Profile Performance
@@ -544,8 +540,8 @@ PR can only merge if:
 
 ## Questions?
 
-- Check [docs/README.md](docs/README.md) for documentation index
-- See [rules.md](docs/rules.md) for architecture rules
-- Open issue for help
+- Check [docs/README.md](docs/README.md) for the documentation index
+- See [docs/REBUILD.md](docs/REBUILD.md) for architecture & invariants
+- Open an issue for help
 
 **Thank you for contributing!** 🚀

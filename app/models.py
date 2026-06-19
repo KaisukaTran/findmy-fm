@@ -82,6 +82,13 @@ class PendingOrder(Base):
     auto_veto_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     auto_veto_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # Live async tracking (live-readiness 1.4). Set when the order is placed as a
+    # resting exchange order; `reconcile_live_orders()` polls fetch_order and books
+    # fills as the venue reports them (NEW→PARTIAL→FILLED). NULL on paper — paper
+    # fills synchronously, so there is nothing to reconcile.
+    exchange_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    exchange_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -104,6 +111,8 @@ class PendingOrder(Base):
             "auto_veto": self.auto_veto,
             "auto_veto_reason": self.auto_veto_reason,
             "auto_veto_at": self.auto_veto_at.isoformat() if self.auto_veto_at else None,
+            "exchange_order_id": self.exchange_order_id,
+            "exchange_status": self.exchange_status,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "decided_at": self.decided_at.isoformat() if self.decided_at else None,
         }
@@ -249,6 +258,12 @@ class KssWave(Base):
     filled_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     filled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     pending_order_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Live async tracking (live-readiness 1.4): the exchange id + last-seen status of
+    # the resting order backing this wave in live mode. The live resting model (1.5)
+    # populates these; paper waves leave them NULL.
+    exchange_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    exchange_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -420,4 +435,71 @@ class MlModel(Base):
             "id": self.id, "version": self.version, "metric": self.metric,
             "n_samples": self.n_samples,
             "trained_at": self.trained_at.isoformat() if self.trained_at else None,
+        }
+
+
+class Withdrawal(Base):
+    """A recorded withdrawal off the exchange. The exchange fee + VAT are computed from config
+    and FROZEN at insert (a snapshot) so later rate changes never rewrite booked history.
+    These costs are booked ONLY here — i.e. only when an actual withdrawal happens."""
+
+    __tablename__ = "withdrawals"
+    __table_args__ = (Index("ix_withdrawals_created_at", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    amount: Mapped[float] = mapped_column(Float, nullable=False)  # withdrawn amount (USD)
+    fee: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # exchange fee (frozen)
+    vat: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # VAT on amount (frozen)
+    exchange: Mapped[str] = mapped_column(String(20), nullable=False, default="binance")
+    note: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "amount": self.amount,
+            "fee": self.fee,
+            "vat": self.vat,
+            "total_cost": self.fee + self.vat,
+            "exchange": self.exchange,
+            "note": self.note,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class SavingsHolding(Base):
+    """A coin the operator holds as long-term savings (e.g. SOL), bought EXTERNALLY and
+    recorded here (src='KAI') for protection + display.
+
+    It lives in its OWN table, deliberately OUTSIDE the trading `Position` table, so the
+    orphan manager / scanner / OPUS — which only ever read Position + KssSession — never see
+    it and can never sell it. The bot may still trade the same symbol with its own capital;
+    that trading inventory is the separate Position row. One row per symbol (accumulating buys
+    update qty + a weighted avg cost)."""
+
+    __tablename__ = "savings_holdings"
+    __table_args__ = (Index("ix_savings_symbol", "symbol", unique=True),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    quantity: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    avg_cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # USD/unit
+    src: Mapped[str] = mapped_column(String(16), nullable=False, default="KAI")  # provenance tag
+    note: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "symbol": self.symbol,
+            "quantity": self.quantity,
+            "avg_cost": self.avg_cost,
+            "cost_basis": self.quantity * self.avg_cost,
+            "src": self.src,
+            "note": self.note,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

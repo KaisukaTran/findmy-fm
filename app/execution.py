@@ -1,0 +1,356 @@
+"""
+Live order execution (Phase 6) — SHIPPED OFF.
+
+Paper execution stays the default everywhere (`app.orders._paper_execute`). Real-money
+placement runs ONLY when ``settings.live_trading`` is True **and** the live-exchange API
+key/secret are configured. Even then the caller (`app.orders._live_execute`) re-gates each
+order: the circuit breaker and the per-order notional cap restrict new-exposure BUYs, while
+SELL exits are never gated (exits reduce risk — see the drawdown-exit-deadlock invariant).
+
+This module only owns the exchange I/O and the on/off predicate. It never logs the secret
+and never falls back to paper on error — a live failure must surface, not be hidden.
+"""
+
+from __future__ import annotations
+
+import logging
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
+
+import ccxt
+
+from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+def _secret(value) -> str:
+    return value.get_secret_value() if hasattr(value, "get_secret_value") else str(value or "")
+
+
+def live_key_present() -> bool:
+    """True when both the live API key and secret are configured (non-empty)."""
+    return bool(_secret(settings.live_api_key).strip() and _secret(settings.live_api_secret).strip())
+
+
+def live_enabled() -> bool:
+    """Real-money placement is active ONLY with the master flag set AND keys present."""
+    return bool(settings.live_trading) and live_key_present()
+
+
+def validate_at_boot() -> str | None:
+    """Boot-time sanity check. Returns a human message describing the live state, or a
+    warning string if live_trading is on but unusable. Never raises; never logs secrets."""
+    if not settings.live_trading:
+        return None
+    if not live_key_present():
+        return "LIVE_TRADING=true but no exchange API key/secret — staying on paper."
+    return f"LIVE_TRADING active on '{settings.live_exchange}' (cap ${settings.live_max_order_notional:.2f}/BUY)."
+
+
+def _client():
+    key, secret = _secret(settings.live_api_key), _secret(settings.live_api_secret)
+    if not (key and secret):
+        raise RuntimeError("live trading enabled but exchange API key/secret missing")
+    ex = getattr(ccxt, settings.live_exchange)(
+        {"apiKey": key, "secret": secret, "enableRateLimit": True}
+    )
+    # 1.8: validate the live path on the exchange TESTNET before real funds. ccxt's
+    # set_sandbox_mode swaps to the sandbox/testnet base URLs (no-op on exchanges without one).
+    if settings.live_use_testnet and hasattr(ex, "set_sandbox_mode"):
+        ex.set_sandbox_mode(True)
+    return ex
+
+
+def place_live_order(
+    pair: str, side: str, quantity: float, price: float, order_type: str,
+    maker_orders: bool | None = None, client_order_id: str | None = None,
+) -> dict:
+    """Place a REAL order on ``settings.live_exchange`` and return a normalised fill dict
+    ``{price, quantity, fee, raw_id, status}``.
+
+    Order kind (1.3): MARKET → taker market order (risk exits — SL/trailing/close/OPUS —
+    always take, never slowed). LIMIT → a post-only ``LIMIT_MAKER`` when ``maker_orders``
+    is on (saves the spread; rounded to the symbol's exchange filters first), else a plain
+    limit. ``maker_orders`` defaults to ``settings.maker_orders``. A post-only order that
+    would cross is rejected by Binance (-2010) — that is surfaced as a structured
+    ``status='rejected'`` (the 1.5 resting model cancels+replaces lower), not an exception.
+
+    Idempotency (1.10): when ``client_order_id`` is given it is sent as the order's
+    ``clientOrderId`` (deterministic from the PendingOrder id). If a retry after a lost
+    response hits a 'Duplicate order' rejection, the prior placement already succeeded — we
+    recover that order by clientOrderId instead of double-placing.
+
+    Raises on any other exchange error — the caller must NOT fall back to a paper fill (that
+    would mask a real placement failure). The API secret is never logged.
+    """
+    ex = _client()
+    side_l = side.lower()
+    if maker_orders is None:
+        maker_orders = settings.maker_orders
+    ccxt_type, base_params = order_placement(order_type, maker_orders)
+    params = dict(base_params)
+    if client_order_id:
+        params["clientOrderId"] = client_order_id
+    qty, px = quantity, price
+
+    # Maker (post-only LIMIT_MAKER): comply with the symbol's exchange filters before
+    # resting — round price→tickSize, qty→stepSize, enforce minQty/minNotional/PERCENT.
+    if maker_orders and ccxt_type == "limit":
+        try:
+            filters = _market_filters(ex, pair)
+        except Exception:  # market metadata unavailable — place unrounded rather than block
+            filters = {}
+        if filters:
+            px, qty = round_to_filters(px, qty, filters, ref_price=px)  # ValueError → propagate
+
+    try:
+        if ccxt_type == "market" or px <= 0:
+            order = ex.create_order(pair, "market", side_l, qty, None, params) if params \
+                else ex.create_order(pair, "market", side_l, qty)
+        elif params:
+            order = ex.create_order(pair, "limit", side_l, qty, px, params)
+        else:
+            order = ex.create_order(pair, "limit", side_l, qty, px)
+    except Exception as exc:
+        # 'Duplicate order' (also code -2010): this exact clientOrderId was already accepted
+        # on a prior, lost attempt — recover it rather than place a second order.
+        if client_order_id and is_duplicate_client_order(exc):
+            logger.info("LIVE duplicate clientOrderId %s — recovering the existing order", client_order_id)
+            order = _fetch_by_client_id(ex, pair, client_order_id)
+        elif is_post_only_reject(exc):
+            logger.info("LIVE post-only rejected (would cross): %s %s %s @ %s", side, qty, pair, px)
+            return {"price": 0.0, "quantity": 0.0, "fee": 0.0, "raw_id": None, "status": "rejected"}
+        else:
+            raise
+
+    # 1.1 — report the TRUTH, never invent a fill. A resting maker order comes back
+    # status='open'/filled=0; the old code fell back to `amount` and recorded a phantom
+    # FULL fill (double-count blocker). Only treat as filled what the exchange actually
+    # reports filled; the caller turns a real fill into a Fill, and async reconciliation
+    # (live-readiness task 1.4) handles NEW→FILLED later.
+    status = order.get("status")  # ccxt-normalised: 'open' | 'closed' | 'canceled'
+    filled = float(order.get("filled") or 0.0)
+    if str(status).lower() == "closed" and filled <= 0:
+        # Fully-filled (e.g. a marketable order) but the venue omitted `filled` → trust amount.
+        filled = float(order.get("amount") or qty)
+    avg = float(order.get("average") or 0.0)
+    if avg <= 0 and filled > 0:  # fall back to a price ONLY when something actually filled
+        avg = float(order.get("price") or px or 0.0)
+    fee_obj = order.get("fee") or {}
+    fee = float(fee_obj.get("cost") or 0.0) if isinstance(fee_obj, dict) else 0.0
+    logger.info(
+        "LIVE order placed: %s %s/%s %s @ %s status=%s (exch id %s)",
+        side, filled, qty, pair, avg, status, order.get("id"),
+    )
+    return {
+        "price": avg, "quantity": filled, "fee": fee,
+        "raw_id": order.get("id"), "status": status,
+    }
+
+
+def fetch_live_order(pair: str, order_id: str) -> dict:
+    """Fetch the live status of a resting order and return a normalised dict
+    ``{status, filled, average, fee, raw_id}``.
+
+    Used by ``app.orders.reconcile_live_orders`` to book a maker order's fill
+    asynchronously (live-readiness task 1.4). ``filled`` is the venue's *cumulative*
+    filled quantity (ccxt-normalised); ``status`` is ccxt's 'open'|'closed'|'canceled'.
+    Raises on any exchange error (the caller logs + skips); never logs the secret.
+    """
+    ex = _client()
+    order = ex.fetch_order(order_id, pair)
+    status = order.get("status")
+    filled = float(order.get("filled") or 0.0)
+    avg = float(order.get("average") or 0.0)
+    if avg <= 0 and filled > 0:  # some venues report price, not average, on a fill
+        avg = float(order.get("price") or 0.0)
+    fee_obj = order.get("fee") or {}
+    fee = float(fee_obj.get("cost") or 0.0) if isinstance(fee_obj, dict) else 0.0
+    return {"status": status, "filled": filled, "average": avg, "fee": fee, "raw_id": order.get("id")}
+
+
+# --- 1.2: exchange-filter compliance (pure; live placement rounds through this) ---------
+
+
+def _quantize(value: float, step: float, rounding: str) -> float:
+    """Round *value* to a multiple of *step* using Decimal (no binary-float drift)."""
+    if step <= 0:
+        return value
+    d = (Decimal(str(value)) / Decimal(str(step))).quantize(Decimal("1"), rounding=rounding)
+    return float(d * Decimal(str(step)))
+
+
+def round_to_filters(price: float, qty: float, filters: dict, ref_price: float | None = None):
+    """Make a (price, qty) order compliant with a symbol's Binance exchange filters.
+
+    `filters` keys (all optional): ``tickSize`` (price step), ``stepSize`` (qty step),
+    ``minQty``, ``minNotional`` ($ floor), ``percentUp``/``percentDown`` (PERCENT_PRICE_BY_SIDE
+    multipliers of ``ref_price``, e.g. 2.0 / 0.5). Price is rounded to the tick; qty is rounded
+    DOWN to the step (never buy more than intended). Raises ``ValueError`` when the order cannot
+    satisfy a hard filter (below minQty / minNotional, or price outside the PERCENT band).
+
+    Pure and side-effect-free — unit-tested against real SOLUSDT-style filters. Live-only;
+    paper execution never calls this.
+    """
+    tick = float(filters.get("tickSize") or 0.0)
+    step = float(filters.get("stepSize") or 0.0)
+    min_qty = float(filters.get("minQty") or 0.0)
+    min_notional = float(filters.get("minNotional") or 0.0)
+
+    adj_price = _quantize(price, tick, ROUND_HALF_UP) if tick > 0 else price
+    adj_qty = _quantize(qty, step, ROUND_DOWN) if step > 0 else qty
+
+    if adj_qty <= 0 or (min_qty > 0 and adj_qty < min_qty):
+        raise ValueError(f"qty {adj_qty} below minQty {min_qty}")
+    if min_notional > 0 and adj_price * adj_qty < min_notional:
+        raise ValueError(f"notional {adj_price * adj_qty:.4f} below minNotional {min_notional}")
+    if ref_price and ref_price > 0:
+        up = filters.get("percentUp")
+        down = filters.get("percentDown")
+        if up is not None and adj_price > float(up) * ref_price:
+            raise ValueError(f"price {adj_price} above PERCENT_PRICE cap {float(up) * ref_price}")
+        if down is not None and adj_price < float(down) * ref_price:
+            raise ValueError(f"price {adj_price} below PERCENT_PRICE floor {float(down) * ref_price}")
+    return adj_price, adj_qty
+
+
+# --- 1.3: maker placement (post-only entries/TP; risk exits stay taker) -----------------
+
+
+def order_placement(order_type: str, maker_orders: bool) -> tuple[str, dict]:
+    """Map an order to its ccxt ``(type, params)``.
+
+    MARKET → ``("market", {})`` — risk exits (SL/trailing/close/OPUS) always take, never
+    slowed (see the drawdown-exit invariant). LIMIT → a post-only ``("limit", {postOnly})``
+    when ``maker_orders`` is on (Binance routes post-only limits as ``LIMIT_MAKER``), else a
+    plain ``("limit", {})``. Pure.
+    """
+    if order_type.upper() == "MARKET":
+        return "market", {}
+    if maker_orders:
+        return "limit", {"postOnly": True}
+    return "limit", {}
+
+
+def is_post_only_reject(exc: Exception) -> bool:
+    """True when an exchange error is a post-only/LIMIT_MAKER rejection — Binance ``-2010``
+    'Order would immediately match and take'. ccxt may also raise ``OrderImmediatelyFillable``.
+    Such a maker order would have crossed the book; the caller treats it as a non-fill.
+
+    Matches the post-only *message* (not the bare ``-2010`` code, which Binance also returns
+    for duplicate-clientOrderId and insufficient-balance — those must NOT be read as a cross)."""
+    text = str(exc).lower()
+    if "immediately match" in text or "post only" in text or "post-only" in text:
+        return True
+    return isinstance(exc, getattr(ccxt, "OrderImmediatelyFillable", ()))
+
+
+def client_order_id(order_id: int) -> str:
+    """Deterministic Binance ``clientOrderId`` from a PendingOrder id (1.10). A retry after a
+    lost response re-sends the SAME id, so the venue rejects the duplicate / we recover it
+    instead of double-placing. Binance allows ``[A-Za-z0-9-_.:/]``, max 36 chars."""
+    return f"fm-{order_id}"
+
+
+def is_duplicate_client_order(exc: Exception) -> bool:
+    """True when an exchange error means this exact ``clientOrderId`` was already accepted
+    (Binance 'Duplicate order sent.') — the prior placement succeeded; recover it, don't replace."""
+    text = str(exc).lower()
+    return "duplicate order" in text or "duplicate clientorderid" in text
+
+
+def _fetch_by_client_id(ex, pair: str, cid: str) -> dict:
+    """Live wrapper: fetch an order by its ``clientOrderId`` (idempotent recovery, 1.10)."""
+    return ex.fetch_order(cid, pair, {"clientOrderId": cid})
+
+
+def filters_from_market(market: dict) -> dict:
+    """Build a ``round_to_filters`` input dict from a ccxt market structure.
+
+    Prefers the raw Binance ``info.filters`` (exact ``tickSize``/``stepSize``/``minQty``/
+    ``minNotional``/PERCENT_PRICE_BY_SIDE), falling back to ccxt's normalised ``limits``.
+    Pure — unit-testable with a fake market dict.
+    """
+    out: dict = {}
+    info = market.get("info") or {}
+    for f in info.get("filters", []) or []:
+        ftype = f.get("filterType")
+        if ftype == "PRICE_FILTER":
+            out["tickSize"] = float(f.get("tickSize") or 0.0)
+        elif ftype == "LOT_SIZE":
+            out["stepSize"] = float(f.get("stepSize") or 0.0)
+            out["minQty"] = float(f.get("minQty") or 0.0)
+        elif ftype in ("NOTIONAL", "MIN_NOTIONAL"):
+            out["minNotional"] = float(f.get("minNotional") or f.get("notional") or 0.0)
+        elif ftype == "PERCENT_PRICE_BY_SIDE":
+            up = f.get("bidMultiplierUp") or f.get("multiplierUp")
+            down = f.get("bidMultiplierDown") or f.get("multiplierDown")
+            if up is not None:
+                out["percentUp"] = float(up)
+            if down is not None:
+                out["percentDown"] = float(down)
+        elif ftype == "PERCENT_PRICE":
+            if f.get("multiplierUp") is not None:
+                out["percentUp"] = float(f["multiplierUp"])
+            if f.get("multiplierDown") is not None:
+                out["percentDown"] = float(f["multiplierDown"])
+    limits = market.get("limits") or {}
+    if "minQty" not in out:
+        out["minQty"] = float((limits.get("amount") or {}).get("min") or 0.0)
+    if "minNotional" not in out:
+        out["minNotional"] = float((limits.get("cost") or {}).get("min") or 0.0)
+    return out
+
+
+def _market_filters(ex, pair: str) -> dict:
+    """Live wrapper: load a symbol's exchange filters for ``round_to_filters`` (ccxt
+    ``market`` auto-loads markets on first use)."""
+    return filters_from_market(ex.market(pair))
+
+
+# --- 1.6: rate-limit guard (Binance REQUEST_WEIGHT / 429 / 418) -------------------------
+
+# Binance spot REQUEST_WEIGHT budget is 6000/min per IP; back off before exhausting it.
+WEIGHT_LIMIT_PER_MIN = 6000
+
+
+def used_weight_from_headers(headers: dict | None) -> int | None:
+    """Extract ``X-MBX-USED-WEIGHT-1M`` (case-insensitive) from response headers, or None."""
+    if not headers:
+        return None
+    for k, v in headers.items():
+        if str(k).lower() == "x-mbx-used-weight-1m":
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def weight_backoff_seconds(
+    used_weight: int | None, limit: int = WEIGHT_LIMIT_PER_MIN, soft_pct: float = 80.0,
+    base: float = 1.0,
+) -> float:
+    """Seconds to pause given current REQUEST_WEIGHT usage. 0 below ``soft_pct`` of the limit;
+    grows toward ``base`` as usage approaches the limit; a hard ``base*5`` once at/over it."""
+    if not used_weight or limit <= 0:
+        return 0.0
+    soft = soft_pct / 100.0 * limit
+    if used_weight < soft:
+        return 0.0
+    if used_weight >= limit:
+        return round(base * 5, 3)
+    # linear ramp from 0 (at soft) to base (at limit)
+    return round(base * (used_weight - soft) / (limit - soft), 3)
+
+
+def classify_rate_error(exc: Exception, retry_after: float | None = None) -> tuple[str, float | None]:
+    """Map an exchange error to an action: ``('retry', seconds)`` for HTTP 429 (rate limited —
+    honour Retry-After), ``('halt', None)`` for HTTP 418 (IP banned — stop live + alert), or
+    ``('raise', None)`` for anything else (the caller re-raises). Pure; no sleeping/IO here."""
+    text = str(exc)
+    if "418" in text:
+        return "halt", None
+    if "429" in text or isinstance(exc, getattr(ccxt, "DDoSProtection", ())):
+        return "retry", (retry_after if retry_after is not None else 1.0)
+    return "raise", None

@@ -7,7 +7,7 @@ Kept out of the route layer so routes stay thin.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -149,9 +149,9 @@ def loss_analysis(db: Session, limit: int = 300) -> dict:
     }
 
 
-def trades_view(db: Session, limit: int = 50) -> list[dict]:
+def trades_view(db: Session, limit: int = 50, offset: int = 0) -> list[dict]:
     """Most recent fills (trade history), tagged with their provenance (OPUS/KSS/…)."""
-    fills = db.query(Fill).order_by(Fill.executed_at.desc()).limit(limit).all()
+    fills = db.query(Fill).order_by(Fill.executed_at.desc()).offset(offset).limit(limit).all()
     out = []
     for f in fills:
         d = f.to_dict()
@@ -208,31 +208,55 @@ def summary_view(db: Session) -> dict:
     }
 
 
-def performance_view(db: Session) -> dict:
+# Performance period windows → lookback in hours (None = all-time).
+_PERIODS: dict[str, int | None] = {"24h": 24, "7d": 24 * 7, "30d": 24 * 30, "all": None}
+
+
+def _period_cutoff(period: str) -> datetime | None:
+    """UTC cutoff for a period key, or None for all-time / unknown."""
+    hours = _PERIODS.get(period)
+    return datetime.utcnow() - timedelta(hours=hours) if hours else None
+
+
+def performance_view(db: Session, period: str = "all") -> dict:
     """
-    Realized-equity curve + win/loss + max drawdown, derived from fills.
+    Realized-equity curve + win/loss + drawdown + expectancy, derived from fills.
 
     Equity is account_equity + cumulative realized P&L stamped at each fill (a
     "realized equity" curve), with a final point including current unrealized P&L.
-    Win/loss counts SELL fills by realized P&L sign.
+    Win/loss counts SELL fills by realized P&L sign. When ``period`` restricts the
+    window, the curve starts from the equity *as of* the cutoff (realized before it)
+    so the line is continuous, and win/loss/expectancy reflect only the window.
     """
-    fills = db.query(Fill).order_by(Fill.executed_at.asc()).all()
-    equity = settings.account_equity
+    all_fills = db.query(Fill).order_by(Fill.executed_at.asc()).all()
+    cutoff = _period_cutoff(period)
+    if cutoff is not None:
+        before = [f for f in all_fills if f.executed_at and f.executed_at < cutoff]
+        fills = [f for f in all_fills if not f.executed_at or f.executed_at >= cutoff]
+        realized_before = sum(f.realized_pnl for f in before)
+    else:
+        fills = all_fills
+        realized_before = 0.0
+
+    base = settings.account_equity + realized_before
     now_iso = datetime.utcnow().isoformat()
     start_iso = fills[0].executed_at.isoformat() if fills else now_iso
-    curve = [equity]
+    curve = [base]
     times = [start_iso]
     realized = 0.0
     wins = losses = 0
+    win_sum = loss_sum = 0.0
     for f in fills:
         realized += f.realized_pnl
-        curve.append(equity + realized)
+        curve.append(base + realized)
         times.append(f.executed_at.isoformat() if f.executed_at else now_iso)
         if f.side == "SELL":
             if f.realized_pnl > 0:
                 wins += 1
+                win_sum += f.realized_pnl
             elif f.realized_pnl < 0:
                 losses += 1
+                loss_sum += f.realized_pnl  # negative
 
     summary = summary_view(db)
     final_equity = summary["total_equity"]
@@ -248,7 +272,9 @@ def performance_view(db: Session) -> dict:
             max_dd = max(max_dd, (peak - v) / peak * 100)
 
     closed = wins + losses
+    gross_loss = -loss_sum  # positive magnitude
     return {
+        "period": period,
         "equity_curve": curve,
         "equity_times": times,
         "realized_pnl": realized,
@@ -256,7 +282,13 @@ def performance_view(db: Session) -> dict:
         "total_equity": final_equity,
         "wins": wins,
         "losses": losses,
+        "closed": closed,
         "win_rate": round(wins / closed * 100, 2) if closed else 0.0,
         "loss_rate": round(losses / closed * 100, 2) if closed else 0.0,
         "max_drawdown_pct": round(max_dd, 2),
+        # Per-closed-trade economics (USDT).
+        "expectancy": round((win_sum + loss_sum) / closed, 2) if closed else 0.0,
+        "avg_win": round(win_sum / wins, 2) if wins else 0.0,
+        "avg_loss": round(loss_sum / losses, 2) if losses else 0.0,
+        "profit_factor": round(win_sum / gross_loss, 2) if gross_loss > 0 else 0.0,
     }

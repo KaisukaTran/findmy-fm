@@ -1,12 +1,42 @@
-<div class="cards mb-10">
-  <div class="card"><div class="label muted" title="Tổng vốn định giá theo thị trường (MTM) = tiền mặt + giá trị thị trường các vị thế.">Equity</div><div class="value">${{ p.total_equity | money }}</div></div>
-  <div class="card"><div class="label muted" title="Lãi/lỗ đã chốt = tiền bán − giá vốn − phí.">Realized P&L</div>
-    <div class="value {{ 'pos' if p.realized_pnl >= 0 else 'neg' }}">${{ p.realized_pnl | money }}</div></div>
-  <div class="card"><div class="label muted" title="Tỉ lệ thắng backtest, tính out-of-sample (walk-forward) để tránh overfit. Ngưỡng vào lệnh ≥ MIN_WIN_RATE.">Win-rate</div><div class="value">{{ "%.0f"|format(p.win_rate) }}%</div></div>
-  <div class="card"><div class="label muted" title="Tỉ lệ thua backtest. Vượt MAX_LOSS_RATE thì cặp đó bị loại, không giao dịch.">Loss-rate</div>
-    <div class="value {{ 'neg' if p.loss_rate > 0 else '' }}">{{ "%.0f"|format(p.loss_rate) }}%</div></div>
-  <div class="card"><div class="label muted" title="Sụt giảm sâu nhất từ đỉnh vốn = (đỉnh − đáy)/đỉnh. Vượt MAX_DRAWDOWN_PCT → circuit-breaker đóng băng auto.">Max drawdown</div>
-    <div class="value {{ 'neg' if p.max_drawdown_pct > 0 else '' }}">{{ "%.1f"|format(p.max_drawdown_pct) }}%</div></div>
+<div id="perf"
+     hx-get="/partials/performance?period={{ period }}"
+     hx-trigger="every 20s [tabActive(this) && document.visibilityState==='visible'], refresh-status from:body"
+     hx-target="this" hx-swap="outerHTML">
+
+  <div class="perf-period">
+    {% for key, lbl in [('24h', '24h'), ('7d', '7 ngày'), ('30d', '30 ngày'), ('all', 'Tất cả')] %}
+    <button class="sm {{ '' if period == key else 'ghost' }}"
+            hx-get="/partials/performance?period={{ key }}"
+            hx-target="#perf" hx-swap="outerHTML">{{ lbl }}</button>
+    {% endfor %}
+  </div>
+
+  <div class="cards mb-10">
+    <div class="card"><div class="label muted" title="Tổng vốn định giá theo thị trường (MTM) = tiền mặt + giá trị thị trường các vị thế.">Equity</div>
+      <div class="value">${{ p.total_equity | money }}</div></div>
+    <div class="card"><div class="label muted" title="Lãi/lỗ đã chốt trong kỳ = tiền bán − giá vốn − phí.">Realized P&L</div>
+      <div class="value {{ 'pos' if p.realized_pnl >= 0 else 'neg' }}">${{ p.realized_pnl | money }}</div></div>
+    <div class="card"><div class="label muted" title="Tỉ lệ lệnh thắng trong kỳ (số lệnh đã chốt).">Win-rate</div>
+      <div class="value">{{ "%.0f"|format(p.win_rate) }}% <span class="muted fs-12">({{ p.closed }})</span></div></div>
+    <div class="card"><div class="label muted" title="Kỳ vọng mỗi lệnh = lãi/lỗ trung bình trên mỗi lệnh đã chốt. Dương = hệ thống có lời.">Expectancy/lệnh</div>
+      <div class="value {{ 'pos' if p.expectancy >= 0 else 'neg' }}">${{ p.expectancy | money }}</div></div>
+    <div class="card"><div class="label muted" title="Profit factor = tổng lãi / tổng lỗ. > 1 là có lời; ≥ 1.5 là tốt.">Profit factor</div>
+      <div class="value {{ 'pos' if p.profit_factor >= 1 else 'neg' }}">{{ "%.2f"|format(p.profit_factor) }}</div></div>
+    <div class="card"><div class="label muted" title="Sụt giảm sâu nhất từ đỉnh vốn = (đỉnh − đáy)/đỉnh. Vượt MAX_DRAWDOWN_PCT → circuit-breaker đóng băng auto.">Max drawdown</div>
+      <div class="value {{ 'neg' if p.max_drawdown_pct > 0 else '' }}">{{ "%.1f"|format(p.max_drawdown_pct) }}%</div></div>
+  </div>
+
+  <div class="perf-curve mb-8">{{ equity_svg | safe }}</div>
+
+  <div class="perf-stats">
+    <div class="perf-winloss">{{ winloss_svg | safe }}</div>
+    <div class="cards perf-econ">
+      <div class="card"><div class="label muted" title="Lãi trung bình của các lệnh thắng.">Lãi TB/thắng</div>
+        <div class="value pos">${{ p.avg_win | money }}</div></div>
+      <div class="card"><div class="label muted" title="Lỗ trung bình của các lệnh thua.">Lỗ TB/thua</div>
+        <div class="value neg">${{ p.avg_loss | money }}</div></div>
+      <div class="card"><div class="label muted" title="Số lệnh đã chốt trong kỳ (thắng + thua).">Lệnh đã chốt</div>
+        <div class="value">{{ p.closed }}</div></div>
+    </div>
+  </div>
 </div>
-<div class="mb-8">{{ equity_svg | safe }}</div>
-<div>{{ winloss_svg | safe }}</div>

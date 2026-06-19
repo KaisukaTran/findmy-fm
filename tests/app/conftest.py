@@ -25,8 +25,8 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_TMP_DIR}/test.db"
 os.environ["REQUIRE_AUTH"] = "false"
 
 from app import models  # noqa: E402,F401  (register models on Base)
-from app.orchestrator import models as _opus_models  # noqa: E402,F401  (register OPUS tables)
 from app.db import Base, SessionLocal, engine  # noqa: E402
+from app.orchestrator import models as _opus_models  # noqa: E402,F401  (register OPUS tables)
 
 
 @pytest.fixture(autouse=True)
@@ -44,9 +44,15 @@ _MUTABLE_SETTINGS = (
     "auto_trade", "autoapprove_enabled", "autoapprove_max_notional",
     "full_auto", "scheduler_enabled", "scan_interval_min",
     "guardian_enabled", "telegram_enabled",
-    "opus_mode", "opus_shadow", "opus_allocation_usd", "opus_daily_cost_cap_usd", "grok_enabled",
+    "opus_mode", "opus_shadow", "opus_allocation_usd", "opus_daily_cost_cap_usd",
+    "grok_enabled", "grok_scanner_enabled",
     "scan_distance_pct", "scan_tp_pct", "scan_max_waves", "scan_fund",
     "sl_pct", "trailing_pct", "deadline_days",
+    "scan_max_symbols", "min_quote_volume", "kss_first_wave_usd",
+    "max_concurrent_sessions", "max_sessions_per_symbol",
+    "live_trading", "live_max_order_notional",
+    "maker_orders", "order_fill_timeout_sec", "live_use_testnet",
+    "telegram_notify_trades", "telegram_notify_risk", "telegram_digest_hours",
 )
 
 
@@ -57,7 +63,8 @@ _MUTABLE_SETTINGS = (
 # resetting them could change unrelated assertions.
 _FLAG_SETTINGS = (
     "auto_trade", "autoapprove_enabled", "full_auto", "scheduler_enabled",
-    "guardian_enabled", "telegram_enabled", "opus_mode", "opus_shadow", "grok_enabled",
+    "guardian_enabled", "telegram_enabled", "opus_mode", "opus_shadow",
+    "grok_enabled", "grok_scanner_enabled", "live_trading",
 )
 
 

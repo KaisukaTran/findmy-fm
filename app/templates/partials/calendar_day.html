@@ -1,0 +1,30 @@
+<div class="cal-day-panel">
+  <h3>
+    {{ d }} · {{ rows | length }} lệnh
+    {% if rows %}· <span class="{{ 'pos' if total >= 0 else 'neg' }}">${{ total | money }}</span>{% endif %}
+  </h3>
+  {% if rows %}
+  <div class="scroll">
+    <table class="tbl">
+      <thead>
+        <tr><th>Giờ</th><th>Symbol</th><th>Side</th><th>KL</th><th>Giá</th><th>Phí</th><th>P&amp;L</th></tr>
+      </thead>
+      <tbody>
+        {% for f in rows %}
+        <tr>
+          <td class="muted">{{ f.executed_at | hms }}</td>
+          <td>{{ f.symbol }}</td>
+          <td>{{ f.side }}</td>
+          <td>{{ f.quantity | qty }}</td>
+          <td>{{ f.price | money }}</td>
+          <td class="muted">{{ f.fee | money }}</td>
+          <td class="{{ 'pos' if f.realized_pnl >= 0 else 'neg' }}">{{ '%+.2f' | format(f.realized_pnl) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Không có lệnh khớp nào trong ngày này.</p>
+  {% endif %}
+</div>

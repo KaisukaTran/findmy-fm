@@ -112,13 +112,47 @@ def _sl_floor_price(py: PyramidSession) -> float:
     return py.avg_price * (1 - py.sl_pct / 100.0)
 
 
+def _anchor_dca_price(
+    db: Session, session_id: int, symbol: str, distance_pct: float,
+    fallback_price: float, entry_price: float,
+) -> float:
+    """Re-anchor a DCA BUY rung to the LIVE market so it is NEVER queued above the current
+    price. An entry-anchored geometric rung (``entry×(1−d)ⁿ``) drifts ABOVE the market after a
+    fast drop; a BUY limit above market fills immediately at an OVERPAY instead of averaging
+    down (seen live: STG wave 5 filled 0.2257 while the market was 0.2123). Returns
+    ``min(current_market, previous_wave_price) × (1 − distance%)`` — the wave-step % below the
+    lower of the current price and the previous wave (so it is below BOTH). When no live price
+    is available (offline) ``min`` falls back to the previous wave → ``prev × (1−d)`` ≈ the
+    geometric rung, preserving the legacy ladder. Shared by manual DCA+ and the auto-chain."""
+    from app.market import get_current_prices
+
+    mkt = get_current_prices([symbol]).get(symbol) or 0.0
+    last = (
+        db.query(KssWave)
+        .filter(KssWave.session_id == session_id)
+        .order_by(KssWave.wave_num.desc())
+        .first()
+    )
+    prev = last.target_price if last is not None else entry_price
+    anchors = [p for p in (mkt, prev) if p > 0]
+    if not anchors:
+        return fallback_price
+    return round(min(anchors) * (1 - distance_pct / 100.0), 8)
+
+
 def _queue_wave_if_above_sl(
     db: Session, py: PyramidSession, session_id: int, symbol: str, order_dict: dict
 ) -> bool:
     """Queue the next DCA wave (+ its KssWave row) and return True, or skip+audit and return
     False when the rung sits at/below the SL — a dead order the SL would pre-empt. Shared by the
-    auto-chain (handle_fill_event) and the rescue adoption so both honour the SL floor."""
+    auto-chain (handle_fill_event) and the rescue adoption so both honour the SL floor.
+
+    The rung is first re-anchored to the live market (``_anchor_dca_price``) so the auto-chain
+    never queues a buy above the current price (which would fill at an overpay, not a dip)."""
     nwn = int(order_dict["source_ref"].split(":")[-1])
+    order_dict["price"] = _anchor_dca_price(
+        db, session_id, symbol, py.distance_pct, order_dict["price"], py.entry_price
+    )
     floor = _sl_floor_price(py)
     if floor > 0 and order_dict["price"] <= floor:
         audit.log(db, "kss", "wave_below_sl", entity=f"kss:{session_id}", symbol=symbol,
@@ -135,6 +169,34 @@ def _queue_wave_if_above_sl(
 
 
 # --- lifecycle ----------------------------------------------------------
+
+
+def projected_ladder_cost(
+    symbol: str,
+    entry_price: float,
+    distance_pct: float,
+    max_waves: int,
+) -> float:
+    """USD a session's FULL DCA ladder would consume, from the frozen pyramid math:
+    Σ over waves of (wave qty × wave price) via ``PyramidSession.estimate_total_cost``.
+
+    This is the precise form of "first-wave size × số sóng × giá": it honours the
+    geometric (n+1)× qty growth, the entry×(1−d)ⁿ price decay, and the active
+    ``kss_first_wave_usd`` sizing. Used to (1) size a session's ``isolated_fund`` so the
+    ladder never starves mid-way, and (2) budget the scanner open-gate against the real
+    planned capital instead of a flat user-set ``scan_fund``.
+    """
+    probe = PyramidSession(
+        symbol=symbol,
+        entry_price=entry_price,
+        distance_pct=distance_pct,
+        max_waves=max_waves,
+        isolated_fund=1.0,  # dummy (>0 to pass validation); estimate_total_cost ignores it
+        tp_pct=1.0,
+        timeout_x_min=1.0,
+        gap_y_min=0.0,
+    )
+    return probe.estimate_total_cost()
 
 
 def create_session(db: Session, **params: Any) -> KssSession:
@@ -388,28 +450,80 @@ def _handle_tp_triggered(db: Session, row: KssSession, result: dict) -> None:
         _queue(db, result["order"])  # market SELL through the approval queue
 
 
-def queue_next_wave(db: Session, session_id: int) -> dict:
+def _idle_deployable(db: Session) -> float:
+    """Free USDT cash available to deploy RIGHT NOW — used by a manual DCA+ to fund a wave
+    beyond a session's ``isolated_fund`` reservation (the reservation is a planning cap, not
+    real set-aside cash). This is exactly the ``cash`` the portfolio summary shows:
+    ``account_equity − cost of open positions + realized PnL``.
+
+    It is the REAL free balance, NOT reduced by the ``equity_backup_pct`` reserve: that reserve
+    gates the AUTO scanner's new-session opens, whereas a manual DCA+ is the user deliberately
+    choosing to deploy their idle cash now. (The old formula subtracted the full cost basis from
+    a 75%-of-equity budget, which wrongly returned 0 whenever a lot was already deployed even
+    with real cash sitting idle.)"""
+    from sqlalchemy import func
+
+    from app.config import settings
+    from app.models import Fill, Position
+
+    invested = sum(p.total_cost for p in db.query(Position).all())
+    realized = float(db.query(func.coalesce(func.sum(Fill.realized_pnl), 0.0)).scalar() or 0.0)
+    return max(0.0, settings.account_equity - invested + realized)
+
+
+def queue_next_wave(db: Session, session_id: int, amount_usd: float | None = None) -> dict:
     """
-    Manually queue the next geometric DCA wave for an ACTIVE session.
+    Manually queue the next DCA wave for an ACTIVE session (the DCA+ button).
 
     Bootstraps DCA when the wave chain has gone dormant — e.g. after extending `max_waves`
     on a session whose ladder was already exhausted (all waves filled, nothing pending). The
     next wave is the standard geometric rung (`generate_wave(current_wave + 1)`); once it
     fills, the frozen `on_fill` auto-chains the rest. Goes through the approval queue.
+
+    Manual override (user intent): the per-session ``isolated_fund`` reservation is a PLANNING
+    cap, not real cash. When the next rung costs more than this session has left reserved, fund
+    it from idle account cash (``_idle_deployable``) and grow ``isolated_fund`` to match — so a
+    deliberate DCA+ click deploys free capital now instead of being blocked by the reservation.
+    ``_idle_deployable`` is the REAL free balance and is NOT reduced by the ``equity_backup_pct``
+    reserve: a manual DCA+ is the user deliberately choosing to spend remaining cash (incl. the
+    auto-backup) — exactly the lever the backup exists for. The AUTO path (handle_fill_event /
+    scanner) is untouched and still honours the backup + lend-idle budget.
+
+    ``amount_usd`` (optional, manual lever): deploy a user-chosen USD slice this wave
+    (qty = amount/anchored price) instead of the fixed geometric rung — so the user can put a
+    meaningful amount of idle cash to work on demand. A custom-amount click also extends the
+    ladder by one when it is full (a deliberate deploy must not be blocked by ``max_waves``).
     """
     row = _get_row(db, session_id)
     if row.status != SESSION_ACTIVE:
         raise ValueError(f"Session {session_id} not active (status={row.status})")
+    if amount_usd is not None and amount_usd <= 0:
+        raise ValueError("amount_usd phải > 0")
     py = _to_pyramid(row)
     next_wave_num = py.current_wave + 1
     if next_wave_num >= py.max_waves:
-        raise ValueError(
-            f"Ladder exhausted (current_wave={py.current_wave}, max_waves={py.max_waves}); "
-            "raise max_waves first"
-        )
+        # A plain DCA+ refuses on a full ladder (raise max_waves first); a deliberate custom-USD
+        # deploy extends the ladder by one so the user is never blocked from putting cash to work.
+        if amount_usd is None:
+            raise ValueError(
+                f"Ladder exhausted (current_wave={py.current_wave}, max_waves={py.max_waves}); "
+                "raise max_waves first"
+            )
+        py.max_waves = next_wave_num + 1
+        row.max_waves = py.max_waves
+        audit.log(db, "kss", "dca_extend_ladder", entity=f"kss:{session_id}",
+                  symbol=row.symbol, max_waves=py.max_waves)
     if _wave_row(db, session_id, next_wave_num) is not None:
         raise ValueError(f"Wave {next_wave_num} already queued")
     next_wave = py.generate_wave(next_wave_num)
+    # User rule: a DCA+ rung must sit BELOW the live market by the step %, AND below the
+    # previous wave — never above market (see _anchor_dca_price).
+    next_wave.target_price = _anchor_dca_price(
+        db, session_id, row.symbol, py.distance_pct, next_wave.target_price, py.entry_price
+    )
+    if amount_usd is not None and next_wave.target_price > 0:
+        # Size the wave to deploy the chosen USD at the anchored price (manual override).
+        next_wave.quantity = round(amount_usd / next_wave.target_price, 8)
     floor = _sl_floor_price(py)
     if floor > 0 and next_wave.target_price <= floor:
         raise ValueError(
@@ -419,10 +533,19 @@ def queue_next_wave(db: Session, session_id: int) -> dict:
         )
     cost = next_wave.quantity * next_wave.target_price
     if cost > py.remaining_fund:
-        raise ValueError(
-            f"Insufficient fund for wave {next_wave_num}: need {cost:.2f}, "
-            f"have {py.remaining_fund:.2f}"
-        )
+        # Reservation exhausted — fund this rung from idle account cash (manual override).
+        idle = _idle_deployable(db)
+        if cost > idle:
+            raise ValueError(
+                f"Không đủ tiền mặt cho sóng {next_wave_num}: cần {cost:.2f}, "
+                f"tiền nhàn rỗi {idle:.2f}. Đóng/giảm bớt session khác để giải phóng vốn."
+            )
+        added = cost - py.remaining_fund
+        row.isolated_fund = py.total_cost + cost  # grow the reservation to fund this wave now
+        py.isolated_fund = row.isolated_fund
+        audit.log(db, "kss", "dca_fund_topup", entity=f"kss:{session_id}", symbol=row.symbol,
+                  wave=next_wave_num, added=round(added, 2),
+                  new_isolated_fund=round(row.isolated_fund, 2))
     py.current_wave = next_wave_num
     next_wave.status = "sent"
     pending, risk_note = _queue(db, py._wave_to_order(next_wave))
@@ -434,13 +557,15 @@ def queue_next_wave(db: Session, session_id: int) -> dict:
         )
     )
     audit.log(db, "kss", "dca_next", entity=f"kss:{session_id}", symbol=row.symbol,
-              wave=next_wave_num, price=next_wave.target_price, qty=next_wave.quantity)
+              wave=next_wave_num, price=next_wave.target_price, qty=next_wave.quantity,
+              amount_usd=round(amount_usd, 2) if amount_usd is not None else None)
     db.commit()
     return {
         "message": f"Queued wave {next_wave_num} @ {next_wave.target_price}",
         "wave_num": next_wave_num,
         "price": next_wave.target_price,
         "quantity": next_wave.quantity,
+        "cost": round(next_wave.quantity * next_wave.target_price, 2),
         "pending_order_id": pending.id,
         "risk_note": risk_note,
     }
@@ -783,13 +908,28 @@ def list_sessions(
 
 
 def summary(db: Session) -> dict:
+    from app import risk  # lazy: risk -> portfolio -> models; avoid an import cycle at load
+
     rows = db.query(KssSession).all()
     active = [r for r in rows if r.status == SESSION_ACTIVE]
+    # reserved = full projected DCA-ladder cost a session set aside (isolated_fund);
+    # deployed = cash actually spent on filled waves (total_cost). The two diverge a lot
+    # because a session reserves its whole ladder up-front but fills it wave by wave.
+    reserved = sum(r.isolated_fund for r in active)
+    deployed = sum(r.total_cost for r in active)
+    equity = risk.account_equity(db)
     return {
         "total_sessions": len(rows),
         "active_sessions": len(active),
-        "total_isolated_fund": sum(r.isolated_fund for r in active),
+        "total_isolated_fund": reserved,        # reserved across active sessions (planned ceiling)
+        "active_used_fund": deployed,           # real cash deployed in active sessions
         "total_used_fund": sum(r.total_cost for r in rows),
+        "equity": equity,
+        # real free USDT a manual DCA+ can deploy right now (incl. the auto-backup reserve).
+        "free_cash": _idle_deployable(db),
+        # reservation as a share of equity, and how far it exceeds equity (over-commit).
+        "reserved_pct_of_equity": (reserved / equity * 100.0) if equity > 0 else 0.0,
+        "over_equity_pct": (max(0.0, reserved - equity) / equity * 100.0) if equity > 0 else 0.0,
     }
 
 

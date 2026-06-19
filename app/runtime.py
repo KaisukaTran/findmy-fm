@@ -12,6 +12,7 @@ without side-effects on the global session.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -38,10 +39,17 @@ KEY_AUTOAPPROVE_ENABLED = "autoapprove_enabled"
 KEY_AUTOAPPROVE_MAX = "autoapprove_max_notional"
 KEY_CONSENSUS_WEIGHTS = "consensus_weights"  # S4: JSON dict of agent weights
 KEY_GROK_FAIL_MODE = "grok_scanner_fail_mode"  # S5: "open" | "closed"
+KEY_LIVE_TRADING = "live_trading"  # Phase 6: real-money master switch (default off)
+
+def _to_bool(v: object) -> bool:
+    """Bool-aware cast for the string-valued KV store. ``bool('0')`` is True (non-empty
+    string), so a plain ``bool`` cast would corrupt a restored False — use this instead."""
+    return str(v).strip().lower() in {"1", "true", "yes", "on"}
+
 
 # Master KSS strategy knobs the dashboard edits (persisted as kss:<field>). Each maps to a
 # settings field; the cast keeps them typed when restored from the string-valued KV store.
-KSS_SETTING_FIELDS: dict[str, type] = {
+KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "scan_distance_pct": float,
     "scan_tp_pct": float,
     "scan_max_waves": int,
@@ -50,13 +58,31 @@ KSS_SETTING_FIELDS: dict[str, type] = {
     "trailing_pct": float,
     "deadline_days": int,
     "max_concurrent_sessions": int,
+    "max_new_sessions_per_scan": int,  # cap NEW opens per scan (0=off); ramp gradually, best-first
+    "max_sessions_per_symbol": int,  # K-1: 1 = one ladder per coin (no blended cost basis)
     "max_deployed_pct": float,
+    "equity_backup_pct": float,
+    "cash_floor_usd": float,  # hard floor: account cash may never drop below this (0 = never <0)
     "loss_streak_block_k": int,
     "loss_streak_window_days": int,
     "min_expectancy_pct": float,
     "min_win_rate": float,
     "min_confidence": float,  # S4: consensus threshold, now decoupled from backtest
+    "min_trials": int,  # min backtest trials for a trustworthy edge (cut thin-sample noise)
+    "block_downtrend_adx": float,  # hard veto: HTF+ST down & ADX≥this (0=off) — entry timing
+    "tp_fee_coverage": float,  # TP adds this × round-trip fee (1.2 = +120% of fees)
     "grok_scanner_fail_mode": str,  # S5: "open" | "closed"
+    "grok_scanner_batch_max": int,  # how many candidates Grok reviews per scan (cover them all)
+    "grok_live_search": _to_bool,  # let Grok use xAI Live Search (web+X+news) in the scan gate
+    "grok_search_max_results": int,  # cap Live Search results per scan call
+    "scan_max_symbols": int,
+    "min_quote_volume": float,
+    "kss_first_wave_usd": float,
+    # Live-readiness knobs (1.9) — LIVE only, inert on paper. maker/testnet are bool (use
+    # _to_bool, not bool, so a restored "0" stays False); timeout is seconds (0 = wait forever).
+    "maker_orders": _to_bool,
+    "order_fill_timeout_sec": int,
+    "live_use_testnet": _to_bool,
 }
 
 # ---------------------------------------------------------------------------
@@ -100,21 +126,37 @@ def set_bool(db: Session, key: str, value: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _xai_key_present() -> bool:
+    """True when an xAI key is configured (so the Grok gates can actually run)."""
+    key = settings.xai_api_key
+    val = key.get_secret_value() if hasattr(key, "get_secret_value") else str(key or "")
+    return bool(val and val.strip())
+
+
 def full_auto_on(db: Session) -> dict:
-    """Enable full-auto mode: sets settings flags and persists KEY_FULL_AUTO."""
+    """Enable full-auto: scheduler + auto-trade + auto-approve as one, plus the Grok
+    co-pilot + scanner gate when an xAI key is configured. Persists every flag so the
+    whole stack survives a restart (the scheduler is auto-started by main.lifespan when
+    KEY_FULL_AUTO is set). The scheduler loop itself is started by the caller/route."""
     settings.full_auto = True
     settings.auto_trade = True
     settings.autoapprove_enabled = True
     set_bool(db, KEY_FULL_AUTO, True)
+    if _xai_key_present():
+        grok_set(db, True)
+        grok_scanner_set(db, True)
     return state(db)
 
 
 def full_auto_off(db: Session) -> dict:
-    """Disable full-auto mode: clears settings flags and persists KEY_FULL_AUTO."""
+    """Disable full-auto: clears auto-trade/auto-approve and the Grok gates, and persists
+    every flag so nothing silently re-enables on the next restart."""
     settings.full_auto = False
     settings.auto_trade = False
     settings.autoapprove_enabled = False
     set_bool(db, KEY_FULL_AUTO, False)
+    grok_set(db, False)
+    grok_scanner_set(db, False)
     return state(db)
 
 
@@ -129,6 +171,14 @@ def opus_mode_off(db: Session) -> dict:
     """Disable OPUS orchestrator mode. Persisted."""
     settings.opus_mode = False
     set_bool(db, KEY_OPUS_MODE, False)
+    return state(db)
+
+
+def set_live_trading(db: Session, enabled: bool) -> dict:
+    """Persist the go-live master switch. Real placement still needs exchange keys; this
+    only flips intent. The caller (route) is responsible for the typed-confirm gate."""
+    settings.live_trading = enabled
+    set_bool(db, KEY_LIVE_TRADING, enabled)
     return state(db)
 
 
@@ -309,7 +359,11 @@ def sync_from_db(db: Session) -> None:
     on the settings singleton. Safe when the key is absent (defaults to no-op).
     Does not touch the scheduler — the caller manages the async loop.
     """
-    if get_bool(db, KEY_FULL_AUTO, default=False):
+    # Full-auto may come from persisted state (the dashboard switch) OR from the
+    # environment (FULL_AUTO=true in .env) — honour either, and cascade the same flags
+    # full_auto_on() sets so a fresh boot behaves exactly like a clicked one.
+    full_auto = settings.full_auto or get_bool(db, KEY_FULL_AUTO, default=False)
+    if full_auto:
         settings.full_auto = True
         settings.auto_trade = True
         settings.autoapprove_enabled = True
@@ -317,8 +371,15 @@ def sync_from_db(db: Session) -> None:
     settings.opus_shadow = get_bool(db, KEY_OPUS_SHADOW, default=settings.opus_shadow)
     settings.grok_enabled = get_bool(db, KEY_GROK_ENABLED, default=settings.grok_enabled)
     settings.grok_scanner_enabled = get_bool(db, KEY_GROK_SCANNER, default=settings.grok_scanner_enabled)
+    # Under full-auto the Grok gates are part of the bundle when an xAI key is configured.
+    if full_auto and _xai_key_present():
+        settings.grok_enabled = True
+        settings.grok_scanner_enabled = True
     settings.ta_lib_enabled = get_bool(db, KEY_TA_LIB, default=settings.ta_lib_enabled)
     settings.ta_external_enabled = get_bool(db, KEY_TA_EXTERNAL, default=settings.ta_external_enabled)
+    # Go-live master switch — persisted operator choice; .env default is OFF. Even when
+    # restored True, real placement is inert unless exchange keys are configured.
+    settings.live_trading = get_bool(db, KEY_LIVE_TRADING, default=settings.live_trading)
     # Auto-approval rule (persisted so a dashboard change survives a restart).
     if get(db, KEY_AUTOAPPROVE_ENABLED) is not None:
         settings.autoapprove_enabled = get_bool(db, KEY_AUTOAPPROVE_ENABLED)

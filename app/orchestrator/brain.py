@@ -105,7 +105,7 @@ def build_snapshot(db: Session) -> dict:
         },
         "limits": {
             "max_trade_notional": settings.opus_max_trade_notional,
-            "max_deployed_pct": settings.max_deployed_pct,
+            "equity_backup_pct": settings.equity_backup_pct,
         },
         "open_positions": pos_rows,
         "candidates": _candidates(db),

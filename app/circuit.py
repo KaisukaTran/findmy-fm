@@ -86,7 +86,7 @@ def evaluate(db: Session) -> dict:
         db.commit()
         try:
             from app import notify  # lazy — circuit must not import notify at module top
-            notify.send(f"Circuit breaker FROZEN: {reason_str}")
+            notify.event("risk", f"🧊 Circuit breaker FROZEN: {reason_str}")
         except Exception:
             pass  # notify failure must never break evaluate
 

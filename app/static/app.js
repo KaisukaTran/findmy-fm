@@ -147,12 +147,13 @@ function refreshScanner() { fireRefresh("refresh-scanner"); }
 function refreshOpus()    { fireRefresh("refresh-opus"); }
 function refreshLosses()  { fireRefresh("refresh-losses"); }
 function refreshAudit()   { fireRefresh("refresh-audit"); }
-function refreshParams()  { fireRefresh("refresh-params"); }
+function refreshCosts()   { fireRefresh("refresh-costs"); }
+function refreshSavings() { fireRefresh("refresh-savings"); }
 
 function refreshAll() {
   // Used by WS push — refetch everything.
   ["refresh-status","refresh-trading","refresh-scanner",
-   "refresh-opus","refresh-losses","refresh-audit","refresh-params"]
+   "refresh-opus","refresh-losses","refresh-audit","refresh-costs","refresh-savings"]
     .forEach((ev) => document.body.dispatchEvent(new CustomEvent(ev)));
 }
 
@@ -204,6 +205,21 @@ const actions = {
     await api("POST", `/api/pending/approve/${id}`);
     refreshTrading(); refreshStatus();
   },
+  async toggleLiveTrading(mode) {
+    const enable = mode === "enable";
+    if (enable) {
+      const phrase = prompt(
+        "BẬT GIAO DỊCH TIỀN THẬT.\nGõ chính xác 'LIVE-TRADING' để xác nhận:");
+      if (phrase === null) return;
+      await api("POST", "/api/live-trading", { enabled: true, confirm: phrase });
+      toast("Đã bật LIVE — lệnh mới sẽ đặt bằng tiền thật.", "success");
+    } else {
+      if (!confirm("Tắt LIVE và quay lại chế độ paper (mô phỏng)?")) return;
+      await api("POST", "/api/live-trading", { enabled: false });
+      toast("Đã tắt LIVE — quay lại paper.", "info");
+    }
+    fireRefresh("refresh-live"); refreshStatus();
+  },
   async reject(id) {
     const reason = prompt("Lý do từ chối?", "") ?? "";
     await api("POST", `/api/pending/reject/${id}`, { reason });
@@ -231,9 +247,19 @@ const actions = {
     refreshTrading(); refreshStatus();
   },
   async kssDcaNext(id) {
-    if (!confirm("Đặt lệnh DCA sóng tiếp theo cho session " + id + "?")) return;
-    const r = await api("POST", `/api/kss/sessions/${id}/dca-next`);
-    toast(`Đã đưa sóng ${r.wave_num} vào hàng chờ: LIMIT BUY ${r.quantity} @ ${r.price}.`, "success");
+    const raw = prompt(
+      "DCA+ thủ công — session " + id + ".\n" +
+      "Nhập số USD muốn bơm từ tiền nhàn rỗi (gồm cả phần dự phòng).\n" +
+      "Để TRỐNG = rung mặc định theo ladder.", "");
+    if (raw === null) return;  // user cancelled
+    const txt = raw.trim();
+    const amount = txt === "" ? null : Number(txt);
+    if (amount !== null && (!isFinite(amount) || amount <= 0)) {
+      toast("Số USD không hợp lệ.", "error"); return;
+    }
+    const r = await api("POST", `/api/kss/sessions/${id}/dca-next`,
+      amount !== null ? { amount_usd: amount } : undefined);
+    toast(`Đã đưa sóng ${r.wave_num} vào hàng chờ: LIMIT BUY ${r.quantity} @ ${r.price} (~$${r.cost}).`, "success");
     refreshTrading(); refreshStatus();
   },
   async scan() {
@@ -272,6 +298,37 @@ const actions = {
     const s = await api("GET", "/api/autoapprove");
     await api("POST", "/api/autoapprove", { enabled: s.enabled, max_notional: v });
     refreshTrading(); refreshStatus();
+  },
+  async recordWithdrawal() {
+    const amt = num(document.getElementById("wd-amount") && document.getElementById("wd-amount").value);
+    if (amt == null || amt <= 0) { toast("Nhập số tiền rút dương (USD).", "error"); return; }
+    const noteEl = document.getElementById("wd-note");
+    const note = (noteEl && noteEl.value || "").trim();
+    await api("POST", "/api/withdrawals", { amount: amt, note: note || null });
+    const a = document.getElementById("wd-amount"); if (a) a.value = "";
+    if (noteEl) noteEl.value = "";
+    toast("Đã ghi nhận lệnh rút.");
+    refreshCosts();
+  },
+  async addSavings(mode) {
+    const sym = (document.getElementById("sv-symbol")?.value || "").trim();
+    const qty = num(document.getElementById("sv-qty")?.value);
+    const cost = num(document.getElementById("sv-cost")?.value);
+    if (!sym) { toast("Nhập mã coin.", "error"); return; }
+    if (qty == null || qty <= 0) { toast("Nhập số lượng dương.", "error"); return; }
+    if (cost == null || cost < 0) { toast("Nhập giá vốn ≥ 0.", "error"); return; }
+    const note = (document.getElementById("sv-note")?.value || "").trim();
+    await api("POST", "/api/savings",
+      { symbol: sym, quantity: qty, avg_cost: cost, note: note || null, mode: mode || "add" });
+    ["sv-symbol","sv-qty","sv-cost","sv-note"].forEach((id) => { const e = document.getElementById(id); if (e) e.value = ""; });
+    toast(mode === "set" ? "Đã ghi đè holding." : "Đã tích thêm.");
+    refreshSavings();
+  },
+  async removeSavings(sym) {
+    if (!confirm(`Xoá ${sym} khỏi sổ savings? (không bán coin — chỉ xoá ghi nhận)`)) return;
+    await api("DELETE", `/api/savings/${encodeURIComponent(sym)}`);
+    toast(`Đã xoá ${sym} khỏi savings.`);
+    refreshSavings();
   },
   async toggleScheduler(desired) {
     const enable = desired === "on";
@@ -348,13 +405,6 @@ const actions = {
   closeLadder() {
     document.getElementById("ladder-modal").classList.add("hidden");
   },
-  auditFilter(mode) {
-    const w = document.getElementById("audit-wrap");
-    if (w) w.className = "af-" + (mode || "important");
-    document.querySelectorAll("[data-action='auditFilter']").forEach((b) =>
-      b.classList.toggle("ghost", b.dataset.id !== mode));
-    applyAuditSymbol();
-  },
   auditFilterSymbol(sym) {
     window._auditSym = sym || "";
     const f = document.getElementById("audit-sym-filter");
@@ -408,7 +458,7 @@ const actions = {
     if (!enable &&
         !confirm("Tắt Hyperopt? Điều chỉnh tham số sẽ dừng.")) return;
     await api("POST", "/api/hyperopt", { enabled: enable });
-    refreshStatus(); refreshParams();
+    refreshStatus();
   },
   async toggleMl(desired) {
     const enable = desired === "on";
@@ -417,34 +467,7 @@ const actions = {
     if (!enable &&
         !confirm("Tắt ML? Lọc dựa trên mô hình sẽ bị tắt.")) return;
     await api("POST", "/api/ml", { enabled: enable });
-    refreshStatus(); refreshParams();
-  },
-  async hyperoptRun() {
-    const btn = document.querySelector("[data-action='hyperoptRun']");
-    if (btn) btn.disabled = true;
-    try {
-      const r = await api("POST", "/api/hyperopt/run");
-      const n = Array.isArray(r) ? r.length : (r.count ?? "?");
-      toast("Hyperopt hoàn tất — " + n + " cặp đã tối ưu.", "success");
-      refreshParams();
-    } finally {
-      if (btn) btn.disabled = false;
-    }
-  },
-  async mlRetrain() {
-    const btn = document.querySelector("[data-action='mlRetrain']");
-    if (btn) btn.disabled = true;
-    try {
-      const r = await api("POST", "/api/ml/retrain");
-      if (r && r.model) {
-        toast("Mô hình huấn luyện xong: v" + r.model.version + " · metric " + r.model.metric + " · " + r.model.n_samples + " mẫu.", "success");
-      } else {
-        toast("Huấn luyện lại không có mô hình — chưa đủ dữ liệu.", "info");
-      }
-      refreshParams();
-    } finally {
-      if (btn) btn.disabled = false;
-    }
+    refreshStatus();
   },
 };
 
@@ -500,7 +523,7 @@ document.addEventListener("click", (e) => {
 document.addEventListener("DOMContentLoaded", () => {
   // U8: restore tab from hash on load; fallback to overview.
   const hash = location.hash.replace("#", "").trim();
-  const valid = ["overview", "trading", "opus", "losses", "strategy", "logs"];
+  const valid = ["overview", "trading", "opus", "losses", "calendar", "strategy", "logs"];
   showTab(valid.includes(hash) ? hash : "overview");
 });
 
@@ -553,26 +576,50 @@ document.addEventListener("submit", async (e) => {
     await api("POST", "/api/kss-settings", {
       scan_distance_pct: num(f.get("scan_distance_pct")),
       scan_tp_pct: num(f.get("scan_tp_pct")),
+      tp_fee_coverage: num(f.get("tp_fee_coverage")),
       scan_max_waves: num(f.get("scan_max_waves")),
       scan_fund: num(f.get("scan_fund")),
       sl_pct: num(f.get("sl_pct")),
       trailing_pct: num(f.get("trailing_pct")),
       deadline_days: num(f.get("deadline_days")),
       max_concurrent_sessions: num(f.get("max_concurrent_sessions")),
+      max_sessions_per_symbol: num(f.get("max_sessions_per_symbol")),
       max_deployed_pct: num(f.get("max_deployed_pct")),
+      equity_backup_pct: num(f.get("equity_backup_pct")),
+      cash_floor_usd: num(f.get("cash_floor_usd")),
       loss_streak_block_k: num(f.get("loss_streak_block_k")),
       loss_streak_window_days: num(f.get("loss_streak_window_days")),
       min_expectancy_pct: num(f.get("min_expectancy_pct")),
       min_win_rate: num(f.get("min_win_rate")),
       min_confidence: num(f.get("min_confidence")),
+      min_trials: num(f.get("min_trials")),
+      block_downtrend_adx: num(f.get("block_downtrend_adx")),
+      kss_first_wave_usd: num(f.get("kss_first_wave_usd")),
+      scan_max_symbols: num(f.get("scan_max_symbols")),
+      min_quote_volume: num(f.get("min_quote_volume")),
     });
     toast("Đã lưu cấu hình KSS — áp dụng cho phiên mới.", "success");
     refreshTrading(); refreshStatus();
+  } else if (form.id === "live-exec-form") {
+    e.preventDefault();
+    const f = new FormData(form);
+    await api("POST", "/api/kss-settings", {
+      maker_orders: f.get("maker_orders") === "1",
+      order_fill_timeout_sec: num(f.get("order_fill_timeout_sec")),
+      live_use_testnet: f.get("live_use_testnet") === "1",
+    });
+    toast("Đã lưu cấu hình LIVE.", "success");
+    refreshStatus();
   } else if (form.id === "grok-fail-mode-form") {
     e.preventDefault();
     const f = new FormData(form);
-    await api("POST", "/api/kss-settings", { grok_scanner_fail_mode: f.get("grok_scanner_fail_mode") });
-    toast("Đã lưu chế độ lỗi Grok.", "success");
+    await api("POST", "/api/kss-settings", {
+      grok_scanner_fail_mode: f.get("grok_scanner_fail_mode"),
+      grok_scanner_batch_max: num(f.get("grok_scanner_batch_max")),
+      grok_live_search: f.get("grok_live_search") === "1",
+      grok_search_max_results: num(f.get("grok_search_max_results")),
+    });
+    toast("Đã lưu cấu hình Grok scanner.", "success");
   } else if (form.id === "consensus-weights-form") {
     e.preventDefault();
     const f = new FormData(form);
@@ -640,63 +687,6 @@ function connectWs() {
 }
 connectWs();
 
-// --- Phase C: params panel (client-side fetch — no /partials/params route) ----
-// All other panels use hx-get to /partials/* HTML routes. The params panel is
-// the sole exception: no server route exists and Python cannot be edited, so
-// we fetch /api/params + /api/ml JSON here and render rows in JS on load.
-
-function renderMlStatus(data) {
-  const el = document.getElementById("ml-status");
-  if (!el) return;
-  const m = data && data.model;
-  if (!m) {
-    el.textContent = "Mô hình ML: chưa được huấn luyện.";
-    return;
-  }
-  el.innerHTML =
-    "Mô hình ML: <b>" + esc(m.id || "—") + "</b>" +
-    " · v" + esc(m.version || "?") +
-    " · metric <b>" + esc(m.metric ?? "—") + "</b>" +
-    " · " + esc(m.n_samples ?? "?") + " mẫu" +
-    " · huấn luyện " + esc(m.trained_at ? m.trained_at.slice(0, 19).replace("T", " ") : "—");
-}
-
-function renderParamsRows(rows) {
-  const tbody = document.getElementById("params-tbody");
-  if (!tbody) return;
-  if (!rows || !rows.length) {
-    tbody.innerHTML = "<tr><td colspan='7' class='muted'>Chưa có tham số tối ưu — hãy chạy Hyperopt trước.</td></tr>";
-    return;
-  }
-  tbody.innerHTML = rows.map((r) =>
-    "<tr>" +
-    "<td>" + esc(r.symbol) + "</td>" +
-    "<td>" + (r.distance_pct != null ? r.distance_pct.toFixed(2) : "—") + "</td>" +
-    "<td>" + (r.tp_pct != null ? r.tp_pct.toFixed(2) : "—") + "</td>" +
-    "<td>" + (r.max_waves ?? "—") + "</td>" +
-    "<td>" + (r.score != null ? r.score.toFixed(4) : "—") + "</td>" +
-    "<td>" + (r.trials ?? "—") + "</td>" +
-    "<td class='muted'>" + esc(r.updated_at ? r.updated_at.slice(0, 16).replace("T", " ") : "—") + "</td>" +
-    "</tr>"
-  ).join("");
-}
-
-async function loadParams() {
-  try {
-    const [rows, mlData] = await Promise.all([
-      api("GET", "/api/params"),
-      api("GET", "/api/ml"),
-    ]);
-    renderParamsRows(rows);
-    renderMlStatus(mlData);
-  } catch (_) {
-    // errors already alerted by api()
-  }
-}
-
-// Initialise on first load; also refresh when the scoped refresh-params fires.
-document.addEventListener("DOMContentLoaded", loadParams);
-document.body.addEventListener("refresh-params", loadParams);
 
 // --- Alpine (CSP build): modal visibility only -------------------------
 

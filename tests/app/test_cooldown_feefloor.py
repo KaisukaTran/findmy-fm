@@ -10,7 +10,6 @@ from app import costengine, runtime, scanner
 from app.config import settings
 from app.kss import service
 
-
 # ---------------------------------------------------------------------------
 # Profit floor = 2x binance_max_fee_pct
 # ---------------------------------------------------------------------------
@@ -22,8 +21,8 @@ def test_min_profit_pct(monkeypatch):
 
 
 def _mk(db, **over):
-    params = dict(symbol="BTC", entry_price=100.0, distance_pct=2.0, max_waves=5,
-                  isolated_fund=1000.0, tp_pct=3.0, timeout_x_min=9999.0, gap_y_min=0.0)
+    params = {"symbol": "BTC", "entry_price": 100.0, "distance_pct": 2.0, "max_waves": 5,
+              "isolated_fund": 1000.0, "tp_pct": 3.0, "timeout_x_min": 9999.0, "gap_y_min": 0.0}
     params.update(over)
     return service.create_session(db, **params)
 

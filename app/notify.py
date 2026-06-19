@@ -245,6 +245,7 @@ _HELP_TEXT = (
     "  /pending   — lệnh chờ duyệt\n"
     "  /positions — vị thế đang mở\n"
     "  /kss       — phiên KSS\n"
+    "  /trade [N|buy|sell] — giao dịch gần nhất (mặc định 10; lọc buy/sell)\n"
     "  /fullauto on|off — bật/tắt Full-Auto\n"
     "  /pause     — tắt Full-Auto + scheduler\n"
     "  /resume    — bật Full-Auto + scheduler\n"
@@ -313,6 +314,31 @@ def _cmd_kss(db) -> str:
     return "\n".join(lines)
 
 
+def _cmd_trade(db, arg: str = "") -> str:
+    """Recent trades. Optional arg: a count (``/trade 20``, capped 1..50) OR a side filter
+    (``/trade buy`` / ``/trade sell``). Bare ``/trade`` = 10 most recent, both sides."""
+    from app import portfolio, timefmt
+
+    side: str | None = None
+    limit = 10
+    a = (arg or "").strip().lower()
+    if a in ("buy", "sell"):
+        side = a.upper()
+    elif a.isdigit():
+        limit = max(1, min(int(a), 50))
+    rows = portfolio.trades_view(db, limit=limit, side=side)
+    if not rows:
+        return f"Chưa có lệnh {side}." if side else "Chưa có giao dịch nào."
+    lines = [f"🧾 Trades{(' ' + side) if side else ''} ({len(rows)} gần nhất):"]
+    for r in rows:
+        pnl = f" · pnl ${r['realized_pnl']:,.2f}" if r["side"] == "SELL" else ""
+        lines.append(
+            f"{timefmt.local_hms(r['executed_at'])} {r['symbol']} {r['side']} "
+            f"{r['quantity']:g} @ {r['price']:g}{pnl} [{r['source']}]"
+        )
+    return "\n".join(lines)
+
+
 def _cmd_status(db) -> str:
     from app import circuit, runtime, scheduler
 
@@ -339,14 +365,19 @@ _INFO_COMMANDS = {
     "position": _cmd_positions,
     "pos": _cmd_positions,
     "kss": _cmd_kss,
+    "trade": _cmd_trade,
+    "trades": _cmd_trade,
     "status": _cmd_status,
 }
 
 
-def _handle_info(db, token: str) -> str | None:
-    """Dispatch a read-only info command, or None if `token` isn't one."""
+def _handle_info(db, token: str, arg: str = "") -> str | None:
+    """Dispatch a read-only info command, or None if `token` isn't one. Only /trade consumes
+    `arg` (count or buy/sell filter); the rest ignore it."""
     handler = _INFO_COMMANDS.get(token)
-    return handler(db) if handler else None
+    if handler is None:
+        return None
+    return handler(db, arg) if handler is _cmd_trade else handler(db)
 
 
 def _set_full_auto(db, on: bool) -> None:
@@ -405,7 +436,7 @@ def handle_command(text: str) -> str:
 
     db = SessionLocal()
     try:
-        reply = _handle_info(db, token)
+        reply = _handle_info(db, token, arg)
         return reply if reply is not None else _handle_control(db, token, arg)
     finally:
         db.close()

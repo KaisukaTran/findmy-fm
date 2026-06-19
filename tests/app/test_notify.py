@@ -97,6 +97,78 @@ def test_handle_command_unknown_returns_help_hint():
 
 
 # ---------------------------------------------------------------------------
+# handle_command("/trade")
+# ---------------------------------------------------------------------------
+
+
+def test_help_lists_trade_command():
+    assert "/trade" in notify.handle_command("/help")
+
+
+def test_handle_command_trade_empty(db):
+    assert "Chưa có giao dịch" in notify.handle_command("/trade")
+
+
+def test_handle_command_trade_lists_recent_with_sell_pnl(db):
+    """Lists recent fills; a SELL shows its realized pnl, a BUY does not."""
+    from app.db import SessionLocal
+    from app.models import Fill
+
+    s = SessionLocal()
+    try:
+        s.add(Fill(symbol="BTC", side="BUY", quantity=2, price=100.0, fee=0.1,
+                   source_ref="pyramid:1:wave:0"))
+        s.add(Fill(symbol="BTC", side="SELL", quantity=2, price=110.0, fee=0.1,
+                   realized_pnl=19.8, source_ref="pyramid:1:tp"))
+        s.commit()
+    finally:
+        s.close()
+
+    reply = notify.handle_command("/trade")
+    assert "Trades" in reply and "BTC" in reply
+    assert "SELL" in reply and "pnl" in reply        # SELL line carries realized pnl
+    # the alias resolves to the same handler
+    assert notify.handle_command("/trades").startswith("🧾")
+
+
+def _seed_trades(n_buy: int, n_sell: int) -> None:
+    from app.db import SessionLocal
+    from app.models import Fill
+
+    s = SessionLocal()
+    try:
+        for i in range(n_buy):
+            s.add(Fill(symbol="ETH", side="BUY", quantity=1, price=100.0 + i,
+                       source_ref="pyramid:1:wave:0"))
+        for i in range(n_sell):
+            s.add(Fill(symbol="ETH", side="SELL", quantity=1, price=110.0 + i,
+                       realized_pnl=9.9, source_ref="pyramid:1:tp"))
+        s.commit()
+    finally:
+        s.close()
+
+
+def test_handle_command_trade_side_filter(db):
+    _seed_trades(n_buy=3, n_sell=2)
+    sell = notify.handle_command("/trade sell")
+    assert "Trades SELL" in sell and "BUY" not in sell
+    buy = notify.handle_command("/trade buy")
+    assert "Trades BUY" in buy and "SELL" not in buy
+
+
+def test_handle_command_trade_count_arg(db):
+    _seed_trades(n_buy=8, n_sell=0)
+    reply = notify.handle_command("/trade 3")
+    # header + exactly 3 trade lines
+    assert len(reply.splitlines()) == 1 + 3
+
+
+def test_handle_command_trade_empty_side(db):
+    _seed_trades(n_buy=2, n_sell=0)   # no SELLs
+    assert "Chưa có lệnh SELL" in notify.handle_command("/trade sell")
+
+
+# ---------------------------------------------------------------------------
 # handle_command("/status")
 # ---------------------------------------------------------------------------
 

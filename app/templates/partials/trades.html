@@ -1,7 +1,14 @@
 <div id="trades-pane" class="scroll"
-     hx-get="/partials/trades?page={{ page }}"
+     hx-get="/partials/trades?page={{ page }}&side={{ side }}"
      hx-trigger="every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body"
      hx-target="this" hx-swap="outerHTML">
+<div class="audit-filters">
+  {% for key, label in [('ALL', '≡ Tất cả'), ('BUY', '🟢 BUY'), ('SELL', '🔴 SELL')] %}
+  <button class="sm {{ '' if side == key else 'ghost' }}"
+          hx-get="/partials/trades?side={{ key }}&page=1" hx-target="#trades-pane" hx-swap="outerHTML"
+          title="Chỉ xem lệnh {{ label }}">{{ label }}</button>
+  {% endfor %}
+</div>
 {% if rows %}
 <table class="tbl">
   <thead><tr>
@@ -32,11 +39,11 @@
 {% else %}<p class="muted">No trades yet.</p>{% endif %}
 <div class="page-nav">
   <button class="sm ghost" {{ 'disabled' if not has_prev }}
-          hx-get="/partials/trades?page={{ page - 1 }}"
+          hx-get="/partials/trades?page={{ page - 1 }}&side={{ side }}"
           hx-target="#trades-pane" hx-swap="outerHTML">&#8249; Trước</button>
   <span class="muted">Trang {{ page }}</span>
   <button class="sm ghost" {{ 'disabled' if not has_next }}
-          hx-get="/partials/trades?page={{ page + 1 }}"
+          hx-get="/partials/trades?page={{ page + 1 }}&side={{ side }}"
           hx-target="#trades-pane" hx-swap="outerHTML">Sau &#8250;</button>
 </div>
 </div>

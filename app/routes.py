@@ -852,16 +852,22 @@ def partial_positions(request: Request, page: int = 1, db: Session = Depends(get
 
 
 @ui_router.get("/partials/trades", response_class=HTMLResponse)
-def partial_trades(request: Request, page: int = 1, db: Session = Depends(get_db)):
+def partial_trades(
+    request: Request, page: int = 1, side: str = "ALL", db: Session = Depends(get_db)
+):
     page = max(1, min(page, 10))
     offset = (page - 1) * 20
-    rows = portfolio.trades_view(db, limit=20, offset=offset)
+    side = side.upper() if side.upper() in ("BUY", "SELL") else "ALL"
+    rows = portfolio.trades_view(
+        db, limit=20, offset=offset, side=None if side == "ALL" else side
+    )
     return templates.TemplateResponse(
         "partials/trades.html",
         {
             "request": request,
             "rows": rows,
             "page": page,
+            "side": side,
             "has_prev": page > 1,
             "has_next": len(rows) == 20,
         },

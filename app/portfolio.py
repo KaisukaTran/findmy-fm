@@ -149,9 +149,16 @@ def loss_analysis(db: Session, limit: int = 300) -> dict:
     }
 
 
-def trades_view(db: Session, limit: int = 50, offset: int = 0) -> list[dict]:
-    """Most recent fills (trade history), tagged with their provenance (OPUS/KSS/…)."""
-    fills = db.query(Fill).order_by(Fill.executed_at.desc()).offset(offset).limit(limit).all()
+def trades_view(
+    db: Session, limit: int = 50, offset: int = 0, side: str | None = None
+) -> list[dict]:
+    """Most recent fills (trade history), tagged with their provenance (OPUS/KSS/…).
+
+    ``side`` filters to a single direction (``"BUY"``/``"SELL"``); ``None`` returns both."""
+    q = db.query(Fill).order_by(Fill.executed_at.desc())
+    if side in ("BUY", "SELL"):
+        q = q.filter(Fill.side == side)
+    fills = q.offset(offset).limit(limit).all()
     out = []
     for f in fills:
         d = f.to_dict()

@@ -22,6 +22,7 @@ from app.models import (
     KssSession,
     KssWave,
     PendingOrder,
+    Position,
 )
 
 TP_TRIGGERED = "tp_triggered"
@@ -253,3 +254,21 @@ def test_guard_ratchets_without_exit(db, monkeypatch):
     db.refresh(s)
     assert out["exited"] == [] and s.status == SESSION_ACTIVE
     assert s.trail_sl_price > 110.0
+
+
+# ----- bug fix: closing a session cancels its stale pending DCA orders -----
+
+def test_frozen_tp_cancels_pending_waves(db, monkeypatch):
+    """Regression: when a session closes (here via the frozen TP), its still-pending DCA wave orders
+    must be cancelled — else they fill later into a position no session owns (the BIO orphan bug)."""
+    monkeypatch.setattr(settings, "kss_dynamic_tp_enabled", False)   # exercise the frozen path
+    s = _session(db, avg_price=100.0, tp_pct=4.0, total_filled_qty=10.0, total_cost=1000.0)
+    db.add(PendingOrder(symbol="AAA", side="BUY", quantity=5, price=98.0, order_type="LIMIT",
+                        status=PENDING, source="kss", source_ref=f"pyramid:{s.id}:wave:3"))
+    db.add(Position(symbol="AAA", quantity=10.0, avg_entry_price=100.0, total_cost=1000.0))
+    db.commit()
+    _price(monkeypatch, 130.0)                                     # ≥ frozen TP and clears cost → TP
+    triggered = service.manage_open_sessions(db)
+    assert s.id in triggered
+    po = db.query(PendingOrder).filter(PendingOrder.source_ref == f"pyramid:{s.id}:wave:3").one()
+    assert po.status == REJECTED                                   # stale DCA order cancelled

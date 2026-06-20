@@ -644,6 +644,7 @@ def manual_take_profit(db: Session, session_id: int) -> dict:
     })
     row.status = PyramidSessionStatus.TP_TRIGGERED.value
     audit.log(db, "kss", "manual_tp", entity=f"kss:{row.id}", symbol=row.symbol, qty=round(qty, 8))
+    _cancel_pending_waves(db, row.id)  # closing → cancel any stale DCA orders (no late orphan fills)
     db.commit()
     fill = orders.approve_order(db, pending.id, reviewer="manual")  # fill now (exits never gated)
     return {"message": f"Đã chốt lời {row.symbol}", "quantity": qty,
@@ -723,6 +724,7 @@ def _queue_dynamic_exit(db: Session, row: KssSession, kind: str, price: float) -
     audit.log(db, "scheduler", "tp_queued" if kind == "tp" else "stop_queued",
               entity=f"kss:{row.id}", symbol=row.symbol, price=round(price, 8),
               kind=("dynamic_tp" if kind == "tp" else "dynamic_trail"))
+    _cancel_pending_waves(db, row.id)  # closing → cancel any stale DCA orders (no late orphan fills)
 
 
 def _evaluate_dynamic_exit(db: Session, row: KssSession, price: float) -> bool:
@@ -817,7 +819,8 @@ def manage_open_sessions(db: Session) -> list[int]:
             _save_state(row, py)
             audit.log(db, "scheduler", "tp_queued", entity=f"kss:{row.id}",
                       symbol=row.symbol, price=price)
-            triggered.append(row.id)
+            _cancel_pending_waves(db, row.id)  # session closing → kill stale DCA orders (else they
+            triggered.append(row.id)           # fill later into a position no session owns = orphan
         else:
             # check_stop also updates peak_price; always save so the high-water
             # mark is persisted even when neither exit triggers.
@@ -837,6 +840,7 @@ def manage_open_sessions(db: Session) -> list[int]:
                     db, "scheduler", "stop_queued", entity=f"kss:{row.id}",
                     symbol=row.symbol, price=price, kind=res["action"],
                 )
+                _cancel_pending_waves(db, row.id)  # session closing → kill stale DCA orders
                 triggered.append(row.id)
             else:
                 _save_state(row, py)
@@ -1019,6 +1023,7 @@ def sweep_deadlines(db: Session, now: datetime | None = None) -> list[int]:
                 "strategy_name": f"Pyramid_{row.symbol}",
                 "note": f"Deadline close after {row.deadline_days}d",
             })
+        _cancel_pending_waves(db, row.id)  # closing → cancel any stale DCA orders (no late orphans)
         audit.log(db, "scheduler", "deadline_close", entity=f"kss:{row.id}",
                   symbol=row.symbol, deadline_days=row.deadline_days)
         closed.append(row.id)

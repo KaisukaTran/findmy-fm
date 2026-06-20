@@ -256,6 +256,11 @@ _HELP_TEXT = (
 )
 
 
+# Max rows a list command prints (Telegram's 4096-char limit fits ~30 lines comfortably). The book
+# can hold >15 coins, so the old hard 15-cut silently dropped sizeable positions/sessions.
+_TG_LIST_CAP = 30
+
+
 def _cmd_summary(db) -> str:
     from app import portfolio
 
@@ -275,10 +280,11 @@ def _cmd_summary(db) -> str:
 def _cmd_pending(db) -> str:
     from app import orders
 
-    pend = orders.list_pending(db, limit=15)
+    pend = orders.list_pending(db, limit=_TG_LIST_CAP)
     if not pend:
         return "Không có lệnh chờ duyệt."
-    lines = ["⏳ Pending (≤15):"]
+    suffix = "+" if len(pend) >= _TG_LIST_CAP else ""
+    lines = [f"⏳ Pending ({len(pend)}{suffix}):"]
     lines += [f"#{o.id} {o.side} {o.quantity:g} {o.symbol} @ {o.price:g}" for o in pend]
     return "\n".join(lines)
 
@@ -289,11 +295,16 @@ def _cmd_positions(db) -> str:
     rows = portfolio.positions_view(db)
     if not rows:
         return "Không có vị thế mở."
-    lines = ["📊 Positions (≤15):"]
+    # Biggest-first so the most capital-at-risk always shows; cap high enough to fit a full book
+    # (the old rows[:15] in insertion order silently dropped sizeable positions like STG when the
+    # book held >15 coins). Telegram's 4096-char limit easily fits ~30 lines.
+    rows = sorted(rows, key=lambda r: r.get("market_value", 0.0), reverse=True)
+    head = f"📊 Positions ({len(rows)}{', top ' + str(_TG_LIST_CAP) if len(rows) > _TG_LIST_CAP else ''}, lớn nhất trước):"
+    lines = [head]
     lines += [
         f"{r['symbol']}: {r['quantity']:g} @ {r['avg_entry_price']:g} · "
         f"uPnL ${r['unrealized_pnl']:,.2f} ({r['unrealized_pnl_pct']:+.1f}%)"
-        for r in rows[:15]
+        for r in rows[:_TG_LIST_CAP]
     ]
     return "\n".join(lines)
 
@@ -301,11 +312,11 @@ def _cmd_positions(db) -> str:
 def _cmd_kss(db) -> str:
     from app.kss import service as kss
 
-    sess = kss.list_sessions(db, limit=15)
+    sess = kss.list_sessions(db, limit=_TG_LIST_CAP)
     summ = kss.summary(db)
     if not sess:
         return "Không có phiên KSS."
-    lines = [f"🔺 KSS — {summ['active_sessions']}/{summ['total_sessions']} active (≤15):"]
+    lines = [f"🔺 KSS — {summ['active_sessions']}/{summ['total_sessions']} active (≤{_TG_LIST_CAP}):"]
     for s in sess:
         mode = (f"🔼trailing-TP SL={s.get('trail_sl_price') or 0.0:g}"
                 if s.get("trail_active") else f"DCA {s.get('filled_waves_count', 0)}/{s.get('max_waves', 0)}")

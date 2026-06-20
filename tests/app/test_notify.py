@@ -169,6 +169,68 @@ def test_handle_command_trade_empty_side(db):
 
 
 # ---------------------------------------------------------------------------
+# handle_command("/positions") — must not silently drop positions past #15
+# ---------------------------------------------------------------------------
+
+
+def test_positions_command_shows_big_position_beyond_15(db, monkeypatch):
+    """Regression: with >15 positions, the old rows[:15] (insertion order) dropped sizeable coins
+    like STG. Now sorted biggest-first and capped high → the big late one always shows."""
+    from app import portfolio
+    from app.db import SessionLocal
+    from app.models import Position
+
+    s = SessionLocal()
+    try:
+        for i in range(15):  # 15 tiny positions inserted first
+            s.add(Position(symbol=f"C{i}", quantity=1.0, avg_entry_price=1.0, total_cost=1.0))
+        s.add(Position(symbol="STG", quantity=7000.0, avg_entry_price=0.2, total_cost=1400.0))  # #16
+        s.commit()
+    finally:
+        s.close()
+    monkeypatch.setattr(portfolio, "get_current_prices",
+                        lambda syms: {sym: (0.21 if sym == "STG" else 1.0) for sym in syms})
+    reply = notify.handle_command("/positions")
+    assert "STG" in reply           # the big 16th position is shown (was cut by rows[:15] before)
+    assert "Positions (16" in reply  # header reflects the true count
+
+
+def test_pending_command_counts_beyond_15(db):
+    from app.db import SessionLocal
+    from app.models import PENDING, PendingOrder
+
+    s = SessionLocal()
+    try:
+        for i in range(16):
+            s.add(PendingOrder(symbol=f"C{i}", side="BUY", quantity=1, price=1.0,
+                               order_type="LIMIT", status=PENDING, source="kss"))
+        s.commit()
+    finally:
+        s.close()
+    reply = notify.handle_command("/pending")
+    assert "Pending (16" in reply  # all 16 counted, not silently cut at 15
+
+
+def test_kss_command_lists_beyond_15(db, monkeypatch):
+    from app import market
+    from app.db import SessionLocal
+    from app.models import SESSION_ACTIVE, KssSession
+
+    s = SessionLocal()
+    try:
+        for i in range(16):
+            s.add(KssSession(symbol=f"K{i}", entry_price=1.0, distance_pct=2.0, max_waves=6,
+                             isolated_fund=100.0, tp_pct=4.0, timeout_x_min=1.0, gap_y_min=0.0,
+                             status=SESSION_ACTIVE, total_filled_qty=1.0, avg_price=1.0, total_cost=1.0))
+        s.commit()
+    finally:
+        s.close()
+    monkeypatch.setattr(market, "get_current_prices", lambda syms, force=False: {x: 1.0 for x in syms})
+    reply = notify.handle_command("/kss")
+    assert reply.count("[active]") == 16  # all 16 sessions listed (old limit=15 dropped one)
+
+
+# ---------------------------------------------------------------------------
 # handle_command("/status")
 # ---------------------------------------------------------------------------
 

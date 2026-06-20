@@ -306,11 +306,13 @@ def _cmd_kss(db) -> str:
     if not sess:
         return "Không có phiên KSS."
     lines = [f"🔺 KSS — {summ['active_sessions']}/{summ['total_sessions']} active (≤15):"]
-    lines += [
-        f"{s.get('symbol')} [{s.get('status')}] "
-        f"avg {s.get('avg_price') or 0.0:g} · now {s.get('current_price') or 0.0:g}"
-        for s in sess
-    ]
+    for s in sess:
+        mode = (f"🔼trailing-TP SL={s.get('trail_sl_price') or 0.0:g}"
+                if s.get("trail_active") else f"DCA {s.get('filled_waves_count', 0)}/{s.get('max_waves', 0)}")
+        lines.append(
+            f"{s.get('symbol')} [{s.get('status')}] "
+            f"avg {s.get('avg_price') or 0.0:g} · now {s.get('current_price') or 0.0:g} · {mode}"
+        )
     return "\n".join(lines)
 
 

@@ -217,6 +217,12 @@ class KssSession(Base):
     sl_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     trailing_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     peak_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    # Dynamic trailing TP/SL (docs/kss-dynamic-tp-plan.md). trail_active is a one-way flag set when
+    # the session clears avg*(1+distance%); trail_sl_price is the ratcheted stop; trail_dist_pct is
+    # the cached ATR-based trail distance (refreshed on the 30-min cycle, applied by the fast guard).
+    trail_active: Mapped[bool] = mapped_column(nullable=False, default=False)
+    trail_sl_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    trail_dist_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
     status: Mapped[str] = mapped_column(String(16), nullable=False, default=SESSION_PENDING)
     current_wave: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

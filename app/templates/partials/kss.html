@@ -34,7 +34,8 @@
     {% for s in sessions %}
     <tr>
       <td>{{ s.symbol }} <span class="muted fs-11">#{{ s.id }}</span></td>
-      <td><span class="badge {{ s.status }}">{{ s.status }}</span></td>
+      <td><span class="badge {{ s.status }}">{{ s.status }}</span>{% if s.trail_active %}
+        <span class="badge active" title="Đang trailing-TP: SL trailing {{ '%.4f'|format(s.trail_sl_price) }}, ladder DCA đã hủy.">🔼 trailing</span>{% endif %}</td>
       <td>{{ s.filled_waves_count }}/{{ s.max_waves }}</td>
       <td class="{{ 'pos' if s.unrealized_pnl >= 0 else 'neg' }}">{{ s.unrealized_pnl | money }}</td>
       <td><button class="sm ghost" data-action="viewLadder" data-id="{{ s.id }}">Xem</button></td>
@@ -42,6 +43,10 @@
         {% if s.status == 'pending' %}
         <button class="ok sm" data-action="kssStart" data-id="{{ s.id }}">Bắt đầu</button>
         {% elif s.status == 'active' %}
+        {% if s.trail_active %}
+        <button class="ok sm" data-action="kssTakeProfit" data-id="{{ s.id }}"
+          title="Chốt lời NGAY: bán toàn bộ ở giá thị trường (chỉ khả dụng khi phiên đã vào chế độ trailing-TP).">Chốt lời</button>
+        {% endif %}
         <button class="ghost sm" data-action="kssCheckTp" data-id="{{ s.id }}">TP?</button>
         <button class="ghost sm" data-action="kssDcaNext" data-id="{{ s.id }}"
           title="Mua thêm 1 sóng DCA (rung kế theo ladder). Nới max_waves trước nếu đã đầy.">DCA+</button>

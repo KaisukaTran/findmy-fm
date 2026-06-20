@@ -16,6 +16,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app import audit, orders
+from app.kss import dynamic_exit
 from app.kss.pyramid import PyramidSession, PyramidSessionStatus, WaveInfo
 from app.models import (
     SESSION_ACTIVE,
@@ -625,6 +626,30 @@ def stop_session(db: Session, session_id: int, reason: str = "manual") -> dict:
     return {"message": f"Session {session_id} stopped", "reason": reason}
 
 
+def manual_take_profit(db: Session, session_id: int) -> dict:
+    """User-pressed "chốt lời ngay": MARKET-sell the FULL qty IMMEDIATELY. Allowed only while the
+    session is in trailing mode (the UI enables the button only then). A deliberate override — it
+    bypasses the K-2 defer and the fee floor (sells at whatever the market is, regardless of how
+    much profit), and is filled at once rather than waiting for the next manage cycle."""
+    row = _get_row(db, session_id)
+    if not row.trail_active:
+        raise ValueError("Chốt lời thủ công chỉ khả dụng khi phiên đã vào chế độ trailing.")
+    if row.total_filled_qty <= 0:
+        raise ValueError("Phiên chưa có khối lượng để bán.")
+    qty = row.total_filled_qty
+    pending, _ = _queue(db, {
+        "symbol": row.symbol, "side": "SELL", "quantity": qty, "price": 0.0,
+        "order_type": "MARKET", "source_ref": f"pyramid:{row.id}:manual_tp",
+        "strategy_name": f"Pyramid_{row.symbol}", "note": "Manual take-profit (full qty)",
+    })
+    row.status = PyramidSessionStatus.TP_TRIGGERED.value
+    audit.log(db, "kss", "manual_tp", entity=f"kss:{row.id}", symbol=row.symbol, qty=round(qty, 8))
+    db.commit()
+    fill = orders.approve_order(db, pending.id, reviewer="manual")  # fill now (exits never gated)
+    return {"message": f"Đã chốt lời {row.symbol}", "quantity": qty,
+            "price": round(getattr(fill, "price", 0.0) or 0.0, 8)}
+
+
 def _tp_clears_cost(db: Session, symbol: str, price: float) -> bool:
     """
     K-2 safety net: a take-profit may execute ONLY if `price` clears the TRUE aggregate
@@ -642,6 +667,112 @@ def _tp_clears_cost(db: Session, symbol: str, price: float) -> bool:
     return price >= pos.avg_entry_price * (1 + floor)
 
 
+def _cancel_pending_waves(db: Session, session_id: int) -> int:
+    """Cancel the session's still-pending DCA wave orders (+ their KssWave rows) when it flips to
+    trailing mode — you cannot average down and trail up at once; rungs below the new SL are dead.
+    No commit (the caller commits)."""
+    from app.models import PENDING, REJECTED, WAVE_PENDING, WAVE_CANCELLED, PendingOrder
+
+    n = 0
+    for o in (db.query(PendingOrder)
+              .filter(PendingOrder.status == PENDING,
+                      PendingOrder.source_ref.like(f"pyramid:{session_id}:wave:%"))
+              .all()):
+        o.status = REJECTED
+        o.reject_reason = "dynamic-tp activated (ladder cancelled)"
+        o.decided_at = datetime.utcnow()
+        n += 1
+    for w in (db.query(KssWave)
+              .filter(KssWave.session_id == session_id,
+                      KssWave.status.in_((WAVE_SENT, WAVE_PENDING)))
+              .all()):
+        w.status = WAVE_CANCELLED
+    return n
+
+
+def _session_atr_pct(symbol: str) -> float:
+    """Daily ATR%% for a session's symbol from cached candles. Fallback 0.0 → the trailing distance
+    falls back to ``kss_trail_min_pct``. Slow-path only (the fast guard reuses the cached value)."""
+    from app.config import settings
+
+    try:
+        from app import scanner
+        from app.ta import indicators
+
+        cmap = scanner._prefetch_candles(
+            settings.data_exchange, [symbol], settings.backtest_timeframe, 80)
+        candles, _ = cmap.get(symbol, ([], False))
+        if len(candles) < 20:
+            return 0.0
+        return float(indicators.atr_pct(candles))
+    except Exception:  # never let a data hiccup break the manage loop
+        return 0.0
+
+
+def _queue_dynamic_exit(db: Session, row: KssSession, kind: str, price: float) -> None:
+    """Queue a full-qty MARKET SELL for a dynamic channel exit and mark the session done so it is
+    not re-evaluated/re-queued next tick. ``kind`` ∈ {"tp","trail_sl"}."""
+    _queue(db, {
+        "symbol": row.symbol, "side": "SELL", "quantity": row.total_filled_qty,
+        "price": 0.0, "order_type": "MARKET",
+        "source_ref": f"pyramid:{row.id}:{kind}",
+        "strategy_name": f"Pyramid_{row.symbol}",
+        "note": f"Dynamic {kind} @ {price:g} (SL={row.trail_sl_price:g})",
+    })
+    row.status = (PyramidSessionStatus.TP_TRIGGERED.value if kind == "tp" else SESSION_STOPPED)
+    audit.log(db, "scheduler", "tp_queued" if kind == "tp" else "stop_queued",
+              entity=f"kss:{row.id}", symbol=row.symbol, price=round(price, 8),
+              kind=("dynamic_tp" if kind == "tp" else "dynamic_trail"))
+
+
+def _evaluate_dynamic_exit(db: Session, row: KssSession, price: float) -> bool:
+    """Dynamic trailing channel (docs/kss-dynamic-tp-plan.md). Returns True when it TOOK OVER this
+    tick (activated, or queued a channel exit) → the caller skips the frozen exits + DCA for this
+    session (precedence §3.6). Returns False to leave the session on the frozen accumulate path."""
+    from app.config import settings
+
+    if not settings.kss_dynamic_tp_enabled or row.total_filled_qty <= 0 or row.avg_price <= 0:
+        return False
+    avg, d = row.avg_price, row.distance_pct
+
+    if not row.trail_active:
+        if not dynamic_exit.should_activate(market=price, avg=avg, distance_pct=d,
+                                            filled_qty=row.total_filled_qty, trail_active=False):
+            return False  # not yet profitable enough → accumulate + DCA continue (frozen)
+        _cancel_pending_waves(db, row.id)
+        peak = max(row.peak_price, price)
+        td = dynamic_exit.trail_distance_pct(_session_atr_pct(row.symbol))
+        sl = dynamic_exit.compute_sl(peak=peak, avg=avg, distance_pct=d, trail_dist_pct=td, prev_sl=0.0)
+        row.trail_active = True
+        row.peak_price = peak
+        row.trail_dist_pct = td
+        row.trail_sl_price = sl
+        tp = dynamic_exit.compute_tp(sl=sl, avg=avg)
+        audit.log(db, "scheduler", "dyn_tp_activated", entity=f"kss:{row.id}", symbol=row.symbol,
+                  price=round(price, 8), sl=round(sl, 8), tp=round(tp, 8), trail_dist=round(td, 3))
+        from app import notify
+        notify.event("trade", f"📈 {row.symbol} → trailing-TP: avg={avg:g} SL={sl:g} TP={tp:g}")
+        return True  # activated; no exit on the activation tick
+
+    # already trailing — check the channel on the CARRIED sl/tp first (§3.5 ordering), then ratchet.
+    carried_sl = row.trail_sl_price
+    if carried_sl > 0:
+        carried_tp = dynamic_exit.compute_tp(sl=carried_sl, avg=avg)
+        if price >= carried_tp:
+            _queue_dynamic_exit(db, row, "tp", price)
+            return True
+        if price <= carried_sl:
+            _queue_dynamic_exit(db, row, "trail_sl", price)
+            return True
+    peak = max(row.peak_price, price)
+    td = dynamic_exit.trail_distance_pct(_session_atr_pct(row.symbol))
+    sl = dynamic_exit.compute_sl(peak=peak, avg=avg, distance_pct=d, trail_dist_pct=td, prev_sl=carried_sl)
+    row.peak_price = peak
+    row.trail_dist_pct = td
+    row.trail_sl_price = sl
+    return True
+
+
 def manage_open_sessions(db: Session) -> list[int]:
     """
     Check every ACTIVE session against the live price and queue a TP sell when the
@@ -650,6 +781,10 @@ def manage_open_sessions(db: Session) -> list[int]:
 
     K-2: a TP that would realize below the true aggregate cost basis (+2x fee) is DEFERRED
     (session stays ACTIVE) instead of selling at a loss.
+
+    Dynamic trailing channel: when ``kss_dynamic_tp_enabled``, a session that has cleared
+    ``avg×(1+distance%)`` is handled by ``_evaluate_dynamic_exit`` (it supersedes the frozen
+    take-profit + trailing for that session); everything else uses the frozen exits unchanged.
     """
     from app.market import get_current_prices
 
@@ -662,9 +797,14 @@ def manage_open_sessions(db: Session) -> list[int]:
         price = prices.get(row.symbol)
         if not price:
             continue
-        py = _to_pyramid(row)
-        if py.total_filled_qty <= 0:
+        if row.total_filled_qty <= 0:
             continue
+        if _evaluate_dynamic_exit(db, row, price):
+            # the dynamic channel took over this session this tick — skip the frozen exits + DCA.
+            if row.status != SESSION_ACTIVE:
+                triggered.append(row.id)
+            continue
+        py = _to_pyramid(row)
         res = py.check_tp(price)
         if res and not _tp_clears_cost(db, row.symbol, price):
             # K-2 defer: market hit the session TP but it would realize below true cost+fees.
@@ -702,6 +842,90 @@ def manage_open_sessions(db: Session) -> list[int]:
                 _save_state(row, py)
     db.commit()
     return triggered
+
+
+# Last price the position-guard saw per session — for crash-detect (in-memory, best-effort; resets
+# on restart). The guard loop is the only writer.
+_guard_last_price: dict[int, float] = {}
+
+
+def _crash_exit(db: Session, row: KssSession, price: float) -> bool:
+    """Crash-detect (§10.3): a drop greater than ``kss_crash_drop_pct`` since the guard's last
+    observation, with price at/below the SL, fires an IMMEDIATE market exit (caps further bleed on a
+    gap). Returns True if it queued an exit. ``0`` disables it."""
+    from app.config import settings
+
+    pct = settings.kss_crash_drop_pct
+    last = _guard_last_price.get(row.id)
+    _guard_last_price[row.id] = price
+    if pct <= 0 or not last or last <= 0:
+        return False
+    drop = (last - price) / last * 100.0
+    if drop > pct and row.trail_sl_price > 0 and price <= row.trail_sl_price:
+        _queue_dynamic_exit(db, row, "trail_sl", price)
+        audit.log(db, "scheduler", "gap_exit", entity=f"kss:{row.id}", symbol=row.symbol,
+                  price=round(price, 8), drop_pct=round(drop, 2))
+        return True
+    return False
+
+
+def _maintain_live_stop(db: Session, row: KssSession, price: float) -> None:
+    """LIVE-only (§10.2): keep a resting STOP-MARKET on the exchange at the current ``trail_sl_price``
+    for server-side (ms) gap protection. INERT on paper / when disabled / without live keys — the
+    actual exchange placement is gated off until live trading is enabled (it must be validated against
+    a real exchange before it ships). The paper-side defence is the guard loop (§10.1) + crash-detect."""
+    from app.config import settings
+
+    if not (settings.kss_live_stop_orders and settings.live_trading and row.trail_sl_price > 0):
+        return
+    # Live activation: place/replace a STOP_MARKET at row.trail_sl_price via app.execution and book the
+    # fill through orders.reconcile_live_orders. Deliberately a no-op here (live automation is OFF) so
+    # paper and disabled-live never touch the exchange. Wire + validate when going live.
+    return
+
+
+def run_position_guard(db: Session) -> dict:
+    """Fast, lightweight exit guard (§10.1) — decoupled from the 30-min scan. Checks only ACTIVE
+    sessions ALREADY in trailing mode, with a FRESH ticker, runs crash-detect + the dynamic channel,
+    and EXECUTES any queued exit immediately (does not wait for the 30-min auto-fill). Cheap: tickers
+    only, no universe/backtest/Grok. Returns a small summary."""
+    from app.config import settings
+    from app.market import get_current_prices
+    from app.models import PENDING, PendingOrder
+
+    if not settings.kss_dynamic_tp_enabled:
+        return {"checked": 0, "exited": []}
+    active = (db.query(KssSession)
+              .filter(KssSession.status == SESSION_ACTIVE,
+                      KssSession.trail_active == True)  # noqa: E712
+              .all())
+    if not active:
+        return {"checked": 0, "exited": []}
+    prices = get_current_prices(list({s.symbol for s in active}), force=True)  # bypass the TTL cache
+    exited: list[int] = []
+    for row in active:
+        price = prices.get(row.symbol)
+        if not price:
+            continue
+        before = row.status
+        if not _crash_exit(db, row, price):
+            _evaluate_dynamic_exit(db, row, price)  # channel: exit or ratchet
+        _maintain_live_stop(db, row, price)
+        if row.status != before and row.status != SESSION_ACTIVE:
+            exited.append(row.id)
+    db.commit()
+    # Fill the queued exit SELLs NOW (exits reduce risk → never gated). reviewer="guard" is a
+    # non-AUTO reviewer so a breaker freeze never blocks a protective exit.
+    for sid in exited:
+        for o in (db.query(PendingOrder)
+                  .filter(PendingOrder.status == PENDING, PendingOrder.side == "SELL",
+                          PendingOrder.source_ref.like(f"pyramid:{sid}:%"))
+                  .all()):
+            try:
+                orders.approve_order(db, o.id, reviewer="guard")
+            except Exception:  # a fill error must not kill the guard
+                logger.exception("position-guard fill failed for order %s", o.id)
+    return {"checked": len(active), "exited": exited}
 
 
 def manage_orphan_positions(db: Session) -> list[str]:
@@ -915,7 +1139,15 @@ def list_sessions(
     # ACTIVE sessions first, then most-recent — so live sessions are always at the top.
     active_first = case((KssSession.status == SESSION_ACTIVE, 0), else_=1)
     rows = q.order_by(active_first, KssSession.created_at.desc()).limit(limit).all()
-    return [_to_pyramid(r).get_status() for r in rows]
+    out = []
+    for r in rows:
+        d = _to_pyramid(r).get_status()
+        # Dynamic trailing state lives on the row, not the (frozen) pyramid — surface it for the UI.
+        d["trail_active"] = bool(r.trail_active)
+        d["trail_sl_price"] = r.trail_sl_price
+        d["trail_dist_pct"] = r.trail_dist_pct
+        out.append(d)
+    return out
 
 
 def summary(db: Session) -> dict:

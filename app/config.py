@@ -228,6 +228,16 @@ class Settings(BaseSettings):
     )
     sl_pct: float = Field(default=8.0, description="KSS session stop-loss %% below avg price (0 = disabled).")
     trailing_pct: float = Field(default=3.0, description="KSS trailing-stop %% below peak once in profit (0 = disabled).")
+
+    # --- Dynamic trailing TP/SL (docs/kss-dynamic-tp-plan.md) — service-layer, OFF by default ---
+    kss_dynamic_tp_enabled: bool = Field(default=False, description="Master toggle for the dynamic trailing channel: once a session clears avg*(1+distance%%) it cancels its DCA ladder and rides a volatility-aware trailing SL with a floating TP, instead of the fixed tp_pct. OFF = today's behaviour unchanged.")
+    kss_tp_gap_pct: float = Field(default=5.0, description="Spike-grab TP ceiling: this %% above the ratcheted SL. A high value effectively disables the spike-grab so the trailing SL is the sole exit (pure chandelier).")
+    kss_exit_fee_mult: float = Field(default=3.0, description="Fee-safe floor multiplier: both the dynamic TP and SL are floored at avg*(1 + this x round_trip_cost%%), so NO automatic trailing exit ever books a loss — not even a fee loss. >=1; 3 = comfortably above round-trip cost.")
+    kss_trail_atr_mult: float = Field(default=1.0, description="Dynamic trailing-stop distance = this x the coin's daily ATR%% (volatility-aware: rides the coin's normal range, exits only on a genuine reversal).")
+    kss_trail_min_pct: float = Field(default=3.0, description="Floor for the trailing distance — the SL never trails closer than this %% below the peak (so a calm coin still gets room and noise never stops it out). Also the fallback when ATR is unavailable.")
+    kss_exit_check_sec: int = Field(default=90, description="Interval (seconds) of the lightweight position-guard loop that checks OPEN-session exits using cached tickers, decoupled from the 30-min full scan. Lower = smaller gap window, more ticker calls. Should be > price_cache_ttl is NOT required — the guard forces a fresh price.")
+    kss_crash_drop_pct: float = Field(default=12.0, description="Crash-detect: if a guard check sees price drop more than this %% since the last observation AND price is at/below the SL, exit at market immediately (caps further bleed on a gap). 0 = off.")
+    kss_live_stop_orders: bool = Field(default=False, description="LIVE only: maintain a resting STOP-MARKET on the exchange at the current SL for server-side (ms) gap protection. Inert on paper / when live automation is off.")
     max_sessions_per_symbol: int = Field(
         default=1,
         description="Cap concurrent ACTIVE KSS sessions per symbol. 1 (K-1) keeps one owner "

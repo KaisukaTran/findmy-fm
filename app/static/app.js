@@ -238,6 +238,12 @@ const actions = {
     await api("DELETE", `/api/kss/sessions/${id}`);
     refreshTrading(); refreshStatus();
   },
+  async kssTakeProfit(id) {
+    if (!confirm("Chốt lời NGAY phiên " + id + "?\nBán TOÀN BỘ ở giá thị trường, bất kể đang lời bao nhiêu.")) return;
+    const r = await api("POST", `/api/kss/sessions/${id}/take-profit`);
+    toast(r.message ? `${r.message} @ ${r.price}` : "Đã chốt lời.", "success");
+    refreshTrading(); refreshStatus();
+  },
   async kssCheckTp(id) {
     const r = await api("POST", `/api/kss/sessions/${id}/check-tp`);
     toast(r.tp_deferred

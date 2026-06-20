@@ -72,6 +72,15 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "min_trials": int,  # min backtest trials for a trustworthy edge (cut thin-sample noise)
     "block_downtrend_adx": float,  # hard veto: HTF+ST down & ADX≥this (0=off) — entry timing
     "entry_momentum_gate": _to_bool,  # veto open when ST down & MACDh<0 (don't buy a falling knife)
+    # Dynamic trailing TP/SL (docs/kss-dynamic-tp-plan.md) — all runtime-tunable, OFF by default
+    "kss_dynamic_tp_enabled": _to_bool,
+    "kss_tp_gap_pct": float,
+    "kss_exit_fee_mult": float,
+    "kss_trail_atr_mult": float,
+    "kss_trail_min_pct": float,
+    "kss_exit_check_sec": int,
+    "kss_crash_drop_pct": float,
+    "kss_live_stop_orders": _to_bool,
     "tp_fee_coverage": float,  # TP adds this × round-trip fee (1.2 = +120% of fees)
     "grok_scanner_fail_mode": str,  # S5: "open" | "closed"
     "grok_scanner_batch_max": int,  # how many candidates Grok reviews per scan (cover them all)

@@ -46,6 +46,28 @@
     <input name="scan_max_symbols" type="number" step="1" min="1" value="{{ k.scan_max_symbols }}"></label>
   <label title="Chỉ quét coin có quote-volume ≥ ngưỡng này. Giảm để quét thêm coin nhỏ (mặc định 1,000,000).">Thanh khoản tối thiểu (quote vol) <span class="varname">min_quote_volume</span>
     <input name="min_quote_volume" type="number" step="any" min="0" value="{{ '%.0f'|format(k.min_quote_volume) }}"></label>
+  <label title="BẬT trailing-TP động (docs/kss-dynamic-tp-plan.md): khi 1 session vượt avg×(1+distance%) nó HỦY thang DCA còn lại và chuyển sang SL trailing theo ATR + TP nổi (sàn phí ×3 nên không exit tự động nào lỗ). TẮT = giữ nguyên hành vi TP cố định hiện tại.">Trailing-TP động <span class="varname">kss_dynamic_tp_enabled</span>
+    <select name="kss_dynamic_tp_enabled" class="select-inline">
+      <option value="1" {% if k.kss_dynamic_tp_enabled %}selected{% endif %}>Bật</option>
+      <option value="0" {% if not k.kss_dynamic_tp_enabled %}selected{% endif %}>Tắt</option>
+    </select></label>
+  <label title="TP nổi cách SL đã ratchet bao nhiêu %. Giá trị lớn → gần như chỉ còn trailing-SL (chandelier).">TP cách SL % <span class="varname">kss_tp_gap_pct</span>
+    <input name="kss_tp_gap_pct" type="number" step="0.1" min="0" value="{{ '%.1f'|format(k.kss_tp_gap_pct) }}"></label>
+  <label title="Hệ số sàn-phí: CẢ TP lẫn SL không bao giờ dưới avg×(1+ hệ_số×phí_khứ_hồi) → không exit tự động nào lỗ, kể cả phí. ≥1; 3 = thoải mái trên phí.">Sàn phí (×phí khứ hồi) <span class="varname">kss_exit_fee_mult</span>
+    <input name="kss_exit_fee_mult" type="number" step="0.5" min="1" value="{{ '%.1f'|format(k.kss_exit_fee_mult) }}"></label>
+  <label title="Khoảng cách SL trailing = hệ số này × ATR ngày của coin (thích nghi biến động — không nghẹt vì nhiễu, vẫn thoát khi đảo chiều thật).">Trailing × ATR <span class="varname">kss_trail_atr_mult</span>
+    <input name="kss_trail_atr_mult" type="number" step="0.1" min="0" value="{{ '%.1f'|format(k.kss_trail_atr_mult) }}"></label>
+  <label title="Sàn khoảng cách trailing: SL không bao giờ bám sát đỉnh hơn % này (coin êm vẫn có chỗ thở). Cũng là fallback khi thiếu ATR.">Trailing tối thiểu % <span class="varname">kss_trail_min_pct</span>
+    <input name="kss_trail_min_pct" type="number" step="0.1" min="0" value="{{ '%.1f'|format(k.kss_trail_min_pct) }}"></label>
+  <label title="Chu kỳ (giây) vòng guard nhẹ kiểm exit session ĐANG MỞ bằng ticker, tách khỏi scan 30 phút. Nhỏ = cửa sổ gap hẹp hơn.">Guard kiểm exit (giây) <span class="varname">kss_exit_check_sec</span>
+    <input name="kss_exit_check_sec" type="number" step="1" min="5" value="{{ k.kss_exit_check_sec }}"></label>
+  <label title="Crash-detect: nếu một lần guard thấy giá rớt > % này so với lần quan sát trước VÀ giá ≤ SL → bán market NGAY (chặn chảy máu trên gap). 0 = tắt.">Crash-detect % <span class="varname">kss_crash_drop_pct</span>
+    <input name="kss_crash_drop_pct" type="number" step="0.5" min="0" value="{{ '%.1f'|format(k.kss_crash_drop_pct) }}"></label>
+  <label title="CHỈ LIVE: duy trì lệnh STOP-MARKET treo sẵn trên sàn tại SL (bảo vệ gap ở mức mili-giây). Vô hiệu ở paper / khi automation tắt.">Stop sàn native (LIVE) <span class="varname">kss_live_stop_orders</span>
+    <select name="kss_live_stop_orders" class="select-inline">
+      <option value="1" {% if k.kss_live_stop_orders %}selected{% endif %}>Bật</option>
+      <option value="0" {% if not k.kss_live_stop_orders %}selected{% endif %}>Tắt</option>
+    </select></label>
   <button type="submit" class="ok">Lưu cấu hình KSS</button>
 </form>
 

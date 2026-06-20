@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import socket
+import threading
 
 from sqlalchemy.orm import Session
 
@@ -26,6 +27,10 @@ from app.kss import service
 logger = logging.getLogger(__name__)
 
 _task: asyncio.Task | None = None
+_guard_task: asyncio.Task | None = None
+# Serialize the 30-min cycle and the fast position-guard so only one DB writer runs at a time
+# (prevents a guard exit racing manage_open_sessions on the same session → no double-sell).
+_work_lock = threading.Lock()
 _last_cycle_at: str | None = None
 _last_summary: dict = {}
 
@@ -223,7 +228,17 @@ def run_cycle(db: Session) -> dict:
 def _cycle_once() -> None:
     db = SessionLocal()
     try:
-        run_cycle(db)
+        with _work_lock:  # never run concurrently with the fast guard
+            run_cycle(db)
+    finally:
+        db.close()
+
+
+def _guard_once() -> None:
+    db = SessionLocal()
+    try:
+        with _work_lock:  # serialize with the 30-min cycle
+            service.run_position_guard(db)
     finally:
         db.close()
 
@@ -238,6 +253,19 @@ async def _loop() -> None:
         except Exception:  # a bad cycle must not kill the loop
             logger.exception("scheduler cycle failed")
         await asyncio.sleep(max(settings.scan_interval_min, 1) * 60)
+
+
+async def _guard_loop() -> None:
+    """Fast, lightweight exit guard — decoupled from the 30-min cycle so a trailing stop is checked
+    every ``kss_exit_check_sec`` (not every 30 min). No-op unless dynamic trailing is enabled."""
+    logger.info("position-guard started (every %ss)", settings.kss_exit_check_sec)
+    while True:
+        try:
+            if settings.kss_dynamic_tp_enabled:
+                await asyncio.to_thread(_guard_once)
+        except Exception:  # a bad guard tick must not kill the loop
+            logger.exception("position-guard tick failed")
+        await asyncio.sleep(max(settings.kss_exit_check_sec, 5))
 
 
 def start() -> bool:
@@ -258,18 +286,24 @@ def start() -> bool:
         return False
     settings.scheduler_enabled = True
     _task = asyncio.create_task(_loop())
+    global _guard_task
+    if not (_guard_task and not _guard_task.done()):
+        _guard_task = asyncio.create_task(_guard_loop())
     return True
 
 
 def stop() -> bool:
     """Stop the background loop. Returns True if a running task was cancelled."""
-    global _task
+    global _task, _guard_task
     settings.scheduler_enabled = False
     cancelled = False
     if _task and not _task.done():
         _task.cancel()
         cancelled = True
     _task = None
+    if _guard_task and not _guard_task.done():
+        _guard_task.cancel()
+    _guard_task = None
     _release_singleton_lock()  # free the lock so the same process can restart cleanly
     return cancelled
 

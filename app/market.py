@@ -30,13 +30,16 @@ _price_cache_ts: float = 0.0
 _exchange_info_cache: dict[str, dict] = {}
 
 
-def get_current_prices(symbols: list[str]) -> dict[str, float]:
-    """Return {symbol: usd_price} for the given base symbols, using a TTL cache."""
+def get_current_prices(symbols: list[str], force: bool = False) -> dict[str, float]:
+    """Return {symbol: usd_price} for the given base symbols, using a TTL cache.
+
+    ``force=True`` bypasses the TTL cache (forces a fresh fetch) — used by the fast position-guard so
+    it never acts on a stale ticker when checking a trailing stop."""
     global _price_cache_ts
     if not symbols:
         return {}
 
-    fresh = (time.time() - _price_cache_ts) < settings.price_cache_ttl
+    fresh = (not force) and (time.time() - _price_cache_ts) < settings.price_cache_ttl
     cached = {s: _price_cache[s] for s in symbols if fresh and s in _price_cache}
     missing = [s for s in symbols if s not in cached]
     if not missing:

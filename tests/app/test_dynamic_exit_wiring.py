@@ -36,6 +36,8 @@ def _cfg(monkeypatch):
     monkeypatch.setattr(settings, "kss_tp_gap_pct", 5.0)
     monkeypatch.setattr(settings, "kss_trail_atr_mult", 1.0)
     monkeypatch.setattr(settings, "kss_trail_min_pct", 3.0)
+    monkeypatch.setattr(settings, "kss_trail_arm_pct", 5.0)      # arm trailing at +5%
+    monkeypatch.setattr(settings, "kss_trail_lock_pct", 2.0)     # armed SL locks ≥ +2% (floor avg×1.02)
     monkeypatch.setattr(settings, "kss_dynamic_tp_enabled", True)
     monkeypatch.setattr(service, "_session_atr_pct", lambda sym: 6.0)  # no candle fetch
 
@@ -73,35 +75,47 @@ def test_disabled_does_not_activate(db, monkeypatch):
     assert s.trail_active is False         # the frozen path handled it, dynamic stayed off
 
 
-# ----- activation (cancel ladder, set SL, no sell) -----
+# ----- arm (cancel ladder, set SL ≥ lock floor, no sell) -----
 
-def test_activation_cancels_ladder_and_arms_sl(db, monkeypatch):
+def test_arm_cancels_ladder_and_locks_sl(db, monkeypatch):
     s = _session(db, peak_price=0.0)
-    # a pending DCA wave that must be cancelled on activation
+    # a pending DCA wave that must be cancelled on arming
     db.add(PendingOrder(symbol="AAA", side="BUY", quantity=5, price=98.0, order_type="LIMIT",
                         status=PENDING, source="kss", source_ref=f"pyramid:{s.id}:wave:3"))
     db.add(KssWave(session_id=s.id, wave_num=3, quantity=5, target_price=98.0, status=WAVE_SENT))
     db.commit()
-    _price(monkeypatch, 102.0)             # ≥ 101.5 activation threshold
+    _price(monkeypatch, 106.0)             # ≥ +5% arm threshold (105)
     service.manage_open_sessions(db)
     db.refresh(s)
     assert s.trail_active is True
-    assert s.trail_sl_price >= service.dynamic_exit.fee_floor_price(100.0) - 1e-6   # ≥ +0.9%
-    assert s.status == SESSION_ACTIVE      # activation does NOT sell on the same tick
+    assert s.trail_sl_price >= service.dynamic_exit.lock_floor_price(100.0) - 1e-6   # locks ≥ +2%
+    assert s.status == SESSION_ACTIVE      # arming does NOT sell on the same tick
     assert _sells(db, s.id, "tp") == 0 and _sells(db, s.id, "trail_sl") == 0
-    # ladder cancelled
+    # ladder cancelled at arm
     wave_po = db.query(PendingOrder).filter(
         PendingOrder.source_ref == f"pyramid:{s.id}:wave:3").one()
     assert wave_po.status == REJECTED
     assert db.query(KssWave).filter(KssWave.session_id == s.id).one().status == WAVE_CANCELLED
 
 
-def test_sub_d_poke_does_not_activate(db, monkeypatch):
+def test_riding_below_arm_does_not_arm(db, monkeypatch):
     s = _session(db)
-    _price(monkeypatch, 101.0)             # > avg but < avg×(1+1.5%)=101.5
+    _price(monkeypatch, 103.0)             # in profit but < +5% arm → RIDE (not armed, no sell)
     service.manage_open_sessions(db)
     db.refresh(s)
     assert s.trail_active is False and s.status == SESSION_ACTIVE
+    assert _sells(db, s.id, "tp") == 0 and _sells(db, s.id, "trail_sl") == 0
+
+
+def test_no_arm_on_stale_peak_when_price_retraced(db, monkeypatch):
+    """Regression (live STG): a stale high-water peak (+13.8%) must NOT arm while the CURRENT price
+    is below the arm threshold — arming off the peak would stop below the lock floor."""
+    s = _session(db, peak_price=113.8)     # stale high-water, avg=100
+    _price(monkeypatch, 100.4)             # current only +0.4% (< +5% arm)
+    service.manage_open_sessions(db)
+    db.refresh(s)
+    assert s.trail_active is False         # did NOT arm on the stale peak
+    assert _sells(db, s.id, "trail_sl") == 0 and _sells(db, s.id, "tp") == 0
 
 
 # ----- channel exits -----
@@ -198,15 +212,15 @@ def test_kss_command_shows_trailing_mode(db, monkeypatch):
     assert "trailing-TP" in notify.handle_command("/kss")
 
 
-def test_activation_fires_one_telegram_alert(db, monkeypatch):
+def test_arm_fires_one_telegram_alert(db, monkeypatch):
     from app import notify
     s = _session(db, peak_price=0.0)
     calls = []
     monkeypatch.setattr(notify, "event", lambda *a, **k: calls.append(a))
-    _price(monkeypatch, 102.0)
-    service.manage_open_sessions(db)                              # activates → 1 alert
+    _price(monkeypatch, 106.0)                                   # ≥ +5% arm
+    service.manage_open_sessions(db)                              # arms → 1 alert
     db.refresh(s)
-    service.manage_open_sessions(db)                              # already trailing → no 2nd alert
+    service.manage_open_sessions(db)                              # already armed → no 2nd alert
     assert len(calls) == 1
 
 

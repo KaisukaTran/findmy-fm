@@ -23,6 +23,8 @@ def _cfg(monkeypatch):
     monkeypatch.setattr(settings, "kss_tp_gap_pct", 5.0)
     monkeypatch.setattr(settings, "kss_trail_atr_mult", 1.0)
     monkeypatch.setattr(settings, "kss_trail_min_pct", 3.0)
+    monkeypatch.setattr(settings, "kss_trail_arm_pct", 5.0)    # arm trailing at +5%
+    monkeypatch.setattr(settings, "kss_trail_lock_pct", 2.0)   # armed SL locks ≥ +2% → floor = avg×1.02
     monkeypatch.setattr(settings, "kss_dynamic_tp_enabled", True)
 
 
@@ -38,20 +40,25 @@ def test_price_precision_buckets():
     assert dx.price_precision(0.23) == 6
 
 
-# ----- activation -----
+# ----- arm threshold & lock floor (Ride & Trail) -----
 
-def test_activation_threshold():
-    assert dx.activation_threshold(100.0, 1.5) == pytest.approx(101.5)
+def test_arm_threshold():
+    assert dx.arm_threshold(100.0) == pytest.approx(105.0)       # avg×(1+arm 5%)
 
 
-def test_should_activate_branches(monkeypatch):
-    base = dict(avg=100.0, distance_pct=1.5, filled_qty=10.0, trail_active=False)
-    assert dx.should_activate(market=101.5, **base) is True      # exactly at threshold
-    assert dx.should_activate(market=101.4, **base) is False     # below threshold
-    assert dx.should_activate(market=120.0, **{**base, "trail_active": True}) is False  # already on
-    assert dx.should_activate(market=120.0, **{**base, "filled_qty": 0.0}) is False     # nothing filled
+def test_lock_floor_price():
+    # max(fee_floor 100.9, avg×(1+lock 2%) = 102) → 102
+    assert dx.lock_floor_price(100.0) == pytest.approx(102.0)
+
+
+def test_should_arm_branches(monkeypatch):
+    base = dict(avg=100.0, filled_qty=10.0, trail_active=False)
+    assert dx.should_arm(market=105.0, **base) is True           # at the +5% arm threshold
+    assert dx.should_arm(market=104.9, **base) is False          # below it (still riding)
+    assert dx.should_arm(market=120.0, **{**base, "trail_active": True}) is False   # already armed
+    assert dx.should_arm(market=120.0, **{**base, "filled_qty": 0.0}) is False      # nothing filled
     monkeypatch.setattr(settings, "kss_dynamic_tp_enabled", False)
-    assert dx.should_activate(market=120.0, **base) is False     # feature off
+    assert dx.should_arm(market=120.0, **base) is False          # feature off
 
 
 # ----- trailing distance (volatility-aware) -----
@@ -76,10 +83,10 @@ def test_compute_sl_ratchet_never_lowers():
     assert dx.compute_sl(peak=120.0, avg=100.0, distance_pct=1.5, trail_dist_pct=6.0,
                          prev_sl=200.0) == pytest.approx(200.0)
 
-def test_compute_sl_floored_when_young():
-    # peak just above activation, wide trail → target < avg → clamp to fee_floor (a NON-loss).
-    sl = dx.compute_sl(peak=101.6, avg=100.0, distance_pct=1.5, trail_dist_pct=6.0, prev_sl=0.0)
-    assert sl == pytest.approx(dx.fee_floor_price(100.0))        # = 100.9
+def test_compute_sl_floored_at_lock_when_young():
+    # armed but peak low + wide trail → target < avg → clamp to the LOCK floor (avg×1.02), not fee.
+    sl = dx.compute_sl(peak=104.0, avg=100.0, distance_pct=1.5, trail_dist_pct=6.0, prev_sl=0.0)
+    assert sl == pytest.approx(dx.lock_floor_price(100.0))       # = 102 (locks +2%, not +0.9%)
 
 def test_compute_sl_snaps_below_target_and_above_floor():
     avg, d, td = 100.0, 1.5, 6.0
@@ -87,7 +94,7 @@ def test_compute_sl_snaps_below_target_and_above_floor():
     sl = dx.compute_sl(peak=peak, avg=avg, distance_pct=d, trail_dist_pct=td, prev_sl=0.0)
     target = peak * (1 - td / 100)
     assert sl <= target + 1e-6                                  # snapped DOWN to a grid level ≤ target
-    assert sl >= dx.fee_floor_price(avg)                        # never below the floor
+    assert sl >= dx.lock_floor_price(avg)                       # never below the lock floor
     # it IS a wave-grid level avg×(1+d)^k
     k = round(math.log(sl / avg) / math.log(1 + d / 100))
     assert sl == pytest.approx(round(avg * (1 + d / 100) ** k, dx.price_precision(avg)))
@@ -107,21 +114,20 @@ def test_compute_tp_floored():
     assert dx.compute_tp(sl=1.0, avg=100.0) == pytest.approx(dx.fee_floor_price(100.0))
 
 
-# ----- the headline invariant: no automatic exit below fee_floor -----
+# ----- the headline invariant: an ARMED exit never locks below the lock floor (a real profit) -----
 
-def test_no_exit_below_fee_floor_invariant():
+def test_no_armed_exit_below_lock_floor_invariant():
     avg, d = 100.0, 1.5
-    floor = dx.fee_floor_price(avg)
+    floor = dx.lock_floor_price(avg)
     for peak in [100.5, 101.5, 105.0, 120.0, 175.0, 240.0]:
         for atr in [0.0, 1.0, 3.0, 7.0, 20.0]:
             td, sl, tp = dx.dynamic_sl_tp(peak=peak, avg=avg, distance_pct=d, atr_pct=atr)
-            assert sl >= floor - 1e-6, f"SL {sl} < floor {floor} (peak={peak}, atr={atr})"
-            assert tp >= floor - 1e-6, f"TP {tp} < floor {floor} (peak={peak}, atr={atr})"
+            assert sl >= floor - 1e-6, f"SL {sl} < lock floor {floor} (peak={peak}, atr={atr})"
             assert tp >= sl                                     # TP ceiling at/above SL
 
 
 def test_dynamic_sl_tp_bundle_shape():
     td, sl, tp = dx.dynamic_sl_tp(peak=130.0, avg=100.0, distance_pct=1.5, atr_pct=6.0)
     assert td == pytest.approx(6.0)
-    assert sl > dx.fee_floor_price(100.0)
+    assert sl >= dx.lock_floor_price(100.0)
     assert tp == pytest.approx(round(sl * 1.05, dx.price_precision(100.0)))

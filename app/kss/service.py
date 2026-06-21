@@ -728,9 +728,16 @@ def _queue_dynamic_exit(db: Session, row: KssSession, kind: str, price: float) -
 
 
 def _evaluate_dynamic_exit(db: Session, row: KssSession, price: float) -> bool:
-    """Dynamic trailing channel (docs/kss-dynamic-tp-plan.md). Returns True when it TOOK OVER this
-    tick (activated, or queued a channel exit) → the caller skips the frozen exits + DCA for this
-    session (precedence §3.6). Returns False to leave the session on the frozen accumulate path."""
+    """Ride & Trail dynamic exit (docs/kss-dynamic-tp-plan.md). Returns True when it TOOK OVER this
+    tick (so the caller skips the frozen TP/stop for this session), False to leave it on the frozen
+    accumulate path.
+
+    Three phases once enabled:
+      - accumulate (price ≤ avg): frozen path (hard SL + DCA, no TP). Returns False.
+      - RIDE (avg < price, peak < arm): suppress the fixed TP so a runner is not capped, ride
+        protected ONLY by the hard SL (full room), and arm the trailing stop once peak ≥ arm.
+      - armed (trail_active): trailing channel — exit at the ratcheted SL (locks ≥ kss_trail_lock_pct)
+        or the spike-grab TP, ratcheting up with the peak."""
     from app.config import settings
 
     if not settings.kss_dynamic_tp_enabled or row.total_filled_qty <= 0 or row.avg_price <= 0:
@@ -738,25 +745,37 @@ def _evaluate_dynamic_exit(db: Session, row: KssSession, price: float) -> bool:
     avg, d = row.avg_price, row.distance_pct
 
     if not row.trail_active:
-        if not dynamic_exit.should_activate(market=price, avg=avg, distance_pct=d,
-                                            filled_qty=row.total_filled_qty, trail_active=False):
-            return False  # not yet profitable enough → accumulate + DCA continue (frozen)
-        _cancel_pending_waves(db, row.id)
-        peak = max(row.peak_price, price)
-        td = dynamic_exit.trail_distance_pct(_session_atr_pct(row.symbol))
-        sl = dynamic_exit.compute_sl(peak=peak, avg=avg, distance_pct=d, trail_dist_pct=td, prev_sl=0.0)
-        row.trail_active = True
-        row.peak_price = peak
-        row.trail_dist_pct = td
-        row.trail_sl_price = sl
-        tp = dynamic_exit.compute_tp(sl=sl, avg=avg)
-        audit.log(db, "scheduler", "dyn_tp_activated", entity=f"kss:{row.id}", symbol=row.symbol,
-                  price=round(price, 8), sl=round(sl, 8), tp=round(tp, 8), trail_dist=round(td, 3))
-        from app import notify
-        notify.event("trade", f"📈 {row.symbol} → trailing-TP: avg={avg:g} SL={sl:g} TP={tp:g}")
-        return True  # activated; no exit on the activation tick
+        if price <= avg:
+            return False  # not in profit → pure accumulate (frozen hard SL + DCA, no TP)
+        # In profit, not yet armed → RIDE (suppress the fixed TP). ARM on the CURRENT price, NOT the
+        # high-water peak: peak can be a stale pre-DCA high, and arming off it lets us arm into an
+        # already-retraced position and exit BELOW the lock floor (seen live: STG armed off a +13.8%
+        # stale peak while price was +0.4% → stopped at +0.23%). Arming on current price guarantees
+        # price ≥ arm > lock floor at arm, so the SL sits below price (no immediate sub-floor stop).
+        if dynamic_exit.should_arm(market=price, avg=avg, filled_qty=row.total_filled_qty,
+                                   trail_active=False):
+            _cancel_pending_waves(db, row.id)  # committing to trail-up → drop the DCA ladder
+            row.peak_price = price             # trail starts at the arm point (discard stale high-water)
+            td = dynamic_exit.trail_distance_pct(_session_atr_pct(row.symbol))
+            sl = dynamic_exit.compute_sl(peak=price, avg=avg, distance_pct=d, trail_dist_pct=td,
+                                         prev_sl=0.0)
+            row.trail_active = True
+            row.trail_dist_pct = td
+            row.trail_sl_price = sl
+            tp = dynamic_exit.compute_tp(sl=sl, avg=avg)
+            audit.log(db, "scheduler", "dyn_tp_armed", entity=f"kss:{row.id}", symbol=row.symbol,
+                      price=round(price, 8), sl=round(sl, 8), tp=round(tp, 8),
+                      trail_dist=round(td, 3), arm_pct=settings.kss_trail_arm_pct)
+            from app import notify
+            notify.event("trade", f"📈 {row.symbol} → trailing-TP (armed +{settings.kss_trail_arm_pct:g}%): "
+                                  f"avg={avg:g} SL={sl:g} TP={tp:g}")
+            return True  # armed; no exit on the arm tick
+        # riding (in profit, < arm): suppress the fixed TP so a runner isn't capped, and keep riding.
+        # If price falls back ≤ avg, next tick returns False → the frozen hard SL + DCA take over
+        # (the hard SL sits below avg, so it can only fire on the frozen path, never while riding).
+        return True
 
-    # already trailing — check the channel on the CARRIED sl/tp first (§3.5 ordering), then ratchet.
+    # armed — check the channel on the CARRIED sl/tp first (ordering), then ratchet up.
     carried_sl = row.trail_sl_price
     if carried_sl > 0:
         carried_tp = dynamic_exit.compute_tp(sl=carried_sl, avg=avg)

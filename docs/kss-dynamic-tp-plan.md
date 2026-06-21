@@ -1,8 +1,16 @@
 # KSS Dynamic Trailing TP/SL — Implementation Plan
 
-Status: **PLAN (approved logic, not yet built)** · Date: 2026-06-20 · Owner: Kai
+Status: **BUILT + on paper** · Date: 2026-06-20 · Owner: Kai
 Revision 2 (2026-06-20): **loss-defense** — trailing exits never realize a loss (incl. fees);
 3× fee buffer on BOTH the TP and the SL edge; activation hysteresis; deferred ladder cancel.
+**Revision 4 (2026-06-20): Ride & Trail.** Live ZEC/PENDLE exited at exactly +0.90% (fee_floor):
+their ATR trail (8–12%) was WIDER than the gain (+3–4%), so the SL clamped to the fee floor and a
+small pullback locked only break-even+fees. Fix: a session now **RIDES** while in profit (the fixed
+TP is suppressed so a runner isn't capped; protected only by the hard SL — full room) and **ARMS**
+the trailing stop only at `peak ≥ avg×(1+kss_trail_arm_pct)` (default +5%); once armed the SL is
+floored at `max(fee_floor, avg×(1+kss_trail_lock_pct))` (default +2%) so a wide ATR trail can't pin
+it back at break-even. Trade-off (accepted by the user): between entry and the arm point a reversal
+falls to the hard SL (a loss) — "let it run" and "never lose even fees" are mathematically opposed.
 
 Upgrade the KSS exit from a single fixed take-profit (`avg×(1+tp%)`) into a **wave-stepped
 trailing channel** that activates once a session has a *real* profit: the stop-loss ratchets UP

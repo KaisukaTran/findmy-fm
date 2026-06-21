@@ -41,20 +41,26 @@ def fee_floor_price(avg: float) -> float:
     return avg * (1 + settings.kss_exit_fee_mult * costengine.round_trip_cost_pct() / 100.0)
 
 
-def activation_threshold(avg: float, distance_pct: float) -> float:
-    """Price at/above which a session flips to trailing mode — one full wave-spacing of profit
-    (``avg×(1+distance%)``). The hysteresis: a bare poke just above avg does NOT activate."""
-    return avg * (1 + distance_pct / 100.0)
+def arm_threshold(avg: float) -> float:
+    """Price at/above which a profitable RIDING session ARMS its trailing stop (Ride & Trail):
+    ``avg×(1+kss_trail_arm_pct)``. Below it the session rides (no fixed-TP cap, protected only by
+    the hard SL) so a runner is not capped early and noise does not arm a thin stop."""
+    return avg * (1 + settings.kss_trail_arm_pct / 100.0)
 
 
-def should_activate(
-    *, market: float, avg: float, distance_pct: float, filled_qty: float, trail_active: bool
-) -> bool:
-    """True only on a filled, not-yet-trailing session whose market has cleared the activation
-    threshold while the feature is enabled. One-way: callers flip ``trail_active`` permanently."""
+def should_arm(*, market: float, avg: float, filled_qty: float, trail_active: bool) -> bool:
+    """True only on a filled, not-yet-armed session whose market has cleared the arm threshold while
+    the feature is enabled. One-way: callers flip ``trail_active`` permanently."""
     if not settings.kss_dynamic_tp_enabled or trail_active or filled_qty <= 0 or avg <= 0:
         return False
-    return market >= activation_threshold(avg, distance_pct)
+    return market >= arm_threshold(avg)
+
+
+def lock_floor_price(avg: float) -> float:
+    """Lowest the ARMED trailing SL may sit: ``max(fee_floor, avg×(1+kss_trail_lock_pct))``. The
+    lock floor stops a wide ATR trail from pinning the stop back at break-even — once armed we lock
+    at least ``kss_trail_lock_pct`` profit (and never below the fee floor, so still no fee loss)."""
+    return max(fee_floor_price(avg), avg * (1 + settings.kss_trail_lock_pct / 100.0))
 
 
 def trail_distance_pct(atr_pct: float) -> float:
@@ -67,17 +73,18 @@ def trail_distance_pct(atr_pct: float) -> float:
 def compute_sl(
     *, peak: float, avg: float, distance_pct: float, trail_dist_pct: float, prev_sl: float = 0.0
 ) -> float:
-    """Ratcheted trailing stop. Trails ``trail_dist%`` below ``peak``, snapped DOWN to a wave-grid
-    level ``avg×(1+d)^k``, clamped at ``fee_floor``, and never below ``prev_sl`` (monotonic — a dip
-    after a high can never loosen the stop). Always returns a price ≥ ``fee_floor``."""
+    """Ratcheted ARMED trailing stop. Trails ``trail_dist%`` below ``peak``, snapped DOWN to a
+    wave-grid level ``avg×(1+d)^k``, clamped at the lock floor (``max(fee_floor, avg×(1+lock_pct))``)
+    so a wide ATR trail can't pin it back at break-even, and never below ``prev_sl`` (monotonic).
+    Always returns a price ≥ the lock floor (a real locked profit)."""
     d = distance_pct / 100.0
-    floor = fee_floor_price(avg)
+    floor = lock_floor_price(avg)
     target = peak * (1 - trail_dist_pct / 100.0)
     if target > avg and d > 0:
         k = max(math.floor(math.log(target / avg) / math.log(1 + d)), 0)
         grid_sl = avg * (1 + d) ** k  # highest grid level ≤ target
     else:
-        grid_sl = avg  # target at/below avg (young session) → the floor clamp lifts it
+        grid_sl = avg  # target at/below avg → the lock floor lifts it
     sl = max(grid_sl, floor, prev_sl)
     return round(sl, price_precision(avg))
 

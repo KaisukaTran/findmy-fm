@@ -40,12 +40,18 @@
     <input name="min_trials" type="number" step="1" min="1" max="200" value="{{ k.min_trials }}" required></label>
   <label title="GATE THỜI ĐIỂM VÀO: chặn mở coin đang DOWNTREND xác nhận — khung lớn (HTF) VÀ Supertrend đều xuống VÀ ADX ≥ ngưỡng này (tránh 'bắt dao rơi'). 0 = tắt. Đây là bản deterministic của veto hay gặp nhất của Grok, hoạt động cả khi Grok tắt. Mặc định 25.">Chặn downtrend (ADX≥) <span class="varname">block_downtrend_adx</span>
     <input name="block_downtrend_adx" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.block_downtrend_adx) }}" required></label>
+  <label title="GATE THỜI ĐIỂM VÀO (chặt hơn block_downtrend_adx): bỏ qua coin có động lượng NGẮN HẠN đang giảm — Supertrend xuống VÀ MACD histogram < 0 — để không mở thang DCA vào coin đang rơi (sẽ chỉ nằm đỏ tới khi bật lại). Bắt các nhịp giảm nhẹ mà gate downtrend (cần HTF+ST+ADX cùng xác nhận) bỏ lọt. Chạy cả khi Grok tắt.">Chặn động lượng giảm (falling-knife) <span class="varname">entry_momentum_gate</span>
+    <select name="entry_momentum_gate" class="select-inline">
+      <option value="1" {% if k.entry_momentum_gate %}selected{% endif %}>Bật</option>
+      <option value="0" {% if not k.entry_momentum_gate %}selected{% endif %}>Tắt</option>
+    </select></label>
   <label title="Notional sóng đầu mỗi session. >0 = đặt cỡ lệnh đầu theo USD (dùng nhiều vốn hơn); 0 = cỡ pip mặc định (rất nhỏ).">Giá trị lệnh đầu (USD) <span class="varname">kss_first_wave_usd</span>
     <input name="kss_first_wave_usd" type="number" step="any" min="0" value="{{ '%.2f'|format(k.kss_first_wave_usd) }}"></label>
   <label title="Trần số coin mỗi lần quét. Tăng để quét nhiều coin hơn (mặc định 50).">Số coin quét tối đa <span class="varname">scan_max_symbols</span>
     <input name="scan_max_symbols" type="number" step="1" min="1" value="{{ k.scan_max_symbols }}"></label>
   <label title="Chỉ quét coin có quote-volume ≥ ngưỡng này. Giảm để quét thêm coin nhỏ (mặc định 1,000,000).">Thanh khoản tối thiểu (quote vol) <span class="varname">min_quote_volume</span>
     <input name="min_quote_volume" type="number" step="any" min="0" value="{{ '%.0f'|format(k.min_quote_volume) }}"></label>
+  <h3 class="section-subhead">━ Trailing TP động (Ride &amp; Trail — chốt lời linh hoạt) ━</h3>
   <label title="BẬT trailing-TP động (docs/kss-dynamic-tp-plan.md): khi 1 session vượt avg×(1+distance%) nó HỦY thang DCA còn lại và chuyển sang SL trailing theo ATR + TP nổi (sàn phí ×3 nên không exit tự động nào lỗ). TẮT = giữ nguyên hành vi TP cố định hiện tại.">Trailing-TP động <span class="varname">kss_dynamic_tp_enabled</span>
     <select name="kss_dynamic_tp_enabled" class="select-inline">
       <option value="1" {% if k.kss_dynamic_tp_enabled %}selected{% endif %}>Bật</option>
@@ -59,6 +65,10 @@
     <input name="kss_trail_atr_mult" type="number" step="0.1" min="0" value="{{ '%.1f'|format(k.kss_trail_atr_mult) }}"></label>
   <label title="Sàn khoảng cách trailing: SL không bao giờ bám sát đỉnh hơn % này (coin êm vẫn có chỗ thở). Cũng là fallback khi thiếu ATR.">Trailing tối thiểu % <span class="varname">kss_trail_min_pct</span>
     <input name="kss_trail_min_pct" type="number" step="0.1" min="0" value="{{ '%.1f'|format(k.kss_trail_min_pct) }}"></label>
+  <label title="Ride & Trail: vị thế có lãi RIDE tự do (bỏ cap TP cố định, chỉ hard SL bảo vệ) tới khi đỉnh ≥ avg×(1+%này) mới ARM trailing. Cao hơn = chạy xa hơn nhưng rủi ro giveback (đảo chiều trước khi arm → về hard SL = lỗ).">Arm trailing tại +% <span class="varname">kss_trail_arm_pct</span>
+    <input name="kss_trail_arm_pct" type="number" step="0.5" min="0" value="{{ '%.1f'|format(k.kss_trail_arm_pct) }}"></label>
+  <label title="Khi đã arm, SL không bao giờ khoá ÍT hơn %này (floor = max(fee_floor, avg×(1+%này))) → trail ATR rộng không kéo SL về break-even. Nên < arm%.">Khoá lãi tối thiểu % <span class="varname">kss_trail_lock_pct</span>
+    <input name="kss_trail_lock_pct" type="number" step="0.5" min="0" value="{{ '%.1f'|format(k.kss_trail_lock_pct) }}"></label>
   <label title="Chu kỳ (giây) vòng guard nhẹ kiểm exit session ĐANG MỞ bằng ticker, tách khỏi scan 30 phút. Nhỏ = cửa sổ gap hẹp hơn.">Guard kiểm exit (giây) <span class="varname">kss_exit_check_sec</span>
     <input name="kss_exit_check_sec" type="number" step="1" min="5" value="{{ k.kss_exit_check_sec }}"></label>
   <label title="Crash-detect: nếu một lần guard thấy giá rớt > % này so với lần quan sát trước VÀ giá ≤ SL → bán market NGAY (chặn chảy máu trên gap). 0 = tắt.">Crash-detect % <span class="varname">kss_crash_drop_pct</span>
@@ -67,6 +77,28 @@
     <select name="kss_live_stop_orders" class="select-inline">
       <option value="1" {% if k.kss_live_stop_orders %}selected{% endif %}>Bật</option>
       <option value="0" {% if not k.kss_live_stop_orders %}selected{% endif %}>Tắt</option>
+    </select></label>
+  <h3 class="section-subhead">━ Lọc &amp; chọn coin nâng cao (relative-strength / breadth / drawdown) ━</h3>
+  <label title="Gate sức mạnh tương đối vs BTC: chỉ mở coin có return gần đây không thua BTC quá biên. Chặn 'alt yếu hơn BTC' (nguyên nhân lỗ sổ mở) mà KHÔNG chặn cứng theo BTC down — alt mạnh khi BTC giảm vẫn vào (nó outperform). Tắt mặc định.">Gate mạnh-hơn-BTC <span class="varname">rel_strength_enabled</span>
+    <select name="rel_strength_enabled" class="select-inline">
+      <option value="1" {% if k.rel_strength_enabled %}selected{% endif %}>Bật</option>
+      <option value="0" {% if not k.rel_strength_enabled %}selected{% endif %}>Tắt</option>
+    </select></label>
+  <label title="Số phiên (nến ngày) tính return cho gate mạnh-hơn-BTC + breadth.">RS: số phiên lookback <span class="varname">rel_strength_lookback_bars</span>
+    <input name="rel_strength_lookback_bars" type="number" step="1" min="1" value="{{ k.rel_strength_lookback_bars }}"></label>
+  <label title="Cho phép thua BTC tối đa bao nhiêu % trước khi gate chặn (2 = được lag BTC ≤2%; 0 = phải bằng BTC).">RS: biên thua BTC % <span class="varname">rel_strength_margin_pct</span>
+    <input name="rel_strength_margin_pct" type="number" step="0.5" min="0" value="{{ '%.1f'|format(k.rel_strength_margin_pct) }}"></label>
+  <label title="Throttle MỀM theo breadth: thị trường yếu rộng (ít coin tăng) → mở ít session/scan hơn (ramp chậm), không bao giờ dừng hẳn (≥1) và KHÔNG chặn theo hướng BTC. Tắt mặc định.">Ramp theo breadth <span class="varname">regime_ramp_enabled</span>
+    <select name="regime_ramp_enabled" class="select-inline">
+      <option value="1" {% if k.regime_ramp_enabled %}selected{% endif %}>Bật</option>
+      <option value="0" {% if not k.regime_ramp_enabled %}selected{% endif %}>Tắt</option>
+    </select></label>
+  <label title="Gate drawdown TUYỆT ĐỐI: bỏ coin có avg_mae backtest (nhịp cắm sâu điển hình dưới avg trước khi thoát) SÂU HƠN % này (vd 12 = loại coin lịch sử thường cắm >12% trước khi hồi). 0 = tắt (vẫn dùng để xếp hạng: drawdown nông hơn → ưu tiên). Phân biệt được coin mà win-rate ~100% bão hòa không tách được.">Gate drawdown tuyệt đối % <span class="varname">max_avg_mae_pct</span>
+    <input name="max_avg_mae_pct" type="number" step="0.5" min="0" max="100" value="{{ '%.1f'|format(k.max_avg_mae_pct) }}"></label>
+  <label title="Gate drawdown TƯƠNG ĐỐI: trong mỗi lần quét, loại nhóm worst_mae (cú cắm sâu nhất so với avg) thuộc quartile tệ nhất. Theo từng scan nên không 'nuke' cả vũ trụ như ngưỡng tuyệt đối. Cần ≥4 ứng viên. Tắt mặc định.">Gate drawdown quartile <span class="varname">mae_quartile_gate_enabled</span>
+    <select name="mae_quartile_gate_enabled" class="select-inline">
+      <option value="1" {% if k.mae_quartile_gate_enabled %}selected{% endif %}>Bật</option>
+      <option value="0" {% if not k.mae_quartile_gate_enabled %}selected{% endif %}>Tắt</option>
     </select></label>
   <button type="submit" class="ok">Lưu cấu hình KSS</button>
 </form>

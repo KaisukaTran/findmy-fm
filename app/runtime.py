@@ -72,12 +72,19 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "min_trials": int,  # min backtest trials for a trustworthy edge (cut thin-sample noise)
     "block_downtrend_adx": float,  # hard veto: HTF+ST down & ADX≥this (0=off) — entry timing
     "entry_momentum_gate": _to_bool,  # veto open when ST down & MACDh<0 (don't buy a falling knife)
+    "rel_strength_enabled": _to_bool,  # skip coins materially weaker than BTC over the lookback
+    "rel_strength_lookback_bars": int,
+    "rel_strength_margin_pct": float,
+    "regime_ramp_enabled": _to_bool,  # breadth-aware soft throttle of new opens/scan (never a stop)
+    "mae_quartile_gate_enabled": _to_bool,  # drop worst-quartile worst_mae candidates per scan
     # Dynamic trailing TP/SL (docs/kss-dynamic-tp-plan.md) — all runtime-tunable, OFF by default
     "kss_dynamic_tp_enabled": _to_bool,
     "kss_tp_gap_pct": float,
     "kss_exit_fee_mult": float,
     "kss_trail_atr_mult": float,
     "kss_trail_min_pct": float,
+    "kss_trail_arm_pct": float,
+    "kss_trail_lock_pct": float,
     "kss_exit_check_sec": int,
     "kss_crash_drop_pct": float,
     "kss_live_stop_orders": _to_bool,

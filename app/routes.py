@@ -401,6 +401,25 @@ class KssSettingsBody(BaseModel):
     max_new_sessions_per_scan: int | None = Field(None, ge=0, le=100)  # cap NEW opens/scan (0=off)
     min_quote_volume: float | None = Field(None, ge=0)
     kss_first_wave_usd: float | None = Field(None, ge=0)
+    entry_momentum_gate: bool | None = None  # veto open when ST down & MACDh<0
+    max_avg_mae_pct: float | None = Field(None, ge=0, le=100)  # absolute avg_mae drawdown gate (0=off)
+    # Dynamic trailing TP/SL (docs/kss-dynamic-tp-plan.md)
+    kss_dynamic_tp_enabled: bool | None = None
+    kss_tp_gap_pct: float | None = Field(None, ge=0, le=100)
+    kss_exit_fee_mult: float | None = Field(None, ge=1, le=20)
+    kss_trail_atr_mult: float | None = Field(None, ge=0, le=10)
+    kss_trail_min_pct: float | None = Field(None, ge=0, le=50)
+    kss_trail_arm_pct: float | None = Field(None, ge=0, le=100)
+    kss_trail_lock_pct: float | None = Field(None, ge=0, le=100)
+    kss_exit_check_sec: int | None = Field(None, ge=5, le=3600)
+    kss_crash_drop_pct: float | None = Field(None, ge=0, le=100)
+    kss_live_stop_orders: bool | None = None
+    # Entry-evaluation v2 (docs/regime-mae-plan.md)
+    rel_strength_enabled: bool | None = None
+    rel_strength_lookback_bars: int | None = Field(None, ge=1, le=90)
+    rel_strength_margin_pct: float | None = Field(None, ge=0, le=50)
+    regime_ramp_enabled: bool | None = None
+    mae_quartile_gate_enabled: bool | None = None
     # Live-readiness knobs (1.9) — LIVE only, inert on paper.
     maker_orders: bool | None = None
     order_fill_timeout_sec: int | None = Field(None, ge=0)

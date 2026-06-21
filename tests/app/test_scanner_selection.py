@@ -97,6 +97,16 @@ def test_opens_ranked_by_consensus_first(db, monkeypatch, _open_env):
     assert _open_env[0] == "HICONS"  # consensus wins despite lower win_rate_lb
 
 
+def test_opens_ranked_by_worst_mae_after_consensus(db, monkeypatch, _open_env):
+    """At equal consensus, the shallower-tail coin (worst_mae closer to 0) opens first — even if it
+    has a lower win_rate_lb (worst_mae outranks win_rate_lb in the key)."""
+    monkeypatch.setattr(settings, "max_new_sessions_per_scan", 0)
+    deep = _mk("DEEP", 90.0, 52, 3.7); deep["consensus"] = 70.0; deep["worst_mae"] = -40.0
+    shallow = _mk("SHALLOW", 60.0, 20, 3.0); shallow["consensus"] = 70.0; shallow["worst_mae"] = -5.0
+    scanner._review_and_open(db, [deep, shallow], "auto")
+    assert _open_env[0] == "SHALLOW"
+
+
 def test_per_scan_cap_zero_means_no_limit(db, monkeypatch, _open_env):
     monkeypatch.setattr(settings, "max_new_sessions_per_scan", 0)
     to_open = [_mk("A", 60.0, 20, 3.0), _mk("B", 90.0, 52, 3.7), _mk("C", 75.0, 30, 3.5)]
@@ -121,6 +131,62 @@ def test_grok_batch_reviews_same_best_first_order(db, monkeypatch, _open_env):
     to_open = [_mk("LOW", 60.0, 20, 3.0), _mk("HIGH", 90.0, 52, 3.7), _mk("MID", 75.0, 30, 3.5)]
     scanner._review_and_open(db, to_open, "auto")
     assert captured["order"] == ["HIGH", "MID", "LOW"]
+
+
+# ---------------------------------------------------------------------------
+# Phase B: breadth-aware soft ramp of the per-scan open cap
+# ---------------------------------------------------------------------------
+
+
+def _c(closes):
+    return [{"close": x} for x in closes]
+
+
+def test_ramp_factor_curve():
+    assert scanner._ramp_factor(0.30) == pytest.approx(0.2)   # weak breadth → min throttle
+    assert scanner._ramp_factor(0.60) == pytest.approx(1.0)   # strong → full
+    assert scanner._ramp_factor(0.05) == pytest.approx(0.2)   # clamp low
+    assert scanner._ramp_factor(0.95) == pytest.approx(1.0)   # clamp high
+
+
+def test_market_breadth_fraction_rising():
+    cmap = {"A": (_c([1, 2]), True), "B": (_c([2, 1]), True), "C": (_c([1, 1]), True)}
+    assert scanner._market_breadth(cmap, ["A", "B", "C"], 1) == pytest.approx(2 / 3)  # A,C ≥0
+
+
+def test_effective_open_cap_throttles_in_weak_breadth(db, monkeypatch):
+    monkeypatch.setattr(settings, "max_new_sessions_per_scan", 5)
+    monkeypatch.setattr(settings, "rel_strength_lookback_bars", 1)
+    monkeypatch.setattr(scanner.audit, "log", lambda *a, **k: None)
+    weak = {f"C{i}": (_c([2, 1]), True) for i in range(10)}    # all falling → breadth 0 → factor 0.2
+    monkeypatch.setattr(settings, "regime_ramp_enabled", True)
+    assert scanner._effective_open_cap(db, weak, list(weak)) == 1   # 5×0.2 → max(1,1)
+    monkeypatch.setattr(settings, "regime_ramp_enabled", False)
+    assert scanner._effective_open_cap(db, weak, list(weak)) == 5   # off → unchanged base
+
+
+# ---------------------------------------------------------------------------
+# Phase C2: relative-quartile worst_mae gate
+# ---------------------------------------------------------------------------
+
+
+def test_mae_quartile_gate_drops_worst(db, monkeypatch):
+    monkeypatch.setattr(settings, "mae_quartile_gate_enabled", True)
+    monkeypatch.setattr(scanner.audit, "log", lambda *a, **k: None)
+    cands = []
+    for sym, wm in [("A", -5.0), ("B", -8.0), ("C", -12.0), ("D", -40.0)]:
+        c = _mk(sym, 90.0, 50, 3.7); c["worst_mae"] = wm; cands.append(c)
+    kept = {c["symbol"] for c in scanner._drop_worst_mae_quartile(db, cands)}
+    assert "D" not in kept and {"A", "B", "C"} <= kept   # worst quartile (−40%) dropped
+
+
+def test_mae_quartile_gate_noop_off_or_few(db, monkeypatch):
+    monkeypatch.setattr(settings, "mae_quartile_gate_enabled", False)
+    cands = [_mk("A", 90.0, 50, 3.7)]
+    assert scanner._drop_worst_mae_quartile(db, cands) == cands          # off → unchanged
+    monkeypatch.setattr(settings, "mae_quartile_gate_enabled", True)
+    few = [_mk("A", 90.0, 50, 3.7), _mk("B", 90.0, 50, 3.7)]            # <4 → no-op
+    assert scanner._drop_worst_mae_quartile(db, few) == few
 
 
 # ---------------------------------------------------------------------------

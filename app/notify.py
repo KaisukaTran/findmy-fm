@@ -201,6 +201,22 @@ def fill_alert(fill) -> bool:
     return event(kind, text, throttle_key=fill.symbol, cooldown=cooldown)
 
 
+def _recent_skip_count(db, action: str, hours: float = 24.0) -> tuple[int, list[str]]:
+    """(count, distinct entities) of an audit action over the last `hours` — for digest monitoring."""
+    from datetime import datetime, timedelta
+
+    from app.models import AuditLog
+
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    rows = db.query(AuditLog.entity).filter(
+        AuditLog.action == action, AuditLog.created_at >= cutoff).all()
+    syms: list[str] = []
+    for (e,) in rows:
+        if e and e not in syms:
+            syms.append(e)
+    return len(rows), syms[:6]
+
+
 def build_digest(db) -> str:
     """Compact periodic snapshot: equity, today's realized P&L, all-time realized, open counts."""
     from app import pnlcal, portfolio
@@ -210,6 +226,14 @@ def build_digest(db) -> str:
     ksum = kss_service.summary(db)
     today = pnlcal.local_today()
     day = pnlcal.realized_by_day(db, today, today).get(today, {}).get("pnl", 0.0)
+    # Phase A monitoring: surface how often the relative-strength-vs-BTC gate bit recently — only
+    # when the gate is on AND it actually blocked something, so the digest stays clean otherwise.
+    rs_line = ""
+    if settings.rel_strength_enabled:
+        n, syms = _recent_skip_count(db, "skipped_rel_strength", 24.0)
+        if n:
+            rs_line = (f"\nPhase A (mạnh-hơn-BTC): bỏ {n} lệnh/24h"
+                       + (f" — {', '.join(syms)}" if syms else ""))
     return (
         "📈 FINDMY-FM digest\n"
         f"Equity ${s['total_equity']:,.2f}\n"
@@ -217,6 +241,7 @@ def build_digest(db) -> str:
         f"Chưa chốt: ${s['unrealized_pnl']:,.2f}\n"
         f"Vị thế {s['positions_count']} · KSS {ksum['active_sessions']} active · "
         f"Pending {s['pending_count']}"
+        + rs_line
     )
 
 

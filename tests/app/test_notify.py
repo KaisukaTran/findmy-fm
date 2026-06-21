@@ -230,6 +230,20 @@ def test_kss_command_lists_beyond_15(db, monkeypatch):
     assert reply.count("[active]") == 16  # all 16 sessions listed (old limit=15 dropped one)
 
 
+def test_digest_shows_rel_strength_skips_when_gate_bites(db, monkeypatch):
+    from app import audit
+    monkeypatch.setattr(settings, "rel_strength_enabled", True)
+    audit.log(db, "scanner", "skipped_rel_strength", entity="FET", reason="yếu hơn BTC")
+    db.commit()
+    d = notify.build_digest(db)
+    assert "Phase A" in d and "FET" in d
+
+
+def test_digest_no_rel_line_when_gate_off(db, monkeypatch):
+    monkeypatch.setattr(settings, "rel_strength_enabled", False)
+    assert "Phase A" not in notify.build_digest(db)
+
+
 # ---------------------------------------------------------------------------
 # handle_command("/status")
 # ---------------------------------------------------------------------------

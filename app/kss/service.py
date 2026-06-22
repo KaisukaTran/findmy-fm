@@ -472,6 +472,40 @@ def _idle_deployable(db: Session) -> float:
     return max(0.0, settings.account_equity - invested + realized)
 
 
+def preview_next_wave(db: Session, session_id: int) -> dict:
+    """Read-only preview of the next DCA+ rung so the user can size a manual DCA+ deliberately.
+
+    Mirrors ``queue_next_wave`` sizing — the geometric rung ``generate_wave(current_wave+1)``
+    re-anchored to the live market (``_anchor_dca_price``) — WITHOUT touching state. Returns the
+    next wave's qty/price/cost, the SL floor it must stay above, the idle cash available, and
+    whether the ladder is already full (a plain DCA+ would be refused). The frontend surfaces
+    ``cost`` as the suggested USD so a DCA+ matches the KSS ladder instead of a blind guess.
+    """
+    row = _get_row(db, session_id)
+    py = _to_pyramid(row)
+    next_wave_num = py.current_wave + 1
+    wave = py.generate_wave(next_wave_num)
+    price = _anchor_dca_price(
+        db, session_id, row.symbol, py.distance_pct, wave.target_price, py.entry_price
+    )
+    cost = wave.quantity * price
+    floor = _sl_floor_price(py)
+    return {
+        "session_id": session_id,
+        "symbol": row.symbol,
+        "wave_num": next_wave_num,
+        "price": round(price, 8),
+        "quantity": wave.quantity,
+        "cost": round(cost, 2),
+        "remaining_fund": round(py.remaining_fund, 2),
+        "idle_deployable": round(_idle_deployable(db), 2),
+        "sl_floor": round(floor, 8),
+        "below_sl": floor > 0 and price <= floor,
+        "ladder_full": next_wave_num >= py.max_waves,
+        "max_waves": py.max_waves,
+    }
+
+
 def queue_next_wave(db: Session, session_id: int, amount_usd: float | None = None) -> dict:
     """
     Manually queue the next DCA wave for an ACTIVE session (the DCA+ button).

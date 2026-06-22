@@ -155,3 +155,13 @@ def dca_next(session_id: int, body: DcaNext | None = None, db: Session = Depends
         return service.queue_next_wave(db, session_id, amount_usd=body.amount_usd if body else None)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/sessions/{session_id}/dca-preview")
+def dca_preview(session_id: int, db: Session = Depends(get_db)):
+    """Read-only: the next DCA+ rung's qty/price/cost (+ SL floor & idle cash) so the UI can
+    suggest a deliberate DCA+ amount. Works even when the ladder is full."""
+    try:
+        return service.preview_next_wave(db, session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

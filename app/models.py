@@ -307,6 +307,10 @@ class Candidate(Base):
     win_rate_lb: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     expectancy: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     trials: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # O-COPY/C1: the same drawdown evidence the rule-based gate trades on (mean/worst dip
+    # vs running avg across backtest trials). Pure persistence — does not change any gate.
+    avg_mae: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    worst_mae: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     est_days_to_tp: Mapped[float | None] = mapped_column(Float, nullable=True)
     decision: Mapped[str] = mapped_column(String(8), nullable=False, default="skip")  # trade / skip
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)

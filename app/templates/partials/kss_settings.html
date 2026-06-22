@@ -100,6 +100,23 @@
       <option value="1" {% if k.mae_quartile_gate_enabled %}selected{% endif %}>Bật</option>
       <option value="0" {% if not k.mae_quartile_gate_enabled %}selected{% endif %}>Tắt</option>
     </select></label>
+  <h3 class="section-subhead">━ OPUS God Mode (học &amp; sao chép) ━</h3>
+  <label title="Chế độ SAO CHÉP: ưu tiên mở các coin mà engine luật (đang có lãi) vừa chấm 'trade' trong lần quét này; OPUS phải giải thích nếu đi chệch. Chỉ là gợi ý mềm trong prompt, không phải lọc cứng.">Chế độ sao chép <span class="varname">opus_copy_mode</span>
+    <select name="opus_copy_mode" class="select-inline">
+      <option value="1" {% if k.opus_copy_mode %}selected{% endif %}>Bật</option>
+      <option value="0" {% if not k.opus_copy_mode %}selected{% endif %}>Tắt</option>
+    </select></label>
+  <label title="Cho OPUS mở lệnh một mình khi độ tin cậy đủ cao (không cần Grok đồng ý). HIỆU LỰC Ở PHA O-LIVE — hiện chưa nối thực thi, bật trước cũng chưa đặt lệnh.">OPUS mở lệnh một mình <span class="varname">opus_solo_open</span>
+    <select name="opus_solo_open" class="select-inline">
+      <option value="1" {% if k.opus_solo_open %}selected{% endif %}>Bật</option>
+      <option value="0" {% if not k.opus_solo_open %}selected{% endif %}>Tắt</option>
+    </select></label>
+  <label title="Ngưỡng consensus tối thiểu (deterministic) để OPUS được mở một mình ở chế độ solo (pha O-LIVE).">Consensus tối thiểu cho solo % <span class="varname">opus_solo_min_consensus</span>
+    <input name="opus_solo_min_consensus" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.opus_solo_min_consensus) }}"></label>
+  <label title="Số 'bài học' chắt lọc tối đa được tiêm vào prompt hệ thống của OPUS (bộ nhớ học từ kết quả thật).">Số bài học tối đa <span class="varname">opus_lessons_max</span>
+    <input name="opus_lessons_max" type="number" step="1" min="0" value="{{ k.opus_lessons_max }}"></label>
+  <label title="Số vị thế đã đóng gần nhất của OPUS đưa vào snapshot để nó tự soi thành tích (ride/rescue lãi hay lỗ).">Lịch sử vị thế đưa vào <span class="varname">opus_history_n</span>
+    <input name="opus_history_n" type="number" step="1" min="1" value="{{ k.opus_history_n }}"></label>
   <button type="submit" class="ok">Lưu cấu hình KSS</button>
 </form>
 

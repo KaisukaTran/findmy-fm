@@ -38,6 +38,8 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("candidates", "win_rate_lb", "FLOAT NOT NULL DEFAULT 0.0"),
     ("candidates", "expectancy", "FLOAT NOT NULL DEFAULT 0.0"),
     ("candidates", "trials", "INTEGER NOT NULL DEFAULT 0"),
+    ("candidates", "avg_mae", "FLOAT NOT NULL DEFAULT 0.0"),
+    ("candidates", "worst_mae", "FLOAT NOT NULL DEFAULT 0.0"),
 ]
 
 

@@ -387,6 +387,9 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
             scan_id=scan.id, symbol=symbol, consensus_pct=consensus,
             win_rate=wr["win_rate"], win_rate_lb=wr["win_rate_lb"],
             expectancy=wr["expectancy"], trials=wr["trials"],
+            # O-COPY/C1: persist the same drawdown evidence the gate trades on, so OPUS
+            # can see it too. Pure persistence — does not feed back into any decision here.
+            avg_mae=wr["avg_mae"], worst_mae=wr["worst_mae"],
             est_days_to_tp=wr["avg_days_to_tp"],
             decision=d["decision"],
             reason="; ".join(d["reasons"])

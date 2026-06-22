@@ -7,6 +7,19 @@
     {% if o.cost_cap_reached %}<span class="badge veto" title="Đã chạm trần chi phí Opus/ngày — tạm dừng ra quyết định mới.">COST CAP</span>{% endif %}
     <span class="badge {{ 'guardian-on' if o.grok_active else 'full-auto-off' }}" title="Grok (xAI) đồng quyết định với OPUS: MỞ khi cả hai đồng ý, ĐÓNG khi một trong hai muốn. Cần xai_api_key.">GROK {{ 'ON' if o.grok_active else ('ENABLED (thiếu key)' if o.grok_enabled else 'OFF') }}</span>
     <button class="sm {{ 'danger' if o.grok_enabled else 'ok' }}" data-action="toggleGrok" data-id="{{ 'off' if o.grok_enabled else 'on' }}">{{ 'Tắt Grok' if o.grok_enabled else 'Bật Grok' }}</button>
+    {% if o.brain_health == 'ok' %}
+    <span class="badge full-auto-on" title="Lệnh gọi Opus gần nhất thành công.">BRAIN OK</span>
+    {% elif o.brain_health == 'http_400_credit' %}
+    <span class="badge veto" title="Tài khoản Anthropic hết credit — nạp ở Plans &amp; Billing để OPUS hoạt động.">HẾT CREDIT</span>
+    {% elif o.brain_health == 'http_401_key' %}
+    <span class="badge veto" title="anthropic_api_key sai/không hợp lệ.">SAI KEY</span>
+    {% elif o.brain_health == 'http_error' %}
+    <span class="badge veto" title="Lệnh gọi Opus lỗi HTTP — xem audit opus/decide_error.">LỖI HTTP</span>
+    {% elif o.brain_health == 'parse' %}
+    <span class="badge hyperopt-on" title="Opus trả JSON không hợp lệ.">LỖI PARSE</span>
+    {% elif o.brain_health == 'never' %}
+    <span class="badge full-auto-off" title="OPUS bật nhưng chưa gọi quyết định lần nào.">CHƯA CHẠY</span>
+    {% endif %}
   </span>
   <span class="muted" title="Opus ra quyết định mỗi chu kỳ này (phút).">tick: {{ o.interval_min }}m</span>
 </div>

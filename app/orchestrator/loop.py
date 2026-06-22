@@ -42,6 +42,13 @@ def tick(db: Session) -> dict:
         ledger.rollup_now(db)
         return {"skipped": "disabled", "watch": watch_summary}
 
+    # 2b) O-LEARN/L2: reflect on recent outcomes into a few distilled lessons. Its own 6h
+    # runtime-timestamp throttle keeps this rare; never raises, so a bad distill can't sink
+    # the tick. Placed after the cost-cap/enabled gates so it never runs while capped.
+    from app.orchestrator import distill
+
+    distill.distill_lessons(db)
+
     # 3) Cost-aware decision throttle (O-5): stretch the budget by spacing paid calls.
     #    Position management above already ran every tick — only the decision is throttled.
     from datetime import datetime

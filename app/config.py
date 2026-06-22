@@ -327,6 +327,12 @@ class Settings(BaseSettings):
     opus_ride_hard_sl_pct: float = Field(default=10.0, description="Hard stop-loss for a 'ride' position so a reversing winner can't become an unbounded loss.")
     opus_max_trade_notional: float = Field(default=200.0, description="Per-trade notional cap for OPUS discretionary orders.")
     opus_shadow: bool = Field(default=True, description="Shadow mode: Opus intents are logged but NOT executed. Flip off to let the sandbox route orders.")
+    # --- God-mode scaffolding (Phase O-FIX; wiring deferred to O-COPY/O-LEARN/O-LIVE) ---
+    opus_copy_mode: bool = Field(default=False, description="Bias OPUS toward symbols the rule-based engine endorsed this scan.")
+    opus_solo_open: bool = Field(default=False, description="Allow OPUS to open without Grok's vote when conviction clears the floor (wiring deferred to a later phase).")
+    opus_solo_min_consensus: float = Field(default=70.0, description="Deterministic-consensus floor required for a solo open.")
+    opus_lessons_max: int = Field(default=8, description="Max distilled lessons injected into the system prompt.")
+    opus_history_n: int = Field(default=20, description="Closed positions shown in the self-history block.")
 
     # --- Grok co-pilot (xAI) for consensus decisions with OPUS (off by default) ---
     # When enabled WITH a key, OPUS (Claude) and Grok (xAI) each decide on the SAME snapshot;

@@ -253,10 +253,29 @@ const actions = {
     refreshTrading(); refreshStatus();
   },
   async kssDcaNext(id) {
+    // Gợi ý số $ của nấc kế tiếp (read-only, fail-soft: thiếu vẫn DCA+ được).
+    let pv = null;
+    try {
+      const r = await fetch(`/api/kss/sessions/${id}/dca-preview`);
+      if (r.ok) pv = await r.json();
+    } catch (_) { /* preview là tuỳ chọn */ }
+
+    let head = "DCA+ thủ công — session " + id + ".\n";
+    if (pv) {
+      head +=
+        `Rung kế tiếp #${pv.wave_num}: BUY ${pv.quantity} @ ${pv.price} ≈ $${pv.cost}\n` +
+        `Tiền nhàn rỗi khả dụng: $${pv.idle_deployable}\n`;
+      if (pv.ladder_full)
+        head += `⚠ Ladder đã đầy (max_waves=${pv.max_waves}) — để TRỐNG sẽ bị chặn; nhập USD để nới thêm 1 nấc.\n`;
+      if (pv.below_sl)
+        head += `⚠ Nấc này dưới SL floor ${pv.sl_floor} — sẽ bị từ chối, nới SL của session trước.\n`;
+    }
     const raw = prompt(
-      "DCA+ thủ công — session " + id + ".\n" +
+      head +
       "Nhập số USD muốn bơm từ tiền nhàn rỗi (gồm cả phần dự phòng).\n" +
-      "Để TRỐNG = rung mặc định theo ladder.", "");
+      "Để TRỐNG = rung mặc định theo ladder" + (pv ? ` (~$${pv.cost})` : "") + ".",
+      // Ladder đầy → pre-fill số gợi ý (đường custom-USD tự nới thêm 1 nấc, tránh lỗi "Ladder exhausted").
+      pv && pv.ladder_full ? String(pv.cost) : "");
     if (raw === null) return;  // user cancelled
     const txt = raw.trim();
     const amount = txt === "" ? null : Number(txt);
@@ -603,6 +622,28 @@ document.addEventListener("submit", async (e) => {
       kss_first_wave_usd: num(f.get("kss_first_wave_usd")),
       scan_max_symbols: num(f.get("scan_max_symbols")),
       min_quote_volume: num(f.get("min_quote_volume")),
+      entry_momentum_gate: f.get("entry_momentum_gate") === "1",
+      max_avg_mae_pct: num(f.get("max_avg_mae_pct")),
+      kss_dynamic_tp_enabled: f.get("kss_dynamic_tp_enabled") === "1",
+      kss_tp_gap_pct: num(f.get("kss_tp_gap_pct")),
+      kss_exit_fee_mult: num(f.get("kss_exit_fee_mult")),
+      kss_trail_atr_mult: num(f.get("kss_trail_atr_mult")),
+      kss_trail_min_pct: num(f.get("kss_trail_min_pct")),
+      kss_trail_arm_pct: num(f.get("kss_trail_arm_pct")),
+      kss_trail_lock_pct: num(f.get("kss_trail_lock_pct")),
+      kss_exit_check_sec: num(f.get("kss_exit_check_sec")),
+      kss_crash_drop_pct: num(f.get("kss_crash_drop_pct")),
+      kss_live_stop_orders: f.get("kss_live_stop_orders") === "1",
+      rel_strength_enabled: f.get("rel_strength_enabled") === "1",
+      rel_strength_lookback_bars: num(f.get("rel_strength_lookback_bars")),
+      rel_strength_margin_pct: num(f.get("rel_strength_margin_pct")),
+      regime_ramp_enabled: f.get("regime_ramp_enabled") === "1",
+      mae_quartile_gate_enabled: f.get("mae_quartile_gate_enabled") === "1",
+      opus_copy_mode: f.get("opus_copy_mode") === "1",
+      opus_solo_open: f.get("opus_solo_open") === "1",
+      opus_solo_min_consensus: num(f.get("opus_solo_min_consensus")),
+      opus_lessons_max: num(f.get("opus_lessons_max")),
+      opus_history_n: num(f.get("opus_history_n")),
     });
     toast("Đã lưu cấu hình KSS — áp dụng cho phiên mới.", "success");
     refreshTrading(); refreshStatus();

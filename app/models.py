@@ -41,6 +41,9 @@ WAVE_PENDING = "pending"
 WAVE_SENT = "sent"
 WAVE_FILLED = "filled"
 WAVE_CANCELLED = "cancelled"
+# Pyramid-UP (docs/pyramid-up-plan.md): an add-on wave registered above entry, waiting for
+# market to reach its target_price (trigger) before it is queued as a marketable BUY.
+WAVE_ARMED = "armed"
 
 
 class PendingOrder(Base):
@@ -225,6 +228,10 @@ class KssSession(Base):
     trail_dist_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
     status: Mapped[str] = mapped_column(String(16), nullable=False, default=SESSION_PENDING)
+    # Regime router (docs/pyramid-up-plan.md): 'dca_down' (existing buy-the-dip ladder, frozen
+    # pyramid.py) or 'pyramid_up' (anti-martingale scale-into-strength). Default keeps every
+    # existing/legacy session on the unchanged DCA-down path.
+    strategy_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="dca_down", server_default="dca_down")
     current_wave: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     avg_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     total_filled_qty: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)

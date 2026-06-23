@@ -448,6 +448,10 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
                 cand.reason = (cand.reason or "") + f" | chặn: {rs_block}"
                 audit.log(db, "scanner", "skipped_rel_strength", entity=symbol, reason=rs_block)
             else:
+                # Regime router (docs/pyramid-up-plan.md): tag the candidate's strategy mode
+                # from its TA before deferring the open. OFF by default (strategy_router_enabled
+                # =False) → always 'dca_down', identical to pre-router behaviour.
+                strategy_mode = _route_strategy_mode(ta, candles, _btc_ret)
                 # Defer the actual open until after the batched Grok review.
                 to_open.append({
                     "cand": cand, "symbol": symbol, "entry": candles[-1]["close"],
@@ -457,6 +461,7 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
                     "expectancy": wr["expectancy"], "ta": ta,
                     "win_rate_lb": wr["win_rate_lb"], "trials": wr["trials"],
                     "avg_mae": wr["avg_mae"], "worst_mae": wr["worst_mae"],
+                    "strategy_mode": strategy_mode,
                 })
         candidates.append(cand)
 
@@ -579,6 +584,27 @@ def _rel_strength_veto(coin_candles: list, btc_ret: float | None) -> str | None:
         n = settings.rel_strength_lookback_bars
         return f"yếu hơn BTC {n}p ({coin_ret:+.1f}% vs BTC {btc_ret:+.1f}%)"
     return None
+
+
+def _route_strategy_mode(ta: dict, coin_candles: list, btc_ret: float | None) -> str:
+    """Regime router (docs/pyramid-up-plan.md): classify a gate-survivor as ``'pyramid_up'``
+    (scale into strength) or ``'dca_down'`` (the existing buy-the-dip ladder, default/fallback).
+    Behind ``settings.strategy_router_enabled`` (default False = always 'dca_down', zero
+    behaviour change). ``rel_strength`` is the coin's N-bar return minus BTC's over the same
+    lookback (None btc_ret/coin_ret → treated as 0, which classify_mode then gates on normally —
+    a missing relative-strength signal safely falls back to 'dca_down' unless 0 already clears
+    the configured threshold)."""
+    from app.kss import regime
+
+    coin_ret = _nbar_return(coin_candles, settings.rel_strength_lookback_bars)
+    rel_strength = (coin_ret - btc_ret) if (coin_ret is not None and btc_ret is not None) else 0.0
+    return regime.classify_mode(
+        enabled=settings.strategy_router_enabled,
+        htf_trend=ta.get("htf"), st_trend=ta.get("st"), adx=ta.get("adx", 0.0),
+        rel_strength=rel_strength, macdh=ta.get("macd_h", 0.0),
+        min_rel_strength=settings.pyramid_up_min_rel_strength,
+        min_adx=settings.pyramid_up_min_adx,
+    )
 
 
 def _market_breadth(candle_map: dict, symbols: list, n: int) -> float:
@@ -790,7 +816,7 @@ def _review_and_open(
             cand.session_id = _open_session(
                 db, symbol, c["entry"], mode,
                 distance_pct=c["distance_pct"], tp_pct=c["tp_pct"], max_waves=c["max_waves"],
-                isolated_fund=c["need"],
+                isolated_fund=c["need"], strategy_mode=c.get("strategy_mode", "dca_down"),
             )
             opened += 1
         else:
@@ -939,6 +965,7 @@ def _open_session(
     tp_pct: float | None = None,
     max_waves: int | None = None,
     isolated_fund: float | None = None,
+    strategy_mode: str = "dca_down",
 ) -> int:
     """Open a KSS session using effective (possibly hyperopt-tuned) params.
 
@@ -948,6 +975,11 @@ def _open_session(
     Defaults resolve from ``settings`` at call time (not at import/definition time)
     so runtime Strategy-tab edits to ``scan_distance_pct`` / ``scan_tp_pct`` /
     ``scan_max_waves`` are always picked up.
+
+    ``strategy_mode`` (docs/pyramid-up-plan.md) is the regime-router tag — NOTE this is a
+    SEPARATE axis from ``mode`` (auto/manual, the existing param): 'dca_down' (default, the
+    existing frozen buy-the-dip ladder) or 'pyramid_up' (anti-martingale scale-into-strength,
+    only ever produced by the router when ``settings.strategy_router_enabled``).
     """
     if distance_pct is None:
         distance_pct = settings.scan_distance_pct
@@ -957,22 +989,31 @@ def _open_session(
         max_waves = settings.scan_max_waves
     if isolated_fund is None:
         isolated_fund = service.projected_ladder_cost(symbol, entry, distance_pct, max_waves)
-    row = service.create_session(
-        db,
-        symbol=symbol,
-        entry_price=entry,
-        distance_pct=distance_pct,
-        max_waves=max_waves,
-        isolated_fund=isolated_fund,
-        tp_pct=tp_pct,
-        # Deadline (not the intra-fill timeout) governs the hold; keep timeout long.
-        timeout_x_min=float(settings.deadline_days * 1440),
-        gap_y_min=0.0,
-        deadline_days=settings.deadline_days,
-        note=f"auto-scanner ({mode})",
-    )
-    started = service.start_session(db, row.id)
-    audit.log(db, "scanner", "session_open", entity=f"kss:{row.id}", symbol=symbol, mode=mode)
+
+    if strategy_mode == "pyramid_up":
+        row = service.create_pyramid_up_session(
+            db, symbol=symbol, entry_price=entry, tp_pct=tp_pct,
+            deadline_days=settings.deadline_days, note=f"auto-scanner ({mode})",
+        )
+        started = service.start_pyramid_up_session(db, row.id)
+    else:
+        row = service.create_session(
+            db,
+            symbol=symbol,
+            entry_price=entry,
+            distance_pct=distance_pct,
+            max_waves=max_waves,
+            isolated_fund=isolated_fund,
+            tp_pct=tp_pct,
+            # Deadline (not the intra-fill timeout) governs the hold; keep timeout long.
+            timeout_x_min=float(settings.deadline_days * 1440),
+            gap_y_min=0.0,
+            deadline_days=settings.deadline_days,
+            note=f"auto-scanner ({mode})",
+        )
+        started = service.start_session(db, row.id)
+    audit.log(db, "scanner", "session_open", entity=f"kss:{row.id}", symbol=symbol, mode=mode,
+              strategy_mode=strategy_mode)
 
     if mode == "auto":
         if not runtime.is_frozen(db):

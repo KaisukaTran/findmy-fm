@@ -420,6 +420,14 @@ class KssSettingsBody(BaseModel):
     rel_strength_margin_pct: float | None = Field(None, ge=0, le=50)
     regime_ramp_enabled: bool | None = None
     mae_quartile_gate_enabled: bool | None = None
+    # Pyramid-UP regime router (docs/pyramid-up-plan.md)
+    strategy_router_enabled: bool | None = None
+    pyramid_up_min_rel_strength: float | None = Field(None, ge=-100, le=100)
+    pyramid_up_min_adx: float | None = Field(None, ge=0, le=100)
+    pyramid_up_step_pct: float | None = Field(None, gt=0, le=50)
+    pyramid_up_size_ratio: float | None = Field(None, gt=0, lt=1)
+    pyramid_up_max_adds: int | None = Field(None, ge=0, le=3)
+    pyramid_up_lock_pct: float | None = Field(None, ge=0, le=100)
     # Live-readiness knobs (1.9) — LIVE only, inert on paper.
     maker_orders: bool | None = None
     order_fill_timeout_sec: int | None = Field(None, ge=0)

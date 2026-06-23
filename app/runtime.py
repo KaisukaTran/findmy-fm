@@ -77,6 +77,14 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "rel_strength_margin_pct": float,
     "regime_ramp_enabled": _to_bool,  # breadth-aware soft throttle of new opens/scan (never a stop)
     "mae_quartile_gate_enabled": _to_bool,  # drop worst-quartile worst_mae candidates per scan
+    # Pyramid-UP regime router (docs/pyramid-up-plan.md) — OFF by default, zero behavior change
+    "strategy_router_enabled": _to_bool,
+    "pyramid_up_min_rel_strength": float,
+    "pyramid_up_min_adx": float,
+    "pyramid_up_step_pct": float,
+    "pyramid_up_size_ratio": float,
+    "pyramid_up_max_adds": int,
+    "pyramid_up_lock_pct": float,
     # Dynamic trailing TP/SL (docs/kss-dynamic-tp-plan.md) — all runtime-tunable, OFF by default
     "kss_dynamic_tp_enabled": _to_bool,
     "kss_tp_gap_pct": float,

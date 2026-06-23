@@ -40,6 +40,7 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("candidates", "trials", "INTEGER NOT NULL DEFAULT 0"),
     ("candidates", "avg_mae", "FLOAT NOT NULL DEFAULT 0.0"),
     ("candidates", "worst_mae", "FLOAT NOT NULL DEFAULT 0.0"),
+    ("kss_sessions", "strategy_mode", "TEXT DEFAULT 'dca_down'"),
 ]
 
 

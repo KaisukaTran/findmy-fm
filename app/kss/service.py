@@ -16,13 +16,14 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app import audit, orders
-from app.kss import dynamic_exit
+from app.kss import dynamic_exit, pyramid_up
 from app.kss.pyramid import PyramidSession, PyramidSessionStatus, WaveInfo
 from app.models import (
     SESSION_ACTIVE,
     SESSION_COMPLETED,
     SESSION_PENDING,
     SESSION_STOPPED,
+    WAVE_ARMED,
     WAVE_FILLED,
     WAVE_SENT,
     KssSession,
@@ -258,6 +259,147 @@ def start_session(db: Session, session_id: int) -> dict:
     }
 
 
+# --- Pyramid-UP lifecycle (docs/pyramid-up-plan.md) ----------------------
+#
+# Anti-martingale "scale into strength": the base wave (n=0, largest) fills at/near entry,
+# add-ons (n>=1, strictly smaller) are ARMED conditional waves that only queue once the market
+# clears their trigger price ABOVE entry. Parallel to the frozen DCA-down path above — never
+# calls PyramidSession/on_fill (that builds a dip-buy ladder); pyramid.py is untouched.
+
+
+def _clamped_pyramid_up_knobs() -> dict:
+    """Read the pyramid_up runtime knobs with the safety clamps the pure module trusts callers
+    to apply: ``size_ratio`` in (0, 1) exclusive, ``max_adds`` in [0, pyramid_up.MAX_ADDS_CAP]."""
+    from app.config import settings
+
+    size_ratio = min(max(settings.pyramid_up_size_ratio, 1e-6), 1 - 1e-6)
+    max_adds = max(0, min(settings.pyramid_up_max_adds, pyramid_up.MAX_ADDS_CAP))
+    return {
+        "step_pct": settings.pyramid_up_step_pct,
+        "size_ratio": size_ratio,
+        "max_adds": max_adds,
+        "lock_pct": settings.pyramid_up_lock_pct,
+    }
+
+
+def create_pyramid_up_session(
+    db: Session,
+    *,
+    symbol: str,
+    entry_price: float,
+    tp_pct: float,
+    deadline_days: int,
+    note: str | None = None,
+) -> KssSession:
+    """Validate + persist a PENDING Pyramid-UP session (sizes via ``pyramid_up.build_ladder``).
+
+    Mirrors ``create_session``'s shape (PENDING row, started by ``start_pyramid_up_session``)
+    but never touches ``PyramidSession`` — the ladder math is entirely ``pyramid_up.py``.
+    ``isolated_fund`` = the projected full-pyramid cost (largest-first, so it never starves
+    mid-way). The DCA-only columns (``distance_pct``/``max_waves``) are populated with the
+    pyramid-up analogues (step_pct / total wave count) purely for display continuity — they are
+    not read by any pyramid-up code path.
+    """
+    from app import costengine
+    from app.config import settings
+    from app.market import get_exchange_info
+
+    knobs = _clamped_pyramid_up_knobs()
+    floor = costengine.min_profit_pct()
+    if tp_pct < floor:
+        tp_pct = floor
+
+    info = get_exchange_info(symbol)
+    # Build the ladder once against the configured target fund (scan_fund — the same per-session
+    # USD knob the DCA-down path reserves before computing its own real ladder cost) purely to
+    # read off its actual (rounded) total cost for isolated_fund; start_pyramid_up_session rebuilds
+    # the ladder fresh at start time against this isolated_fund.
+    ladder = pyramid_up.build_ladder(
+        entry=entry_price, target_fund=settings.scan_fund, max_adds=knobs["max_adds"],
+        step_pct=knobs["step_pct"], size_ratio=knobs["size_ratio"],
+        step_size=info.get("stepSize", 0.00001), min_qty=info.get("minQty", 0.00001),
+    )
+    isolated_fund = sum(w.qty * w.trigger_price for w in ladder)
+    if isolated_fund <= 0:
+        raise ValueError(f"Invalid pyramid-up sizing for {symbol} (entry={entry_price})")
+
+    row = KssSession(
+        status=SESSION_PENDING,
+        symbol=symbol,
+        entry_price=entry_price,
+        distance_pct=knobs["step_pct"],
+        max_waves=knobs["max_adds"] + 1,
+        isolated_fund=isolated_fund,
+        tp_pct=tp_pct,
+        timeout_x_min=float(deadline_days * 1440),
+        gap_y_min=0.0,
+        sl_pct=settings.sl_pct,  # disaster floor before the BE+ trail arms (no DCA-down to average)
+        deadline_days=deadline_days,
+        strategy_mode="pyramid_up",
+        note=note,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def start_pyramid_up_session(db: Session, session_id: int) -> dict:
+    """Start a Pyramid-UP session: queue the BASE wave (n=0) as a MARKETABLE BUY (fills now,
+    like the manual take-profit/dynamic-exit MARKET orders), and persist every add-on (n>=1) as
+    an ARMED ``KssWave`` row (``status=WAVE_ARMED``, ``target_price``=trigger) — NOT a standing
+    buy-limit (a buy-limit above market would be immediately marketable and fill at once)."""
+    from app.market import get_exchange_info
+
+    row = _get_row(db, session_id)
+    if row.status != SESSION_PENDING:
+        raise ValueError(f"Session {session_id} already started (status={row.status})")
+    if row.strategy_mode != "pyramid_up":
+        raise ValueError(f"Session {session_id} is not a pyramid_up session")
+
+    knobs = _clamped_pyramid_up_knobs()
+    info = get_exchange_info(row.symbol)
+    # build_ladder solves base_qty internally from target_fund=row.isolated_fund (the same
+    # full-pyramid cost computed at create time), so the ladder approximates that reservation.
+    ladder = pyramid_up.build_ladder(
+        entry=row.entry_price, target_fund=row.isolated_fund, max_adds=knobs["max_adds"],
+        step_pct=knobs["step_pct"], size_ratio=knobs["size_ratio"],
+        step_size=info.get("stepSize", 0.00001), min_qty=info.get("minQty", 0.00001),
+    )
+    if not ladder:
+        raise ValueError(f"Failed to build pyramid-up ladder for session {session_id}")
+
+    base = ladder[0]
+    pending, risk_note = _queue(db, {
+        "symbol": row.symbol, "side": "BUY", "quantity": base.qty, "price": 0.0,
+        "order_type": "MARKET", "source_ref": f"pyramid:{row.id}:wave:0",
+        "strategy_name": f"PyramidUp_{row.symbol}",
+        "note": "Pyramid-UP base wave (market)",
+    })
+    db.add(KssWave(
+        session_id=session_id, wave_num=0, quantity=base.qty, target_price=row.entry_price,
+        status=WAVE_SENT, pending_order_id=pending.id,
+    ))
+    for add in ladder[1:]:
+        db.add(KssWave(
+            session_id=session_id, wave_num=add.n, quantity=add.qty,
+            target_price=add.trigger_price, status=WAVE_ARMED,
+        ))
+    row.status = SESSION_ACTIVE
+    row.started_at = datetime.utcnow()
+    row.deadline_at = datetime.utcnow() + timedelta(days=row.deadline_days)
+    db.commit()
+    audit.log(db, "kss", "pyramid_up_started", entity=f"kss:{row.id}", symbol=row.symbol,
+              base_qty=round(base.qty, 8), adds=len(ladder) - 1)
+    return {
+        "message": f"Session {session_id} started (pyramid_up)",
+        "deadline_at": row.deadline_at.isoformat(),
+        "pending_order_id": pending.id,
+        "risk_note": risk_note,
+        "order": {"symbol": row.symbol, "side": "BUY", "quantity": base.qty, "price": 0.0},
+    }
+
+
 def adopt_position_into_kss(
     db: Session,
     symbol: str,
@@ -424,6 +566,11 @@ def handle_fill_event(
         wave_row.filled_price = filled_price
         wave_row.filled_at = datetime.utcnow()
 
+    if row.strategy_mode == "pyramid_up":
+        result = _handle_pyramid_up_fill(db, row, wave_num, filled_qty, filled_price)
+        db.commit()
+        return result
+
     py = _to_pyramid(row)
     result = py.on_fill(wave_num, filled_qty, filled_price)
     _save_state(row, py)
@@ -436,6 +583,55 @@ def handle_fill_event(
 
     db.commit()
     return result
+
+
+def _handle_pyramid_up_fill(
+    db: Session, row: KssSession, wave_num: int, filled_qty: float, filled_price: float
+) -> dict:
+    """Pyramid-UP wave-fill path (parallel to the frozen ``PyramidSession.on_fill`` above, never
+    calls it). Recomputes ``avg_price``/``total_filled_qty``/``total_cost`` from the session's
+    FILLED waves (source of truth = the wave rows, not an incremental running total), then sets
+    the protective stop to break-even-plus so every add is a free-roll: net risk on the position
+    can never exceed the risk taken on the base wave. The existing ``_evaluate_dynamic_exit``
+    'armed' branch then owns ratcheting the stop further and executing the eventual sell — no
+    duplicate exit logic here."""
+    db.flush()  # autoflush=False (db.py): push the just-marked-FILLED wave so the re-query below
+    #             SEES it — otherwise total_qty/avg are computed missing the current fill (= 0 on the
+    #             base wave → the position is invisible: no SL/TP/trailing ever runs).
+    filled = (
+        db.query(KssWave)
+        .filter(KssWave.session_id == row.id, KssWave.status == WAVE_FILLED)
+        .all()
+    )
+    total_qty = sum(w.filled_qty or 0.0 for w in filled)
+    total_cost = sum((w.filled_qty or 0.0) * (w.filled_price or 0.0) for w in filled)
+    row.total_filled_qty = total_qty
+    row.total_cost = total_cost
+    row.current_wave = wave_num
+    avg = total_cost / total_qty if total_qty > 0 else 0.0
+    row.avg_price = avg
+
+    # Arm the break-even-plus trailing stop ONLY after an ADD (wave ≥ 1) that is already in genuine
+    # profit beyond the BE+ floor (filled_price > the stop). Arming on the BASE wave — which fills at
+    # ≈avg — would place the stop ABOVE the just-filled price and sell at break-even on the very next
+    # tick. Until an in-profit add arms it, the position rides protected by the hard SL (in
+    # manage_open_sessions) plus the standard +arm_pct trail in _evaluate_dynamic_exit.
+    if avg > 0 and wave_num >= 1:
+        from app.config import settings
+
+        fee_floor = dynamic_exit.fee_floor_price(avg)
+        new_sl = pyramid_up.stop_after_add(avg, settings.pyramid_up_lock_pct, fee_floor)
+        if filled_price > new_sl:
+            row.trail_active = True
+            row.peak_price = max(row.peak_price, filled_price, avg)
+            row.trail_sl_price = max(new_sl, row.trail_sl_price or 0.0)
+            row.trail_dist_pct = dynamic_exit.trail_distance_pct(_session_atr_pct(row.symbol))
+
+    kind = "pyramid_base_filled" if wave_num == 0 else "pyramid_add"
+    audit.log(db, "kss", kind, entity=f"kss:{row.id}", symbol=row.symbol, wave=wave_num,
+              filled_qty=round(filled_qty, 8), filled_price=round(filled_price, 8),
+              avg=round(avg, 8), sl=round(row.trail_sl_price, 8))
+    return {"action": kind, "message": f"Session {row.id} {kind} (wave {wave_num})"}
 
 
 def _handle_tp_triggered(db: Session, row: KssSession, result: dict) -> None:
@@ -774,7 +970,14 @@ def _evaluate_dynamic_exit(db: Session, row: KssSession, price: float) -> bool:
         or the spike-grab TP, ratcheting up with the peak."""
     from app.config import settings
 
-    if not settings.kss_dynamic_tp_enabled or row.total_filled_qty <= 0 or row.avg_price <= 0:
+    # Pyramid-UP already has a protective BE+ stop the moment its base wave fills (set by
+    # _handle_pyramid_up_fill), independent of this dynamic-TP feature toggle — a pyramid_up
+    # session must stay protected even when kss_dynamic_tp_enabled is globally OFF (paper has it
+    # ON, but don't silently leave pyramid_up unprotected if an operator flips it off later).
+    is_pyramid_up_armed = row.strategy_mode == "pyramid_up" and row.trail_active
+    if not (settings.kss_dynamic_tp_enabled or is_pyramid_up_armed):
+        return False
+    if row.total_filled_qty <= 0 or row.avg_price <= 0:
         return False
     avg, d = row.avg_price, row.distance_pct
 
@@ -828,6 +1031,80 @@ def _evaluate_dynamic_exit(db: Session, row: KssSession, price: float) -> bool:
     return True
 
 
+def _maybe_queue_pyramid_add(db: Session, row: KssSession, market: float) -> None:
+    """Pyramid-UP add-trigger (docs/pyramid-up-plan.md): find the lowest-n ARMED wave; if the
+    market has reached its trigger AND the previous wave is filled AND the filled-add count is
+    still below ``pyramid_up_max_adds`` AND the per-symbol cap + capital budget allow it, queue a
+    MARKETABLE BUY for it (re-asserting the SAME gates a brand-new open would face — adding to an
+    existing winner is still new capital at risk, never bypassed). No-op (silently) when nothing
+    is due or capital is capped this tick; retried next cycle."""
+    from app.config import settings
+
+    armed = (
+        db.query(KssWave)
+        .filter(KssWave.session_id == row.id, KssWave.status == WAVE_ARMED)
+        .order_by(KssWave.wave_num.asc())
+        .first()
+    )
+    if armed is None or market < armed.target_price:
+        return
+    prev = _wave_row(db, row.id, armed.wave_num - 1)
+    if prev is None or prev.status != WAVE_FILLED:
+        return
+    max_adds = max(0, min(settings.pyramid_up_max_adds, pyramid_up.MAX_ADDS_CAP))
+    if armed.wave_num > max_adds:
+        return
+
+    from app import scanner  # lazy — scanner imports this module at load time
+
+    if scanner._symbol_at_cap(db, row.symbol):
+        return
+    need = armed.quantity * armed.target_price
+    ok, why = scanner._can_open(db, need)
+    if not ok:
+        audit.log(db, "kss", "pyramid_add_capped", entity=f"kss:{row.id}", symbol=row.symbol,
+                  wave=armed.wave_num, reason=why)
+        return
+
+    pending, _ = _queue(db, {
+        "symbol": row.symbol, "side": "BUY", "quantity": armed.quantity, "price": 0.0,
+        "order_type": "MARKET", "source_ref": f"pyramid:{row.id}:wave:{armed.wave_num}",
+        "strategy_name": f"PyramidUp_{row.symbol}",
+        "note": f"Pyramid-UP add {armed.wave_num} (market, trigger {armed.target_price:g})",
+    })
+    armed.status = WAVE_SENT
+    armed.pending_order_id = pending.id
+    audit.log(db, "kss", "pyramid_add_queued", entity=f"kss:{row.id}", symbol=row.symbol,
+              wave=armed.wave_num, trigger=round(armed.target_price, 8), market=round(market, 8))
+
+
+def _pyramid_up_hard_sl(db: Session, row: KssSession, price: float) -> bool:
+    """Disaster floor for a not-yet-armed pyramid_up position: a momentum trade has NO DCA-down
+    ladder to average a loser back, so a drop past the hard SL (``sl_pct`` below avg) is cut at
+    market — the only loss-cutter before the BE+ trail arms. Returns True if it queued an exit.
+    The hard SL is allowed to realize a loss (unlike K-2/K-trail, which only DEFER profit-taking
+    below cost); cutting a real loser is its whole job."""
+    from app.config import settings
+
+    sl_pct = row.sl_pct if row.sl_pct and row.sl_pct > 0 else settings.sl_pct
+    if sl_pct <= 0 or row.avg_price <= 0 or row.total_filled_qty <= 0:
+        return False
+    floor = row.avg_price * (1 - sl_pct / 100.0)
+    if price > floor:
+        return False
+    _queue(db, {
+        "symbol": row.symbol, "side": "SELL", "quantity": row.total_filled_qty,
+        "price": 0.0, "order_type": "MARKET", "source_ref": f"pyramid:{row.id}:sl",
+        "strategy_name": f"PyramidUp_{row.symbol}",
+        "note": f"Pyramid-UP hard SL @ {price:g} (floor {floor:g}, avg {row.avg_price:g})",
+    })
+    row.status = SESSION_STOPPED
+    audit.log(db, "scheduler", "stop_queued", entity=f"kss:{row.id}", symbol=row.symbol,
+              price=round(price, 8), kind="stop_loss")
+    _cancel_pending_waves(db, row.id)  # closing → kill stale armed/pending waves
+    return True
+
+
 def manage_open_sessions(db: Session) -> list[int]:
     """
     Check every ACTIVE session against the live price and queue a TP sell when the
@@ -851,6 +1128,20 @@ def manage_open_sessions(db: Session) -> list[int]:
     for row in active:
         price = prices.get(row.symbol)
         if not price:
+            continue
+        if row.strategy_mode == "pyramid_up":
+            # Add-trigger loop BEFORE the exit check (docs/pyramid-up-plan.md): queue the next
+            # armed add-on once price clears its trigger, the prior add is filled, and capital
+            # caps allow it. Exit (TP/trail/SL) is the existing _evaluate_dynamic_exit below —
+            # pyramid_up never queues a DCA-down wave, so it never falls through to py.check_tp.
+            _maybe_queue_pyramid_add(db, row, price)
+            if row.total_filled_qty > 0:
+                if _evaluate_dynamic_exit(db, row, price):
+                    if row.status != SESSION_ACTIVE:
+                        triggered.append(row.id)
+                elif _pyramid_up_hard_sl(db, row, price):
+                    # not armed / still accumulating → the hard SL is the only floor (no DCA-down).
+                    triggered.append(row.id)
             continue
         if row.total_filled_qty <= 0:
             continue
@@ -950,7 +1241,16 @@ def run_position_guard(db: Session) -> dict:
     from app.market import get_current_prices
     from app.models import PENDING, PendingOrder
 
-    if not settings.kss_dynamic_tp_enabled:
+    # Pyramid-UP sessions need their BE+ trailing stop guarded even when the global dynamic-TP
+    # toggle is off (see _evaluate_dynamic_exit) — only skip the whole guard when BOTH the
+    # feature is off AND there is no pyramid_up session that could need it.
+    has_pyramid_up = (
+        db.query(KssSession)
+        .filter(KssSession.status == SESSION_ACTIVE, KssSession.strategy_mode == "pyramid_up")
+        .count()
+        > 0
+    )
+    if not settings.kss_dynamic_tp_enabled and not has_pyramid_up:
         return {"checked": 0, "exited": []}
     active = (db.query(KssSession)
               .filter(KssSession.status == SESSION_ACTIVE,

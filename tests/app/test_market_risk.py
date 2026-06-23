@@ -6,6 +6,7 @@ import pytest
 
 import app.market as market
 from app import models, risk
+from app.config import settings
 
 
 @pytest.fixture(autouse=True)
@@ -13,6 +14,14 @@ def _clear_market_cache():
     market.clear_cache()
     yield
     market.clear_cache()
+
+
+@pytest.fixture(autouse=True)
+def _pin_account_equity(monkeypatch):
+    # The risk-threshold tests below assume a $10k book (10% position cap = $1k, 5% daily-loss
+    # cap = $500). Pin it so they stay deterministic regardless of the per-instance .env
+    # ACCOUNT_EQUITY (the paper wide-test instance runs at $10M).
+    monkeypatch.setattr(settings, "account_equity", 10000.0)
 
 
 class _FakeProvider:

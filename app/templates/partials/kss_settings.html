@@ -100,6 +100,24 @@
       <option value="1" {% if k.mae_quartile_gate_enabled %}selected{% endif %}>Bật</option>
       <option value="0" {% if not k.mae_quartile_gate_enabled %}selected{% endif %}>Tắt</option>
     </select></label>
+  <h3 class="section-subhead">━ Chế độ Pyramid-UP (theo đà tăng) ━</h3>
+  <label title="Công tắc tổng cho regime router (docs/pyramid-up-plan.md): khi bật, scanner phân loại mỗi ứng viên 'pyramid_up' (vào theo đà tăng) hoặc 'dca_down' (mua khi giảm, đường cũ) dựa trên tín hiệu TA trước khi mở. Tắt = mọi ứng viên vẫn là 'dca_down' — không đổi hành vi.">Bật regime router <span class="varname">strategy_router_enabled</span>
+    <select name="strategy_router_enabled" class="select-inline">
+      <option value="1" {% if k.strategy_router_enabled %}selected{% endif %}>Bật</option>
+      <option value="0" {% if not k.strategy_router_enabled %}selected{% endif %}>Tắt</option>
+    </select></label>
+  <label title="Gate regime Pyramid-UP: return sức-mạnh-tương-đối-vs-BTC (%) tối thiểu một ứng viên phải vượt để được định tuyến sang 'pyramid_up' thay vì 'dca_down'. Cao hơn = chỉ coin outperform BTC rõ rệt nhất mới vào chế độ scale-vào-đà-tăng.">RS tối thiểu cho Pyramid-UP % <span class="varname">pyramid_up_min_rel_strength</span>
+    <input name="pyramid_up_min_rel_strength" type="number" step="0.1" min="-100" max="100" value="{{ '%.1f'|format(k.pyramid_up_min_rel_strength) }}"></label>
+  <label title="Gate regime Pyramid-UP: ADX (độ mạnh xu hướng) tối thiểu một ứng viên phải có để định tuyến sang 'pyramid_up'. Dưới ngưỡng này xu hướng tăng quá yếu/nhiễu để cưỡi theo; rơi về 'dca_down'.">ADX tối thiểu cho Pyramid-UP <span class="varname">pyramid_up_min_adx</span>
+    <input name="pyramid_up_min_adx" type="number" step="0.5" min="0" max="100" value="{{ '%.1f'|format(k.pyramid_up_min_adx) }}"></label>
+  <label title="Ladder Pyramid-UP: % trên giá entry giữa mỗi lần kích hoạt add-on (add lần n kích hoạt tại entry×(1+%này)^n). Nhỏ hơn = add kích hoạt sớm hơn/gần nhau hơn; lớn hơn = chờ một nhịp tăng mạnh hơn được xác nhận mới scale vào.">Bước % mỗi add-on <span class="varname">pyramid_up_step_pct</span>
+    <input name="pyramid_up_step_pct" type="number" step="0.1" min="0.1" max="50" value="{{ '%.1f'|format(k.pyramid_up_step_pct) }}"></label>
+  <label title="Ladder Pyramid-UP: mỗi add-on có khối lượng = tỷ lệ này × khối lượng sóng trước (anti-martingale — giảm dần nghiêm ngặt). Giới hạn trong (0, 1) không bao gồm biên; vd 0.7 = mỗi add bằng 70%% sóng trước.">Tỷ lệ khối lượng add-on <span class="varname">pyramid_up_size_ratio</span>
+    <input name="pyramid_up_size_ratio" type="number" step="0.01" min="0.01" max="0.99" value="{{ '%.2f'|format(k.pyramid_up_size_ratio) }}"></label>
+  <label title="Ladder Pyramid-UP: số sóng add-on tối đa trên sóng entry gốc (chặn cứng ở 3 dù đặt giá trị này cao hơn — pyramid_up.MAX_ADDS_CAP). 0 = chỉ sóng gốc, không scale vào.">Số add-on tối đa <span class="varname">pyramid_up_max_adds</span>
+    <input name="pyramid_up_max_adds" type="number" step="1" min="0" max="3" value="{{ k.pyramid_up_max_adds }}"></label>
+  <label title="Quản trị rủi ro Pyramid-UP: sau mỗi add khớp, SL dời lên break-even-plus = avg×(1+%này) (sàn ở mức hòa phí) — mỗi add là một 'free-roll', rủi ro net không vượt quá rủi ro của sóng gốc.">Khóa lãi sau add % <span class="varname">pyramid_up_lock_pct</span>
+    <input name="pyramid_up_lock_pct" type="number" step="0.1" min="0" max="100" value="{{ '%.1f'|format(k.pyramid_up_lock_pct) }}"></label>
   <h3 class="section-subhead">━ OPUS God Mode (học &amp; sao chép) ━</h3>
   <label title="Chế độ SAO CHÉP: ưu tiên mở các coin mà engine luật (đang có lãi) vừa chấm 'trade' trong lần quét này; OPUS phải giải thích nếu đi chệch. Chỉ là gợi ý mềm trong prompt, không phải lọc cứng.">Chế độ sao chép <span class="varname">opus_copy_mode</span>
     <select name="opus_copy_mode" class="select-inline">

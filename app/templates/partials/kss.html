@@ -33,7 +33,13 @@
   <tbody>
     {% for s in sessions %}
     <tr>
-      <td>{{ s.symbol }} <span class="muted fs-11">#{{ s.id }}</span></td>
+      <td>{{ s.symbol }} <span class="muted fs-11">#{{ s.id }}</span>
+        {% if s.strategy_mode == 'pyramid_up' %}
+        <span class="badge strategy-pyr" title="Chế độ Pyramid-UP: scale vào theo đà tăng (add-on trên giá entry).">PYR↑</span>
+        {% else %}
+        <span class="badge strategy-dca" title="Chế độ DCA-xuống: mua thêm khi giá giảm (đường mặc định).">DCA↓</span>
+        {% endif %}
+      </td>
       <td><span class="badge {{ s.status }}">{{ s.status }}</span>{% if s.trail_active %}
         <span class="badge active" title="Đang trailing-TP: SL trailing {{ '%.4f'|format(s.trail_sl_price) }}, ladder DCA đã hủy.">🔼 trailing</span>{% endif %}</td>
       <td>{{ s.filled_waves_count }}/{{ s.max_waves }}</td>

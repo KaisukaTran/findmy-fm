@@ -30,7 +30,7 @@
       <td>{{ r.quantity | qty }}</td>
       <td>{{ r.price | money }}</td>
       <td>{{ "%.4f"|format(r.fee) }}</td>
-      <td class="{{ 'pos' if r.realized_pnl >= 0 else 'neg' }}">{{ r.realized_pnl | money }}</td>
+      <td class="{{ 'pos' if r.realized_pnl >= 0 else 'neg' }}">{{ r.realized_pnl | money_kmb }}</td>
       <td><span class="badge {{ 'ml-on' if r.source == 'OPUS' else ('active' if r.source == 'KSS' else '') }}">{{ r.source }}</span></td>
     </tr>
     {% endfor %}

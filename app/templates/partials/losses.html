@@ -1,11 +1,11 @@
 {% set cause_badge = {'OPUS':'ml-on','KSS-SL':'veto','KSS-Trail':'hyperopt-on','KSS-TP?':'breaker-frozen','Khác':''} %}
 <div class="cards mb-12">
   <div class="card"><div class="label" data-tip="Tổng lỗ đã chốt từ mọi lệnh bán có realized < 0.">Tổng lỗ đã chốt</div>
-    <div class="value neg">${{ L.total | money }}</div></div>
+    <div class="value neg">${{ L.total | money_kmb }}</div></div>
   <div class="card"><div class="label" data-tip="Số lệnh bán bị lỗ.">Số lệnh lỗ</div><div class="value">{{ L.count }}</div></div>
   {% for tag, c in L.by_cause.items() %}
   <div class="card"><div class="label"><span class="badge {{ cause_badge.get(tag,'') }}">{{ tag }}</span></div>
-    <div class="value neg fs-15">${{ c.total | money }} <span class="muted fs-12">· {{ c.count }} lệnh</span></div></div>
+    <div class="value neg fs-15">${{ c.total | money_kmb }} <span class="muted fs-12">· {{ c.count }} lệnh</span></div></div>
   {% endfor %}
 </div>
 
@@ -15,7 +15,7 @@
   <thead><tr><th>Cặp</th><th>Số lệnh lỗ</th><th>Tổng lỗ</th></tr></thead>
   <tbody>
     {% for sym, p in L.by_pair %}
-    <tr><td>{{ sym }}</td><td>{{ p.count }}</td><td class="neg">${{ p.total | money }}</td></tr>
+    <tr><td>{{ sym }}</td><td>{{ p.count }}</td><td class="neg">${{ p.total | money_kmb }}</td></tr>
     {% endfor %}
   </tbody>
 </table></div>
@@ -37,8 +37,8 @@
     <tr>
       <td class="muted">{{ r.time }}</td>
       <td>{{ r.symbol }}</td>
-      <td class="muted">${{ r.value | money }}</td>
-      <td class="neg">${{ r.loss | money }}</td>
+      <td class="muted">${{ r.value | money_kmb }}</td>
+      <td class="neg">${{ r.loss | money_kmb }}</td>
       <td class="muted">{{ "%.4f"|format(r.fee) }}</td>
       <td><span class="badge {{ cause_badge.get(r.tag,'') }}" title="{{ r.reason }} | {{ r.source_ref }}">{{ r.tag }}</span></td>
     </tr>

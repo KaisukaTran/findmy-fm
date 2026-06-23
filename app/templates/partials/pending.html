@@ -36,11 +36,11 @@
       <td>{{ o.quantity | qty }}</td>
       <td>{{ (o.price | money) if o.price else "mkt" }}</td>
       <td class="muted">{{ (o.mkt | money) if o.mkt else "—" }}</td>
-      <td class="muted">${{ o.notional | money }}</td>
+      <td class="muted">${{ o.notional | money_kmb }}</td>
       <td class="muted">{{ o.source }}{% if o.risk_note %} ⚠{% endif %}{% if o.get('auto_veto') %} <span class="badge veto" title="{{ o.get('auto_veto_reason') or '' }}">VETOED</span>{% endif %}</td>
       <td>
         {%- if not o.auto -%}
-          <span class="badge badge-manual" title="${{ o.notional | money }} > ngưỡng — cần duyệt tay">TAY</span>
+          <span class="badge badge-manual" title="${{ o.notional | money_kmb }} > ngưỡng — cần duyệt tay">TAY</span>
         {%- elif o.due -%}
           <span class="badge active" title="≤ ngưỡng và đã tới giá — tự duyệt chu kỳ tới">AUTO ✓</span>
         {%- else -%}

@@ -47,6 +47,23 @@ _TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 # Display filters: money = ##,###.## (thousands + 2dp); qty keeps crypto precision.
 templates.env.filters["money"] = lambda v: f"{float(v or 0):,.2f}"
+
+
+def _money_kmb(v) -> str:
+    """Abbreviated money: full below 1K, then K/M/B. For amounts, not prices."""
+    n = float(v or 0)
+    sign = "-" if n < 0 else ""
+    a = abs(n)
+    if a < 1e3:
+        return f"{n:,.2f}"
+    if a < 1e6:
+        return f"{sign}{a / 1e3:.1f}K"
+    if a < 1e9:
+        return f"{sign}{a / 1e6:.2f}M"
+    return f"{sign}{a / 1e9:.2f}B"
+
+
+templates.env.filters["money_kmb"] = _money_kmb
 templates.env.filters["qty"] = lambda v: f"{float(v or 0):,.6f}"
 templates.env.filters["ladder"] = charts.pyramid_ladder_svg  # session dict -> SVG
 # Display timezone: stored UTC -> local (Vietnam GMT+7) HH:MM:SS / full datetime.
@@ -380,7 +397,7 @@ class KssSettingsBody(BaseModel):
     sl_pct: float | None = Field(None, ge=0, le=100)
     trailing_pct: float | None = Field(None, ge=0, le=100)
     deadline_days: int | None = Field(None, ge=1, le=365)
-    max_concurrent_sessions: int | None = Field(None, ge=1, le=100)
+    max_concurrent_sessions: int | None = Field(None, ge=1, le=500)  # raised for wide-scale paper tests (~universe size)
     max_sessions_per_symbol: int | None = Field(None, ge=0, le=20)
     max_deployed_pct: float | None = Field(None, gt=0, le=100)
     equity_backup_pct: float | None = Field(None, ge=0, le=90)

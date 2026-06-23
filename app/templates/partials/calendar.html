@@ -30,7 +30,7 @@
 
   <div class="cal-total muted">
     Tổng đã chốt:
-    <span class="{{ 'pos' if ctx.total >= 0 else 'neg' }}">${{ ctx.total | money }}</span>
+    <span class="{{ 'pos' if ctx.total >= 0 else 'neg' }}">${{ ctx.total | money_kmb }}</span>
     · {{ ctx.closed }} lệnh · thắng {{ ctx.win_rate }}%
   </div>
 </div>

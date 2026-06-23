@@ -228,6 +228,15 @@ def run_cycle(db: Session) -> dict:
 def _cycle_once() -> None:
     db = SessionLocal()
     try:
+        # Warm the OHLCV candle cache OUTSIDE _work_lock first: the fetch is network-heavy
+        # (~minutes on a cold cache after a restart) but read-only w.r.t. session rows, so
+        # doing it off-lock keeps the 90s position-guard responsive. run_cycle's own
+        # _prefetch_candles then hits the warm cache, so the lock is held only for the fast
+        # write phase. Best-effort — on failure run_cycle fetches under the lock as before.
+        try:
+            scanner.prefetch_universe_candles(db)
+        except Exception:
+            logger.exception("candle prefetch failed (non-fatal; scan will fetch under lock)")
         with _work_lock:  # never run concurrently with the fast guard
             run_cycle(db)
     finally:

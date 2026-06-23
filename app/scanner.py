@@ -228,6 +228,23 @@ def _effective_params(db: Session, symbol: str) -> tuple[float, float, int]:
     return settings.scan_distance_pct, settings.scan_tp_pct, settings.scan_max_waves
 
 
+def prefetch_universe_candles(db: Session) -> int:
+    """Warm the OHLCV candle cache for the whole universe OUTSIDE the scheduler ``_work_lock``,
+    so the slow cold-cache fetch no longer blocks the fast 90s position-guard (which needs the
+    same lock). Read-only w.r.t. session/position/order rows — only the in-process candle cache
+    is written, and that is independent of any DB row, so warming it off-lock is race-free.
+
+    Uses the SAME ``exchange``/``timeframe``/``limit``/``_universe`` the locked ``run_scan`` uses,
+    so the warmed entries match exactly what ``run_scan`` then requests (the universe is a superset
+    of run_scan's ``to_fetch``). Best-effort: any failure just leaves ``run_scan`` to fetch under
+    the lock exactly as before. Returns the number of symbols warmed."""
+    provider = data_provider()
+    universe = _universe(db, provider)
+    limit = _days_to_bars(settings.backtest_lookback_days, settings.backtest_timeframe)
+    _prefetch_candles(settings.data_exchange, universe, settings.backtest_timeframe, limit)
+    return len(universe)
+
+
 def run_scan(db: Session, mode: str | None = None) -> dict:
     """Run one full scan; returns {scan_id, mode, candidates:[...]}.
 

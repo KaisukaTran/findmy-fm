@@ -144,6 +144,19 @@ class Settings(BaseSettings):
         default="kraken",
         description="ccxt exchange id for backtest/scan history (public, no key — e.g. kraken/coinbase).",
     )
+    live_ws_prices: bool = Field(
+        default=True,
+        description="Live instance only: stream real-time prices from the Binance public "
+        "WebSocket (!miniTicker@arr) to keep the price cache warm so trailing-stop/crash-detect "
+        "react sub-second instead of every kss_exit_check_sec. Gated by live_trading — paper "
+        "never starts it. REST stays the fallback if the socket drops.",
+    )
+    ws_stale_sec: int = Field(
+        default=10,
+        description="Live WS price feed: if no ticker message has arrived within this many "
+        "seconds the socket is treated as down and get_current_prices(force=True) falls back "
+        "to a REST fetch.",
+    )
 
     # --- Scanner / multi-agent decision layer ---
     watchlist: list[str] = Field(

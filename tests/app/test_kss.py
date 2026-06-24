@@ -212,6 +212,31 @@ def test_queue_next_wave_after_extending_ladder(db, mock_market):
     assert row.current_wave == 2
 
 
+def test_preview_next_wave_suggests_cost_even_when_ladder_full(db, mock_market):
+    """preview_next_wave is read-only and returns the next rung's $ even on a FULL ladder
+    (where a plain DCA+ refuses) — so the UI can suggest a deliberate DCA+ amount."""
+    row = service.create_session(
+        db, symbol="BTC", entry_price=50000.0, distance_pct=2.0, max_waves=2,
+        isolated_fund=100000.0, tp_pct=3.0, timeout_x_min=30.0, gap_y_min=5.0,
+    )
+    res = service.start_session(db, row.id)
+    orders.approve_order(db, res["pending_order_id"])  # fill wave 0 → queues wave 1
+    w1 = next(p for p in orders.list_pending(db) if p.source_ref == f"pyramid:{row.id}:wave:1")
+    orders.approve_order(db, w1.id)  # fill wave 1 → ladder full (max_waves=2)
+
+    pv = service.preview_next_wave(db, row.id)
+    assert pv["wave_num"] == 2
+    assert pv["ladder_full"] is True
+    assert pv["cost"] > 0 and pv["quantity"] > 0 and pv["price"] > 0
+    assert pv["idle_deployable"] >= 0
+
+    # Read-only: the preview must NOT mutate state — a plain DCA+ still refuses,
+    # and no extra wave row was created.
+    with pytest.raises(ValueError, match="Ladder exhausted"):
+        service.queue_next_wave(db, row.id)
+    assert db.query(models.KssWave).filter_by(session_id=row.id).count() == 2
+
+
 def test_dca_next_funds_from_idle_cash_when_reservation_exhausted(db, mock_market, monkeypatch):
     """Manual DCA+ deploys idle account cash when the session's own isolated_fund is used up
     (the reservation is a planning cap, not real set-aside cash)."""

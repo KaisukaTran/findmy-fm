@@ -66,10 +66,36 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "loss_streak_block_k": int,
     "loss_streak_window_days": int,
     "min_expectancy_pct": float,
+    "max_avg_mae_pct": float,  # drawdown gate (0=off) + ranking: shallower backtest dip = better
     "min_win_rate": float,
     "min_confidence": float,  # S4: consensus threshold, now decoupled from backtest
     "min_trials": int,  # min backtest trials for a trustworthy edge (cut thin-sample noise)
     "block_downtrend_adx": float,  # hard veto: HTF+ST down & ADX≥this (0=off) — entry timing
+    "entry_momentum_gate": _to_bool,  # veto open when ST down & MACDh<0 (don't buy a falling knife)
+    "rel_strength_enabled": _to_bool,  # skip coins materially weaker than BTC over the lookback
+    "rel_strength_lookback_bars": int,
+    "rel_strength_margin_pct": float,
+    "regime_ramp_enabled": _to_bool,  # breadth-aware soft throttle of new opens/scan (never a stop)
+    "mae_quartile_gate_enabled": _to_bool,  # drop worst-quartile worst_mae candidates per scan
+    # Pyramid-UP regime router (docs/pyramid-up-plan.md) — OFF by default, zero behavior change
+    "strategy_router_enabled": _to_bool,
+    "pyramid_up_min_rel_strength": float,
+    "pyramid_up_min_adx": float,
+    "pyramid_up_step_pct": float,
+    "pyramid_up_size_ratio": float,
+    "pyramid_up_max_adds": int,
+    "pyramid_up_lock_pct": float,
+    # Dynamic trailing TP/SL (docs/kss-dynamic-tp-plan.md) — all runtime-tunable, OFF by default
+    "kss_dynamic_tp_enabled": _to_bool,
+    "kss_tp_gap_pct": float,
+    "kss_exit_fee_mult": float,
+    "kss_trail_atr_mult": float,
+    "kss_trail_min_pct": float,
+    "kss_trail_arm_pct": float,
+    "kss_trail_lock_pct": float,
+    "kss_exit_check_sec": int,
+    "kss_crash_drop_pct": float,
+    "kss_live_stop_orders": _to_bool,
     "tp_fee_coverage": float,  # TP adds this × round-trip fee (1.2 = +120% of fees)
     "grok_scanner_fail_mode": str,  # S5: "open" | "closed"
     "grok_scanner_batch_max": int,  # how many candidates Grok reviews per scan (cover them all)
@@ -83,6 +109,12 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "maker_orders": _to_bool,
     "order_fill_timeout_sec": int,
     "live_use_testnet": _to_bool,
+    # OPUS god-mode scaffolding (docs/opus-godmode-plan.md §3) — wiring deferred, knobs persist now.
+    "opus_copy_mode": _to_bool,
+    "opus_solo_open": _to_bool,
+    "opus_solo_min_consensus": float,
+    "opus_lessons_max": int,
+    "opus_history_n": int,
 }
 
 # ---------------------------------------------------------------------------

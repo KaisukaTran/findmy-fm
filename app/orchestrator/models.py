@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, Index, Integer, String
+from sqlalchemy import DateTime, Float, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -63,6 +63,25 @@ class OpusCostLedger(Base):
     billed_cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # 2x raw
     purpose: Mapped[str] = mapped_column(String(32), nullable=False, default="decision")
     request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class OpusLesson(Base):
+    """Distilled lesson from OPUS's own/the engine's trade history (Phase O-LEARN, L2).
+
+    A periodic distiller summarizes recent wins/losses into short lessons; the top
+    `opus_lessons_max` are injected into the static system prompt so learning compounds
+    across calls instead of being amnesiac. Table created now (O-FIX scaffolding); the
+    writer/reader is built in a later phase.
+    """
+
+    __tablename__ = "opus_lessons"
+    __table_args__ = (Index("ix_opus_lessons_ts", "ts"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ts: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    scope: Mapped[str] = mapped_column(String(32), nullable=False, default="general")
+    lesson_text: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class OpusMetricHourly(Base):

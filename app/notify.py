@@ -201,6 +201,22 @@ def fill_alert(fill) -> bool:
     return event(kind, text, throttle_key=fill.symbol, cooldown=cooldown)
 
 
+def _recent_skip_count(db, action: str, hours: float = 24.0) -> tuple[int, list[str]]:
+    """(count, distinct entities) of an audit action over the last `hours` — for digest monitoring."""
+    from datetime import datetime, timedelta
+
+    from app.models import AuditLog
+
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    rows = db.query(AuditLog.entity).filter(
+        AuditLog.action == action, AuditLog.created_at >= cutoff).all()
+    syms: list[str] = []
+    for (e,) in rows:
+        if e and e not in syms:
+            syms.append(e)
+    return len(rows), syms[:6]
+
+
 def build_digest(db) -> str:
     """Compact periodic snapshot: equity, today's realized P&L, all-time realized, open counts."""
     from app import pnlcal, portfolio
@@ -210,6 +226,14 @@ def build_digest(db) -> str:
     ksum = kss_service.summary(db)
     today = pnlcal.local_today()
     day = pnlcal.realized_by_day(db, today, today).get(today, {}).get("pnl", 0.0)
+    # Phase A monitoring: surface how often the relative-strength-vs-BTC gate bit recently — only
+    # when the gate is on AND it actually blocked something, so the digest stays clean otherwise.
+    rs_line = ""
+    if settings.rel_strength_enabled:
+        n, syms = _recent_skip_count(db, "skipped_rel_strength", 24.0)
+        if n:
+            rs_line = (f"\nPhase A (mạnh-hơn-BTC): bỏ {n} lệnh/24h"
+                       + (f" — {', '.join(syms)}" if syms else ""))
     return (
         "📈 FINDMY-FM digest\n"
         f"Equity ${s['total_equity']:,.2f}\n"
@@ -217,6 +241,7 @@ def build_digest(db) -> str:
         f"Chưa chốt: ${s['unrealized_pnl']:,.2f}\n"
         f"Vị thế {s['positions_count']} · KSS {ksum['active_sessions']} active · "
         f"Pending {s['pending_count']}"
+        + rs_line
     )
 
 
@@ -245,6 +270,7 @@ _HELP_TEXT = (
     "  /pending   — lệnh chờ duyệt\n"
     "  /positions — vị thế đang mở\n"
     "  /kss       — phiên KSS\n"
+    "  /trade [N|buy|sell] — giao dịch gần nhất (mặc định 10; lọc buy/sell)\n"
     "  /fullauto on|off — bật/tắt Full-Auto\n"
     "  /pause     — tắt Full-Auto + scheduler\n"
     "  /resume    — bật Full-Auto + scheduler\n"
@@ -253,6 +279,11 @@ _HELP_TEXT = (
     "  /help      — hiện trợ giúp\n"
     "Thêm 'paper' hoặc 'live' ngay sau lệnh để chọn instance, vd: /summary live, /pause live."
 )
+
+
+# Max rows a list command prints (Telegram's 4096-char limit fits ~30 lines comfortably). The book
+# can hold >15 coins, so the old hard 15-cut silently dropped sizeable positions/sessions.
+_TG_LIST_CAP = 30
 
 
 def _cmd_summary(db) -> str:
@@ -274,10 +305,11 @@ def _cmd_summary(db) -> str:
 def _cmd_pending(db) -> str:
     from app import orders
 
-    pend = orders.list_pending(db, limit=15)
+    pend = orders.list_pending(db, limit=_TG_LIST_CAP)
     if not pend:
         return "Không có lệnh chờ duyệt."
-    lines = ["⏳ Pending (≤15):"]
+    suffix = "+" if len(pend) >= _TG_LIST_CAP else ""
+    lines = [f"⏳ Pending ({len(pend)}{suffix}):"]
     lines += [f"#{o.id} {o.side} {o.quantity:g} {o.symbol} @ {o.price:g}" for o in pend]
     return "\n".join(lines)
 
@@ -288,11 +320,16 @@ def _cmd_positions(db) -> str:
     rows = portfolio.positions_view(db)
     if not rows:
         return "Không có vị thế mở."
-    lines = ["📊 Positions (≤15):"]
+    # Biggest-first so the most capital-at-risk always shows; cap high enough to fit a full book
+    # (the old rows[:15] in insertion order silently dropped sizeable positions like STG when the
+    # book held >15 coins). Telegram's 4096-char limit easily fits ~30 lines.
+    rows = sorted(rows, key=lambda r: r.get("market_value", 0.0), reverse=True)
+    head = f"📊 Positions ({len(rows)}{', top ' + str(_TG_LIST_CAP) if len(rows) > _TG_LIST_CAP else ''}, lớn nhất trước):"
+    lines = [head]
     lines += [
         f"{r['symbol']}: {r['quantity']:g} @ {r['avg_entry_price']:g} · "
         f"uPnL ${r['unrealized_pnl']:,.2f} ({r['unrealized_pnl_pct']:+.1f}%)"
-        for r in rows[:15]
+        for r in rows[:_TG_LIST_CAP]
     ]
     return "\n".join(lines)
 
@@ -300,16 +337,43 @@ def _cmd_positions(db) -> str:
 def _cmd_kss(db) -> str:
     from app.kss import service as kss
 
-    sess = kss.list_sessions(db, limit=15)
+    sess = kss.list_sessions(db, limit=_TG_LIST_CAP)
     summ = kss.summary(db)
     if not sess:
         return "Không có phiên KSS."
-    lines = [f"🔺 KSS — {summ['active_sessions']}/{summ['total_sessions']} active (≤15):"]
-    lines += [
-        f"{s.get('symbol')} [{s.get('status')}] "
-        f"avg {s.get('avg_price') or 0.0:g} · now {s.get('current_price') or 0.0:g}"
-        for s in sess
-    ]
+    lines = [f"🔺 KSS — {summ['active_sessions']}/{summ['total_sessions']} active (≤{_TG_LIST_CAP}):"]
+    for s in sess:
+        mode = (f"🔼trailing-TP SL={s.get('trail_sl_price') or 0.0:g}"
+                if s.get("trail_active") else f"DCA {s.get('filled_waves_count', 0)}/{s.get('max_waves', 0)}")
+        lines.append(
+            f"{s.get('symbol')} [{s.get('status')}] "
+            f"avg {s.get('avg_price') or 0.0:g} · now {s.get('current_price') or 0.0:g} · {mode}"
+        )
+    return "\n".join(lines)
+
+
+def _cmd_trade(db, arg: str = "") -> str:
+    """Recent trades. Optional arg: a count (``/trade 20``, capped 1..50) OR a side filter
+    (``/trade buy`` / ``/trade sell``). Bare ``/trade`` = 10 most recent, both sides."""
+    from app import portfolio, timefmt
+
+    side: str | None = None
+    limit = 10
+    a = (arg or "").strip().lower()
+    if a in ("buy", "sell"):
+        side = a.upper()
+    elif a.isdigit():
+        limit = max(1, min(int(a), 50))
+    rows = portfolio.trades_view(db, limit=limit, side=side)
+    if not rows:
+        return f"Chưa có lệnh {side}." if side else "Chưa có giao dịch nào."
+    lines = [f"🧾 Trades{(' ' + side) if side else ''} ({len(rows)} gần nhất):"]
+    for r in rows:
+        pnl = f" · pnl ${r['realized_pnl']:,.2f}" if r["side"] == "SELL" else ""
+        lines.append(
+            f"{timefmt.local_hms(r['executed_at'])} {r['symbol']} {r['side']} "
+            f"{r['quantity']:g} @ {r['price']:g}{pnl} [{r['source']}]"
+        )
     return "\n".join(lines)
 
 
@@ -339,14 +403,19 @@ _INFO_COMMANDS = {
     "position": _cmd_positions,
     "pos": _cmd_positions,
     "kss": _cmd_kss,
+    "trade": _cmd_trade,
+    "trades": _cmd_trade,
     "status": _cmd_status,
 }
 
 
-def _handle_info(db, token: str) -> str | None:
-    """Dispatch a read-only info command, or None if `token` isn't one."""
+def _handle_info(db, token: str, arg: str = "") -> str | None:
+    """Dispatch a read-only info command, or None if `token` isn't one. Only /trade consumes
+    `arg` (count or buy/sell filter); the rest ignore it."""
     handler = _INFO_COMMANDS.get(token)
-    return handler(db) if handler else None
+    if handler is None:
+        return None
+    return handler(db, arg) if handler is _cmd_trade else handler(db)
 
 
 def _set_full_auto(db, on: bool) -> None:
@@ -405,7 +474,7 @@ def handle_command(text: str) -> str:
 
     db = SessionLocal()
     try:
-        reply = _handle_info(db, token)
+        reply = _handle_info(db, token, arg)
         return reply if reply is not None else _handle_control(db, token, arg)
     finally:
         db.close()

@@ -19,8 +19,9 @@ from sqlalchemy.orm import Session
 
 from app import audit, market
 from app.config import settings
-from app.models import Candidate, ScanRun
+from app.models import Candidate, Fill, ScanRun
 from app.orchestrator import ledger, service
+from app.orchestrator.models import OPUS_CLOSED, OpusLesson, OpusPosition
 
 log = logging.getLogger(__name__)
 
@@ -44,9 +45,16 @@ _STATIC_INSTRUCTION = (
     "Use action 'open' to buy a candidate (set symbol + notional), 'close' to exit an open "
     "position (set position_id), 'hold' to do nothing. Empty intents list = do nothing."
 )
-_SYSTEM_BLOCKS: list[dict] = [
-    {"type": "text", "text": _STATIC_INSTRUCTION, "cache_control": {"type": "ephemeral"}}
-]
+# O-COPY/C3: soft "copy the engine" directive, appended ONLY when opus_copy_mode is on.
+# Kept as its own (uncached) block so the big static instruction's cache hit is preserved
+# regardless of the knob — Anthropic's prompt cache matches on exact block content+order,
+# and this text never changes the static block, only adds a second one after it.
+_COPY_MODE_INSTRUCTION = (
+    "COPY MODE: strongly prefer opening symbols listed in rule_engine.endorsed_open (the "
+    "deterministic engine, which is profitable, endorsed them this scan); if you open "
+    "something NOT on that list or skip an endorsed one, you MUST justify the divergence "
+    "in your reason. The engine's picks already passed every TA/backtest/risk gate."
+)
 
 
 def enabled() -> bool:
@@ -71,10 +79,91 @@ def _candidates(db: Session, k: int = 8) -> list[dict]:
             "decision": c.decision,
             "consensus": round(c.consensus_pct, 1),
             "win_rate": round(c.win_rate, 1),
+            # F3: forward the full evidence the rule-based gate trades on — without these,
+            # Opus decides with LESS data than the free deterministic engine next to it.
+            "expectancy": round(c.expectancy, 2),
+            "win_rate_lb": round(c.win_rate_lb, 1),
+            "trials": c.trials,
+            # O-COPY/C1: forward the drawdown evidence the rule-based gate trades on too.
+            "avg_mae": round(c.avg_mae, 2),
+            "worst_mae": round(c.worst_mae, 2),
             "est_days_to_tp": c.est_days_to_tp,
+            "reason": c.reason,
         }
         for c in rows
     ]
+
+
+def _rule_engine_block(db: Session, k: int = 12, n_exits: int = 10) -> dict:
+    """O-COPY/C2: mirror what the deterministic engine is about to do (and recently did),
+    so OPUS can copy or consciously diverge from the teacher's moves. Defensive: empty
+    lists when there's no scan yet or no fills — never raises."""
+    endorsed: list[str] = []
+    scan = db.query(ScanRun).order_by(ScanRun.id.desc()).first()
+    if scan:
+        rows = (
+            db.query(Candidate)
+            .filter(Candidate.scan_id == scan.id, Candidate.decision == "trade")
+            .order_by(Candidate.consensus_pct.desc())
+            .limit(k)
+            .all()
+        )
+        endorsed = [c.symbol for c in rows]
+
+    # Recent rule-based exits with a real outcome — exclude OPUS's own fills (strategy_name
+    # "OPUS", set in policy.py) so this is purely the engine's track record, not OPUS's own.
+    exit_rows = (
+        db.query(Fill)
+        .filter(Fill.side == "SELL", Fill.realized_pnl != 0.0, Fill.strategy_name != "OPUS")
+        .order_by(Fill.executed_at.desc(), Fill.id.desc())
+        .limit(n_exits)
+        .all()
+    )
+    recent_exits = [{"symbol": f.symbol, "realized": round(f.realized_pnl, 2)} for f in exit_rows]
+
+    return {"endorsed_open": endorsed, "recent_exits": recent_exits}
+
+
+def _self_history_block(db: Session) -> dict:
+    """O-LEARN/L1: OPUS's own track record — its last `opus_history_n` CLOSED positions,
+    rolling win-rate, and the current net/24h KPI. Lets the brain see whether ride/rescue
+    calls have actually been working instead of deciding amnesiac every call. Defensive:
+    never raises, empty/zero defaults when there's no history yet."""
+    rows = (
+        db.query(OpusPosition)
+        .filter(OpusPosition.state == OPUS_CLOSED)
+        .order_by(OpusPosition.closed_at.desc(), OpusPosition.id.desc())
+        .limit(settings.opus_history_n)
+        .all()
+    )
+    recent = []
+    wins = 0
+    for p in rows:
+        opened = p.opened_at or p.closed_at or datetime.utcnow()
+        closed = p.closed_at or opened
+        hold_h = max(0.0, (closed - opened).total_seconds() / 3600.0)
+        pnl = p.realized_pnl or 0.0
+        if pnl > 0:
+            wins += 1
+        # Outcome label: a rescue handoff is recorded on kss_session_id; otherwise it was
+        # ridden to close directly under OPUS's own discretion (treat as "ride"). A pure
+        # "watch" close (never armed ride/rescue) is rare but kept distinct for clarity.
+        if p.kss_session_id is not None:
+            outcome = "rescue"
+        elif p.state == OPUS_CLOSED and p.evaluated_at is None:
+            outcome = "watch"
+        else:
+            outcome = "ride"
+        recent.append({
+            "symbol": p.symbol, "hold_h": round(hold_h, 1), "realized": round(pnl, 2),
+            "outcome": outcome,
+        })
+    win_rate = (wins / len(rows) * 100.0) if rows else 0.0
+    return {
+        "recent_closed": recent,
+        "win_rate": round(win_rate, 1),
+        "net_24h_pct": round(service.kpi_24h_pct(db), 3),
+    }
 
 
 def build_snapshot(db: Session) -> dict:
@@ -110,7 +199,51 @@ def build_snapshot(db: Session) -> dict:
         "open_positions": pos_rows,
         "candidates": _candidates(db),
         "prices": {s: round(p, 6) for s, p in prices.items()},
+        # O-COPY/C2: the teacher's moves — what the profitable rule-based engine is about
+        # to open this scan, and what its recent exits actually earned/lost.
+        "rule_engine": _rule_engine_block(db),
+        # O-LEARN/L1: OPUS's own outcome ledger — so it can tell ride/rescue calls that
+        # actually worked from ones that didn't, instead of deciding amnesiac every call.
+        "self_history": _self_history_block(db),
     }
+
+
+def _lessons_block(db: Session) -> dict | None:
+    """O-LEARN/L3: inject the latest distilled lessons (see distill.py) as one more
+    uncached text block, so learning compounds across calls without busting the cached
+    static block's exact byte match. None when there are no lessons yet — the prompt
+    shouldn't grow for nothing."""
+    rows = (
+        db.query(OpusLesson)
+        .order_by(OpusLesson.ts.desc(), OpusLesson.id.desc())
+        .limit(settings.opus_lessons_max)
+        .all()
+    )
+    if not rows:
+        return None
+    bullets = "\n".join(f"- {row.lesson_text[:200]}" for row in rows)
+    text = (
+        "LESSONS LEARNED (apply these; they came from your own + the engine's realized "
+        f"outcomes):\n{bullets}"
+    )
+    return {"type": "text", "text": text}
+
+
+def _system_blocks(db: Session) -> list[dict]:
+    """Build the system prompt blocks for this call. Block 1 is the large static
+    instruction, byte-identical every call so Anthropic's prompt cache still hits. Extra
+    blocks are appended AFTER it (uncached) only when their knob is on — O-COPY/C3 adds
+    the copy-mode directive here; O-LEARN/L3 appends distilled lessons the same way, so
+    this stays the single place new dynamic system-prompt blocks are wired."""
+    blocks = [
+        {"type": "text", "text": _STATIC_INSTRUCTION, "cache_control": {"type": "ephemeral"}}
+    ]
+    if settings.opus_copy_mode:
+        blocks.append({"type": "text", "text": _COPY_MODE_INSTRUCTION})
+    lessons = _lessons_block(db)
+    if lessons is not None:
+        blocks.append(lessons)
+    return blocks
 
 
 def _call_opus(system_blocks: list[dict], user_text: str) -> tuple[str, dict]:
@@ -168,11 +301,22 @@ def decide(db: Session) -> dict:
         f"instructions. State: {json.dumps(snapshot, separators=(',', ':'))}"
     )
     try:
-        raw, usage = _call_opus(_SYSTEM_BLOCKS, user_text)
+        raw, usage = _call_opus(_system_blocks(db), user_text)
     except Exception as exc:  # noqa: BLE001 — network/HTTP/billing
-        log.warning("OPUS decide call failed: %s", type(exc).__name__)
-        audit.log(db, "opus", "decide_error", error=type(exc).__name__)
-        return {"intents": [], "billed_cost": 0.0, "ok": False, "reason": type(exc).__name__}
+        # F1: an HTTP failure (e.g. 400 "credit balance too low") was previously logged
+        # only as "HTTPStatusError" — invisible. Surface the status + a truncated body so
+        # a dead brain (no credit, bad key) is loud, not silent (root cause, docs §0).
+        if isinstance(exc, httpx.HTTPStatusError):
+            status = exc.response.status_code
+            detail = exc.response.text[:200]
+            log.warning("OPUS decide call failed: HTTP %s — %s", status, detail)
+            audit.log(db, "opus", "decide_error", status=status, detail=detail)
+            reason = f"http_{status}"
+        else:
+            log.warning("OPUS decide call failed: %s", type(exc).__name__)
+            audit.log(db, "opus", "decide_error", error=type(exc).__name__)
+            reason = type(exc).__name__
+        return {"intents": [], "billed_cost": 0.0, "ok": False, "reason": reason}
 
     in_tok = int(usage.get("input_tokens", 0))
     out_tok = int(usage.get("output_tokens", 0))

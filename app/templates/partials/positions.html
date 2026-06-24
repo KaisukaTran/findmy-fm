@@ -22,9 +22,9 @@
       <td>{{ r.quantity | qty }}</td>
       <td>{{ r.avg_entry_price | money }}</td>
       <td>{{ r.current_price | money }}</td>
-      <td>${{ r.market_value | money }} <span class="muted fs-11">{{ "%.1f"|format(r.market_value_pct) }}%</span></td>
+      <td>${{ r.market_value | money_kmb }} <span class="muted fs-11">{{ "%.1f"|format(r.market_value_pct) }}%</span></td>
       <td class="{{ 'pos' if r.unrealized_pnl >= 0 else 'neg' }}">
-        ${{ r.unrealized_pnl | money }} ({{ "%.1f"|format(r.unrealized_pnl_pct) }}%)
+        ${{ r.unrealized_pnl | money_kmb }} ({{ "%.1f"|format(r.unrealized_pnl_pct) }}%)
       </td>
       <td>
         {% for s in r.sources %}<span class="badge {{ 'ml-on' if s == 'OPUS' else 'active' }}">{{ s }}</span> {% endfor %}

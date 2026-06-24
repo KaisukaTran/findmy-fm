@@ -228,6 +228,23 @@ def _effective_params(db: Session, symbol: str) -> tuple[float, float, int]:
     return settings.scan_distance_pct, settings.scan_tp_pct, settings.scan_max_waves
 
 
+def prefetch_universe_candles(db: Session) -> int:
+    """Warm the OHLCV candle cache for the whole universe OUTSIDE the scheduler ``_work_lock``,
+    so the slow cold-cache fetch no longer blocks the fast 90s position-guard (which needs the
+    same lock). Read-only w.r.t. session/position/order rows — only the in-process candle cache
+    is written, and that is independent of any DB row, so warming it off-lock is race-free.
+
+    Uses the SAME ``exchange``/``timeframe``/``limit``/``_universe`` the locked ``run_scan`` uses,
+    so the warmed entries match exactly what ``run_scan`` then requests (the universe is a superset
+    of run_scan's ``to_fetch``). Best-effort: any failure just leaves ``run_scan`` to fetch under
+    the lock exactly as before. Returns the number of symbols warmed."""
+    provider = data_provider()
+    universe = _universe(db, provider)
+    limit = _days_to_bars(settings.backtest_lookback_days, settings.backtest_timeframe)
+    _prefetch_candles(settings.data_exchange, universe, settings.backtest_timeframe, limit)
+    return len(universe)
+
+
 def run_scan(db: Session, mode: str | None = None) -> dict:
     """Run one full scan; returns {scan_id, mode, candidates:[...]}.
 
@@ -331,6 +348,8 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
     t_votes_ms = 0
     _n_skipped_thin = 0
 
+    # BTC reference return for the relative-strength entry gate (computed once; None = gate off/no data)
+    _btc_ret = _btc_ref_return(_candle_map, settings.rel_strength_lookback_bars)
     for symbol in to_fetch:
         candles, _hit = _candle_map.get(symbol, ([], False))
         if len(candles) < _MIN_CANDLES:
@@ -385,6 +404,9 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
             scan_id=scan.id, symbol=symbol, consensus_pct=consensus,
             win_rate=wr["win_rate"], win_rate_lb=wr["win_rate_lb"],
             expectancy=wr["expectancy"], trials=wr["trials"],
+            # O-COPY/C1: persist the same drawdown evidence the gate trades on, so OPUS
+            # can see it too. Pure persistence — does not feed back into any decision here.
+            avg_mae=wr["avg_mae"], worst_mae=wr["worst_mae"],
             est_days_to_tp=wr["avg_days_to_tp"],
             decision=d["decision"],
             reason="; ".join(d["reasons"])
@@ -410,12 +432,43 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
             # protects entries even when the Grok gate is off. The TA evidence now blocks the open
             # instead of only advising Grok.
             veto = _downtrend_veto(ta)
+            knife = None if veto else _falling_knife_veto(ta)
+            # Drawdown gate (off when max_avg_mae_pct=0): reject coins whose backtested typical
+            # deepest dip below avg is worse than the limit. avg_mae is ≤ 0, so "deeper" = more
+            # negative than −max_avg_mae_pct.
+            mae_block = None
+            if not veto and not knife and settings.max_avg_mae_pct > 0 \
+                    and wr["avg_mae"] < -settings.max_avg_mae_pct:
+                mae_block = (f"drawdown lịch sử TB {wr['avg_mae']:.1f}% "
+                             f"sâu hơn -{settings.max_avg_mae_pct:.0f}%")
+            # Relative-strength vs BTC: block coins materially weaker than BTC over the lookback.
+            rs_block = None
+            if not veto and not knife and not mae_block:
+                rs_block = _rel_strength_veto(candles, _btc_ret)
             if veto:
                 cand.decision = d["decision"] = "skip"
                 cand.reason = (cand.reason or "") + f" | chặn: {veto}"
                 audit.log(db, "scanner", "skipped_downtrend", entity=symbol, reason=veto,
                           htf=ta.get("htf"), st=ta.get("st"), adx=ta.get("adx"))
+            elif knife:
+                cand.decision = d["decision"] = "skip"
+                cand.reason = (cand.reason or "") + f" | chặn: {knife}"
+                audit.log(db, "scanner", "skipped_entry_timing", entity=symbol, reason=knife,
+                          st=ta.get("st"), macd_h=ta.get("macd_h"))
+            elif mae_block:
+                cand.decision = d["decision"] = "skip"
+                cand.reason = (cand.reason or "") + f" | chặn: {mae_block}"
+                audit.log(db, "scanner", "skipped_entry_timing", entity=symbol, reason=mae_block,
+                          avg_mae=wr["avg_mae"])
+            elif rs_block:
+                cand.decision = d["decision"] = "skip"
+                cand.reason = (cand.reason or "") + f" | chặn: {rs_block}"
+                audit.log(db, "scanner", "skipped_rel_strength", entity=symbol, reason=rs_block)
             else:
+                # Regime router (docs/pyramid-up-plan.md): tag the candidate's strategy mode
+                # from its TA before deferring the open. OFF by default (strategy_router_enabled
+                # =False) → always 'dca_down', identical to pre-router behaviour.
+                strategy_mode = _route_strategy_mode(ta, candles, _btc_ret)
                 # Defer the actual open until after the batched Grok review.
                 to_open.append({
                     "cand": cand, "symbol": symbol, "entry": candles[-1]["close"],
@@ -424,6 +477,8 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
                     "loss_rate": wr["loss_rate"], "net_edge": net_edge,
                     "expectancy": wr["expectancy"], "ta": ta,
                     "win_rate_lb": wr["win_rate_lb"], "trials": wr["trials"],
+                    "avg_mae": wr["avg_mae"], "worst_mae": wr["worst_mae"],
+                    "strategy_mode": strategy_mode,
                 })
         candidates.append(cand)
 
@@ -433,7 +488,8 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
                   count=len(_skipped_thin), symbols=",".join(_skipped_thin[:20]))
 
     _t_grok = time.monotonic()
-    _review_and_open(db, to_open, mode)
+    to_open = _drop_worst_mae_quartile(db, to_open)  # relative drawdown gate (Phase C2)
+    _review_and_open(db, to_open, mode, per_scan_cap=_effective_open_cap(db, _candle_map, to_fetch))
     t_grok_open_ms = int((time.monotonic() - _t_grok) * 1000)
     # Split grok/open: grok is the dominant cost; open is fast DB work.
     # We cannot split them without modifying _review_and_open, so we report
@@ -505,12 +561,123 @@ def _downtrend_veto(ta: dict) -> str | None:
     return None
 
 
+def _falling_knife_veto(ta: dict) -> str | None:
+    """Tighter entry-timing gate than ``_downtrend_veto``. Returns a reason to SKIP a 'trade'
+    candidate whose SHORT-TERM momentum is falling — Supertrend ``down`` AND MACD histogram < 0 —
+    i.e. don't open a DCA ladder into a coin actively dropping (it would just sit red until a
+    bounce). This catches the mild/short-term drops the downtrend gate lets through (that one needs
+    HTF+ST+ADX all confirming). Toggle with ``settings.entry_momentum_gate``."""
+    if not settings.entry_momentum_gate:
+        return None
+    if ta.get("st") == "down" and ta.get("macd_h", 0.0) < 0:
+        return f"momentum ngắn hạn xuống (ST down, MACDh {ta.get('macd_h', 0.0):+.2f})"
+    return None
+
+
+def _nbar_return(candles: list, n: int) -> float | None:
+    """% return over the last ``n`` bars (close[-1] vs close[-1-n]); None if not enough data."""
+    if not candles or n <= 0 or len(candles) <= n:
+        return None
+    prev = candles[-1 - n]["close"]
+    return (candles[-1]["close"] / prev - 1) * 100.0 if prev else None
+
+
+def _btc_ref_return(candle_map: dict, n: int) -> float | None:
+    """BTC's ``n``-bar return from the prefetched candle map — the relative-strength benchmark."""
+    btc, _ = candle_map.get("BTC", ([], False))
+    return _nbar_return(btc, n)
+
+
+def _rel_strength_veto(coin_candles: list, btc_ret: float | None) -> str | None:
+    """Returns a reason to SKIP a coin materially weaker than BTC over the lookback (the 'alt bleeding
+    vs BTC' pattern). None when the gate is off, BTC data is missing, or the coin keeps pace. A coin
+    UP while BTC is DOWN passes (it outperforms) — so a BTC downtrend alone never blocks a strong alt."""
+    if not settings.rel_strength_enabled or btc_ret is None:
+        return None
+    coin_ret = _nbar_return(coin_candles, settings.rel_strength_lookback_bars)
+    if coin_ret is None:
+        return None
+    if coin_ret < btc_ret - settings.rel_strength_margin_pct:
+        n = settings.rel_strength_lookback_bars
+        return f"yếu hơn BTC {n}p ({coin_ret:+.1f}% vs BTC {btc_ret:+.1f}%)"
+    return None
+
+
+def _route_strategy_mode(ta: dict, coin_candles: list, btc_ret: float | None) -> str:
+    """Regime router (docs/pyramid-up-plan.md): classify a gate-survivor as ``'pyramid_up'``
+    (scale into strength) or ``'dca_down'`` (the existing buy-the-dip ladder, default/fallback).
+    Behind ``settings.strategy_router_enabled`` (default False = always 'dca_down', zero
+    behaviour change). ``rel_strength`` is the coin's N-bar return minus BTC's over the same
+    lookback (None btc_ret/coin_ret → treated as 0, which classify_mode then gates on normally —
+    a missing relative-strength signal safely falls back to 'dca_down' unless 0 already clears
+    the configured threshold)."""
+    from app.kss import regime
+
+    coin_ret = _nbar_return(coin_candles, settings.rel_strength_lookback_bars)
+    rel_strength = (coin_ret - btc_ret) if (coin_ret is not None and btc_ret is not None) else 0.0
+    return regime.classify_mode(
+        enabled=settings.strategy_router_enabled,
+        htf_trend=ta.get("htf"), st_trend=ta.get("st"), adx=ta.get("adx", 0.0),
+        rel_strength=rel_strength, macdh=ta.get("macd_h", 0.0),
+        min_rel_strength=settings.pyramid_up_min_rel_strength,
+        min_adx=settings.pyramid_up_min_adx,
+    )
+
+
+def _market_breadth(candle_map: dict, symbols: list, n: int) -> float:
+    """Fraction (0..1) of the universe whose last-n-bar return is ≥ 0 (rising) — a cheap breadth
+    proxy from the already-prefetched candles (no per-coin TA). 0.5 when nothing is measurable."""
+    rets = [r for s in symbols if (r := _nbar_return(candle_map.get(s, ([], False))[0], n)) is not None]
+    return (sum(1 for r in rets if r >= 0) / len(rets)) if rets else 0.5
+
+
+def _ramp_factor(breadth: float) -> float:
+    """Soft-throttle curve: 0.2 at breadth ≤30%, ramping linearly to 1.0 at breadth ≥60%. Never 0."""
+    return 0.2 + 0.8 * max(0.0, min(1.0, (breadth - 0.30) / 0.30))
+
+
+def _drop_worst_mae_quartile(db: Session, to_open: list[dict]) -> list[dict]:
+    """RELATIVE drawdown gate: among the gate-survivors of this scan, drop the worst quartile by
+    ``worst_mae`` (deepest single dip below avg). Per-scan/relative, so it never nukes the universe
+    like an absolute cutoff (−15%% rejects ~81%%). No-op when off or with <4 candidates."""
+    if not settings.mae_quartile_gate_enabled or len(to_open) < 4:
+        return to_open
+    thr = sorted(c.get("worst_mae", 0.0) for c in to_open)[len(to_open) // 4]  # 25th-pct boundary
+    kept = []
+    for c in to_open:
+        if c.get("worst_mae", 0.0) < thr:  # in the most-negative quartile → drop
+            c["cand"].decision = "skip"
+            c["cand"].reason = (c["cand"].reason or "") + \
+                f" | chặn: worst_mae {c.get('worst_mae', 0.0):.0f}% (quartile sâu nhất)"
+            audit.log(db, "scanner", "skipped_mae_quartile", entity=c["symbol"],
+                      worst_mae=round(c.get("worst_mae", 0.0), 1))
+        else:
+            kept.append(c)
+    return kept
+
+
+def _effective_open_cap(db: Session, candle_map: dict, symbols: list) -> int:
+    """``max_new_sessions_per_scan`` scaled by market breadth when ``regime_ramp_enabled`` — fewer
+    new opens in a broadly-weak market (never a hard stop; ≥1). 0 (unlimited) is left unchanged."""
+    base = settings.max_new_sessions_per_scan
+    if not settings.regime_ramp_enabled or base <= 0:
+        return base
+    breadth = _market_breadth(candle_map, symbols, settings.rel_strength_lookback_bars)
+    eff = max(1, round(base * _ramp_factor(breadth)))
+    if eff < base:
+        audit.log(db, "scanner", "regime_ramp", breadth=round(breadth, 2), cap=eff, base=base)
+    return eff
+
+
 def _trade_block_reason(db: Session, symbol: str) -> str | None:
     """Deterministic skip gates for a 'trade' candidate. Returns a reason string to skip,
     or None to proceed. Audits each block."""
     if _in_stop_cooldown(db, symbol):
         audit.log(db, "scanner", "skipped_cooldown", entity=symbol)
         return "stop-loss cooldown"
+    if _has_pending_sell(db, symbol):
+        audit.log(db, "scanner", "skipped_pending_sell", entity=symbol)
+        return "exit (SELL) in flight"
     block, streak = _loss_streak_block(db, symbol)
     if block:
         audit.log(db, "scanner", "skipped_loss_streak", entity=symbol, streak=streak,
@@ -525,7 +692,28 @@ def _trade_block_reason(db: Session, symbol: str) -> str | None:
     return None
 
 
-def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
+def _open_rank_key(c: dict) -> tuple:
+    """Best-first ranking key for opens AND the Grok batch (kept identical so Grok reviews exactly
+    the candidates that will open). Sorted descending.
+
+    Leads with CONSENSUS — the market-context score {trend,dip,volatility,liquidity,ml} that
+    actually varies across coins (≈46–80) — because the backtest metrics saturate: a 4%-TP DCA
+    with a 30-day deadline "wins" ~100% of historical trials for nearly every liquid coin, so
+    win_rate_lb≈93% and expectancy≈tp−cost are near-constant and cannot rank. ``worst_mae`` (the
+    single worst adverse excursion across trials, signed ≤ 0) then breaks ties toward shallower-tail
+    (safer) entries — it discriminates far better than ``avg_mae`` (which is compressed); win_rate_lb
+    and expectancy are last-resort tiebreaks."""
+    return (
+        c.get("consensus", 0.0),
+        c.get("worst_mae", 0.0),
+        c.get("win_rate_lb", 0.0),
+        c.get("expectancy", 0.0),
+    )
+
+
+def _review_and_open(
+    db: Session, to_open: list[dict], mode: str, per_scan_cap: int | None = None
+) -> None:
     """Optional batched Grok endorse/veto pass, then open a KSS session per surviving
     candidate (still subject to the cumulative capital caps via _can_open). Grok is
     FAIL-OPEN: a symbol absent from the verdict map is treated as endorsed.
@@ -569,20 +757,17 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
             audit.log(db, "scanner", "skipped_capped_batch", entity="grok",
                       reason=_why, symbols=len(to_open))
         else:
-            # Rank EXACTLY like the open loop (win_rate_lb → trials → expectancy) and cap at the
-            # runtime grok_scanner_batch_max, so Grok reviews the SAME top candidates that will
-            # actually be opened. Expectancy alone is near-constant in a bull market (most pairs
-            # tie at tp − cost), which left the batch order ~random and could send Grok a different
-            # set than the one opened (under fail_mode="open" unreviewed pairs still open).
+            # Rank EXACTLY like the open loop (_open_rank_key: consensus → avg_mae → win_rate_lb →
+            # expectancy) and cap at the runtime grok_scanner_batch_max, so Grok reviews the SAME
+            # top candidates that will actually be opened. The backtest metrics saturate in a long
+            # lookback (most pairs tie at ~100% win / tp−cost), so leading with consensus keeps the
+            # batch order meaningful and aligned with what opens (under fail_mode="open" unreviewed
+            # pairs still open).
             # SECURITY: items payload is numeric/enum-only — no free-text from market data.
             # Fields: symbol (our own key), consensus/win_rate/loss_rate/net_edge/price
             # (all floats from backtest), ta (numeric/enum indicator bundle from ta_bundle).
             batch_max = settings.grok_scanner_batch_max
-            sorted_candidates = sorted(
-                to_open,
-                key=lambda c: (c.get("win_rate_lb", 0.0), c.get("trials", 0), c.get("expectancy", 0.0)),
-                reverse=True,
-            )
+            sorted_candidates = sorted(to_open, key=_open_rank_key, reverse=True)
             batch = sorted_candidates[:batch_max]
             dropped = sorted_candidates[batch_max:]
             if dropped:
@@ -598,17 +783,14 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
             } for c in batch]
             reviews = grok.review_candidates(db, items)
 
-    # Open best-first: within the concurrent/per-scan caps, prefer the most trustworthy edge
-    # (Wilson lower-bound win-rate, then trial count, then expectancy) rather than universe
-    # (volume) order — when a bull market floods the gate with look-alike candidates this is
-    # what actually decides which ones get capital.
-    ranked = sorted(
-        to_open,
-        key=lambda c: (c.get("win_rate_lb", 0.0), c.get("trials", 0), c.get("expectancy", 0.0)),
-        reverse=True,
-    )
+    # Open best-first (_open_rank_key): within the concurrent/per-scan caps, prefer the highest
+    # market-context consensus, then the shallowest backtest drawdown (avg_mae) — rather than the
+    # saturated win_rate_lb/expectancy or universe (volume) order. When the gate floods with
+    # look-alike candidates this is what actually decides which ones get capital.
+    ranked = sorted(to_open, key=_open_rank_key, reverse=True)
     # Cap NEW opens per scan (0 = no limit) so exposure ramps gradually.
-    per_scan_cap = settings.max_new_sessions_per_scan
+    if per_scan_cap is None:
+        per_scan_cap = settings.max_new_sessions_per_scan
     opened = 0
     for c in ranked:
         cand, symbol = c["cand"], c["symbol"]
@@ -654,7 +836,7 @@ def _review_and_open(db: Session, to_open: list[dict], mode: str) -> None:
             cand.session_id = _open_session(
                 db, symbol, c["entry"], mode,
                 distance_pct=c["distance_pct"], tp_pct=c["tp_pct"], max_waves=c["max_waves"],
-                isolated_fund=c["need"],
+                isolated_fund=c["need"], strategy_mode=c.get("strategy_mode", "dca_down"),
             )
             opened += 1
         else:
@@ -733,6 +915,22 @@ def _in_stop_cooldown(db: Session, symbol: str) -> bool:
     return elapsed_min < settings.stop_cooldown_min
 
 
+def _has_pending_sell(db: Session, symbol: str) -> bool:
+    """True if the symbol has a SELL order still in flight (queued but not yet filled). Opening a
+    new session while an exit is mid-flight re-enters a coin that is being closed AND blends its
+    Position avg before the SELL realizes — the BICO race: a re-open landed ~1s before the SL fill,
+    so the fill-time stop_cooldown could not catch it. Block until the SELL settles."""
+    from app.models import PENDING, PendingOrder
+
+    return (
+        db.query(PendingOrder.id)
+        .filter(PendingOrder.symbol == symbol, PendingOrder.side == "SELL",
+                PendingOrder.status == PENDING)
+        .first()
+        is not None
+    )
+
+
 def _loss_streak_block(db: Session, symbol: str) -> tuple[bool, int]:
     """Block a pair on a recent consecutive-loss streak.
 
@@ -803,6 +1001,7 @@ def _open_session(
     tp_pct: float | None = None,
     max_waves: int | None = None,
     isolated_fund: float | None = None,
+    strategy_mode: str = "dca_down",
 ) -> int:
     """Open a KSS session using effective (possibly hyperopt-tuned) params.
 
@@ -812,6 +1011,11 @@ def _open_session(
     Defaults resolve from ``settings`` at call time (not at import/definition time)
     so runtime Strategy-tab edits to ``scan_distance_pct`` / ``scan_tp_pct`` /
     ``scan_max_waves`` are always picked up.
+
+    ``strategy_mode`` (docs/pyramid-up-plan.md) is the regime-router tag — NOTE this is a
+    SEPARATE axis from ``mode`` (auto/manual, the existing param): 'dca_down' (default, the
+    existing frozen buy-the-dip ladder) or 'pyramid_up' (anti-martingale scale-into-strength,
+    only ever produced by the router when ``settings.strategy_router_enabled``).
     """
     if distance_pct is None:
         distance_pct = settings.scan_distance_pct
@@ -821,22 +1025,31 @@ def _open_session(
         max_waves = settings.scan_max_waves
     if isolated_fund is None:
         isolated_fund = service.projected_ladder_cost(symbol, entry, distance_pct, max_waves)
-    row = service.create_session(
-        db,
-        symbol=symbol,
-        entry_price=entry,
-        distance_pct=distance_pct,
-        max_waves=max_waves,
-        isolated_fund=isolated_fund,
-        tp_pct=tp_pct,
-        # Deadline (not the intra-fill timeout) governs the hold; keep timeout long.
-        timeout_x_min=float(settings.deadline_days * 1440),
-        gap_y_min=0.0,
-        deadline_days=settings.deadline_days,
-        note=f"auto-scanner ({mode})",
-    )
-    started = service.start_session(db, row.id)
-    audit.log(db, "scanner", "session_open", entity=f"kss:{row.id}", symbol=symbol, mode=mode)
+
+    if strategy_mode == "pyramid_up":
+        row = service.create_pyramid_up_session(
+            db, symbol=symbol, entry_price=entry, tp_pct=tp_pct,
+            deadline_days=settings.deadline_days, note=f"auto-scanner ({mode})",
+        )
+        started = service.start_pyramid_up_session(db, row.id)
+    else:
+        row = service.create_session(
+            db,
+            symbol=symbol,
+            entry_price=entry,
+            distance_pct=distance_pct,
+            max_waves=max_waves,
+            isolated_fund=isolated_fund,
+            tp_pct=tp_pct,
+            # Deadline (not the intra-fill timeout) governs the hold; keep timeout long.
+            timeout_x_min=float(settings.deadline_days * 1440),
+            gap_y_min=0.0,
+            deadline_days=settings.deadline_days,
+            note=f"auto-scanner ({mode})",
+        )
+        started = service.start_session(db, row.id)
+    audit.log(db, "scanner", "session_open", entity=f"kss:{row.id}", symbol=symbol, mode=mode,
+              strategy_mode=strategy_mode)
 
     if mode == "auto":
         if not runtime.is_frozen(db):

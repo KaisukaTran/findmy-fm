@@ -13,6 +13,9 @@ __pycache__/
 *.db-wal
 *.db-shm
 
+# Local DB + settings backups (never commit; may contain secrets from .env)
+data/backups/
+
 # OS
 .DS_Store
 

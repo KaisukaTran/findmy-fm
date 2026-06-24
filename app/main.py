@@ -63,6 +63,11 @@ async def lifespan(app: FastAPI):
     # scheduler would never scan, so the two must boot together.
     if settings.scheduler_enabled or settings.full_auto:
         scheduler.start()
+    if settings.live_trading and settings.live_ws_prices and settings.live_exchange == "binance":
+        from app.data import ws_feed
+
+        ws_feed.start()
+        logging.getLogger("app.main").info("ws_feed: live Binance price stream started")
     from app import notify, notify_discord
     notify.start()
     notify_discord.start()
@@ -73,6 +78,12 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        try:
+            from app.data import ws_feed
+
+            ws_feed.stop()
+        except Exception:
+            pass
         scheduler.stop()
         notify.stop()
         notify_discord.stop()

@@ -26,8 +26,8 @@
       <td>{{ r.quantity | qty }}</td>
       <td>${{ r.avg_cost | money }}</td>
       <td>{{ ('$' + (r.price | money)) if r.price else '—' }}</td>
-      <td>${{ r.value | money }}</td>
-      <td class="{{ 'pos' if r.unrealized_pnl >= 0 else 'neg' }}">${{ r.unrealized_pnl | money }} ({{ '%+.1f'|format(r.unrealized_pnl_pct) }}%)</td>
+      <td>${{ r.value | money_kmb }}</td>
+      <td class="{{ 'pos' if r.unrealized_pnl >= 0 else 'neg' }}">${{ r.unrealized_pnl | money_kmb }} ({{ '%+.1f'|format(r.unrealized_pnl_pct) }}%)</td>
       <td class="muted">{{ r.note or '' }}</td>
       <td class="row-actions">
         <button class="danger sm" data-action="removeSavings" data-id="{{ r.symbol }}" title="Xoá khỏi sổ savings">Xoá</button>
@@ -37,9 +37,9 @@
   </tbody>
   <tfoot><tr>
     <td class="muted">Tổng {{ s.count }}</td>
-    <td></td><td></td><td class="muted">vốn ${{ s.cost_basis | money }}</td>
-    <td><b>${{ s.value | money }}</b></td>
-    <td class="{{ 'pos' if s.unrealized_pnl >= 0 else 'neg' }}"><b>${{ s.unrealized_pnl | money }}</b></td>
+    <td></td><td></td><td class="muted">vốn ${{ s.cost_basis | money_kmb }}</td>
+    <td><b>${{ s.value | money_kmb }}</b></td>
+    <td class="{{ 'pos' if s.unrealized_pnl >= 0 else 'neg' }}"><b>${{ s.unrealized_pnl | money_kmb }}</b></td>
     <td></td><td></td>
   </tr></tfoot>
 </table>

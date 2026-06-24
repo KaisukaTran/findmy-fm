@@ -41,6 +41,9 @@ WAVE_PENDING = "pending"
 WAVE_SENT = "sent"
 WAVE_FILLED = "filled"
 WAVE_CANCELLED = "cancelled"
+# Pyramid-UP (docs/pyramid-up-plan.md): an add-on wave registered above entry, waiting for
+# market to reach its target_price (trigger) before it is queued as a marketable BUY.
+WAVE_ARMED = "armed"
 
 
 class PendingOrder(Base):
@@ -217,8 +220,18 @@ class KssSession(Base):
     sl_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     trailing_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     peak_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    # Dynamic trailing TP/SL (docs/kss-dynamic-tp-plan.md). trail_active is a one-way flag set when
+    # the session clears avg*(1+distance%); trail_sl_price is the ratcheted stop; trail_dist_pct is
+    # the cached ATR-based trail distance (refreshed on the 30-min cycle, applied by the fast guard).
+    trail_active: Mapped[bool] = mapped_column(nullable=False, default=False)
+    trail_sl_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    trail_dist_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
     status: Mapped[str] = mapped_column(String(16), nullable=False, default=SESSION_PENDING)
+    # Regime router (docs/pyramid-up-plan.md): 'dca_down' (existing buy-the-dip ladder, frozen
+    # pyramid.py) or 'pyramid_up' (anti-martingale scale-into-strength). Default keeps every
+    # existing/legacy session on the unchanged DCA-down path.
+    strategy_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="dca_down", server_default="dca_down")
     current_wave: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     avg_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     total_filled_qty: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
@@ -301,6 +314,10 @@ class Candidate(Base):
     win_rate_lb: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     expectancy: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     trials: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # O-COPY/C1: the same drawdown evidence the rule-based gate trades on (mean/worst dip
+    # vs running avg across backtest trials). Pure persistence — does not change any gate.
+    avg_mae: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    worst_mae: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     est_days_to_tp: Mapped[float | None] = mapped_column(Float, nullable=True)
     decision: Mapped[str] = mapped_column(String(8), nullable=False, default="skip")  # trade / skip
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)

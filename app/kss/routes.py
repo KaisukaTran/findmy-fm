@@ -133,6 +133,15 @@ def check_tp(session_id: int, current_price: float | None = None, db: Session = 
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.post("/sessions/{session_id}/take-profit", dependencies=[Depends(require_api_key)])
+def take_profit(session_id: int, db: Session = Depends(get_db)):
+    """Manual 'chốt lời ngay' — only valid while the session is in trailing mode (the UI gates it)."""
+    try:
+        return service.manual_take_profit(db, session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 class DcaNext(BaseModel):
     # Optional manual lever: deploy this many USD of idle cash this wave (None = geometric rung).
     amount_usd: float | None = Field(None, gt=0)
@@ -146,3 +155,13 @@ def dca_next(session_id: int, body: DcaNext | None = None, db: Session = Depends
         return service.queue_next_wave(db, session_id, amount_usd=body.amount_usd if body else None)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/sessions/{session_id}/dca-preview")
+def dca_preview(session_id: int, db: Session = Depends(get_db)):
+    """Read-only: the next DCA+ rung's qty/price/cost (+ SL floor & idle cash) so the UI can
+    suggest a deliberate DCA+ amount. Works even when the ladder is full."""
+    try:
+        return service.preview_next_wave(db, session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

@@ -7,19 +7,32 @@
     {% if o.cost_cap_reached %}<span class="badge veto" title="Đã chạm trần chi phí Opus/ngày — tạm dừng ra quyết định mới.">COST CAP</span>{% endif %}
     <span class="badge {{ 'guardian-on' if o.grok_active else 'full-auto-off' }}" title="Grok (xAI) đồng quyết định với OPUS: MỞ khi cả hai đồng ý, ĐÓNG khi một trong hai muốn. Cần xai_api_key.">GROK {{ 'ON' if o.grok_active else ('ENABLED (thiếu key)' if o.grok_enabled else 'OFF') }}</span>
     <button class="sm {{ 'danger' if o.grok_enabled else 'ok' }}" data-action="toggleGrok" data-id="{{ 'off' if o.grok_enabled else 'on' }}">{{ 'Tắt Grok' if o.grok_enabled else 'Bật Grok' }}</button>
+    {% if o.brain_health == 'ok' %}
+    <span class="badge full-auto-on" title="Lệnh gọi Opus gần nhất thành công.">BRAIN OK</span>
+    {% elif o.brain_health == 'http_400_credit' %}
+    <span class="badge veto" title="Tài khoản Anthropic hết credit — nạp ở Plans &amp; Billing để OPUS hoạt động.">HẾT CREDIT</span>
+    {% elif o.brain_health == 'http_401_key' %}
+    <span class="badge veto" title="anthropic_api_key sai/không hợp lệ.">SAI KEY</span>
+    {% elif o.brain_health == 'http_error' %}
+    <span class="badge veto" title="Lệnh gọi Opus lỗi HTTP — xem audit opus/decide_error.">LỖI HTTP</span>
+    {% elif o.brain_health == 'parse' %}
+    <span class="badge hyperopt-on" title="Opus trả JSON không hợp lệ.">LỖI PARSE</span>
+    {% elif o.brain_health == 'never' %}
+    <span class="badge full-auto-off" title="OPUS bật nhưng chưa gọi quyết định lần nào.">CHƯA CHẠY</span>
+    {% endif %}
   </span>
   <span class="muted" title="Opus ra quyết định mỗi chu kỳ này (phút).">tick: {{ o.interval_min }}m</span>
 </div>
 
 <div class="cards">
-  <div class="card"><div class="label" data-tip="Vốn cấp riêng cho OPUS. Đây là mẫu số của KPI 1%/24h. Tách rời khỏi vốn full-auto thường.">Vốn cấp</div><div class="value">${{ o.allocation_usd | money }}</div></div>
+  <div class="card"><div class="label" data-tip="Vốn cấp riêng cho OPUS. Đây là mẫu số của KPI 1%/24h. Tách rời khỏi vốn full-auto thường.">Vốn cấp</div><div class="value">${{ o.allocation_usd | money_kmb }}</div></div>
   <div class="card"><div class="label" data-tip="Tổng lãi/lỗ OPUS = đã chốt + tạm tính − chi phí Opus hôm nay (×2). %% so với vốn cấp.">Lãi/Lỗ OPUS</div>
-    <div class="value {{ 'pos' if o.total_pnl >= 0 else 'neg' }}">${{ o.total_pnl | money }} <span class="fs-12">({{ "%+.2f"|format(o.pnl_pct) }}%)</span></div></div>
-  <div class="card"><div class="label" data-tip="Vốn đang nằm trong các vị thế OPUS đang mở = Σ (KL × giá vốn).">Đang đầu tư</div><div class="value">${{ o.deployed_usd | money }}</div></div>
-  <div class="card"><div class="label" data-tip="Vốn OPUS còn trống = vốn cấp − đang đầu tư.">Khả dụng</div><div class="value">${{ o.free_usd | money }}</div></div>
+    <div class="value {{ 'pos' if o.total_pnl >= 0 else 'neg' }}">${{ o.total_pnl | money_kmb }} <span class="fs-12">({{ "%+.2f"|format(o.pnl_pct) }}%)</span></div></div>
+  <div class="card"><div class="label" data-tip="Vốn đang nằm trong các vị thế OPUS đang mở = Σ (KL × giá vốn).">Đang đầu tư</div><div class="value">${{ o.deployed_usd | money_kmb }}</div></div>
+  <div class="card"><div class="label" data-tip="Vốn OPUS còn trống = vốn cấp − đang đầu tư.">Khả dụng</div><div class="value">${{ o.free_usd | money_kmb }}</div></div>
   <div class="card"><div class="label" data-tip="Số vị thế Opus đang quản lý (watch/ride).">Vị thế</div><div class="value">{{ o.open_positions }}</div></div>
   <div class="card"><div class="label" data-tip="Chi phí gọi Opus hôm nay đã nhân ×2 (theo quy tắc tính chi phí trước lợi nhuận). Vượt trần thì tạm dừng.">Opus cost today</div>
-    <div class="value {{ 'neg' if o.cost_cap_reached else '' }}">${{ o.spend_today_usd | money }} / ${{ o.daily_cost_cap_usd | money }}</div></div>
+    <div class="value {{ 'neg' if o.cost_cap_reached else '' }}">${{ o.spend_today_usd | money_kmb }} / ${{ o.daily_cost_cap_usd | money_kmb }}</div></div>
   <div class="card"><div class="label" data-tip="Lợi nhuận RÒNG 24h gần nhất / allocation. Ròng = lãi gộp − phí trade − 2×chi phí Opus. Mục tiêu ≥ 1%.">KPI 24h (net)</div>
     <div class="value {{ 'pos' if o.kpi_24h_pct >= o.kpi_target_pct else ('neg' if o.kpi_24h_pct < 0 else '') }}">{{ "%.2f"|format(o.kpi_24h_pct) }}% / {{ "%.1f"|format(o.kpi_target_pct) }}%</div></div>
 </div>

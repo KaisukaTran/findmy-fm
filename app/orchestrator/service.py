@@ -8,6 +8,7 @@ are zero until later phases populate the tables. Capital is isolated: OPUS sees
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 
 from sqlalchemy import func
@@ -15,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app import portfolio
 from app.config import settings
+from app.models import AuditLog
 from app.orchestrator.models import (
     OPUS_CLOSED,
     OPUS_RIDE,
@@ -154,6 +156,40 @@ def pacing(db: Session) -> dict:
     }
 
 
+def brain_health(db: Session) -> str:
+    """
+    OPUS brain health derived from the latest `opus`/`decide*` audit row (F2).
+
+    This is the signal that would have caught the dead brain on day one (root cause,
+    docs §0): the brain call was failing 100% of the time but logged only the exception
+    type, so nothing surfaced a 400 "credit balance too low" until someone went digging.
+    """
+    if not settings.opus_mode:
+        return "disabled"
+    row = (
+        db.query(AuditLog)
+        .filter(AuditLog.actor == "opus", AuditLog.action.like("decide%"))
+        .order_by(AuditLog.id.desc())
+        .first()
+    )
+    if row is None:
+        return "never"
+    if row.action == "decide":
+        return "ok"
+    if row.action == "decide_parse_error":
+        return "parse"
+    # decide_error — read the stored HTTP status (if any) to classify the failure.
+    detail = json.loads(row.detail) if row.detail else {}
+    status = detail.get("status")
+    if status == 400:
+        return "http_400_credit"
+    if status == 401:
+        return "http_401_key"
+    if status is not None:
+        return "http_error"
+    return "http_error"  # decide_error with no status (non-HTTP exception) — still a failure
+
+
 def state(db: Session) -> dict:
     """Compact OPUS state for the API + dashboard."""
     alloc = allocation()
@@ -182,4 +218,5 @@ def state(db: Session) -> dict:
         "grok_enabled": settings.grok_enabled,
         "grok_active": bool(settings.grok_enabled and settings.xai_api_key.get_secret_value()),
         "grok_role": settings.grok_role,
+        "brain_health": brain_health(db),
     }

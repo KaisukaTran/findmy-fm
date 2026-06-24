@@ -97,6 +97,154 @@ def test_handle_command_unknown_returns_help_hint():
 
 
 # ---------------------------------------------------------------------------
+# handle_command("/trade")
+# ---------------------------------------------------------------------------
+
+
+def test_help_lists_trade_command():
+    assert "/trade" in notify.handle_command("/help")
+
+
+def test_handle_command_trade_empty(db):
+    assert "Chưa có giao dịch" in notify.handle_command("/trade")
+
+
+def test_handle_command_trade_lists_recent_with_sell_pnl(db):
+    """Lists recent fills; a SELL shows its realized pnl, a BUY does not."""
+    from app.db import SessionLocal
+    from app.models import Fill
+
+    s = SessionLocal()
+    try:
+        s.add(Fill(symbol="BTC", side="BUY", quantity=2, price=100.0, fee=0.1,
+                   source_ref="pyramid:1:wave:0"))
+        s.add(Fill(symbol="BTC", side="SELL", quantity=2, price=110.0, fee=0.1,
+                   realized_pnl=19.8, source_ref="pyramid:1:tp"))
+        s.commit()
+    finally:
+        s.close()
+
+    reply = notify.handle_command("/trade")
+    assert "Trades" in reply and "BTC" in reply
+    assert "SELL" in reply and "pnl" in reply        # SELL line carries realized pnl
+    # the alias resolves to the same handler
+    assert notify.handle_command("/trades").startswith("🧾")
+
+
+def _seed_trades(n_buy: int, n_sell: int) -> None:
+    from app.db import SessionLocal
+    from app.models import Fill
+
+    s = SessionLocal()
+    try:
+        for i in range(n_buy):
+            s.add(Fill(symbol="ETH", side="BUY", quantity=1, price=100.0 + i,
+                       source_ref="pyramid:1:wave:0"))
+        for i in range(n_sell):
+            s.add(Fill(symbol="ETH", side="SELL", quantity=1, price=110.0 + i,
+                       realized_pnl=9.9, source_ref="pyramid:1:tp"))
+        s.commit()
+    finally:
+        s.close()
+
+
+def test_handle_command_trade_side_filter(db):
+    _seed_trades(n_buy=3, n_sell=2)
+    sell = notify.handle_command("/trade sell")
+    assert "Trades SELL" in sell and "BUY" not in sell
+    buy = notify.handle_command("/trade buy")
+    assert "Trades BUY" in buy and "SELL" not in buy
+
+
+def test_handle_command_trade_count_arg(db):
+    _seed_trades(n_buy=8, n_sell=0)
+    reply = notify.handle_command("/trade 3")
+    # header + exactly 3 trade lines
+    assert len(reply.splitlines()) == 1 + 3
+
+
+def test_handle_command_trade_empty_side(db):
+    _seed_trades(n_buy=2, n_sell=0)   # no SELLs
+    assert "Chưa có lệnh SELL" in notify.handle_command("/trade sell")
+
+
+# ---------------------------------------------------------------------------
+# handle_command("/positions") — must not silently drop positions past #15
+# ---------------------------------------------------------------------------
+
+
+def test_positions_command_shows_big_position_beyond_15(db, monkeypatch):
+    """Regression: with >15 positions, the old rows[:15] (insertion order) dropped sizeable coins
+    like STG. Now sorted biggest-first and capped high → the big late one always shows."""
+    from app import portfolio
+    from app.db import SessionLocal
+    from app.models import Position
+
+    s = SessionLocal()
+    try:
+        for i in range(15):  # 15 tiny positions inserted first
+            s.add(Position(symbol=f"C{i}", quantity=1.0, avg_entry_price=1.0, total_cost=1.0))
+        s.add(Position(symbol="STG", quantity=7000.0, avg_entry_price=0.2, total_cost=1400.0))  # #16
+        s.commit()
+    finally:
+        s.close()
+    monkeypatch.setattr(portfolio, "get_current_prices",
+                        lambda syms: {sym: (0.21 if sym == "STG" else 1.0) for sym in syms})
+    reply = notify.handle_command("/positions")
+    assert "STG" in reply           # the big 16th position is shown (was cut by rows[:15] before)
+    assert "Positions (16" in reply  # header reflects the true count
+
+
+def test_pending_command_counts_beyond_15(db):
+    from app.db import SessionLocal
+    from app.models import PENDING, PendingOrder
+
+    s = SessionLocal()
+    try:
+        for i in range(16):
+            s.add(PendingOrder(symbol=f"C{i}", side="BUY", quantity=1, price=1.0,
+                               order_type="LIMIT", status=PENDING, source="kss"))
+        s.commit()
+    finally:
+        s.close()
+    reply = notify.handle_command("/pending")
+    assert "Pending (16" in reply  # all 16 counted, not silently cut at 15
+
+
+def test_kss_command_lists_beyond_15(db, monkeypatch):
+    from app import market
+    from app.db import SessionLocal
+    from app.models import SESSION_ACTIVE, KssSession
+
+    s = SessionLocal()
+    try:
+        for i in range(16):
+            s.add(KssSession(symbol=f"K{i}", entry_price=1.0, distance_pct=2.0, max_waves=6,
+                             isolated_fund=100.0, tp_pct=4.0, timeout_x_min=1.0, gap_y_min=0.0,
+                             status=SESSION_ACTIVE, total_filled_qty=1.0, avg_price=1.0, total_cost=1.0))
+        s.commit()
+    finally:
+        s.close()
+    monkeypatch.setattr(market, "get_current_prices", lambda syms, force=False: {x: 1.0 for x in syms})
+    reply = notify.handle_command("/kss")
+    assert reply.count("[active]") == 16  # all 16 sessions listed (old limit=15 dropped one)
+
+
+def test_digest_shows_rel_strength_skips_when_gate_bites(db, monkeypatch):
+    from app import audit
+    monkeypatch.setattr(settings, "rel_strength_enabled", True)
+    audit.log(db, "scanner", "skipped_rel_strength", entity="FET", reason="yếu hơn BTC")
+    db.commit()
+    d = notify.build_digest(db)
+    assert "Phase A" in d and "FET" in d
+
+
+def test_digest_no_rel_line_when_gate_off(db, monkeypatch):
+    monkeypatch.setattr(settings, "rel_strength_enabled", False)
+    assert "Phase A" not in notify.build_digest(db)
+
+
+# ---------------------------------------------------------------------------
 # handle_command("/status")
 # ---------------------------------------------------------------------------
 

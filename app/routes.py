@@ -47,6 +47,23 @@ _TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 # Display filters: money = ##,###.## (thousands + 2dp); qty keeps crypto precision.
 templates.env.filters["money"] = lambda v: f"{float(v or 0):,.2f}"
+
+
+def _money_kmb(v) -> str:
+    """Abbreviated money: full below 1K, then K/M/B. For amounts, not prices."""
+    n = float(v or 0)
+    sign = "-" if n < 0 else ""
+    a = abs(n)
+    if a < 1e3:
+        return f"{n:,.2f}"
+    if a < 1e6:
+        return f"{sign}{a / 1e3:.1f}K"
+    if a < 1e9:
+        return f"{sign}{a / 1e6:.2f}M"
+    return f"{sign}{a / 1e9:.2f}B"
+
+
+templates.env.filters["money_kmb"] = _money_kmb
 templates.env.filters["qty"] = lambda v: f"{float(v or 0):,.6f}"
 templates.env.filters["ladder"] = charts.pyramid_ladder_svg  # session dict -> SVG
 # Display timezone: stored UTC -> local (Vietnam GMT+7) HH:MM:SS / full datetime.
@@ -380,7 +397,7 @@ class KssSettingsBody(BaseModel):
     sl_pct: float | None = Field(None, ge=0, le=100)
     trailing_pct: float | None = Field(None, ge=0, le=100)
     deadline_days: int | None = Field(None, ge=1, le=365)
-    max_concurrent_sessions: int | None = Field(None, ge=1, le=100)
+    max_concurrent_sessions: int | None = Field(None, ge=1, le=500)  # raised for wide-scale paper tests (~universe size)
     max_sessions_per_symbol: int | None = Field(None, ge=0, le=20)
     max_deployed_pct: float | None = Field(None, gt=0, le=100)
     equity_backup_pct: float | None = Field(None, ge=0, le=90)
@@ -401,10 +418,43 @@ class KssSettingsBody(BaseModel):
     max_new_sessions_per_scan: int | None = Field(None, ge=0, le=100)  # cap NEW opens/scan (0=off)
     min_quote_volume: float | None = Field(None, ge=0)
     kss_first_wave_usd: float | None = Field(None, ge=0)
+    entry_momentum_gate: bool | None = None  # veto open when ST down & MACDh<0
+    max_avg_mae_pct: float | None = Field(None, ge=0, le=100)  # absolute avg_mae drawdown gate (0=off)
+    # Dynamic trailing TP/SL (docs/kss-dynamic-tp-plan.md)
+    kss_dynamic_tp_enabled: bool | None = None
+    kss_tp_gap_pct: float | None = Field(None, ge=0, le=100)
+    kss_exit_fee_mult: float | None = Field(None, ge=1, le=20)
+    kss_trail_atr_mult: float | None = Field(None, ge=0, le=10)
+    kss_trail_min_pct: float | None = Field(None, ge=0, le=50)
+    kss_trail_arm_pct: float | None = Field(None, ge=0, le=100)
+    kss_trail_lock_pct: float | None = Field(None, ge=0, le=100)
+    kss_exit_check_sec: int | None = Field(None, ge=5, le=3600)
+    kss_crash_drop_pct: float | None = Field(None, ge=0, le=100)
+    kss_live_stop_orders: bool | None = None
+    # Entry-evaluation v2 (docs/regime-mae-plan.md)
+    rel_strength_enabled: bool | None = None
+    rel_strength_lookback_bars: int | None = Field(None, ge=1, le=90)
+    rel_strength_margin_pct: float | None = Field(None, ge=0, le=50)
+    regime_ramp_enabled: bool | None = None
+    mae_quartile_gate_enabled: bool | None = None
+    # Pyramid-UP regime router (docs/pyramid-up-plan.md)
+    strategy_router_enabled: bool | None = None
+    pyramid_up_min_rel_strength: float | None = Field(None, ge=-100, le=100)
+    pyramid_up_min_adx: float | None = Field(None, ge=0, le=100)
+    pyramid_up_step_pct: float | None = Field(None, gt=0, le=50)
+    pyramid_up_size_ratio: float | None = Field(None, gt=0, lt=1)
+    pyramid_up_max_adds: int | None = Field(None, ge=0, le=3)
+    pyramid_up_lock_pct: float | None = Field(None, ge=0, le=100)
     # Live-readiness knobs (1.9) — LIVE only, inert on paper.
     maker_orders: bool | None = None
     order_fill_timeout_sec: int | None = Field(None, ge=0)
     live_use_testnet: bool | None = None
+    # OPUS god-mode scaffolding (docs/opus-godmode-plan.md §3) — wiring deferred to later phases.
+    opus_copy_mode: bool | None = None
+    opus_solo_open: bool | None = None
+    opus_solo_min_consensus: float | None = Field(None, ge=0, le=100)
+    opus_lessons_max: int | None = Field(None, ge=0, le=50)
+    opus_history_n: int | None = Field(None, ge=0, le=200)
 
 
 @api_router.get("/api/kss-settings")
@@ -852,16 +902,22 @@ def partial_positions(request: Request, page: int = 1, db: Session = Depends(get
 
 
 @ui_router.get("/partials/trades", response_class=HTMLResponse)
-def partial_trades(request: Request, page: int = 1, db: Session = Depends(get_db)):
+def partial_trades(
+    request: Request, page: int = 1, side: str = "ALL", db: Session = Depends(get_db)
+):
     page = max(1, min(page, 10))
     offset = (page - 1) * 20
-    rows = portfolio.trades_view(db, limit=20, offset=offset)
+    side = side.upper() if side.upper() in ("BUY", "SELL") else "ALL"
+    rows = portfolio.trades_view(
+        db, limit=20, offset=offset, side=None if side == "ALL" else side
+    )
     return templates.TemplateResponse(
         "partials/trades.html",
         {
             "request": request,
             "rows": rows,
             "page": page,
+            "side": side,
             "has_prev": page > 1,
             "has_next": len(rows) == 20,
         },

@@ -149,11 +149,15 @@ def render(row: AuditLog) -> dict:
         cat, sev, icon = RISK, "good", "🔓"
         msg = "Circuit-breaker được gỡ băng thủ công"
     # --- system / noise ---
-    elif act in ("skipped_cooldown", "skipped_concentration", "skipped_opus_owned", "skipped_cap"):
+    elif act in ("skipped_cooldown", "skipped_concentration", "skipped_opus_owned", "skipped_cap",
+                 "skipped_entry_timing", "skipped_rel_strength", "skipped_mae_quartile"):
         reasons = {"skipped_cooldown": "đang cooldown sau stop-loss",
                    "skipped_concentration": "đã đủ session/coin",
                    "skipped_opus_owned": "OPUS đang giữ coin này",
-                   "skipped_cap": d.get("reason", "vượt trần vốn")}
+                   "skipped_cap": d.get("reason", "vượt trần vốn"),
+                   "skipped_entry_timing": d.get("reason", "thời điểm vào lệnh xấu"),
+                   "skipped_rel_strength": d.get("reason", "yếu hơn BTC"),
+                   "skipped_mae_quartile": "drawdown lịch sử thuộc quartile sâu nhất"}
         cat, sev, icon = SYSTEM, "info", "⏭️"
         msg = f"Bỏ qua {s}: {reasons.get(act, '')}"
     elif act == "cycle":

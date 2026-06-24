@@ -24,6 +24,7 @@ from app.models import (
     SESSION_PENDING,
     SESSION_STOPPED,
     WAVE_ARMED,
+    WAVE_CANCELLED,
     WAVE_FILLED,
     WAVE_SENT,
     KssSession,
@@ -265,6 +266,16 @@ def start_session(db: Session, session_id: int) -> dict:
 # add-ons (n>=1, strictly smaller) are ARMED conditional waves that only queue once the market
 # clears their trigger price ABOVE entry. Parallel to the frozen DCA-down path above — never
 # calls PyramidSession/on_fill (that builds a dip-buy ladder); pyramid.py is untouched.
+#
+# Defensive DCA + reversal-flip: every pyramid_up session ALSO gets ONE conditional wave BELOW
+# entry (wave_num=DEFENSIVE_WAVE_NUM), sized/spaced like a normal first DCA-down rung (reuses
+# settings.scan_distance_pct / settings.kss_first_wave_usd — no new config). If price rises, it
+# never triggers (irrelevant while riding up). If price instead falls to it, it fills — averaging
+# down once — and the session FLIPS to dca_down (reversal confirmed): the up-side pyramid is
+# abandoned, the remaining up-adds are cancelled, and the session re-seeds a normal DCA-down
+# ladder anchored at the new (post-fill) avg so it keeps averaging down from there.
+
+DEFENSIVE_WAVE_NUM = -1
 
 
 def _clamped_pyramid_up_knobs() -> dict:
@@ -385,12 +396,32 @@ def start_pyramid_up_session(db: Session, session_id: int) -> dict:
             session_id=session_id, wave_num=add.n, quantity=add.qty,
             target_price=add.trigger_price, status=WAVE_ARMED,
         ))
+
+    # ONE defensive DCA rung BELOW entry (reversal-flip, docs §"defensive DCA"): sized/spaced
+    # like a normal first DCA-down rung — reuses settings.scan_distance_pct/kss_first_wave_usd,
+    # no new config. If the market falls to it, _maybe_queue_pyramid_defensive fills it and the
+    # session flips to dca_down (see _handle_pyramid_up_fill).
+    from app.config import settings
+
+    defensive_price = round(
+        row.entry_price * (1 - settings.scan_distance_pct / 100.0), pyramid_up.price_precision(row.entry_price)
+    )
+    defensive_qty = pyramid_up._round_qty(
+        settings.kss_first_wave_usd / defensive_price if defensive_price > 0 else 0.0,
+        info.get("stepSize", 0.00001), info.get("minQty", 0.00001),
+    )
+    db.add(KssWave(
+        session_id=session_id, wave_num=DEFENSIVE_WAVE_NUM, quantity=defensive_qty,
+        target_price=defensive_price, status=WAVE_ARMED,
+    ))
+
     row.status = SESSION_ACTIVE
     row.started_at = datetime.utcnow()
     row.deadline_at = datetime.utcnow() + timedelta(days=row.deadline_days)
     db.commit()
     audit.log(db, "kss", "pyramid_up_started", entity=f"kss:{row.id}", symbol=row.symbol,
-              base_qty=round(base.qty, 8), adds=len(ladder) - 1)
+              base_qty=round(base.qty, 8), adds=len(ladder) - 1,
+              defensive_price=defensive_price, defensive_qty=defensive_qty)
     return {
         "message": f"Session {session_id} started (pyramid_up)",
         "deadline_at": row.deadline_at.isoformat(),
@@ -612,6 +643,12 @@ def _handle_pyramid_up_fill(
     avg = total_cost / total_qty if total_qty > 0 else 0.0
     row.avg_price = avg
 
+    # Reversal-flip: the defensive rung filling means price fell BELOW entry — the up-side
+    # pyramid thesis is invalidated. Flip to dca_down and re-seed a normal averaging-down ladder
+    # from the new avg INSTEAD OF the BE+ arming below (that branch is for in-profit up-adds).
+    if wave_num == DEFENSIVE_WAVE_NUM:
+        return _flip_to_dca_down(db, row, avg, filled_price)
+
     # Arm the break-even-plus trailing stop ONLY after an ADD (wave ≥ 1) that is already in genuine
     # profit beyond the BE+ floor (filled_price > the stop). Arming on the BASE wave — which fills at
     # ≈avg — would place the stop ABOVE the just-filled price and sell at break-even on the very next
@@ -633,6 +670,66 @@ def _handle_pyramid_up_fill(
               filled_qty=round(filled_qty, 8), filled_price=round(filled_price, 8),
               avg=round(avg, 8), sl=round(row.trail_sl_price, 8))
     return {"action": kind, "message": f"Session {row.id} {kind} (wave {wave_num})"}
+
+
+def _flip_to_dca_down(db: Session, row: KssSession, avg: float, filled_price: float) -> dict:
+    """Reversal-flip (defensive DCA confirmed a downturn): convert this pyramid_up session into a
+    normal dca_down session, anchored at the CURRENT avg, and queue the next dip-buy rung.
+
+    Mirrors the tail of ``adopt_position_into_kss`` (the established pattern for re-seeding a
+    frozen ``PyramidSession`` ladder from an already-held position): build a ``PyramidSession`` via
+    ``_to_pyramid`` with ``entry_price=avg``, seed the held qty as wave 0 ALREADY FILLED (no
+    re-buy — the buying already happened across the base + defensive waves), call ``on_fill`` to
+    get the next DCA wave, and queue it via ``_queue_wave_if_above_sl`` (skips a rung that would
+    sit at/below the SL floor). Does not arm trailing here — the position is now in accumulate
+    mode; ``_evaluate_dynamic_exit`` will arm it later if it recovers, same as any dca_down
+    session."""
+    from app.config import settings
+
+    row.strategy_mode = "dca_down"
+    row.distance_pct = settings.scan_distance_pct
+    row.max_waves = settings.scan_max_waves
+    if row.sl_pct <= 0:
+        row.sl_pct = settings.sl_pct  # keep the hard SL floor (frozen on_fill reads it via _to_pyramid)
+
+    # The up-side pyramid is abandoned — cancel any remaining ARMED up-adds (never the defensive
+    # wave itself, which is the one that just filled and is already WAVE_FILLED).
+    cancelled = (
+        db.query(KssWave)
+        .filter(KssWave.session_id == row.id, KssWave.status == WAVE_ARMED, KssWave.wave_num >= 1)
+        .all()
+    )
+    for w in cancelled:
+        w.status = WAVE_CANCELLED
+
+    # Re-seed a fresh dca_down ladder anchored at the new avg (entry-anchored math, frozen
+    # pyramid.py): seed the held qty as a "sent" wave 0 and let on_fill RECONSTRUCT the running
+    # totals once, then compute the next DCA rung below the NEW avg (not a re-buy of the held qty).
+    # CRITICAL: _to_pyramid copied the held totals onto py, so we zero them first — otherwise
+    # on_fill's `total_filled_qty += filled_qty` would DOUBLE-count the position and oversell on the
+    # next TP/SL. held_qty×avg == the real total_cost (avg = cost/qty), so the reconstruction exact.
+    held_qty = row.total_filled_qty
+    row.entry_price = avg
+    py = _to_pyramid(row)
+    py.status = PyramidSessionStatus.ACTIVE
+    py.total_filled_qty = 0.0
+    py.total_cost = 0.0
+    py.avg_price = 0.0
+    py.current_wave = 0
+    py.waves = [WaveInfo(wave_num=0, quantity=held_qty, target_price=avg, status="sent")]
+    result = py.on_fill(0, held_qty, avg, current_market_price=filled_price)
+    _save_state(row, py)
+    row.last_fill_at = datetime.utcnow()
+
+    if result.get("action") == "next_wave":
+        nwn = int(result["order"]["source_ref"].split(":")[-1])
+        if not _queue_wave_if_above_sl(db, py, row.id, row.symbol, result["order"]):
+            row.current_wave = nwn - 1  # frozen on_fill advanced it; nothing was queued
+
+    audit.log(db, "kss", "pyramid_up_flipped", entity=f"kss:{row.id}", symbol=row.symbol,
+              reason="defensive_dca", avg=round(avg, 8), price=round(filled_price, 8))
+    return {"action": "pyramid_up_flipped",
+            "message": f"Session {row.id} flipped to dca_down (defensive DCA filled @ {filled_price:g})"}
 
 
 def _handle_tp_triggered(db: Session, row: KssSession, result: dict) -> None:
@@ -902,8 +999,12 @@ def _tp_clears_cost(db: Session, symbol: str, price: float) -> bool:
 def _cancel_pending_waves(db: Session, session_id: int) -> int:
     """Cancel the session's still-pending DCA wave orders (+ their KssWave rows) when it flips to
     trailing mode — you cannot average down and trail up at once; rungs below the new SL are dead.
-    No commit (the caller commits)."""
-    from app.models import PENDING, REJECTED, WAVE_PENDING, WAVE_CANCELLED, PendingOrder
+    Also cancels ARMED waves (pyramid_up's conditional up-adds + the defensive rung) — they are
+    standing conditional triggers, not orders, but a session that arms trailing (commits to riding
+    up) or closes must drop them too, or a stale defensive/add trigger could fire into a session
+    that no longer wants it. dca_down sessions never have WAVE_ARMED rows, so this is a no-op for
+    them. No commit (the caller commits)."""
+    from app.models import PENDING, REJECTED, WAVE_PENDING, PendingOrder
 
     n = 0
     for o in (db.query(PendingOrder)
@@ -916,7 +1017,7 @@ def _cancel_pending_waves(db: Session, session_id: int) -> int:
         n += 1
     for w in (db.query(KssWave)
               .filter(KssWave.session_id == session_id,
-                      KssWave.status.in_((WAVE_SENT, WAVE_PENDING)))
+                      KssWave.status.in_((WAVE_SENT, WAVE_PENDING, WAVE_ARMED)))
               .all()):
         w.status = WAVE_CANCELLED
     return n
@@ -1049,18 +1150,60 @@ def _evaluate_dynamic_exit(db: Session, row: KssSession, price: float) -> bool:
     return True
 
 
+def _maybe_queue_pyramid_defensive(db: Session, row: KssSession, market: float) -> None:
+    """Defensive DCA trigger (reversal-flip): find the ARMED defensive wave
+    (``wave_num == DEFENSIVE_WAVE_NUM``); if the market has fallen to/through its target price AND
+    the per-symbol cap + capital budget allow it, queue a MARKET BUY for it (the SAME gates a
+    brand-new open would face). The fill itself triggers the flip to dca_down in
+    ``_handle_pyramid_up_fill``. No-op (silently) when not due or capital is capped this tick;
+    retried next cycle."""
+    defensive = (
+        db.query(KssWave)
+        .filter(KssWave.session_id == row.id, KssWave.status == WAVE_ARMED,
+                KssWave.wave_num == DEFENSIVE_WAVE_NUM)
+        .one_or_none()
+    )
+    if defensive is None or market > defensive.target_price:
+        return
+
+    from app import scanner  # lazy — scanner imports this module at load time
+
+    if scanner._symbol_at_cap(db, row.symbol):
+        return
+    need = defensive.quantity * defensive.target_price
+    ok, why = scanner._can_open(db, need)
+    if not ok:
+        audit.log(db, "kss", "pyramid_defensive_capped", entity=f"kss:{row.id}",
+                  symbol=row.symbol, reason=why)
+        return
+
+    pending, _ = _queue(db, {
+        "symbol": row.symbol, "side": "BUY", "quantity": defensive.quantity, "price": 0.0,
+        "order_type": "MARKET", "source_ref": f"pyramid:{row.id}:wave:{DEFENSIVE_WAVE_NUM}",
+        "strategy_name": f"PyramidUp_{row.symbol}",
+        "note": f"Pyramid-UP defensive DCA (market, trigger {defensive.target_price:g})",
+    })
+    defensive.status = WAVE_SENT
+    defensive.pending_order_id = pending.id
+    audit.log(db, "kss", "pyramid_defensive_queued", entity=f"kss:{row.id}", symbol=row.symbol,
+              trigger=round(defensive.target_price, 8), market=round(market, 8))
+
+
 def _maybe_queue_pyramid_add(db: Session, row: KssSession, market: float) -> None:
-    """Pyramid-UP add-trigger (docs/pyramid-up-plan.md): find the lowest-n ARMED wave; if the
-    market has reached its trigger AND the previous wave is filled AND the filled-add count is
-    still below ``pyramid_up_max_adds`` AND the per-symbol cap + capital budget allow it, queue a
-    MARKETABLE BUY for it (re-asserting the SAME gates a brand-new open would face — adding to an
-    existing winner is still new capital at risk, never bypassed). No-op (silently) when nothing
-    is due or capital is capped this tick; retried next cycle."""
+    """Pyramid-UP add-trigger (docs/pyramid-up-plan.md): find the lowest-n ARMED wave (n>=1 —
+    the defensive rung at ``DEFENSIVE_WAVE_NUM`` is handled separately by
+    ``_maybe_queue_pyramid_defensive`` and must never be mistaken for an up-add); if the market has
+    reached its trigger AND the previous wave is filled AND the filled-add count is still below
+    ``pyramid_up_max_adds`` AND the per-symbol cap + capital budget allow it, queue a MARKETABLE
+    BUY for it (re-asserting the SAME gates a brand-new open would face — adding to an existing
+    winner is still new capital at risk, never bypassed). No-op (silently) when nothing is due or
+    capital is capped this tick; retried next cycle."""
     from app.config import settings
 
     armed = (
         db.query(KssWave)
-        .filter(KssWave.session_id == row.id, KssWave.status == WAVE_ARMED)
+        .filter(KssWave.session_id == row.id, KssWave.status == WAVE_ARMED,
+                KssWave.wave_num >= 1)
         .order_by(KssWave.wave_num.asc())
         .first()
     )
@@ -1148,10 +1291,14 @@ def manage_open_sessions(db: Session) -> list[int]:
         if not price:
             continue
         if row.strategy_mode == "pyramid_up":
-            # Add-trigger loop BEFORE the exit check (docs/pyramid-up-plan.md): queue the next
-            # armed add-on once price clears its trigger, the prior add is filled, and capital
-            # caps allow it. Exit (TP/trail/SL) is the existing _evaluate_dynamic_exit below —
-            # pyramid_up never queues a DCA-down wave, so it never falls through to py.check_tp.
+            # Defensive-DCA trigger FIRST (reversal-flip): if price has fallen to the defensive
+            # rung, fill it now — the session flips to dca_down in _handle_pyramid_up_fill and the
+            # up-add loop below becomes moot (its ARMED waves get cancelled on the flip).
+            _maybe_queue_pyramid_defensive(db, row, price)
+            # Add-trigger loop (docs/pyramid-up-plan.md): queue the next armed add-on once price
+            # clears its trigger, the prior add is filled, and capital caps allow it. Exit
+            # (TP/trail/SL) is the existing _evaluate_dynamic_exit below — pyramid_up never queues
+            # a DCA-down wave, so it never falls through to py.check_tp.
             _maybe_queue_pyramid_add(db, row, price)
             if row.total_filled_qty > 0:
                 if _evaluate_dynamic_exit(db, row, price):

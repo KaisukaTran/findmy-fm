@@ -544,12 +544,13 @@ def handle_fill_event(
         db.commit()
         return {"action": "completed", "message": f"Session {session_id} completed (TP filled)"}
 
-    # Stop-loss / trailing-stop sells terminate the session as STOPPED.
-    if parts[2] in {"sl", "trailing", "deadline"}:
+    # Stop-loss / trailing-stop sells terminate the session as STOPPED. ("trail_sl" is the dynamic
+    # trailing exit — previously missing here, so a dynamic trail set NO re-entry cooldown.)
+    if parts[2] in {"sl", "trailing", "trail_sl", "deadline"}:
         row.status = SESSION_STOPPED
         # Record a re-entry cooldown after a risk exit (not a calendar deadline),
         # so the scanner doesn't immediately re-open the same falling symbol.
-        if parts[2] in {"sl", "trailing"}:
+        if parts[2] in {"sl", "trailing", "trail_sl"}:
             from app import runtime
 
             runtime.set(db, f"stop_cooldown:{row.symbol}", datetime.utcnow().isoformat())
@@ -942,7 +943,10 @@ def _session_atr_pct(symbol: str) -> float:
 
 def _queue_dynamic_exit(db: Session, row: KssSession, kind: str, price: float) -> None:
     """Queue a full-qty MARKET SELL for a dynamic channel exit and mark the session done so it is
-    not re-evaluated/re-queued next tick. ``kind`` ∈ {"tp","trail_sl"}."""
+    not re-evaluated/re-queued next tick. ``kind`` ∈ {"tp","trail_sl","sl"} ("sl" = the hard-SL
+    fallback when a trailing stop is deferred below the blended cost but price has since reached the
+    hard-SL floor — a genuine loser to cut)."""
+    _kind_label = {"tp": "dynamic_tp", "trail_sl": "dynamic_trail", "sl": "dynamic_sl"}.get(kind, kind)
     _queue(db, {
         "symbol": row.symbol, "side": "SELL", "quantity": row.total_filled_qty,
         "price": 0.0, "order_type": "MARKET",
@@ -952,8 +956,7 @@ def _queue_dynamic_exit(db: Session, row: KssSession, kind: str, price: float) -
     })
     row.status = (PyramidSessionStatus.TP_TRIGGERED.value if kind == "tp" else SESSION_STOPPED)
     audit.log(db, "scheduler", "tp_queued" if kind == "tp" else "stop_queued",
-              entity=f"kss:{row.id}", symbol=row.symbol, price=round(price, 8),
-              kind=("dynamic_tp" if kind == "tp" else "dynamic_trail"))
+              entity=f"kss:{row.id}", symbol=row.symbol, price=round(price, 8), kind=_kind_label)
     _cancel_pending_waves(db, row.id)  # closing → cancel any stale DCA orders (no late orphan fills)
 
 
@@ -1013,15 +1016,30 @@ def _evaluate_dynamic_exit(db: Session, row: KssSession, price: float) -> bool:
         return True
 
     # armed — check the channel on the CARRIED sl/tp first (ordering), then ratchet up.
+    # K-trail/K-2 guard: an exit may only execute when it clears the TRUE blended Position cost
+    # basis (+2x fee). A residual orphan / cross-session lot can inflate the wallet avg above this
+    # session's trail floor, so selling at the trail would book a loss (see loss-cases: BIO). When
+    # it would not clear cost, DEFER (hold) instead of locking a loss — but a genuinely deep loser
+    # is still cut by the hard-SL floor so a deferred trail can't bleed to the deadline.
     carried_sl = row.trail_sl_price
     if carried_sl > 0:
         carried_tp = dynamic_exit.compute_tp(sl=carried_sl, avg=avg)
         if price >= carried_tp:
-            _queue_dynamic_exit(db, row, "tp", price)
-            return True
-        if price <= carried_sl:
-            _queue_dynamic_exit(db, row, "trail_sl", price)
-            return True
+            if _tp_clears_cost(db, row.symbol, price):
+                _queue_dynamic_exit(db, row, "tp", price)
+                return True
+            audit.log(db, "scheduler", "tp_deferred", entity=f"kss:{row.id}",
+                      symbol=row.symbol, price=round(price, 8))
+        elif price <= carried_sl:
+            if _tp_clears_cost(db, row.symbol, price):
+                _queue_dynamic_exit(db, row, "trail_sl", price)
+                return True
+            audit.log(db, "scheduler", "trailing_deferred", entity=f"kss:{row.id}",
+                      symbol=row.symbol, price=round(price, 8))
+            sl_pct = row.sl_pct if row.sl_pct and row.sl_pct > 0 else settings.sl_pct
+            if sl_pct > 0 and price <= avg * (1 - sl_pct / 100.0):
+                _queue_dynamic_exit(db, row, "sl", price)  # hard SL still cuts the real loser
+                return True
     peak = max(row.peak_price, price)
     td = dynamic_exit.trail_distance_pct(_session_atr_pct(row.symbol))
     sl = dynamic_exit.compute_sl(peak=peak, avg=avg, distance_pct=d, trail_dist_pct=td, prev_sl=carried_sl)

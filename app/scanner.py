@@ -675,6 +675,9 @@ def _trade_block_reason(db: Session, symbol: str) -> str | None:
     if _in_stop_cooldown(db, symbol):
         audit.log(db, "scanner", "skipped_cooldown", entity=symbol)
         return "stop-loss cooldown"
+    if _has_pending_sell(db, symbol):
+        audit.log(db, "scanner", "skipped_pending_sell", entity=symbol)
+        return "exit (SELL) in flight"
     block, streak = _loss_streak_block(db, symbol)
     if block:
         audit.log(db, "scanner", "skipped_loss_streak", entity=symbol, streak=streak,
@@ -910,6 +913,22 @@ def _in_stop_cooldown(db: Session, symbol: str) -> bool:
         return False
     elapsed_min = (datetime.now(timezone.utc) - stopped_at).total_seconds() / 60.0
     return elapsed_min < settings.stop_cooldown_min
+
+
+def _has_pending_sell(db: Session, symbol: str) -> bool:
+    """True if the symbol has a SELL order still in flight (queued but not yet filled). Opening a
+    new session while an exit is mid-flight re-enters a coin that is being closed AND blends its
+    Position avg before the SELL realizes — the BICO race: a re-open landed ~1s before the SL fill,
+    so the fill-time stop_cooldown could not catch it. Block until the SELL settles."""
+    from app.models import PENDING, PendingOrder
+
+    return (
+        db.query(PendingOrder.id)
+        .filter(PendingOrder.symbol == symbol, PendingOrder.side == "SELL",
+                PendingOrder.status == PENDING)
+        .first()
+        is not None
+    )
 
 
 def _loss_streak_block(db: Session, symbol: str) -> tuple[bool, int]:

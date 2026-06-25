@@ -149,3 +149,15 @@ def test_defensive_fires_when_not_downtrend(db, monkeypatch):
     service._maybe_queue_pyramid_defensive(db, s, 0.0250 * 0.98)
     assert db.query(PendingOrder).filter(
         PendingOrder.source_ref == f"pyramid:{s.id}:wave:{DEF}").count() == 1
+
+
+def test_defensive_fires_despite_symbol_at_cap(db, monkeypatch):
+    """REGRESSION (the BICO bug): the defensive must fire even when _symbol_at_cap is True — the
+    session occupies its OWN per-symbol slot, so averaging it is not a new open. The old code
+    re-asserted the cap and blocked the defensive on every session (it never once fired)."""
+    s = _pyr_session(db)
+    monkeypatch.setattr(service, "_coin_in_downtrend", lambda sym: False)
+    monkeypatch.setattr(scanner, "_symbol_at_cap", lambda db, sym: True)
+    service._maybe_queue_pyramid_defensive(db, s, 0.0250 * 0.98)
+    assert db.query(PendingOrder).filter(
+        PendingOrder.source_ref == f"pyramid:{s.id}:wave:{DEF}").count() == 1

@@ -137,6 +137,10 @@ def test_add_in_profit_arms_then_locks(db, monkeypatch):
 def test_add_trigger_queues_market_buy(db, monkeypatch):
     s = _pyr_session(db)
     _fill_base(db, s, price=100.0)
+    # Regression: the up-add must fire even when the symbol is "at cap" — the session occupies its
+    # own per-symbol slot; scaling it is not a new open. The old code re-asserted the cap and
+    # blocked every up-add (pyramid_add_queued was always 0).
+    monkeypatch.setattr(scanner, "_symbol_at_cap", lambda db, sym: True)
     _price(monkeypatch, 102.0)          # clears the wave-1 trigger (102)
     service.manage_open_sessions(db)
     buys = db.query(PendingOrder).filter(

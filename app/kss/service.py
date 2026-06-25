@@ -1202,8 +1202,11 @@ def _maybe_queue_pyramid_defensive(db: Session, row: KssSession, market: float) 
 
     from app import scanner  # lazy — scanner imports this module at load time
 
-    if scanner._symbol_at_cap(db, row.symbol):
-        return
+    # Do NOT re-assert _symbol_at_cap here: the defensive averages THIS session's OWN position (not
+    # a new session), but the per-symbol cap (max_sessions_per_symbol=1) counts the session's own
+    # active slot — so it would block the defensive on EVERY session. That bug left pyramid_up
+    # unable to fire its defensive/adds at all (pyramid_add_queued / pyramid_defensive_queued were
+    # always 0). The capital budget gate (_can_open) below still applies — new cash is still gated.
     need = defensive.quantity * defensive.target_price
     ok, why = scanner._can_open(db, need)
     if not ok:
@@ -1252,8 +1255,9 @@ def _maybe_queue_pyramid_add(db: Session, row: KssSession, market: float) -> Non
 
     from app import scanner  # lazy — scanner imports this module at load time
 
-    if scanner._symbol_at_cap(db, row.symbol):
-        return
+    # Do NOT re-assert _symbol_at_cap here (same bug as the defensive): an up-add scales THIS
+    # session's own position, not a new session, but the per-symbol cap counts the session's own
+    # active slot → it blocked every up-add (pyramid_add_queued was always 0). _can_open still gates.
     need = armed.quantity * armed.target_price
     ok, why = scanner._can_open(db, need)
     if not ok:

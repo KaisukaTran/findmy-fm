@@ -1154,6 +1154,28 @@ def _evaluate_dynamic_exit(db: Session, row: KssSession, price: float) -> bool:
     return True
 
 
+def _coin_in_downtrend(symbol: str) -> bool:
+    """True when the coin sits in a CONFIRMED downtrend (HTF+ST down + ADX — the scanner's entry
+    veto). Gates the defensive-DCA flip: don't average down into a confirmed dump (the buy-the-dip
+    thesis fails there — Martingale-into-weakness); let the hard SL cut it instead. A non-downtrend
+    dip (a recoverable pullback) still flips + averages. Best-effort — a data hiccup returns False
+    so a transient glitch never blocks the defensive."""
+    from app.config import settings
+
+    try:
+        from app import scanner
+        from app.ta import bundle as ta_bundle
+
+        cmap = scanner._prefetch_candles(
+            settings.data_exchange, [symbol], settings.backtest_timeframe, 80)
+        candles, _ = cmap.get(symbol, ([], False))
+        if len(candles) < 20:
+            return False
+        return scanner._downtrend_veto(ta_bundle._tier1(candles)) is not None
+    except Exception:
+        return False
+
+
 def _maybe_queue_pyramid_defensive(db: Session, row: KssSession, market: float) -> None:
     """Defensive DCA trigger (reversal-flip): find the ARMED defensive wave
     (``wave_num == DEFENSIVE_WAVE_NUM``); if the market has fallen to/through its target price AND
@@ -1168,6 +1190,14 @@ def _maybe_queue_pyramid_defensive(db: Session, row: KssSession, market: float) 
         .one_or_none()
     )
     if defensive is None or market > defensive.target_price:
+        return
+
+    # #2 — never average down into a CONFIRMED downtrend (Martingale-into-weakness): skip the
+    # defensive flip and let the hard SL cut a genuine downtrend loser instead. A non-downtrend dip
+    # (recoverable pullback) still flips + averages, which is where dca_down earns its keep.
+    if _coin_in_downtrend(row.symbol):
+        audit.log(db, "kss", "pyramid_defensive_skipped_downtrend", entity=f"kss:{row.id}",
+                  symbol=row.symbol, trigger=round(defensive.target_price, 8))
         return
 
     from app import scanner  # lazy — scanner imports this module at load time

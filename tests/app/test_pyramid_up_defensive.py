@@ -21,6 +21,7 @@ from app.models import (
     WAVE_FILLED,
     KssSession,
     KssWave,
+    PendingOrder,
 )
 
 DEF = service.DEFENSIVE_WAVE_NUM  # -1
@@ -127,3 +128,24 @@ def test_defensive_rung_placed_at_arm_pct_below_entry(db, monkeypatch):
     defw = db.query(KssWave).filter(KssWave.session_id == row.id,
                                     KssWave.wave_num == DEF).one()
     assert abs(defw.target_price - 1.0 * (1 - settings.kss_trail_arm_pct / 100.0)) < 1e-6
+
+
+def test_defensive_skipped_in_confirmed_downtrend(db, monkeypatch):
+    """#2 — in a confirmed downtrend, the defensive must NOT fire (don't average into a dump);
+    the wave stays ARMED and the hard SL cuts it instead."""
+    s = _pyr_session(db)
+    monkeypatch.setattr(service, "_coin_in_downtrend", lambda sym: True)
+    service._maybe_queue_pyramid_defensive(db, s, 0.0250 * 0.98)   # market <= defensive target
+    assert db.query(PendingOrder).filter(
+        PendingOrder.source_ref == f"pyramid:{s.id}:wave:{DEF}").count() == 0
+    defw = db.query(KssWave).filter(KssWave.session_id == s.id, KssWave.wave_num == DEF).one()
+    assert defw.status == WAVE_ARMED
+
+
+def test_defensive_fires_when_not_downtrend(db, monkeypatch):
+    """A non-downtrend dip still flips + averages (where dca_down earns its keep)."""
+    s = _pyr_session(db)
+    monkeypatch.setattr(service, "_coin_in_downtrend", lambda sym: False)
+    service._maybe_queue_pyramid_defensive(db, s, 0.0250 * 0.98)
+    assert db.query(PendingOrder).filter(
+        PendingOrder.source_ref == f"pyramid:{s.id}:wave:{DEF}").count() == 1

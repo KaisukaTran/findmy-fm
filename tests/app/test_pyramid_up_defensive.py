@@ -108,3 +108,22 @@ def test_flipped_session_arms_trailing_on_recovery(db, monkeypatch):
     service.manage_open_sessions(db)
     db.refresh(s)
     assert s.trail_active is True
+
+
+def test_defensive_rung_placed_at_arm_pct_below_entry(db, monkeypatch):
+    """The defensive rung must sit at -kss_trail_arm_pct (5%) below entry — symmetric with the
+    +arm uptrend confirmation — NOT the hair-trigger 1.5% DCA spacing."""
+    from app import market
+    monkeypatch.setattr(market, "get_exchange_info",
+                        lambda sym: {"stepSize": 0.0001, "minQty": 0.0001})
+    monkeypatch.setattr(market, "get_current_prices", lambda syms, force=False: {"AAA": 1.0})
+    monkeypatch.setattr(settings, "scan_fund", 1500.0)
+    monkeypatch.setattr(settings, "pyramid_up_max_adds", 2)
+    monkeypatch.setattr(settings, "pyramid_up_step_pct", 2.0)
+    monkeypatch.setattr(settings, "pyramid_up_size_ratio", 0.7)
+    row = service.create_pyramid_up_session(db, symbol="AAA", entry_price=1.0, tp_pct=4.0,
+                                            deadline_days=30)
+    service.start_pyramid_up_session(db, row.id)
+    defw = db.query(KssWave).filter(KssWave.session_id == row.id,
+                                    KssWave.wave_num == DEF).one()
+    assert abs(defw.target_price - 1.0 * (1 - settings.kss_trail_arm_pct / 100.0)) < 1e-6

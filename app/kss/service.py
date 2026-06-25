@@ -268,8 +268,8 @@ def start_session(db: Session, session_id: int) -> dict:
 # calls PyramidSession/on_fill (that builds a dip-buy ladder); pyramid.py is untouched.
 #
 # Defensive DCA + reversal-flip: every pyramid_up session ALSO gets ONE conditional wave BELOW
-# entry (wave_num=DEFENSIVE_WAVE_NUM), sized/spaced like a normal first DCA-down rung (reuses
-# settings.scan_distance_pct / settings.kss_first_wave_usd — no new config). If price rises, it
+# entry (wave_num=DEFENSIVE_WAVE_NUM), at −kss_trail_arm_pct (symmetric with the +arm uptrend
+# confirmation) and sized by settings.kss_first_wave_usd — no new config. If price rises, it
 # never triggers (irrelevant while riding up). If price instead falls to it, it fills — averaging
 # down once — and the session FLIPS to dca_down (reversal confirmed): the up-side pyramid is
 # abandoned, the remaining up-adds are cancelled, and the session re-seeds a normal DCA-down
@@ -397,14 +397,18 @@ def start_pyramid_up_session(db: Session, session_id: int) -> dict:
             target_price=add.trigger_price, status=WAVE_ARMED,
         ))
 
-    # ONE defensive DCA rung BELOW entry (reversal-flip, docs §"defensive DCA"): sized/spaced
-    # like a normal first DCA-down rung — reuses settings.scan_distance_pct/kss_first_wave_usd,
-    # no new config. If the market falls to it, _maybe_queue_pyramid_defensive fills it and the
+    # ONE defensive DCA rung BELOW entry (reversal-flip, docs §"defensive DCA"): placed at
+    # −kss_trail_arm_pct, SYMMETRIC with the up-side arm (+kss_trail_arm_pct confirms the uptrend →
+    # arm trailing; −kss_trail_arm_pct confirms a reversal → flip to dca_down). Reuses the existing
+    # arm knob (no new config) AND avoids a hair-trigger: a 1.5% DCA-spacing rung would flip on
+    # ordinary intraday noise, abandoning the momentum thesis on every minor dip. Sized by
+    # kss_first_wave_usd. If the market falls to it, _maybe_queue_pyramid_defensive fills it and the
     # session flips to dca_down (see _handle_pyramid_up_fill).
     from app.config import settings
 
     defensive_price = round(
-        row.entry_price * (1 - settings.scan_distance_pct / 100.0), pyramid_up.price_precision(row.entry_price)
+        row.entry_price * (1 - settings.kss_trail_arm_pct / 100.0),
+        pyramid_up.price_precision(row.entry_price),
     )
     defensive_qty = pyramid_up._round_qty(
         settings.kss_first_wave_usd / defensive_price if defensive_price > 0 else 0.0,

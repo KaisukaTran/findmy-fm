@@ -16,6 +16,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app import audit, orders
+from app.clock import utcnow
 from app.kss import dynamic_exit, pyramid_up
 from app.kss.pyramid import PyramidSession, PyramidSessionStatus, WaveInfo
 from app.models import (
@@ -239,7 +240,7 @@ def start_session(db: Session, session_id: int) -> dict:
 
     pending, risk_note = _queue(db, order_dict)
     _save_state(row, py)
-    row.deadline_at = datetime.utcnow() + timedelta(days=row.deadline_days)
+    row.deadline_at = utcnow() + timedelta(days=row.deadline_days)
     db.add(
         KssWave(
             session_id=session_id,
@@ -420,8 +421,8 @@ def start_pyramid_up_session(db: Session, session_id: int) -> dict:
     ))
 
     row.status = SESSION_ACTIVE
-    row.started_at = datetime.utcnow()
-    row.deadline_at = datetime.utcnow() + timedelta(days=row.deadline_days)
+    row.started_at = utcnow()
+    row.deadline_at = utcnow() + timedelta(days=row.deadline_days)
     db.commit()
     audit.log(db, "kss", "pyramid_up_started", entity=f"kss:{row.id}", symbol=row.symbol,
               base_qty=round(base.qty, 8), adds=len(ladder) - 1,
@@ -486,14 +487,14 @@ def adopt_position_into_kss(
     py.start()  # marks ACTIVE + appends wave 0 as "sent" (we do NOT queue this buy)
     result = py.on_fill(0, held_qty, avg_price, current_market_price=current_price)
     _save_state(row, py)
-    row.deadline_at = datetime.utcnow() + timedelta(days=row.deadline_days)
-    row.last_fill_at = datetime.utcnow()
+    row.deadline_at = utcnow() + timedelta(days=row.deadline_days)
+    row.last_fill_at = utcnow()
 
     db.add(
         KssWave(
             session_id=row.id, wave_num=0, quantity=held_qty,
             target_price=avg_price, status=WAVE_FILLED,
-            filled_qty=held_qty, filled_price=avg_price, filled_at=datetime.utcnow(),
+            filled_qty=held_qty, filled_price=avg_price, filled_at=utcnow(),
         )
     )
     # If the strategy wants the next DCA wave, queue it like a normal fill would — unless the
@@ -541,12 +542,12 @@ def _merge_rescue(
     _save_state(row, py)
     row.max_waves = py.max_waves
     row.isolated_fund = py.isolated_fund
-    row.last_fill_at = datetime.utcnow()
+    row.last_fill_at = utcnow()
     db.add(
         KssWave(
             session_id=row.id, wave_num=wave_num, quantity=held_qty,
             target_price=avg_price, status=WAVE_FILLED,
-            filled_qty=held_qty, filled_price=avg_price, filled_at=datetime.utcnow(),
+            filled_qty=held_qty, filled_price=avg_price, filled_at=utcnow(),
         )
     )
     db.commit()
@@ -588,7 +589,7 @@ def handle_fill_event(
         if parts[2] in {"sl", "trailing", "trail_sl"}:
             from app import runtime
 
-            runtime.set(db, f"stop_cooldown:{row.symbol}", datetime.utcnow().isoformat())
+            runtime.set(db, f"stop_cooldown:{row.symbol}", utcnow().isoformat())
         db.commit()
         return {"action": parts[2], "message": f"Session {session_id} stopped ({parts[2]})"}
 
@@ -600,7 +601,7 @@ def handle_fill_event(
         wave_row.status = WAVE_FILLED
         wave_row.filled_qty = filled_qty
         wave_row.filled_price = filled_price
-        wave_row.filled_at = datetime.utcnow()
+        wave_row.filled_at = utcnow()
 
     if row.strategy_mode == "pyramid_up":
         result = _handle_pyramid_up_fill(db, row, wave_num, filled_qty, filled_price)
@@ -723,7 +724,7 @@ def _flip_to_dca_down(db: Session, row: KssSession, avg: float, filled_price: fl
     py.waves = [WaveInfo(wave_num=0, quantity=held_qty, target_price=avg, status="sent")]
     result = py.on_fill(0, held_qty, avg, current_market_price=filled_price)
     _save_state(row, py)
-    row.last_fill_at = datetime.utcnow()
+    row.last_fill_at = utcnow()
 
     if result.get("action") == "next_wave":
         nwn = int(result["order"]["source_ref"].split(":")[-1])
@@ -929,7 +930,7 @@ def consolidate_sessions(db: Session, keep_id: int, merge_id: int) -> dict:
     keep.total_cost = pos.total_cost
     keep.avg_price = pos.avg_entry_price
     keep.isolated_fund = keep.isolated_fund + merge.isolated_fund
-    keep.last_fill_at = datetime.utcnow()
+    keep.last_fill_at = utcnow()
     db.query(OpusPosition).filter(OpusPosition.kss_session_id == merge_id).update(
         {"kss_session_id": keep_id}
     )
@@ -1017,7 +1018,7 @@ def _cancel_pending_waves(db: Session, session_id: int) -> int:
               .all()):
         o.status = REJECTED
         o.reject_reason = "dynamic-tp activated (ladder cancelled)"
-        o.decided_at = datetime.utcnow()
+        o.decided_at = utcnow()
         n += 1
     for w in (db.query(KssWave)
               .filter(KssWave.session_id == session_id,
@@ -1556,7 +1557,7 @@ def sweep_deadlines(db: Session, now: datetime | None = None) -> list[int]:
     normal approval flow (never bypassed). Every close is audit-logged.
     Returns the list of closed session ids.
     """
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     overdue = (
         db.query(KssSession)
         .filter(

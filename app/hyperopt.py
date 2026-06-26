@@ -14,7 +14,6 @@ in the ``pair_params`` table and can be queried with ``best_params``.
 
 from __future__ import annotations
 
-from datetime import datetime
 from itertools import product
 
 from sqlalchemy.orm import Session
@@ -22,6 +21,7 @@ from sqlalchemy.orm import Session
 import app.audit as audit
 import app.costengine as costengine
 from app.backtest import estimate_win_rate
+from app.clock import utcnow
 from app.config import settings
 from app.data.providers import Candle, data_provider
 from app.models import PairParams
@@ -116,7 +116,7 @@ def persist(db: Session, symbol: str, best: dict) -> PairParams:
     row.max_waves = best["max_waves"]
     row.score = best["score"]
     row.trials = best["trials"]
-    row.updated_at = datetime.utcnow()
+    row.updated_at = utcnow()
 
     db.flush()
     return row

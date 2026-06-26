@@ -15,6 +15,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import portfolio
+from app.clock import utcnow
 from app.config import settings
 from app.models import AuditLog
 from app.orchestrator.models import (
@@ -64,7 +65,7 @@ def deployed(db: Session) -> float:
 
 
 def _utc_day_start() -> datetime:
-    now = datetime.utcnow()
+    now = utcnow()
     return datetime(now.year, now.month, now.day)
 
 
@@ -80,7 +81,7 @@ def spend_today(db: Session) -> float:
 
 def net_pnl_24h(db: Session) -> float:
     """Net profit over the last 24h from hourly rollups (gross - fees - billed Opus cost)."""
-    since = datetime.utcnow() - timedelta(hours=24)
+    since = utcnow() - timedelta(hours=24)
     total = (
         db.query(func.coalesce(func.sum(OpusMetricHourly.net_pnl), 0.0))
         .filter(OpusMetricHourly.hour_ts >= since)

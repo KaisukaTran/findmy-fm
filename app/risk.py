@@ -17,6 +17,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import portfolio
+from app.clock import utcnow
 from app.config import settings
 from app.market import get_exchange_info
 from app.models import Fill, Position
@@ -70,7 +71,7 @@ def current_exposure(symbol: str, db: Session) -> tuple[float, float]:
 
 def daily_loss(db: Session) -> float:
     """Sum of realized losses (positive number) from fills executed today (UTC)."""
-    today = datetime.utcnow().date()
+    today = utcnow().date()
     start = datetime.combine(today, time.min)
     end = datetime.combine(today, time.max)
     total = (

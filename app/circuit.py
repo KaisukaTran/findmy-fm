@@ -13,6 +13,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app import audit, portfolio, risk, runtime
+from app.clock import utcnow
 from app.config import settings
 from app.models import Fill
 
@@ -97,7 +98,7 @@ def evaluate(db: Session) -> dict:
         if frozen_at_raw:
             try:
                 frozen_at = datetime.fromisoformat(frozen_at_raw)
-                elapsed_min = (datetime.utcnow() - frozen_at).total_seconds() / 60.0
+                elapsed_min = (utcnow() - frozen_at).total_seconds() / 60.0
                 if elapsed_min >= settings.breaker_cooldown_min:
                     runtime.unfreeze(db)
                     audit.log(db, "circuit", "rearm", detail={"elapsed_min": elapsed_min, **m})

@@ -20,6 +20,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.clock import utcnow
 from app.config import settings
 from app.models import Fill, Withdrawal
 from app.orchestrator.models import OpusCostLedger
@@ -33,7 +34,7 @@ def _offset() -> timedelta:
 
 
 def local_today() -> date:
-    return (datetime.utcnow() + _offset()).date()
+    return (utcnow() + _offset()).date()
 
 
 # --- withdrawal recording (the ONLY write path) -------------------------------

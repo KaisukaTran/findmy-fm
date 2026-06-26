@@ -12,11 +12,11 @@ executing. Paper-only.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 
 from sqlalchemy.orm import Session
 
 from app import audit, costengine, market, orders, runtime
+from app.clock import utcnow
 from app.config import settings
 from app.orchestrator import brain, service
 from app.orchestrator.models import OPUS_CLOSED, OPUS_RIDE, OPUS_WATCH, OpusPosition
@@ -67,8 +67,8 @@ def _open(db: Session, intent: dict, allowed: set[str], result: dict) -> None:
 
     qty = capped / price
     pos = OpusPosition(
-        symbol=symbol, opened_at=datetime.utcnow(), entry_price=price, qty=qty,
-        avg_price=price, state=OPUS_WATCH, watch_started_at=datetime.utcnow(),
+        symbol=symbol, opened_at=utcnow(), entry_price=price, qty=qty,
+        avg_price=price, state=OPUS_WATCH, watch_started_at=utcnow(),
     )
     db.add(pos)
     db.flush()  # assign id for the source_ref
@@ -101,7 +101,7 @@ def force_close(db: Session, pos: OpusPosition, reason: str) -> float | None:
     hard-stop. Commits."""
     if pos.qty <= 0:
         pos.state = OPUS_CLOSED
-        pos.closed_at = datetime.utcnow()
+        pos.closed_at = utcnow()
         db.commit()
         return 0.0
     order, _ = orders.queue_order(
@@ -113,7 +113,7 @@ def force_close(db: Session, pos: OpusPosition, reason: str) -> float | None:
     realized = fill.realized_pnl or 0.0
     pos.realized_pnl = (pos.realized_pnl or 0.0) + realized
     pos.state = OPUS_CLOSED
-    pos.closed_at = datetime.utcnow()
+    pos.closed_at = utcnow()
     audit.log(db, "opus", "close", entity=f"opos:{pos.id}", symbol=pos.symbol,
               realized=round(realized, 4), reason=reason)
     db.commit()

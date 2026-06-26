@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.clock import utcnow
 from app.config import settings
 from app.market import get_current_prices
 from app.models import Fill, PendingOrder, Position
@@ -222,7 +223,7 @@ _PERIODS: dict[str, int | None] = {"24h": 24, "7d": 24 * 7, "30d": 24 * 30, "all
 def _period_cutoff(period: str) -> datetime | None:
     """UTC cutoff for a period key, or None for all-time / unknown."""
     hours = _PERIODS.get(period)
-    return datetime.utcnow() - timedelta(hours=hours) if hours else None
+    return utcnow() - timedelta(hours=hours) if hours else None
 
 
 def performance_view(db: Session, period: str = "all") -> dict:
@@ -246,7 +247,7 @@ def performance_view(db: Session, period: str = "all") -> dict:
         realized_before = 0.0
 
     base = settings.account_equity + realized_before
-    now_iso = datetime.utcnow().isoformat()
+    now_iso = utcnow().isoformat()
     start_iso = fills[0].executed_at.isoformat() if fills else now_iso
     curve = [base]
     times = [start_iso]

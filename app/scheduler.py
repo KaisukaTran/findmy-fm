@@ -20,6 +20,7 @@ import threading
 from sqlalchemy.orm import Session
 
 from app import audit, orders, scanner
+from app.clock import utcnow
 from app.config import settings
 from app.db import SessionLocal
 from app.kss import service
@@ -86,7 +87,7 @@ def _run_periodic(db: Session) -> tuple[int, bool]:
     ml_trained = False
     try:
         from app import hyperopt, ml, runtime
-        now = datetime.utcnow()
+        now = utcnow()
 
         def _due(key: str, hours: float) -> bool:
             last = runtime.get(db, key)
@@ -113,7 +114,7 @@ def _run_periodic(db: Session) -> tuple[int, bool]:
 def run_cycle(db: Session) -> dict:
     """One scheduler cycle. Returns a small summary (counts), not data dumps."""
     global _last_cycle_at, _last_summary
-    from datetime import datetime, timedelta
+    from datetime import timedelta
 
     from app import circuit, guardian, notify
     from app.models import PENDING, PendingOrder
@@ -143,7 +144,7 @@ def run_cycle(db: Session) -> dict:
     veto_expired = 0
     ttl = settings.guardian_veto_ttl_min
     if ttl > 0:
-        cutoff = datetime.utcnow() - timedelta(minutes=ttl)
+        cutoff = utcnow() - timedelta(minutes=ttl)
         stale = (
             db.query(PendingOrder)
             .filter(
@@ -184,7 +185,7 @@ def run_cycle(db: Session) -> dict:
                 if order is not None:
                     order.auto_veto = True
                     order.auto_veto_reason = reason
-                    order.auto_veto_at = datetime.utcnow()
+                    order.auto_veto_at = utcnow()
                     audit.log(db, "guardian", "veto", entity=f"order:{oid}", reason=reason)
                     notify.event("risk", f"⛔ Guardian vetoed order {oid} ({order.symbol}): {reason}")
                     guardian_vetoes += 1
@@ -220,7 +221,7 @@ def run_cycle(db: Session) -> dict:
         "hyperopt_runs": hyperopt_runs,
         "ml_trained": ml_trained,
     }
-    _last_cycle_at = datetime.utcnow().isoformat()
+    _last_cycle_at = utcnow().isoformat()
     _last_summary = {k: (len(v) if isinstance(v, list) else v) for k, v in summary.items()}
     return summary
 

@@ -32,6 +32,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
+from app.clock import utcnow
 from app.config import settings
 from app.market import get_current_prices, get_exchange_info
 
@@ -112,7 +113,7 @@ class PyramidSession:
     # Timestamps
     start_time: datetime | None = None
     last_fill_time: datetime | None = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=utcnow)
 
     # Exchange info (cached)
     _min_qty: float = field(default=0.00001, repr=False)
@@ -256,7 +257,7 @@ class PyramidSession:
             )
             return None
 
-        self.start_time = datetime.utcnow()
+        self.start_time = utcnow()
         self.status = PyramidSessionStatus.ACTIVE
         self.current_wave = 0
 
@@ -303,7 +304,7 @@ class PyramidSession:
             return {"action": "none", "message": f"Wave {wave_num} not found"}
 
         # Update wave info
-        now = datetime.utcnow()
+        now = utcnow()
         wave.status = "filled"
         wave.filled_qty = filled_qty
         wave.filled_price = filled_price
@@ -488,7 +489,7 @@ class PyramidSession:
         if not self.last_fill_time:
             return False
 
-        now = datetime.utcnow()
+        now = utcnow()
         time_since_last_fill = (now - self.last_fill_time).total_seconds() / 60  # minutes
 
         if time_since_last_fill <= self.timeout_x_min:

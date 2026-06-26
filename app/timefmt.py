@@ -1,7 +1,7 @@
 """
 Display-time helpers — convert stored UTC timestamps to the configured local zone.
 
-Storage stays naive-UTC everywhere (datetime.utcnow); these only shift values for the
+Storage stays naive-UTC everywhere (utcnow); these only shift values for the
 dashboard/charts so users see Vietnam time (UTC+`tz_offset_hours`). Never use these for
 logic/comparisons.
 """

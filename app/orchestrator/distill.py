@@ -19,6 +19,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app import audit, runtime
+from app.clock import utcnow
 from app.config import settings
 from app.orchestrator import brain, ledger
 from app.orchestrator.models import OpusLesson
@@ -54,13 +55,13 @@ def _gap_hours_since_last_run(db: Session) -> float:
     if not last:
         return 1e9
     try:
-        return (datetime.utcnow() - datetime.fromisoformat(last)).total_seconds() / 3600.0
+        return (utcnow() - datetime.fromisoformat(last)).total_seconds() / 3600.0
     except ValueError:
         return 1e9
 
 
 def _mark_ran(db: Session) -> None:
-    runtime.set(db, _RUNTIME_KEY_LAST_DISTILL, datetime.utcnow().isoformat())
+    runtime.set(db, _RUNTIME_KEY_LAST_DISTILL, utcnow().isoformat())
 
 
 def distill_lessons(db: Session) -> int:

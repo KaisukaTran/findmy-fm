@@ -18,6 +18,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.clock import utcnow
 from app.config import settings
 from app.models import Fill
 
@@ -30,7 +31,7 @@ def _offset() -> timedelta:
 
 
 def local_today() -> date:
-    return (datetime.utcnow() + _offset()).date()
+    return (utcnow() + _offset()).date()
 
 
 def _local_date(dt: datetime) -> date:

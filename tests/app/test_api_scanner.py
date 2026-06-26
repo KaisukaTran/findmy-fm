@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app import scanner
 from app.config import settings
+from app.data import candle_cache
 from app.main import app as fastapi_app
 
 _DAY = 86_400_000
@@ -38,7 +39,13 @@ class _FakeProvider:
 
 @pytest.fixture
 def client(monkeypatch):
-    monkeypatch.setattr(scanner, "data_provider", lambda: _FakeProvider())
+    # The scan fetches candles via scanner._provider_factory (CcxtProvider), NOT data_provider,
+    # so patch both — otherwise the candle prefetch hits the live exchange and the endpoint test
+    # depends on the real BTC trend (entry_momentum_gate would flip BTC to 'skip' when BTC is down).
+    _fake = _FakeProvider()
+    monkeypatch.setattr(scanner, "data_provider", lambda: _fake)
+    monkeypatch.setattr(scanner, "_provider_factory", lambda _xid: _fake)
+    candle_cache.clear()
     monkeypatch.setattr("app.kss.pyramid.get_exchange_info",
                         lambda s: {"minQty": 0.00001, "stepSize": 0.00001, "maxQty": 10000.0})
     monkeypatch.setattr("app.kss.pyramid.get_current_prices", lambda syms: dict.fromkeys(syms, 1.0))

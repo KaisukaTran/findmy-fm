@@ -4,6 +4,7 @@ import pytest
 
 from app import models, orders, scanner, scheduler
 from app.config import settings
+from app.data import candle_cache
 from app.kss import service
 
 _DAY = 86_400_000
@@ -37,7 +38,13 @@ class _FakeProvider:
 
 @pytest.fixture
 def env(monkeypatch):
-    monkeypatch.setattr(scanner, "data_provider", lambda: _FakeProvider())
+    # The scan fetches candles via scanner._provider_factory (CcxtProvider), NOT data_provider,
+    # so patch both — otherwise the cycle prefetch hits the live exchange and a market-reactive
+    # gate (entry_momentum_gate) flips BTC to 'skip' whenever real BTC is short-term down.
+    _fake = _FakeProvider()
+    monkeypatch.setattr(scanner, "data_provider", lambda: _fake)
+    monkeypatch.setattr(scanner, "_provider_factory", lambda _xid: _fake)
+    candle_cache.clear()
     monkeypatch.setattr("app.kss.pyramid.get_exchange_info",
                         lambda s: {"minQty": 0.00001, "stepSize": 0.00001, "maxQty": 10000.0})
     monkeypatch.setattr("app.kss.pyramid.get_current_prices", lambda syms: dict.fromkeys(syms, 1.0))

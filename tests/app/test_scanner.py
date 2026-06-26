@@ -40,7 +40,15 @@ class _FakeProvider:
 
 @pytest.fixture
 def scan_env(monkeypatch):
-    monkeypatch.setattr(scanner, "data_provider", lambda: _FakeProvider())
+    # Route BOTH the universe provider AND the candle source through the fake. The scan
+    # fetches OHLCV via scanner._provider_factory (CcxtProvider) — NOT data_provider — so
+    # patching data_provider alone leaves the candle prefetch hitting the live exchange,
+    # making these mechanics tests depend on the real BTC trend (a market-reactive gate like
+    # entry_momentum_gate would then flip BTC to 'skip' whenever BTC is short-term down).
+    _fake = _FakeProvider()
+    monkeypatch.setattr(scanner, "data_provider", lambda: _fake)
+    monkeypatch.setattr(scanner, "_provider_factory", lambda _xid: _fake)
+    candle_cache.clear()
     monkeypatch.setattr("app.kss.pyramid.get_exchange_info",
                         lambda s: {"minQty": 0.00001, "stepSize": 0.00001, "maxQty": 10000.0})
     monkeypatch.setattr("app.kss.pyramid.get_current_prices", lambda syms: dict.fromkeys(syms, 1.0))

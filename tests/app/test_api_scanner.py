@@ -51,6 +51,10 @@ def client(monkeypatch):
     monkeypatch.setattr("app.kss.pyramid.get_current_prices", lambda syms: dict.fromkeys(syms, 1.0))
     monkeypatch.setattr("app.orders.get_current_prices", lambda syms: dict.fromkeys(syms, 1.0))
     monkeypatch.setattr("app.portfolio.get_current_prices", lambda syms: dict.fromkeys(syms, 1.0))
+    # The open path now anchors ``entry`` to the live ticker (app.market.get_current_prices);
+    # keep it hermetic (candle close = the fake's get_prices) so it never hits the real exchange.
+    monkeypatch.setattr("app.market.get_current_prices",
+                        lambda syms, force=False: _fake.get_prices(syms))
     monkeypatch.setattr(settings, "watchlist", ["BTC"])
     monkeypatch.setattr(settings, "scan_top_n", 0)
     monkeypatch.setattr(settings, "min_confidence", 0.0)

@@ -18,6 +18,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app import audit, market
+from app.clock import utcnow
 from app.config import settings
 from app.orchestrator import service
 from app.orchestrator.models import OPUS_RESCUE, OPUS_RIDE, OPUS_WATCH
@@ -41,7 +42,7 @@ def run(db: Session) -> dict:
         return {"rides": 0, "rescues": 0, "ride_stops": 0}
 
     prices = market.get_current_prices(sorted({p.symbol for p in positions}))
-    now = datetime.utcnow()
+    now = utcnow()
     rides = rescues = ride_stops = 0
 
     for pos in positions:

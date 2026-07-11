@@ -13,11 +13,11 @@ without side-effects on the global session.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
 
 from sqlalchemy.orm import Session
 
 from app.agents.aggregator import DEFAULT_WEIGHTS
+from app.clock import utcnow
 from app.config import settings
 from app.models import RuntimeConfig
 
@@ -132,11 +132,11 @@ def set(db: Session, key: str, value: object) -> None:  # noqa: A001
     """Upsert a RuntimeConfig row, storing *value* as a string, then commit."""
     row: RuntimeConfig | None = db.get(RuntimeConfig, key)
     if row is None:
-        row = RuntimeConfig(key=key, value=str(value), updated_at=datetime.utcnow())
+        row = RuntimeConfig(key=key, value=str(value), updated_at=utcnow())
         db.add(row)
     else:
         row.value = str(value)
-        row.updated_at = datetime.utcnow()
+        row.updated_at = utcnow()
     db.commit()
 
 
@@ -369,7 +369,7 @@ def freeze(db: Session, reason: str) -> None:
     """Activate the circuit-breaker freeze with a human-readable *reason*."""
     set_bool(db, KEY_FROZEN, True)
     set(db, KEY_FROZEN_REASON, reason)
-    set(db, KEY_FROZEN_AT, datetime.utcnow().isoformat())
+    set(db, KEY_FROZEN_AT, utcnow().isoformat())
 
 
 def unfreeze(db: Session) -> None:

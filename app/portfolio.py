@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.clock import utcnow
 from app.config import settings
 from app.market import get_current_prices
 from app.models import Fill, PendingOrder, Position
@@ -45,8 +46,21 @@ def _symbol_owners(db: Session) -> dict[str, list[str]]:
     return owners
 
 
-def positions_view(db: Session) -> list[dict]:
-    """Open positions enriched with live price, market value and unrealized P&L."""
+# Columns the Positions table may be sorted by (click a header). Whitelisted so a
+# crafted ?sort= can only ever pick one of these dict keys.
+POSITION_SORT_KEYS = frozenset(
+    {"symbol", "quantity", "avg_entry_price", "current_price", "market_value", "unrealized_pnl"}
+)
+
+
+def positions_view(
+    db: Session, sort: str | None = None, direction: str = "asc"
+) -> list[dict]:
+    """Open positions enriched with live price, market value and unrealized P&L.
+
+    When ``sort`` is one of ``POSITION_SORT_KEYS`` the rows are ordered by that column
+    (``direction`` = ``asc``|``desc``); otherwise the natural DB order is kept.
+    """
     positions = db.query(Position).filter(Position.quantity > 0).all()
     if not positions:
         return []
@@ -76,6 +90,11 @@ def positions_view(db: Session) -> list[dict]:
                 "unrealized_pnl_pct": (unrealized / p.total_cost * 100) if p.total_cost else 0.0,
                 "sources": owners.get(p.symbol, []),  # ["OPUS"], ["KSS"], or both
             }
+        )
+    if sort in POSITION_SORT_KEYS:
+        rows.sort(
+            key=lambda r: r[sort].lower() if isinstance(r[sort], str) else r[sort],
+            reverse=(direction == "desc"),
         )
     return rows
 
@@ -222,7 +241,7 @@ _PERIODS: dict[str, int | None] = {"24h": 24, "7d": 24 * 7, "30d": 24 * 30, "all
 def _period_cutoff(period: str) -> datetime | None:
     """UTC cutoff for a period key, or None for all-time / unknown."""
     hours = _PERIODS.get(period)
-    return datetime.utcnow() - timedelta(hours=hours) if hours else None
+    return utcnow() - timedelta(hours=hours) if hours else None
 
 
 def performance_view(db: Session, period: str = "all") -> dict:
@@ -246,7 +265,7 @@ def performance_view(db: Session, period: str = "all") -> dict:
         realized_before = 0.0
 
     base = settings.account_equity + realized_before
-    now_iso = datetime.utcnow().isoformat()
+    now_iso = utcnow().isoformat()
     start_iso = fills[0].executed_at.isoformat() if fills else now_iso
     curve = [base]
     times = [start_iso]

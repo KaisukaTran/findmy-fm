@@ -831,12 +831,27 @@ def _review_and_open(
             cand.reason = (cand.reason or "") + f" | hoãn: đạt cap {per_scan_cap} phiên/scan"
             audit.log(db, "scanner", "skipped_per_scan_cap", entity=symbol, cap=per_scan_cap)
             continue
-        ok, why = _can_open(db, c["need"])
+        # Anchor the ladder at the LIVE market, not the (possibly day-old) daily-candle close.
+        # Using the stale candle close as ``entry`` while the guard reads the live ticker minted
+        # phantom profit: on an intraday pump the candle close sits BELOW the live price, so wave 0
+        # force-filled cheap and TP'd instantly at the higher live price — a fake +TP repeated
+        # every scan (the MIRA instant-flip bug). Fall back to the candle close only when offline.
+        # ``need`` (reservation + open-gate budget) must be recomputed from the SAME entry so the
+        # isolated_fund matches the ladder the session will actually run.
+        from app.market import get_current_prices  # lazy — avoid import cycle at module load
+
+        live = get_current_prices([symbol]).get(symbol)
+        entry = live if live and live > 0 else c["entry"]
+        need = (
+            c["need"] if entry == c["entry"]
+            else service.projected_ladder_cost(symbol, entry, c["distance_pct"], c["max_waves"])
+        )
+        ok, why = _can_open(db, need)
         if ok:
             cand.session_id = _open_session(
-                db, symbol, c["entry"], mode,
+                db, symbol, entry, mode,
                 distance_pct=c["distance_pct"], tp_pct=c["tp_pct"], max_waves=c["max_waves"],
-                isolated_fund=c["need"], strategy_mode=c.get("strategy_mode", "dca_down"),
+                isolated_fund=need, strategy_mode=c.get("strategy_mode", "dca_down"),
             )
             opened += 1
         else:
@@ -1066,6 +1081,22 @@ def _open_session(
                         audit.log(db, "scanner", "guardian_veto", entity=f"order:{oid}",
                                   symbol=symbol, session=row.id)
                         _vetoed = True
+            # Defense-in-depth: only force-fill wave 0 when it is actually marketable — the live
+            # market must not sit materially ABOVE the entry limit for a BUY. Force-approving a
+            # below-market BUY limit fills it at the stale limit price and books an instant
+            # phantom TP (the MIRA instant-flip bug). A not-yet-marketable wave 0 is left PENDING
+            # for auto_fill_due_orders, which fills it once the market reaches the limit. A 0.1%
+            # tolerance absorbs micro-ticks/rounding so normal at-market opens are unaffected.
+            if not _vetoed:
+                from app.market import get_current_prices  # lazy — avoid import cycle
+
+                mkt = get_current_prices([symbol]).get(symbol) or 0.0
+                marketable = entry <= 0 or mkt <= 0 or mkt <= entry * 1.001
+                if not marketable:
+                    audit.log(db, "scanner", "wave0_not_marketable", entity=f"order:{oid}",
+                              symbol=symbol, session=row.id,
+                              market=round(mkt, 8), entry=round(entry, 8))
+                    _vetoed = True
             if not _vetoed:
                 try:
                     orders.approve_order(db, oid, reviewer="auto-trader")

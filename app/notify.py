@@ -23,6 +23,7 @@ import time
 
 import httpx
 
+from app.clock import utcnow
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -203,11 +204,11 @@ def fill_alert(fill) -> bool:
 
 def _recent_skip_count(db, action: str, hours: float = 24.0) -> tuple[int, list[str]]:
     """(count, distinct entities) of an audit action over the last `hours` — for digest monitoring."""
-    from datetime import datetime, timedelta
+    from datetime import timedelta
 
     from app.models import AuditLog
 
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    cutoff = utcnow() - timedelta(hours=hours)
     rows = db.query(AuditLog.entity).filter(
         AuditLog.action == action, AuditLog.created_at >= cutoff).all()
     syms: list[str] = []

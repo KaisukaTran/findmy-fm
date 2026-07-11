@@ -20,6 +20,7 @@ from datetime import datetime
 from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.clock import utcnow
 from app.db import Base
 
 # --- status constants ---------------------------------------------------
@@ -92,7 +93,7 @@ class PendingOrder(Base):
     exchange_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     exchange_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     def to_dict(self) -> dict:
@@ -146,7 +147,7 @@ class Fill(Base):
     source_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
     strategy_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     executed_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
+        DateTime, default=utcnow, nullable=False
     )
 
     def to_dict(self) -> dict:
@@ -179,7 +180,7 @@ class Position(Base):
     total_cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     realized_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, default=utcnow, onupdate=utcnow, nullable=False
     )
 
     def to_dict(self) -> dict:
@@ -241,7 +242,7 @@ class KssSession(Base):
     # Max days the session may wait for take-profit before being force-closed.
     deadline_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
     deadline_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_fill_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -278,7 +279,7 @@ class KssWave(Base):
     exchange_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     exchange_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     session: Mapped[KssSession] = relationship(back_populates="waves")
 
@@ -295,7 +296,7 @@ class ScanRun(Base):
     mode: Mapped[str] = mapped_column(String(12), nullable=False, default="semi")  # semi / auto
     universe_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     params: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON snapshot of thresholds
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
 
 class Candidate(Base):
@@ -322,7 +323,7 @@ class Candidate(Base):
     decision: Mapped[str] = mapped_column(String(8), nullable=False, default="skip")  # trade / skip
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     session_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     def to_dict(self) -> dict:
         return {
@@ -349,7 +350,7 @@ class AgentVoteRecord(Base):
     score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     def to_dict(self) -> dict:
         return {
@@ -371,7 +372,7 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(String(48), nullable=False)
     entity: Mapped[str | None] = mapped_column(String(64), nullable=True)
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     def to_dict(self) -> dict:
         return {
@@ -396,7 +397,7 @@ class RuntimeConfig(Base):
     key: Mapped[str] = mapped_column(String(48), primary_key=True)
     value: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, default=utcnow, onupdate=utcnow, nullable=False
     )
 
     def to_dict(self) -> dict:
@@ -423,7 +424,7 @@ class PairParams(Base):
     score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # objective value
     trials: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, default=utcnow, onupdate=utcnow, nullable=False
     )
 
     def to_dict(self) -> dict:
@@ -445,7 +446,7 @@ class MlModel(Base):
     params_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # weights/bias/feature spec
     metric: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # val accuracy/AUC
     n_samples: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    trained_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    trained_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     def to_dict(self) -> dict:
         return {
@@ -469,7 +470,7 @@ class Withdrawal(Base):
     vat: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # VAT on amount (frozen)
     exchange: Mapped[str] = mapped_column(String(20), nullable=False, default="binance")
     note: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     def to_dict(self) -> dict:
         return {
@@ -503,9 +504,9 @@ class SavingsHolding(Base):
     avg_cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # USD/unit
     src: Mapped[str] = mapped_column(String(16), nullable=False, default="KAI")  # provenance tag
     note: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime, default=utcnow, onupdate=utcnow, nullable=False
     )
 
     def to_dict(self) -> dict:

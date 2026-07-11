@@ -40,11 +40,24 @@ class _FakeProvider:
 
 @pytest.fixture
 def scan_env(monkeypatch):
-    monkeypatch.setattr(scanner, "data_provider", lambda: _FakeProvider())
+    # Route BOTH the universe provider AND the candle source through the fake. The scan
+    # fetches OHLCV via scanner._provider_factory (CcxtProvider) — NOT data_provider — so
+    # patching data_provider alone leaves the candle prefetch hitting the live exchange,
+    # making these mechanics tests depend on the real BTC trend (a market-reactive gate like
+    # entry_momentum_gate would then flip BTC to 'skip' whenever BTC is short-term down).
+    _fake = _FakeProvider()
+    monkeypatch.setattr(scanner, "data_provider", lambda: _fake)
+    monkeypatch.setattr(scanner, "_provider_factory", lambda _xid: _fake)
+    candle_cache.clear()
     monkeypatch.setattr("app.kss.pyramid.get_exchange_info",
                         lambda s: {"minQty": 0.00001, "stepSize": 0.00001, "maxQty": 10000.0})
     monkeypatch.setattr("app.kss.pyramid.get_current_prices", lambda syms: dict.fromkeys(syms, 1.0))
     monkeypatch.setattr("app.orders.get_current_prices", lambda syms: dict.fromkeys(syms, 1.0))
+    # The open path now anchors ``entry`` to the LIVE ticker (app.market.get_current_prices) and
+    # gates wave-0 force-fill on marketability — keep that hermetic (candle close = the fake's
+    # get_prices) so these mechanics tests never touch the real exchange.
+    monkeypatch.setattr("app.market.get_current_prices",
+                        lambda syms, force=False: _fake.get_prices(syms))
     monkeypatch.setattr(settings, "watchlist", ["BTC"])
     monkeypatch.setattr(settings, "scan_top_n", 0)
     monkeypatch.setattr(settings, "min_confidence", 0.0)
@@ -86,6 +99,31 @@ def test_full_auto_executes(db, scan_env, monkeypatch):
 
     assert db.query(models.Fill).count() >= 1  # wave 0 auto-approved + filled
     assert db.query(models.AuditLog).filter_by(action="auto_approve").count() == 1
+
+
+def test_open_anchors_entry_to_live_not_stale_candle(db, scan_env, monkeypatch):
+    """Regression: the stale-entry instant-flip (phantom-profit) bug.
+
+    ``entry`` used to be the last DAILY-candle close while the guard read the live ticker. On an
+    intraday pump the candle close sits BELOW the live price, so wave 0 force-filled cheap and TP'd
+    instantly at the higher live price — a fake +TP repeated every scan (MIRA et al.). The fix
+    anchors wave 0 at the LIVE price, so avg == live and no instant phantom profit can be booked.
+    """
+    monkeypatch.setattr(settings, "auto_trade", True)
+    candle_close = _uptrend()[-1]["close"]
+    live = candle_close * 1.10  # simulate the live ticker 10% ABOVE the stale daily close
+    monkeypatch.setattr("app.market.get_current_prices",
+                        lambda syms, force=False: dict.fromkeys(syms, live))
+    monkeypatch.setattr("app.orders.get_current_prices", lambda syms: dict.fromkeys(syms, live))
+
+    scanner.run_scan(db)
+
+    sess = db.query(models.KssSession).filter_by(symbol="BTC").one()
+    # Wave 0 is anchored at the LIVE price, not the stale (lower) candle close.
+    assert sess.avg_price == pytest.approx(live, rel=1e-3)
+    assert sess.avg_price > candle_close
+    # No instant phantom TP: nothing was sold on the open.
+    assert db.query(models.Fill).filter_by(side="SELL").count() == 0
 
 
 def test_high_thresholds_skip(db, scan_env, monkeypatch):

@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.clock import utcnow
 from app.config import settings
 from app.orchestrator import service
 from app.orchestrator.models import OpusCostLedger, OpusMetricHourly, OpusPosition
@@ -64,7 +65,7 @@ def record_cost(
 
 def rollup_hour(db: Session, hour: datetime | None = None) -> OpusMetricHourly:
     """Aggregate one hour's OPUS cost + realized PnL into an OpusMetricHourly row (upsert)."""
-    hour = _hour_floor(hour or datetime.utcnow())
+    hour = _hour_floor(hour or utcnow())
     nxt = hour + timedelta(hours=1)
 
     cost = (
@@ -110,12 +111,12 @@ def rollup_hour(db: Session, hour: datetime | None = None) -> OpusMetricHourly:
 
 def rollup_now(db: Session) -> OpusMetricHourly:
     """Refresh the current hour's rollup (cheap; safe to call each tick / on view)."""
-    return rollup_hour(db, datetime.utcnow())
+    return rollup_hour(db, utcnow())
 
 
 def metrics_series(db: Session, hours: int = 48) -> list[OpusMetricHourly]:
     """The last `hours` hourly rollups, oldest→newest (drives the chart)."""
-    since = _hour_floor(datetime.utcnow()) - timedelta(hours=hours - 1)
+    since = _hour_floor(utcnow()) - timedelta(hours=hours - 1)
     return (
         db.query(OpusMetricHourly)
         .filter(OpusMetricHourly.hour_ts >= since)

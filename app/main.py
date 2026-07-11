@@ -19,6 +19,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
+from app.clock import utcnow
 from app.config import settings
 from app.db import init_db
 from app.kss.routes import router as kss_router
@@ -30,7 +31,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 def _local_time(timestamp: float | None = None) -> time.struct_time:
     """Log %(asctime)s in the configured display zone (Vietnam GMT+7) regardless of the host TZ."""
-    base = datetime.utcfromtimestamp(timestamp) if timestamp is not None else datetime.utcnow()
+    base = datetime.utcfromtimestamp(timestamp) if timestamp is not None else utcnow()
     return (base + timedelta(hours=settings.tz_offset_hours)).timetuple()
 
 

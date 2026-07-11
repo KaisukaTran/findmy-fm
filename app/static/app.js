@@ -244,14 +244,6 @@ const actions = {
     toast(r.message ? `${r.message} @ ${r.price}` : "Đã chốt lời.", "success");
     refreshTrading(); refreshStatus();
   },
-  async kssCheckTp(id) {
-    const r = await api("POST", `/api/kss/sessions/${id}/check-tp`);
-    toast(r.tp_deferred
-      ? "TP đạt theo avg session nhưng DƯỚI giá vốn tổng + 2× phí — đã HOÃN (K-2), tránh chốt lời mà lỗ."
-      : (r.tp_triggered ? "TP đạt — đã đưa lệnh bán vào hàng chờ." : "Chưa đạt TP."),
-      r.tp_triggered ? "success" : "info");
-    refreshTrading(); refreshStatus();
-  },
   async kssDcaNext(id) {
     // Gợi ý số $ của nấc kế tiếp (read-only, fail-soft: thiếu vẫn DCA+ được).
     let pv = null;

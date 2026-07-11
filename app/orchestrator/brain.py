@@ -12,12 +12,12 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
 
 import httpx
 from sqlalchemy.orm import Session
 
 from app import audit, market
+from app.clock import utcnow
 from app.config import settings
 from app.models import Candidate, Fill, ScanRun
 from app.orchestrator import ledger, service
@@ -139,7 +139,7 @@ def _self_history_block(db: Session) -> dict:
     recent = []
     wins = 0
     for p in rows:
-        opened = p.opened_at or p.closed_at or datetime.utcnow()
+        opened = p.opened_at or p.closed_at or utcnow()
         closed = p.closed_at or opened
         hold_h = max(0.0, (closed - opened).total_seconds() / 3600.0)
         pnl = p.realized_pnl or 0.0
@@ -172,7 +172,7 @@ def build_snapshot(db: Session) -> dict:
     positions = service.managed_positions(db)
     syms = sorted({p.symbol for p in positions} | {c["symbol"] for c in _candidates(db)})
     prices = market.get_current_prices(syms) if syms else {}
-    now = datetime.utcnow()
+    now = utcnow()
     pos_rows = []
     for p in positions:
         price = prices.get(p.symbol, 0.0)

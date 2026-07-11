@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app import scanner
 from app.config import settings
+from app.data import candle_cache
 from app.main import app as fastapi_app
 
 _DAY = 86_400_000
@@ -38,12 +39,22 @@ class _FakeProvider:
 
 @pytest.fixture
 def client(monkeypatch):
-    monkeypatch.setattr(scanner, "data_provider", lambda: _FakeProvider())
+    # The scan fetches candles via scanner._provider_factory (CcxtProvider), NOT data_provider,
+    # so patch both — otherwise the candle prefetch hits the live exchange and the endpoint test
+    # depends on the real BTC trend (entry_momentum_gate would flip BTC to 'skip' when BTC is down).
+    _fake = _FakeProvider()
+    monkeypatch.setattr(scanner, "data_provider", lambda: _fake)
+    monkeypatch.setattr(scanner, "_provider_factory", lambda _xid: _fake)
+    candle_cache.clear()
     monkeypatch.setattr("app.kss.pyramid.get_exchange_info",
                         lambda s: {"minQty": 0.00001, "stepSize": 0.00001, "maxQty": 10000.0})
     monkeypatch.setattr("app.kss.pyramid.get_current_prices", lambda syms: dict.fromkeys(syms, 1.0))
     monkeypatch.setattr("app.orders.get_current_prices", lambda syms: dict.fromkeys(syms, 1.0))
     monkeypatch.setattr("app.portfolio.get_current_prices", lambda syms: dict.fromkeys(syms, 1.0))
+    # The open path now anchors ``entry`` to the live ticker (app.market.get_current_prices);
+    # keep it hermetic (candle close = the fake's get_prices) so it never hits the real exchange.
+    monkeypatch.setattr("app.market.get_current_prices",
+                        lambda syms, force=False: _fake.get_prices(syms))
     monkeypatch.setattr(settings, "watchlist", ["BTC"])
     monkeypatch.setattr(settings, "scan_top_n", 0)
     monkeypatch.setattr(settings, "min_confidence", 0.0)

@@ -1697,10 +1697,25 @@ def list_sessions(
         q = q.filter(KssSession.status == status)
     if symbol:
         q = q.filter(KssSession.symbol == symbol)
-    from sqlalchemy import case
+    from sqlalchemy import case, func, select
     # ACTIVE sessions first, then most-recent — so live sessions are always at the top.
     active_first = case((KssSession.status == SESSION_ACTIVE, 0), else_=1)
-    rows = q.order_by(active_first, KssSession.created_at.desc()).limit(limit).all()
+    # Within the active group, sessions whose ladder is FULL (every wave filled → no
+    # auto-DCA rung left) bubble up so a manual DCA+ / max_waves bump is easy to spot.
+    # The correlated filled-wave count is done in SQL (before .limit) so the ordering
+    # stays correct across pagination.
+    filled_count = (
+        select(func.count(KssWave.id))
+        .where(KssWave.session_id == KssSession.id, KssWave.status == WAVE_FILLED)
+        .correlate(KssSession)
+        .scalar_subquery()
+    )
+    full_first = case((filled_count >= KssSession.max_waves, 0), else_=1)
+    rows = (
+        q.order_by(active_first, full_first, KssSession.created_at.desc())
+        .limit(limit)
+        .all()
+    )
     out = []
     for r in rows:
         d = _to_pyramid(r).get_status()

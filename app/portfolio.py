@@ -46,8 +46,21 @@ def _symbol_owners(db: Session) -> dict[str, list[str]]:
     return owners
 
 
-def positions_view(db: Session) -> list[dict]:
-    """Open positions enriched with live price, market value and unrealized P&L."""
+# Columns the Positions table may be sorted by (click a header). Whitelisted so a
+# crafted ?sort= can only ever pick one of these dict keys.
+POSITION_SORT_KEYS = frozenset(
+    {"symbol", "quantity", "avg_entry_price", "current_price", "market_value", "unrealized_pnl"}
+)
+
+
+def positions_view(
+    db: Session, sort: str | None = None, direction: str = "asc"
+) -> list[dict]:
+    """Open positions enriched with live price, market value and unrealized P&L.
+
+    When ``sort`` is one of ``POSITION_SORT_KEYS`` the rows are ordered by that column
+    (``direction`` = ``asc``|``desc``); otherwise the natural DB order is kept.
+    """
     positions = db.query(Position).filter(Position.quantity > 0).all()
     if not positions:
         return []
@@ -77,6 +90,11 @@ def positions_view(db: Session) -> list[dict]:
                 "unrealized_pnl_pct": (unrealized / p.total_cost * 100) if p.total_cost else 0.0,
                 "sources": owners.get(p.symbol, []),  # ["OPUS"], ["KSS"], or both
             }
+        )
+    if sort in POSITION_SORT_KEYS:
+        rows.sort(
+            key=lambda r: r[sort].lower() if isinstance(r[sort], str) else r[sort],
+            reverse=(direction == "desc"),
         )
     return rows
 

@@ -206,6 +206,10 @@ button { white-space: nowrap; }
   box-shadow: 0 4px 14px rgba(0,0,0,.5);
 }
 .tbl th[title], .muted[title] { cursor: help; text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
+/* Click-to-sort column headers (Positions table). */
+.tbl th .th-sort { cursor: pointer; color: var(--muted); text-decoration: none; user-select: none; }
+.tbl th .th-sort:hover { color: var(--fg); }
+.tbl th .th-sort .sort-ico { color: var(--accent); font-size: 10px; }
 
 /* Phone / narrow viewports */
 @media (max-width: 600px) {

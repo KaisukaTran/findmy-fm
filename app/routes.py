@@ -883,11 +883,20 @@ def partial_summary(request: Request, db: Session = Depends(get_db)):
 
 
 @ui_router.get("/partials/positions", response_class=HTMLResponse)
-def partial_positions(request: Request, page: int = 1, db: Session = Depends(get_db)):
+def partial_positions(
+    request: Request,
+    page: int = 1,
+    sort: str = "",
+    dir: str = "asc",
+    db: Session = Depends(get_db),
+):
     # Trading tab: page size 20, up to 10 pages.
     page = max(1, min(page, 10))
     offset = (page - 1) * 20
-    all_rows = portfolio.positions_view(db)
+    # Sanitise the click-to-sort inputs before they reach the view / template.
+    sort = sort if sort in portfolio.POSITION_SORT_KEYS else ""
+    direction = "desc" if dir == "desc" else "asc"
+    all_rows = portfolio.positions_view(db, sort=sort or None, direction=direction)
     rows = all_rows[offset: offset + 20]
     return templates.TemplateResponse(
         "partials/positions.html",
@@ -897,6 +906,8 @@ def partial_positions(request: Request, page: int = 1, db: Session = Depends(get
             "page": page,
             "has_prev": page > 1,
             "has_next": len(all_rows) > offset + 20,
+            "sort": sort,
+            "dir": direction,
         },
     )
 

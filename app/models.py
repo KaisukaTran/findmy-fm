@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.clock import utcnow
@@ -258,6 +258,10 @@ class KssWave(Base):
     __table_args__ = (
         Index("ix_kss_waves_session_id", "session_id"),
         Index("ix_kss_waves_pending_order_id", "pending_order_id"),
+        # One row per wave per session — the DB backstop against the duplicate-wave race
+        # (manual DCA+ and the auto-chain both queuing the same wave_num). New DBs enforce it;
+        # existing DBs are additionally guarded in service._queue_wave_if_above_sl / _wave_row.
+        UniqueConstraint("session_id", "wave_num", name="uq_kss_waves_session_wave"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

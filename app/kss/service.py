@@ -100,10 +100,14 @@ def _get_row(db: Session, session_id: int) -> KssSession:
 
 
 def _wave_row(db: Session, session_id: int, wave_num: int) -> KssWave | None:
+    # ``.first()`` (not ``.one_or_none()``): a legacy DB may hold duplicate (session_id, wave_num)
+    # rows from the historical DCA+/auto-chain race; one_or_none() would raise MultipleResultsFound
+    # and crash the fill hook. Return the earliest (canonical) row so bookkeeping stays deterministic.
     return (
         db.query(KssWave)
         .filter(KssWave.session_id == session_id, KssWave.wave_num == wave_num)
-        .one_or_none()
+        .order_by(KssWave.id)
+        .first()
     )
 
 
@@ -154,6 +158,14 @@ def _queue_wave_if_above_sl(
     The rung is first re-anchored to the live market (``_anchor_dca_price``) so the auto-chain
     never queues a buy above the current price (which would fill at an overpay, not a dip)."""
     nwn = int(order_dict["source_ref"].split(":")[-1])
+    # Idempotency guard against the duplicate-wave race: if this wave is already queued/recorded
+    # (e.g. a manual DCA+ queued it while the auto-chain is firing), do not queue a second copy —
+    # that historically double-bought a rung (session 42/C: wave 13 filled twice, ~$49.9k) and
+    # stranded an orphan lot the session bookkeeping could not see.
+    if _wave_row(db, session_id, nwn) is not None:
+        audit.log(db, "kss", "wave_already_queued", entity=f"kss:{session_id}",
+                  symbol=symbol, wave=nwn)
+        return False
     order_dict["price"] = _anchor_dca_price(
         db, session_id, symbol, py.distance_pct, order_dict["price"], py.entry_price
     )

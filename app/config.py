@@ -224,6 +224,15 @@ class Settings(BaseSettings):
     loss_streak_block_k: int = Field(default=2, description="Block a pair after this many consecutive losing closes (a win breaks the streak).")
     loss_streak_window_days: int = Field(default=14, description="Only count closes within this sliding window (days) — the block auto-decays as old losses age out.")
 
+    # --- Loss re-entry escalation: space out re-opening a coin that got STOPPED OUT (hard-SL) ---
+    # A "large loss" = a hard-SL close (source_ref …:sl); trailing exits (…:trail_sl) do NOT count.
+    # The block escalates by how many times the coin has been stopped out, then blacklists it.
+    loss_reentry_enabled: bool = Field(default=True, description="Block re-opening a coin after a hard stop-loss, escalating by how many times it was stopped out (weeks → months → blacklist). Counts every hard-SL close (…:sl); trailing exits don't count.")
+    loss_reentry_weeks_1: int = Field(default=2, description="Weeks to block a coin after its 1st hard-SL stop-out.")
+    loss_reentry_weeks_2: int = Field(default=8, description="Weeks to block after the 2nd hard-SL (≈2 months). The block auto-decays once this many weeks pass since the last stop-out.")
+    loss_reentry_blacklist_after: int = Field(default=3, description="Hard-SL count at which a coin is blacklisted (blocked indefinitely). Clear a coin via loss_reentry_pardon.")
+    loss_reentry_pardon: str = Field(default="", description="Comma-separated symbols exempt from the loss re-entry block (manual pardon / un-blacklist). e.g. 'C, MIRA'.")
+
     # --- Grok scanner gate: a Grok (xAI) endorse/veto pass over qualified candidates ---
     grok_scanner_enabled: bool = Field(default=False, description="Have Grok review scanner candidates that passed every deterministic gate (one batched call/scan). Needs xai_api_key. Off = no cost, deterministic behaviour unchanged.")
     grok_scanner_batch_max: int = Field(default=60, ge=1, le=300, description="Max candidates Grok reviews per scan (single batched call). Set high enough to cover EVERY 'trade' candidate so none opens unreviewed; the batch is sorted by expectancy so the strongest are kept if it ever truncates. Larger = more tokens/call.")

@@ -27,6 +27,11 @@ from app.routes import api_router, ui_router
 from app.security import install_security
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+# httpx/httpcore log every request at INFO, and the Telegram bot token lives in the request URL
+# (api.telegram.org/bot<token>/…) — at INFO that token is written cleartext to the uvicorn logs on
+# every poll. Silence their request logging so no secret leaks to disk.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def _local_time(timestamp: float | None = None) -> time.struct_time:

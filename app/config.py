@@ -31,8 +31,10 @@ class Settings(BaseSettings):
         description="API key required (X-API-Key header) for write/mutation endpoints.",
     )
     require_auth: bool = Field(
-        default=False,
-        description="If true, enforce X-API-Key on write endpoints. Off by default for local demo.",
+        default=True,
+        description="If true, enforce X-API-Key on write/mutation endpoints. ON by default — the "
+        "dashboard prompts for the key once and stores it in sessionStorage. The app refuses to boot "
+        "if this is on while api_key is still a shipped default, and live trading always requires it.",
     )
     cors_origins: list[str] = Field(
         default=["http://localhost:8000", "http://127.0.0.1:8000"],

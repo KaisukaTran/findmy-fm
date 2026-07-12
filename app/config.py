@@ -224,6 +224,15 @@ class Settings(BaseSettings):
     loss_streak_block_k: int = Field(default=2, description="Block a pair after this many consecutive losing closes (a win breaks the streak).")
     loss_streak_window_days: int = Field(default=14, description="Only count closes within this sliding window (days) — the block auto-decays as old losses age out.")
 
+    # --- Loss re-entry escalation: space out re-opening a coin that got STOPPED OUT (hard-SL) ---
+    # A "large loss" = a hard-SL close (source_ref …:sl); trailing exits (…:trail_sl) do NOT count.
+    # The block escalates by how many times the coin has been stopped out, then blacklists it.
+    loss_reentry_enabled: bool = Field(default=True, description="Block re-opening a coin after a hard stop-loss, escalating by how many times it was stopped out (weeks → months → blacklist). Counts every hard-SL close (…:sl); trailing exits don't count.")
+    loss_reentry_weeks_1: int = Field(default=2, description="Weeks to block a coin after its 1st hard-SL stop-out.")
+    loss_reentry_weeks_2: int = Field(default=8, description="Weeks to block after the 2nd hard-SL (≈2 months). The block auto-decays once this many weeks pass since the last stop-out.")
+    loss_reentry_blacklist_after: int = Field(default=3, description="Hard-SL count at which a coin is blacklisted (blocked indefinitely). Clear a coin via loss_reentry_pardon.")
+    loss_reentry_pardon: str = Field(default="", description="Comma-separated symbols exempt from the loss re-entry block (manual pardon / un-blacklist). e.g. 'C, MIRA'.")
+
     # --- Grok scanner gate: a Grok (xAI) endorse/veto pass over qualified candidates ---
     grok_scanner_enabled: bool = Field(default=False, description="Have Grok review scanner candidates that passed every deterministic gate (one batched call/scan). Needs xai_api_key. Off = no cost, deterministic behaviour unchanged.")
     grok_scanner_batch_max: int = Field(default=60, ge=1, le=300, description="Max candidates Grok reviews per scan (single batched call). Set high enough to cover EVERY 'trade' candidate so none opens unreviewed; the batch is sorted by expectancy so the strongest are kept if it ever truncates. Larger = more tokens/call.")
@@ -306,6 +315,7 @@ class Settings(BaseSettings):
     telegram_push_enabled: bool = Field(default=False, description="MASTER switch for PROACTIVE pushes (trade/risk fills + periodic digest). Default False = the bot only REPLIES to commands you send, never pushes unsolicited messages. The per-category telegram_notify_trades/_risk + digest knobs only matter when this is True. Command replies and the manual /api/telegram/test are never gated by this.")
     telegram_notify_trades: bool = Field(default=True, description="Push a Telegram alert on each fill (trade). Kill switch for trade alerts (only applies when telegram_push_enabled=True).")
     telegram_notify_risk: bool = Field(default=True, description="Push Telegram alerts on risk events (SL/trailing exits, breaker freeze, guardian veto).")
+    telegram_notify_maxdca: bool = Field(default=True, description="Push a Telegram alert (with a 1-click 'add a DCA wave' button) when a KSS session's ladder is FULL. Bypasses telegram_push_enabled — you need to see it to decide. Its own kill switch.")
     telegram_digest_hours: int = Field(default=0, ge=0, description="Hours between periodic Telegram digest pushes (equity + today's P&L + open counts). 0 = off.")
 
     # --- Discord notifier (alternative to Telegram; works where TG is SNI/DPI-blocked) ---

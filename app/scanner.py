@@ -678,6 +678,10 @@ def _trade_block_reason(db: Session, symbol: str) -> str | None:
     if _has_pending_sell(db, symbol):
         audit.log(db, "scanner", "skipped_pending_sell", entity=symbol)
         return "exit (SELL) in flight"
+    reentry_blocked, reentry_reason = _loss_reentry_block(db, symbol)
+    if reentry_blocked:
+        audit.log(db, "scanner", "skipped_loss_reentry", entity=symbol, reason=reentry_reason)
+        return reentry_reason
     block, streak = _loss_streak_block(db, symbol)
     if block:
         audit.log(db, "scanner", "skipped_loss_streak", entity=symbol, streak=streak,
@@ -979,6 +983,79 @@ def _loss_streak_block(db: Session, symbol: str) -> tuple[bool, int]:
         else:
             break  # a winning close breaks the most-recent streak
     return streak >= settings.loss_streak_block_k, streak
+
+
+def _loss_reentry_pardon_set() -> set[str]:
+    """Symbols the user has manually exempted from the loss re-entry block (case-insensitive)."""
+    return {s.strip().upper() for s in (settings.loss_reentry_pardon or "").split(",") if s.strip()}
+
+
+def _hard_sl_closes(db: Session, symbol: str) -> list:
+    """The symbol's hard-SL stop-outs, most recent first. A 'hard-SL' is a close whose
+    source_ref ends in ':sl' (e.g. 'pyramid:42:sl', 'orphan:sl'). Trailing exits
+    ('…:trail_sl') are deliberately excluded — Kai's rule counts only true stop-outs."""
+    from app.models import Fill
+
+    return (
+        db.query(Fill)
+        .filter(Fill.symbol == symbol, Fill.side == "SELL", Fill.source_ref.like("%:sl"))
+        .order_by(Fill.executed_at.desc())
+        .all()
+    )
+
+
+def _loss_reentry_block(db: Session, symbol: str) -> tuple[bool, str | None]:
+    """Escalating re-entry block after a coin is STOPPED OUT (hard-SL), Kai's rule:
+
+    1st hard-SL → block `loss_reentry_weeks_1` weeks; 2nd → `loss_reentry_weeks_2` weeks
+    (≈2 months); ≥`loss_reentry_blacklist_after` → blacklist (blocked indefinitely).
+
+    Count-based (not a streak): a later winning close does NOT lift the block early — a coin
+    that keeps getting stopped out earns a longer time-out. Tiers 1–2 auto-decay once the
+    window passes since the LAST stop-out. Clear a blacklist via `loss_reentry_pardon`.
+    Returns (blocked, reason) where reason is the VN skip message (None when not blocked).
+    """
+    from datetime import timedelta
+
+    if not settings.loss_reentry_enabled:
+        return False, None
+    if symbol.upper() in _loss_reentry_pardon_set():
+        return False, None
+
+    closes = _hard_sl_closes(db, symbol)
+    n = len(closes)
+    if n == 0:
+        return False, None
+    if n >= settings.loss_reentry_blacklist_after:
+        return True, f"blacklist: {n} lần chạm hard-SL"
+
+    weeks = settings.loss_reentry_weeks_2 if n >= 2 else settings.loss_reentry_weeks_1
+    last = closes[0].executed_at
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    unblock = last + timedelta(weeks=weeks)
+    if datetime.now(timezone.utc) < unblock:
+        return True, f"lỗ lớn {n} lần, chặn {weeks} tuần (mở lại {unblock:%Y-%m-%d})"
+    return False, None
+
+
+def loss_reentry_blocklist(db: Session) -> list[dict]:
+    """Coins currently blocked by the loss re-entry gate, for the Strategy UI panel.
+    Scans every symbol that has ever hit a hard-SL and keeps those still blocked."""
+    from app.models import Fill
+
+    syms = [
+        s for (s,) in db.query(Fill.symbol)
+        .filter(Fill.side == "SELL", Fill.source_ref.like("%:sl"))
+        .distinct()
+    ]
+    out = []
+    for sym in syms:
+        blocked, reason = _loss_reentry_block(db, sym)
+        if blocked:
+            out.append({"symbol": sym, "reason": reason, "hard_sls": len(_hard_sl_closes(db, sym))})
+    out.sort(key=lambda r: (-r["hard_sls"], r["symbol"]))
+    return out
 
 
 def _symbol_at_cap(db: Session, symbol: str) -> bool:

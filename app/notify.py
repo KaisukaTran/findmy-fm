@@ -94,18 +94,46 @@ def _internal_signature() -> str:
 # ---------------------------------------------------------------------------
 
 
-def _telegram_send(text: str) -> bool:
-    """Send *text* to the configured Telegram chat. False on error/disabled."""
+def _telegram_send(text: str, reply_markup: dict | None = None) -> bool:
+    """Send *text* to the configured Telegram chat. False on error/disabled.
+
+    ``reply_markup`` (optional) attaches an inline keyboard, e.g.
+    ``{"inline_keyboard": [[{"text": "…", "callback_data": "dca:paper:42"}]]}``."""
     if not enabled():
         return False
     try:
         url = f"{_base_url()}/sendMessage"
-        payload = {"chat_id": settings.telegram_chat_id, "text": text}
+        payload: dict = {"chat_id": settings.telegram_chat_id, "text": text}
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
         resp = httpx.post(url, json=payload, timeout=_TIMEOUT)
         return resp.status_code == 200
     except Exception:  # network, timeout, parse error — all swallowed
         logger.debug("notify._telegram_send failed (Telegram unreachable or misconfigured)")
         return False
+
+
+def _answer_callback(callback_id: str, text: str = "") -> None:
+    """Acknowledge a pressed inline button (stops the client spinner; optional toast). Never raises."""
+    if not enabled() or not callback_id:
+        return
+    try:
+        httpx.post(f"{_base_url()}/answerCallbackQuery",
+                   json={"callback_query_id": callback_id, "text": text[:200]}, timeout=_TIMEOUT)
+    except Exception:
+        logger.debug("notify._answer_callback failed")
+
+
+def _edit_message(chat_id: str, message_id: int, text: str) -> None:
+    """Replace an alert's text (and drop its buttons) after the action ran. Never raises."""
+    if not enabled():
+        return
+    try:
+        httpx.post(f"{_base_url()}/editMessageText",
+                   json={"chat_id": chat_id, "message_id": message_id, "text": text},
+                   timeout=_TIMEOUT)
+    except Exception:
+        logger.debug("notify._edit_message failed")
 
 
 def any_channel_enabled() -> bool:
@@ -120,18 +148,23 @@ def any_channel_enabled() -> bool:
         return False
 
 
-def send(text: str, *, instance: str | None = None) -> bool:
+def send(text: str, *, instance: str | None = None, buttons: list | None = None) -> bool:
     """Broadcast *text* to every configured alert channel (Telegram + Discord).
 
     The message is tagged with an instance label (🧪 PAPER / 🔴 LIVE) so paper and live
     are distinguishable when they share one bot. The tag is THIS instance's by default;
     pass `instance` to label a reply relayed on behalf of the sibling (routed commands).
 
+    ``buttons`` (Telegram only) is a list of rows of ``{"text", "callback_data"}`` dicts —
+    an inline keyboard for 1-click actions (Discord gets the plain text, no button).
+
     Returns True if at least one channel accepted it. Never raises; a failure on one
     channel never suppresses the others.
     """
     text = f"{_label(instance or instance_name())} {text}"
-    sent = _telegram_send(text)
+    # Call with 1 arg when there is no keyboard so callers/stubs that predate the reply_markup
+    # parameter keep working (backward-compatible signature widening).
+    sent = _telegram_send(text, {"inline_keyboard": buttons}) if buttons else _telegram_send(text)
     try:
         from app import notify_discord
 
@@ -140,6 +173,76 @@ def send(text: str, *, instance: str | None = None) -> bool:
     except Exception:  # importing/sending to Discord must never break a Telegram alert
         logger.debug("notify: Discord fan-out failed")
     return sent
+
+
+def _fmt_usd(x: float) -> str:
+    """Compact USD with the sign before the $ (-$196, not $-196); no decimals from $100 up."""
+    sign, a = ("-" if x < 0 else ""), abs(x)
+    return f"{sign}${a:,.0f}" if a >= 100 else f"{sign}${a:,.2f}"
+
+
+def _fmt_px(x: float) -> str:
+    """Price with enough significant digits for sub-cent coins."""
+    return f"{x:.6g}"
+
+
+def _format_maxdca(s: dict) -> str:
+    """Human alert body from a service.dca_alert_snapshot dict."""
+    lines = [
+        f"⛏️ KSS {s['symbol']} — đã DCA hết thang ({s['waves']} sóng)",
+        f"📊 Vốn {_fmt_px(s['avg'])} · TT {_fmt_px(s['market'])} · "
+        f"uPnL {s['upnl_pct']:+.1f}% ({_fmt_usd(s['upnl_usd'])})",
+        f"💰 Đã bơm {_fmt_usd(s['deployed'])} · Sàn SL {_fmt_px(s['sl_floor'])} "
+        f"(giá cách sàn {s['room_to_sl_pct']:+.1f}%)",
+        f"➕ Nếu thêm sóng {s['next_wave']}: ~{_fmt_usd(s['add_cost'])} @ {_fmt_px(s['add_price'])}",
+    ]
+    if s["below_sl"]:
+        lines.append("⚠️ Rung mới NẰM DƯỚI sàn SL — bấm sẽ bị từ chối (nới SL trước).")
+    return "\n".join(lines)
+
+
+def alert_max_dca(db) -> list[int]:
+    """Alert on ACTIVE KSS sessions whose DCA ladder is FULL (no auto rung left) with the
+    session's current state + the exact cost of the next rung, plus two 1-click buttons:
+    '➕ Thêm ~$X' (add the rung) and '✖ Bỏ qua' (mute this session). Bypasses the
+    telegram_push_enabled mute (gated by its own telegram_notify_maxdca) — you decide from the msg.
+
+    De-dups per (session, max_waves) so a full ladder alerts once; '✖ Bỏ qua' sets a hard mute
+    (``maxdca_declined``) that a later '➕' add clears. Returns the ids alerted this pass; never
+    raises out (a snapshot failure skips just that session)."""
+    if not settings.telegram_notify_maxdca or not enabled():
+        return []
+    from app import runtime
+    from app.kss import service
+    from app.models import SESSION_ACTIVE, KssSession
+
+    inst = instance_name()
+    rows = (
+        db.query(KssSession)
+        .filter(KssSession.status == SESSION_ACTIVE,
+                KssSession.current_wave + 1 >= KssSession.max_waves)
+        .all()
+    )
+    alerted: list[int] = []
+    for r in rows:
+        if runtime.get(db, f"maxdca_declined:{r.id}") == "1":
+            continue  # user muted this session with '✖ Bỏ qua'
+        key = f"maxdca_alerted:{r.id}"
+        if runtime.get(db, key) == str(r.max_waves):
+            continue  # already alerted at this ladder depth
+        try:
+            snap = service.dca_alert_snapshot(db, r.id)
+        except Exception:
+            logger.debug("alert_max_dca: snapshot failed for session %s", r.id)
+            continue
+        buttons = [[
+            {"text": f"➕ Thêm ~{_fmt_usd(snap['add_cost'])}", "callback_data": f"dca:{inst}:{r.id}"},
+            {"text": "✖ Bỏ qua", "callback_data": f"dcax:{inst}:{r.id}"},
+        ]]
+        if send(_format_maxdca(snap), buttons=buttons):
+            runtime.set(db, key, str(r.max_waves))
+            alerted.append(r.id)
+    return alerted
 
 
 # ---------------------------------------------------------------------------
@@ -452,6 +555,27 @@ def _handle_control(db, token: str, arg: str) -> str:
 
         circuit.reset(db)
         return "Breaker reset: auto-approve unblocked."
+    if token in ("dca_add", "dca", "addwave"):
+        if not arg.isdigit():
+            return "Dùng: /dca_add <session_id> — thêm 1 sóng DCA (cỡ ladder) cho session."
+        from app import runtime
+        from app.kss import service
+
+        try:
+            r = service.queue_manual_extra_wave(db, int(arg))
+        except ValueError as exc:
+            return f"⚠️ {exc}"
+        runtime.set(db, f"maxdca_declined:{arg}", "0")  # a deliberate add re-arms future alerts
+        return (f"✅ {r.get('symbol', '?')}: đã thêm sóng {r.get('wave_num', '?')} "
+                f"@ {r.get('price', 0):.6g} (~${r.get('cost', 0)}, chờ khớp).")
+    if token in ("dca_skip", "dca_no", "skipdca"):
+        if not arg.isdigit():
+            return "Dùng: /dca_skip <session_id> — bỏ qua, không nhắc thêm DCA cho session này."
+        from app import runtime
+
+        runtime.set(db, f"maxdca_declined:{arg}", "1")
+        return (f"✖ Đã bỏ qua thêm DCA cho session {arg} — sẽ không nhắc lại "
+                f"(bấm /dca_add {arg} để thêm sau).")
     return f"Unknown command: /{token}\n\n{_HELP_TEXT}"
 
 
@@ -521,6 +645,30 @@ def _proxy_command(target: str, cmd_text: str) -> str:
         return f"Không liên lạc được instance '{target}'."
 
 
+def _handle_callback(callback: dict) -> None:
+    """Handle a pressed inline button on a max-DCA alert. callback_data is
+    ``dca:<instance>:<sid>`` (add a rung) or ``dcax:<instance>:<sid>`` (mute the session). Each
+    maps to a command (``/dca_add`` / ``/dca_skip``) so it reuses command auth + the paper→live
+    relay: a ``*:live:*`` press on the paper poller is proxied to the live instance. Same chat_id
+    auth boundary as text commands."""
+    data = callback.get("data") or ""
+    msg = callback.get("message") or {}
+    chat_id = str(msg.get("chat", {}).get("id", ""))
+    if chat_id != settings.telegram_chat_id:
+        return  # AUTH BOUNDARY: ignore presses from any chat but the configured one
+    prefix, _, rest = data.partition(":")
+    if prefix not in ("dca", "dcax"):
+        _answer_callback(callback.get("id", ""))
+        return
+    target, _, sid = rest.partition(":")
+    cmd_text = f"/dca_skip {sid}" if prefix == "dcax" else f"/dca_add {sid}"
+    reply = handle_command(cmd_text) if target == instance_name() else _proxy_command(target, cmd_text)
+    _answer_callback(callback.get("id", ""), "Đã bỏ qua" if prefix == "dcax" else "Đã xử lý")
+    message_id = msg.get("message_id")
+    if message_id is not None:
+        _edit_message(chat_id, message_id, f"{_label(target)} {reply}")
+
+
 # ---------------------------------------------------------------------------
 # Async command poller
 # ---------------------------------------------------------------------------
@@ -556,6 +704,13 @@ async def _loop() -> None:
             for update in updates:
                 update_id: int = update["update_id"]
                 offset = update_id + 1  # advance regardless of outcome
+
+                callback = update.get("callback_query")
+                if callback:
+                    # Inline-button press (e.g. the max-DCA '+wave' button). Runs the mapped
+                    # command off-thread so the poll loop never blocks on DB/network.
+                    await asyncio.to_thread(_handle_callback, callback)
+                    continue
 
                 message = update.get("message") or update.get("edited_message")
                 if not message:

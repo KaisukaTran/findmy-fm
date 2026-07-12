@@ -404,6 +404,11 @@ class KssSettingsBody(BaseModel):
     cash_floor_usd: float | None = Field(None, ge=0)  # hard cash floor (0 = never negative)
     loss_streak_block_k: int | None = Field(None, ge=1, le=20)
     loss_streak_window_days: int | None = Field(None, ge=1, le=365)
+    loss_reentry_enabled: bool | None = None
+    loss_reentry_weeks_1: int | None = Field(None, ge=1, le=520)
+    loss_reentry_weeks_2: int | None = Field(None, ge=1, le=520)
+    loss_reentry_blacklist_after: int | None = Field(None, ge=1, le=50)
+    loss_reentry_pardon: str | None = None
     min_expectancy_pct: float | None = Field(None, ge=-100, le=100)
     min_win_rate: float | None = Field(None, ge=0, le=100)
     min_confidence: float | None = Field(None, ge=0, le=100)  # S4: consensus threshold
@@ -1052,7 +1057,7 @@ def partial_kss_settings(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         "partials/kss_settings.html",
         {"request": request, "k": k, "depth_pct": depth_pct, "gs": grok_scanner, "ta": ta,
-         "cw": cw},
+         "cw": cw, "blocked": scanner.loss_reentry_blocklist(db)},
     )
 
 

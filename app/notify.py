@@ -201,48 +201,86 @@ def _format_maxdca(s: dict) -> str:
     return "\n".join(lines)
 
 
-def alert_max_dca(db) -> list[int]:
-    """Alert on ACTIVE KSS sessions whose DCA ladder is FULL (no auto rung left) with the
-    session's current state + the exact cost of the next rung, plus two 1-click buttons:
-    '➕ Thêm ~$X' (add the rung) and '✖ Bỏ qua' (mute this session). Bypasses the
-    telegram_push_enabled mute (gated by its own telegram_notify_maxdca) — you decide from the msg.
-
-    De-dups per (session, max_waves) so a full ladder alerts once; '✖ Bỏ qua' sets a hard mute
-    (``maxdca_declined``) that a later '➕' add clears. Returns the ids alerted this pass; never
-    raises out (a snapshot failure skips just that session)."""
-    if not settings.telegram_notify_maxdca or not enabled():
-        return []
+def _maxdca_full_sessions(db) -> list:
+    """ACTIVE sessions whose DCA ladder is FULL (no auto rung left) and NOT muted via '✖ Bỏ qua'.
+    This is a PULL surface (no proactive push): shown in /summary and listed on demand."""
     from app import runtime
-    from app.kss import service
     from app.models import SESSION_ACTIVE, KssSession
 
-    inst = instance_name()
     rows = (
         db.query(KssSession)
         .filter(KssSession.status == SESSION_ACTIVE,
                 KssSession.current_wave + 1 >= KssSession.max_waves)
+        .order_by(KssSession.id)
         .all()
     )
-    alerted: list[int] = []
-    for r in rows:
-        if runtime.get(db, f"maxdca_declined:{r.id}") == "1":
-            continue  # user muted this session with '✖ Bỏ qua'
-        key = f"maxdca_alerted:{r.id}"
-        if runtime.get(db, key) == str(r.max_waves):
-            continue  # already alerted at this ladder depth
+    return [r for r in rows if runtime.get(db, f"maxdca_declined:{r.id}") != "1"]
+
+
+def maxdca_summary_line(db) -> str:
+    """Compact one-liner folded into /summary: how many sessions are full-ladder (need a DCA
+    decision) + the first few symbols. Empty string when none or the feature is off."""
+    if not settings.telegram_notify_maxdca:
+        return ""
+    rows = _maxdca_full_sessions(db)
+    if not rows:
+        return ""
+    syms = ", ".join(r.symbol for r in rows[:6]) + ("…" if len(rows) > 6 else "")
+    return f"\n🔺 DCA chờ quyết: {len(rows)} session ({syms}) — bấm Liệt kê"
+
+
+def maxdca_list_button(db=None) -> list | None:
+    """The inline '📋 Liệt kê' button attached to a /summary reply — only when full-ladder
+    sessions exist. Opens its own DB session if one isn't passed."""
+    from app.db import SessionLocal
+
+    close = db is None
+    db = db or SessionLocal()
+    try:
+        if not settings.telegram_notify_maxdca:
+            return None
+        n = len(_maxdca_full_sessions(db))
+        if n == 0:
+            return None
+        return [[{"text": f"📋 Liệt kê {n} session DCA",
+                  "callback_data": f"dcalist:{instance_name()}"}]]
+    finally:
+        if close:
+            db.close()
+
+
+def send_maxdca_list(db) -> int:
+    """ON-DEMAND (pull): send one card per full-ladder session — current state + next-rung cost +
+    the '➕ Thêm ~$X' / '✖ Bỏ qua' buttons. Fired when the user taps '📋 Liệt kê' (or /dca_list),
+    never on a timer. Returns how many cards were sent."""
+    from app.kss import service
+
+    if not enabled():
+        return 0
+    inst = instance_name()
+    sent = 0
+    for r in _maxdca_full_sessions(db):
         try:
             snap = service.dca_alert_snapshot(db, r.id)
         except Exception:
-            logger.debug("alert_max_dca: snapshot failed for session %s", r.id)
+            logger.debug("send_maxdca_list: snapshot failed for session %s", r.id)
             continue
         buttons = [[
             {"text": f"➕ Thêm ~{_fmt_usd(snap['add_cost'])}", "callback_data": f"dca:{inst}:{r.id}"},
             {"text": "✖ Bỏ qua", "callback_data": f"dcax:{inst}:{r.id}"},
         ]]
         if send(_format_maxdca(snap), buttons=buttons):
-            runtime.set(db, key, str(r.max_waves))
-            alerted.append(r.id)
-    return alerted
+            sent += 1
+    return sent
+
+
+def _reply_buttons(cmd_text: str) -> list | None:
+    """Inline buttons to attach to a command reply. /summary gets the '📋 Liệt kê' DCA button
+    when any session is full-ladder (the pull entry point — no proactive push)."""
+    tok = cmd_text.strip().lstrip("/").split()[0].lower() if cmd_text.strip() else ""
+    if tok == "summary":
+        return maxdca_list_button()
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -409,7 +447,7 @@ def _cmd_summary(db) -> str:
         f"Unrealized: ${s['unrealized_pnl']:,.2f} ({s['unrealized_pct']:+.2f}%)\n"
         f"Trades {s['total_trades']} · Pending {s['pending_count']} · "
         f"Positions {s['positions_count']}"
-    )
+    ) + maxdca_summary_line(db)
 
 
 def _cmd_pending(db) -> str:
@@ -582,6 +620,9 @@ def _handle_control(db, token: str, arg: str) -> str:
         runtime.set(db, f"maxdca_declined:{arg}", "1")
         return (f"✖ Đã bỏ qua thêm DCA cho session {arg} — sẽ không nhắc lại "
                 f"(bấm /dca_add {arg} để thêm sau).")
+    if token in ("dca_list", "dcalist", "dca"):
+        n = send_maxdca_list(db)
+        return f"📋 Đã gửi {n} thẻ DCA (session full-ladder)." if n else "Không có session full-ladder."
     return f"Unknown command: /{token}\n\n{_HELP_TEXT}"
 
 
@@ -652,24 +693,34 @@ def _proxy_command(target: str, cmd_text: str) -> str:
 
 
 def _handle_callback(callback: dict) -> None:
-    """Handle a pressed inline button on a max-DCA alert. callback_data is
-    ``dca:<instance>:<sid>`` (add a rung) or ``dcax:<instance>:<sid>`` (mute the session). Each
-    maps to a command (``/dca_add`` / ``/dca_skip``) so it reuses command auth + the paper→live
-    relay: a ``*:live:*`` press on the paper poller is proxied to the live instance. Same chat_id
-    auth boundary as text commands."""
+    """Handle a pressed inline button. callback_data is one of:
+      ``dcalist:<instance>``    — the /summary '📋 Liệt kê' button: send the detail cards.
+      ``dca:<instance>:<sid>``  — a card's '➕' button: add one ladder rung.
+      ``dcax:<instance>:<sid>`` — a card's '✖ Bỏ qua' button: mute that session.
+    Each maps to a command so it reuses command auth + the paper→live relay (a ``*:live*`` press
+    on the paper poller is proxied to live). Same chat_id auth boundary as text commands."""
     data = callback.get("data") or ""
     msg = callback.get("message") or {}
+    cb_id = callback.get("id", "")
     chat_id = str(msg.get("chat", {}).get("id", ""))
     if chat_id != settings.telegram_chat_id:
         return  # AUTH BOUNDARY: ignore presses from any chat but the configured one
     prefix, _, rest = data.partition(":")
+
+    if prefix == "dcalist":
+        target = rest or instance_name()
+        # '/dca_list' sends the cards itself (locally or on the sibling); we just ack.
+        reply = handle_command("/dca_list") if target == instance_name() else _proxy_command(target, "/dca_list")
+        _answer_callback(cb_id, reply[:180])
+        return
+
     if prefix not in ("dca", "dcax"):
-        _answer_callback(callback.get("id", ""))
+        _answer_callback(cb_id)
         return
     target, _, sid = rest.partition(":")
     cmd_text = f"/dca_skip {sid}" if prefix == "dcax" else f"/dca_add {sid}"
     reply = handle_command(cmd_text) if target == instance_name() else _proxy_command(target, cmd_text)
-    _answer_callback(callback.get("id", ""), "Đã bỏ qua" if prefix == "dcax" else "Đã xử lý")
+    _answer_callback(cb_id, "Đã bỏ qua" if prefix == "dcax" else "Đã xử lý")
     message_id = msg.get("message_id")
     if message_id is not None:
         _edit_message(chat_id, message_id, f"{_label(target)} {reply}")
@@ -742,7 +793,7 @@ async def _loop() -> None:
                     except Exception:
                         logger.exception("handle_command raised for text=%r", cmd_text)
                         reply = "Internal error processing command."
-                    send(reply)
+                    send(reply, buttons=_reply_buttons(cmd_text))
                 else:
                     # Command targets the sibling: relay over localhost, label the reply
                     # with the TARGET's tag (off-thread so the poll loop never blocks).

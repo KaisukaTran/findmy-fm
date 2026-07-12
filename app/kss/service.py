@@ -905,6 +905,68 @@ def queue_next_wave(db: Session, session_id: int, amount_usd: float | None = Non
     }
 
 
+def queue_manual_extra_wave(db: Session, session_id: int) -> dict:
+    """One-click 'add one more DCA wave at ladder size' — backs the Telegram max-DCA button.
+
+    On a FULL ladder a plain ``queue_next_wave`` refuses ("raise max_waves first"), so we bump
+    ``max_waves`` by one (in-memory) and queue the standard geometric rung. The bump is only
+    committed if the rung actually queues — if it lands below the SL floor (or funding fails)
+    ``queue_next_wave`` raises and we roll back so ``max_waves`` is left untouched. Adds
+    ``symbol`` to the returned dict for a friendly reply. Deliberate user intent, so it funds
+    from idle cash exactly like the manual DCA+ (never the auto path)."""
+    row = _get_row(db, session_id)
+    if row.status != SESSION_ACTIVE:
+        raise ValueError(f"Session {session_id} không active (status={row.status}).")
+    if row.current_wave + 1 >= row.max_waves:
+        row.max_waves = row.current_wave + 2  # in-memory; queue_next_wave commits it on success
+    try:
+        result = queue_next_wave(db, session_id)
+    except Exception:
+        db.rollback()  # discard the uncommitted max_waves bump
+        raise
+    result["symbol"] = row.symbol
+    return result
+
+
+def dca_alert_snapshot(db: Session, session_id: int) -> dict:
+    """Read-only snapshot for the max-DCA Telegram alert: the session's CURRENT state plus a
+    preview of the exact rung the '+wave' button would add (price, qty, USD cost, below-SL).
+    No DB writes — the max_waves bump needed to preview the next rung is done on a throwaway
+    in-memory pyramid, never persisted."""
+    from app.market import get_current_prices
+
+    row = _get_row(db, session_id)
+    py = _to_pyramid(row)
+    mkt = get_current_prices([row.symbol]).get(row.symbol) or 0.0
+    avg = row.avg_price or 0.0
+    qty_held = row.total_filled_qty or 0.0
+    floor = _sl_floor_price(py)
+
+    next_num = py.current_wave + 1
+    py.max_waves = max(py.max_waves, next_num + 1)  # in-memory only → lets us preview past a full ladder
+    wave = py.generate_wave(next_num)
+    add_price = _anchor_dca_price(
+        db, session_id, row.symbol, py.distance_pct, wave.target_price, py.entry_price
+    )
+    add_qty = wave.quantity
+    return {
+        "symbol": row.symbol,
+        "waves": f"{row.current_wave + 1}/{row.max_waves}",
+        "avg": avg,
+        "market": mkt,
+        "upnl_pct": (mkt / avg - 1) * 100 if avg > 0 and mkt > 0 else 0.0,
+        "upnl_usd": (mkt - avg) * qty_held,
+        "deployed": row.total_cost or 0.0,
+        "sl_floor": floor,
+        "room_to_sl_pct": (mkt / floor - 1) * 100 if floor > 0 and mkt > 0 else 0.0,
+        "next_wave": next_num,
+        "add_price": add_price,
+        "add_qty": add_qty,
+        "add_cost": add_qty * add_price,
+        "below_sl": floor > 0 and add_price <= floor,
+    }
+
+
 def consolidate_sessions(db: Session, keep_id: int, merge_id: int) -> dict:
     """
     Merge a duplicate session's inventory into another session for the SAME symbol (K-1

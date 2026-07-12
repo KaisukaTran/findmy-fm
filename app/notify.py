@@ -271,14 +271,18 @@ def event(kind: str, text: str, *, throttle_key: str | None = None, cooldown: fl
     kind="trade" → gated by telegram_notify_trades; kind="risk" → telegram_notify_risk.
     Risk events are never throttled (an SL/breaker alert must always go out).
 
-    All proactive pushes are first gated by the master telegram_push_enabled switch — when
-    it is off (default) the bot stays silent and only replies to commands you send.
+    Trade/digest pushes are gated by the master telegram_push_enabled switch — when it is off
+    (default) the bot stays quiet about routine activity and only replies to commands you send.
+    RISK events (SL/breaker/guardian veto) deliberately BYPASS the master mute and fire whenever
+    telegram_notify_risk is on (its own kill switch) — a safety alert must never be silenced by a
+    convenience flag. Set telegram_notify_risk=False to disable risk pushes entirely.
     """
-    if not settings.telegram_push_enabled:
+    if kind == "risk":
+        if not settings.telegram_notify_risk:
+            return False
+    elif not settings.telegram_push_enabled:
         return False
-    if kind == "trade" and not settings.telegram_notify_trades:
-        return False
-    if kind == "risk" and not settings.telegram_notify_risk:
+    elif kind == "trade" and not settings.telegram_notify_trades:
         return False
     if throttle_key and not _throttle_ok(f"{kind}:{throttle_key}", cooldown):
         return False
@@ -289,11 +293,13 @@ def fill_alert(fill) -> bool:
     """Push a one-line alert for a Fill. SL/trailing exits route through the *risk* kill
     switch (never throttled); ordinary fills through *trade* (throttled per symbol)."""
     ref = fill.source_ref or ""
-    if ref.endswith(":sl"):
+    if ref.endswith(":trail_sl"):
+        kind, tag = "risk", "📉 Trail-SL"
+    elif ref.endswith(":sl"):
         kind, tag = "risk", "🛑 SL"
     elif ref.endswith(":trailing"):
         kind, tag = "risk", "📉 Trailing"
-    elif ref.endswith(":tp"):
+    elif ref.endswith((":tp", ":manual_tp")):
         kind, tag = "trade", "✅ TP"
     elif fill.side == "SELL":
         kind, tag = "trade", "↩️ SELL"

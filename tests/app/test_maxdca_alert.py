@@ -18,10 +18,16 @@ from app.models import SESSION_ACTIVE, KssSession
 
 @pytest.fixture(autouse=True)
 def _cfg(monkeypatch):
+    from app import market
     monkeypatch.setattr(settings, "telegram_notify_maxdca", True)
+    monkeypatch.setattr(settings, "maxdca_allow_add", False)         # production default = info-only
+    monkeypatch.setattr(settings, "maxdca_max_underwater_pct", 8.0)
+    monkeypatch.setattr(settings, "max_session_deploy_usd", 0.0)     # cap off (no headroom filter)
     monkeypatch.setattr(settings, "live_trading", False)   # instance_name() -> 'paper'
     monkeypatch.setattr(settings, "telegram_chat_id", "777")
     monkeypatch.setattr(notify, "enabled", lambda: True)
+    monkeypatch.setattr(market, "get_current_prices",
+                        lambda syms, force=False: {"AAA": 99.0})    # avg 100 → −1% (not deep)
 
 
 def _capture_send(monkeypatch):
@@ -86,7 +92,7 @@ def test_full_sessions_excludes_not_full_and_declined(db):
 def test_summary_line_shows_count(db):
     _session(db, current_wave=5, max_waves=6)
     line = notify.maxdca_summary_line(db)
-    assert "DCA" in line and "1 session" in line and "AAA" in line
+    assert "cạn nấc" in line and "AAA" in line and "Liệt kê" in line
 
 
 def test_summary_line_empty_when_none(db):
@@ -117,16 +123,27 @@ def test_reply_buttons_only_for_summary(db):
 
 # ---- send_maxdca_list (on-demand detail cards) ----
 
-def test_send_list_cards_with_buttons(db, monkeypatch):
+def test_send_list_cards_info_only_by_default(db, monkeypatch):
+    """maxdca_allow_add off (default) → card shows status + only the '✖ Bỏ qua' button (no ➕)."""
     calls = _capture_send(monkeypatch)
     _stub_snapshot(monkeypatch)
     s = _session(db, current_wave=5, max_waves=6)
     assert notify.send_maxdca_list(db) == 1
     text, rm = calls[-1]
-    assert "AAA" in text and "654" in text                 # status + next-rung cost
     kb = rm["inline_keyboard"][0]
-    assert kb[0]["callback_data"] == f"dca:paper:{s.id}"
-    assert kb[1]["callback_data"] == f"dcax:paper:{s.id}"
+    assert "AAA" in text
+    assert len(kb) == 1 and kb[0]["callback_data"] == f"dcax:paper:{s.id}"   # only mute
+
+
+def test_send_list_cards_add_button_when_enabled(db, monkeypatch):
+    monkeypatch.setattr(settings, "maxdca_allow_add", True)
+    calls = _capture_send(monkeypatch)
+    _stub_snapshot(monkeypatch)
+    s = _session(db, current_wave=5, max_waves=6)
+    notify.send_maxdca_list(db)
+    kb = calls[-1][1]["inline_keyboard"][0]
+    assert kb[0]["callback_data"] == f"dca:paper:{s.id}"     # ➕ add
+    assert kb[1]["callback_data"] == f"dcax:paper:{s.id}"    # ✖ mute
 
 
 def test_send_list_excludes_declined(db, monkeypatch):
@@ -137,6 +154,19 @@ def test_send_list_excludes_declined(db, monkeypatch):
     runtime.set(db, f"maxdca_declined:{s.id}", "1")
     assert notify.send_maxdca_list(db) == 0
     assert calls == []
+
+
+def test_list_excludes_too_deep_underwater(db, monkeypatch):
+    from app import market
+    monkeypatch.setattr(market, "get_current_prices", lambda syms, force=False: {"AAA": 90.0})  # −10%
+    _session(db, current_wave=5, max_waves=6, avg_price=100.0)   # deeper than 8% → excluded
+    assert notify._maxdca_full_sessions(db) == []
+
+
+def test_list_excludes_no_deploy_headroom(db, monkeypatch):
+    monkeypatch.setattr(settings, "max_session_deploy_usd", 100.0)
+    _session(db, current_wave=5, max_waves=6, total_cost=100.0)  # deployed == cap → 0 headroom → excluded
+    assert notify._maxdca_full_sessions(db) == []
 
 
 # ---- service: preview + add ----

@@ -72,6 +72,8 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "loss_reentry_blacklist_after": int,
     "loss_reentry_pardon": str,  # comma-separated manual pardon list
     "max_session_deploy_usd": float,  # hard ceiling on total USD deployed per session (0=off)
+    "maxdca_allow_add": _to_bool,  # show the ➕ add button on Liệt kê cards (default off = info-only)
+    "maxdca_max_underwater_pct": float,  # drop sessions deeper underwater than this from the list
     "min_expectancy_pct": float,
     "max_avg_mae_pct": float,  # drawdown gate (0=off) + ranking: shallower backtest dip = better
     "min_win_rate": float,

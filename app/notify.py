@@ -202,19 +202,43 @@ def _format_maxdca(s: dict) -> str:
 
 
 def _maxdca_full_sessions(db) -> list:
-    """ACTIVE sessions whose DCA ladder is FULL (no auto rung left) and NOT muted via '✖ Bỏ qua'.
-    This is a PULL surface (no proactive push): shown in /summary and listed on demand."""
+    """ACTIVE full-ladder sessions to SURFACE for awareness (no auto rung left), after safety
+    filters so the list can't invite averaging into deep losers (the C-pattern):
+      - not muted via '✖ Bỏ qua';
+      - not deeper than `maxdca_max_underwater_pct` underwater (let the SL handle deep ones);
+      - still has deploy headroom under `max_session_deploy_usd` (adding is possible at all).
+    A PULL surface — shown in /summary and listed on demand, never pushed."""
     from app import runtime
+    from app.config import settings
+    from app.kss import service
+    from app.market import get_current_prices
     from app.models import SESSION_ACTIVE, KssSession
 
-    rows = (
-        db.query(KssSession)
-        .filter(KssSession.status == SESSION_ACTIVE,
-                KssSession.current_wave + 1 >= KssSession.max_waves)
-        .order_by(KssSession.id)
-        .all()
-    )
-    return [r for r in rows if runtime.get(db, f"maxdca_declined:{r.id}") != "1"]
+    rows = [
+        r for r in (
+            db.query(KssSession)
+            .filter(KssSession.status == SESSION_ACTIVE,
+                    KssSession.current_wave + 1 >= KssSession.max_waves)
+            .order_by(KssSession.id)
+            .all()
+        )
+        if runtime.get(db, f"maxdca_declined:{r.id}") != "1"
+    ]
+    if not rows:
+        return []
+    prices = get_current_prices(list({r.symbol for r in rows}))
+    max_fall = settings.maxdca_max_underwater_pct
+    out = []
+    for r in rows:
+        # Depth = how far the coin has fallen from ENTRY (the ladder anchor), NOT from avg — DCA
+        # averaging keeps uPnL-vs-avg near zero even after a big drop, so avg would never filter.
+        mkt, entry = prices.get(r.symbol) or 0.0, r.entry_price or 0.0
+        if max_fall > 0 and entry > 0 and mkt > 0 and (mkt / entry - 1) * 100 <= -max_fall:
+            continue  # coin already fell too far from entry — don't invite averaging into the knife
+        if service._session_deploy_headroom(db, r.id, r.total_cost) <= 0:
+            continue  # deploy cap leaves no room to add anyway
+        out.append(r)
+    return out
 
 
 def maxdca_summary_line(db) -> str:
@@ -226,7 +250,7 @@ def maxdca_summary_line(db) -> str:
     if not rows:
         return ""
     syms = ", ".join(r.symbol for r in rows[:6]) + ("…" if len(rows) > 6 else "")
-    return f"\n🔺 DCA chờ quyết: {len(rows)} session ({syms}) — bấm Liệt kê"
+    return f"\nℹ️ {len(rows)} thang đã cạn nấc ({syms}) — bấm Liệt kê để xem"
 
 
 def maxdca_list_button(db=None) -> list | None:
@@ -265,11 +289,15 @@ def send_maxdca_list(db) -> int:
         except Exception:
             logger.debug("send_maxdca_list: snapshot failed for session %s", r.id)
             continue
-        buttons = [[
-            {"text": f"➕ Thêm ~{_fmt_usd(snap['add_cost'])}", "callback_data": f"dca:{inst}:{r.id}"},
-            {"text": "✖ Bỏ qua", "callback_data": f"dcax:{inst}:{r.id}"},
-        ]]
-        if send(_format_maxdca(snap), buttons=buttons):
+        # Cards are INFORMATIONAL by default (just '✖ Bỏ qua' to mute). The '➕ Thêm DCA' button
+        # only appears when maxdca_allow_add is on — so a tap-through can't mass-deploy into deep
+        # ladders. The deliberate /dca_add <id> command is always available regardless.
+        row = []
+        if settings.maxdca_allow_add:
+            row.append({"text": f"➕ Thêm ~{_fmt_usd(snap['add_cost'])}",
+                        "callback_data": f"dca:{inst}:{r.id}"})
+        row.append({"text": "✖ Bỏ qua", "callback_data": f"dcax:{inst}:{r.id}"})
+        if send(_format_maxdca(snap), buttons=[row]):
             sent += 1
     return sent
 

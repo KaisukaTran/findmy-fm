@@ -320,7 +320,9 @@ class Settings(BaseSettings):
     telegram_push_enabled: bool = Field(default=False, description="MASTER switch for PROACTIVE pushes (trade/risk fills + periodic digest). Default False = the bot only REPLIES to commands you send, never pushes unsolicited messages. The per-category telegram_notify_trades/_risk + digest knobs only matter when this is True. Command replies and the manual /api/telegram/test are never gated by this.")
     telegram_notify_trades: bool = Field(default=True, description="Push a Telegram alert on each fill (trade). Kill switch for trade alerts (only applies when telegram_push_enabled=True).")
     telegram_notify_risk: bool = Field(default=True, description="Push Telegram alerts on risk events (SL/trailing exits, breaker freeze, guardian veto).")
-    telegram_notify_maxdca: bool = Field(default=True, description="Push a Telegram alert (with a 1-click 'add a DCA wave' button) when a KSS session's ladder is FULL. Bypasses telegram_push_enabled — you need to see it to decide. Its own kill switch.")
+    telegram_notify_maxdca: bool = Field(default=True, description="Show the full-ladder (max-DCA) section in /summary + the 'Liệt kê' button. Its own kill switch.")
+    maxdca_allow_add: bool = Field(default=False, description="Show the '➕ Thêm DCA' button on the Liệt kê cards. OFF by default = the list is INFORMATIONAL (only shows exhausted ladders + a 'Bỏ qua' mute) so you can't accidentally mass-add DCA into deep losers. The deliberate /dca_add <id> command always works.")
+    maxdca_max_underwater_pct: float = Field(default=8.0, description="Exclude a full-ladder session from the Liệt kê list once the coin has FALLEN more than this %% from ENTRY (the ladder anchor, not avg — DCA keeps uPnL-vs-avg near zero) — don't invite averaging into a knife that already dropped far. 0 = no depth filter.")
     telegram_digest_hours: int = Field(default=0, ge=0, description="Hours between periodic Telegram digest pushes (equity + today's P&L + open counts). 0 = off.")
 
     # --- Discord notifier (alternative to Telegram; works where TG is SNI/DPI-blocked) ---

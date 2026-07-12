@@ -112,6 +112,23 @@ def test_fill_alert_routes_sl_to_risk_and_buy_to_trade(monkeypatch, _no_network)
     assert any("🛑 SL" in m and "PnL" in m for m in _no_network)
 
 
+def test_fill_alert_routes_trail_sl_and_manual_tp(monkeypatch, _no_network):
+    """A dynamic trailing-stop exit (':trail_sl') is a RISK event, not a generic SELL, and a
+    manual take-profit (':manual_tp') is tagged TP — both were previously mis-routed."""
+    monkeypatch.setattr(settings, "telegram_notify_trades", True)
+    monkeypatch.setattr(settings, "telegram_notify_risk", True)
+
+    class _F:
+        def __init__(self, ref, pnl=0.0):
+            self.symbol, self.quantity, self.price = "BTC", 1.0, 100.0
+            self.side, self.source_ref, self.realized_pnl = "SELL", ref, pnl
+
+    notify.fill_alert(_F("pyramid:9:trail_sl", 3.0))
+    notify.fill_alert(_F("pyramid:9:manual_tp", 4.0))
+    assert any("📉 Trail-SL" in m for m in _no_network)
+    assert any("✅ TP" in m for m in _no_network)
+
+
 def test_risk_fill_not_throttled(monkeypatch, _no_network):
     monkeypatch.setattr(settings, "telegram_notify_risk", True)
 

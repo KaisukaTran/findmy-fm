@@ -1,8 +1,7 @@
-"""Telegram max-DCA alert + 1-click 'add a wave' button (Kai's request 2026-07-12).
-
-When a KSS session's DCA ladder is FULL (no auto rung left), push a Telegram alert with an
-inline button. One click -> queue_manual_extra_wave -> the standard next ladder rung is added
-(the ladder is extended by one) through the normal approval flow.
+"""Max-DCA — PULL-based UX (Kai 2026-07-12, redesign): no proactive push. The full-ladder
+situation is folded into /summary as a compact line + a '📋 Liệt kê' button; tapping it (or
+/dca_list) sends one detail card per session with '➕ Thêm ~$X' / '✖ Bỏ qua' buttons. A press
+maps to /dca_add or /dca_skip so it reuses command auth + the paper→live relay.
 
 No network: _telegram_send / relay / service internals are stubbed.
 """
@@ -39,7 +38,7 @@ _SNAP = {"symbol": "AAA", "waves": "6/6", "avg": 100.0, "market": 95.0, "upnl_pc
 
 def _stub_snapshot(monkeypatch, **over):
     snap = {**_SNAP, **over}
-    monkeypatch.setattr(service, "dca_alert_snapshot", lambda db, sid: snap)
+    monkeypatch.setattr(service, "dca_alert_snapshot", lambda db, sid: {**snap, "symbol": _SNAP["symbol"]})
     return snap
 
 
@@ -60,10 +59,8 @@ def _session(db, **kw):
 
 def test_send_attaches_inline_keyboard(monkeypatch):
     calls = _capture_send(monkeypatch)
-    ok = notify.send("hi", buttons=[[{"text": "X", "callback_data": "dca:paper:1"}]])
-    assert ok
-    _text, rm = calls[-1]
-    assert rm == {"inline_keyboard": [[{"text": "X", "callback_data": "dca:paper:1"}]]}
+    assert notify.send("hi", buttons=[[{"text": "X", "callback_data": "dca:paper:1"}]])
+    assert calls[-1][1] == {"inline_keyboard": [[{"text": "X", "callback_data": "dca:paper:1"}]]}
 
 
 def test_send_without_buttons_has_no_markup(monkeypatch):
@@ -72,51 +69,77 @@ def test_send_without_buttons_has_no_markup(monkeypatch):
     assert calls[-1][1] is None
 
 
-# ---- alert_max_dca detection / dedup ----
+# ---- full-ladder set (pull surface) ----
 
-def test_alert_fires_once_on_full_ladder(db, monkeypatch):
+def test_full_sessions_excludes_not_full_and_declined(db):
+    from app import runtime
+    a = _session(db, current_wave=5, max_waves=6)          # full
+    _session(db, current_wave=2, max_waves=6)              # not full → excluded
+    d = _session(db, current_wave=5, max_waves=6)          # full but muted → excluded
+    runtime.set(db, f"maxdca_declined:{d.id}", "1")
+    ids = {r.id for r in notify._maxdca_full_sessions(db)}
+    assert ids == {a.id}
+
+
+# ---- /summary fold-in + list button (NO proactive push) ----
+
+def test_summary_line_shows_count(db):
+    _session(db, current_wave=5, max_waves=6)
+    line = notify.maxdca_summary_line(db)
+    assert "DCA" in line and "1 session" in line and "AAA" in line
+
+
+def test_summary_line_empty_when_none(db):
+    _session(db, current_wave=2, max_waves=6)              # not full
+    assert notify.maxdca_summary_line(db) == ""
+
+
+def test_summary_line_off_when_disabled(db, monkeypatch):
+    monkeypatch.setattr(settings, "telegram_notify_maxdca", False)
+    _session(db, current_wave=5, max_waves=6)
+    assert notify.maxdca_summary_line(db) == ""
+
+
+def test_list_button_present_then_none(db):
+    s = _session(db, current_wave=5, max_waves=6)
+    btn = notify.maxdca_list_button(db)
+    assert btn and btn[0][0]["callback_data"] == "dcalist:paper"
+    s.current_wave = 2                                     # no longer full
+    db.commit()
+    assert notify.maxdca_list_button(db) is None
+
+
+def test_reply_buttons_only_for_summary(db):
+    _session(db, current_wave=5, max_waves=6)
+    assert notify._reply_buttons("/summary") is not None
+    assert notify._reply_buttons("/status") is None
+
+
+# ---- send_maxdca_list (on-demand detail cards) ----
+
+def test_send_list_cards_with_buttons(db, monkeypatch):
     calls = _capture_send(monkeypatch)
-    _stub_snapshot(monkeypatch)
-    s = _session(db, current_wave=5, max_waves=6)          # 6/6 → full
-    assert notify.alert_max_dca(db) == [s.id]
-    text, rm = calls[-1]
-    assert "AAA" in text and "uPnL" in text and "654" in text   # status + next-rung cost shown
-    kb = rm["inline_keyboard"][0]
-    assert kb[0]["callback_data"] == f"dca:paper:{s.id}"        # ➕ add
-    assert kb[1]["callback_data"] == f"dcax:paper:{s.id}"       # ✖ bỏ qua
-    # dedup: nothing on a second pass at the same ladder depth
-    calls.clear()
-    assert notify.alert_max_dca(db) == []
-    assert calls == []
-
-
-def test_no_alert_when_ladder_not_full(db, monkeypatch):
-    calls = _capture_send(monkeypatch)
-    _session(db, current_wave=2, max_waves=6)
-    assert notify.alert_max_dca(db) == []
-    assert calls == []
-
-
-def test_realert_after_ladder_extended(db, monkeypatch):
-    _capture_send(monkeypatch)
     _stub_snapshot(monkeypatch)
     s = _session(db, current_wave=5, max_waves=6)
-    assert notify.alert_max_dca(db) == [s.id]                # alerted at max_waves=6
-    s.max_waves = 7                                          # button bumped it, then it filled full again
-    s.current_wave = 6
-    db.commit()
-    assert notify.alert_max_dca(db) == [s.id]                # different depth → re-alert
+    assert notify.send_maxdca_list(db) == 1
+    text, rm = calls[-1]
+    assert "AAA" in text and "654" in text                 # status + next-rung cost
+    kb = rm["inline_keyboard"][0]
+    assert kb[0]["callback_data"] == f"dca:paper:{s.id}"
+    assert kb[1]["callback_data"] == f"dcax:paper:{s.id}"
 
 
-def test_declined_session_is_muted(db, monkeypatch):
+def test_send_list_excludes_declined(db, monkeypatch):
     from app import runtime
     calls = _capture_send(monkeypatch)
     _stub_snapshot(monkeypatch)
     s = _session(db, current_wave=5, max_waves=6)
-    runtime.set(db, f"maxdca_declined:{s.id}", "1")          # user pressed ✖ Bỏ qua earlier
-    assert notify.alert_max_dca(db) == []
+    runtime.set(db, f"maxdca_declined:{s.id}", "1")
+    assert notify.send_maxdca_list(db) == 0
     assert calls == []
 
+
+# ---- service: preview + add ----
 
 def test_snapshot_previews_next_rung(db, monkeypatch):
     from app import market
@@ -126,18 +149,8 @@ def test_snapshot_previews_next_rung(db, monkeypatch):
     snap = service.dca_alert_snapshot(db, s.id)
     assert snap["symbol"] == "AAA" and snap["next_wave"] == 6
     assert snap["market"] == 95.0 and snap["upnl_pct"] == pytest.approx(-5.0)
-    assert snap["add_cost"] > 0 and snap["below_sl"] is False   # 93.6 rung > 92 SL floor
+    assert snap["add_cost"] > 0 and snap["below_sl"] is False
 
-
-def test_kill_switch_suppresses_alert(db, monkeypatch):
-    calls = _capture_send(monkeypatch)
-    monkeypatch.setattr(settings, "telegram_notify_maxdca", False)
-    _session(db, current_wave=5, max_waves=6)
-    assert notify.alert_max_dca(db) == []
-    assert calls == []
-
-
-# ---- queue_manual_extra_wave (service) ----
 
 def test_extra_wave_bumps_ladder_then_delegates(db, monkeypatch):
     s = _session(db, current_wave=5, max_waves=6)
@@ -150,8 +163,7 @@ def test_extra_wave_bumps_ladder_then_delegates(db, monkeypatch):
 
     monkeypatch.setattr(service, "queue_next_wave", fake_qnw)
     res = service.queue_manual_extra_wave(db, s.id)
-    assert seen["max_waves"] == 7            # ladder extended by one BEFORE delegating
-    assert seen["amount_usd"] is None        # standard ladder-size rung (not a custom USD)
+    assert seen["max_waves"] == 7 and seen["amount_usd"] is None
     assert res["symbol"] == "AAA" and res["wave_num"] == 6
 
 
@@ -164,18 +176,15 @@ def test_extra_wave_rejects_inactive(db):
 
 def test_extra_wave_rolls_back_bump_on_failure(db, monkeypatch):
     s = _session(db, current_wave=5, max_waves=6)
-
-    def boom(dbx, sid, amount_usd=None):
-        raise ValueError("dưới SL")
-
-    monkeypatch.setattr(service, "queue_next_wave", boom)
+    monkeypatch.setattr(service, "queue_next_wave",
+                        lambda dbx, sid, amount_usd=None: (_ for _ in ()).throw(ValueError("dưới SL")))
     with pytest.raises(ValueError):
         service.queue_manual_extra_wave(db, s.id)
     db.expire_all()
-    assert db.get(KssSession, s.id).max_waves == 6          # bump rolled back, not persisted
+    assert db.get(KssSession, s.id).max_waves == 6
 
 
-# ---- /dca_add command + callback dispatch ----
+# ---- commands ----
 
 def test_dca_add_command_formats_reply(db, monkeypatch):
     monkeypatch.setattr(service, "queue_manual_extra_wave",
@@ -185,61 +194,22 @@ def test_dca_add_command_formats_reply(db, monkeypatch):
 
 
 def test_dca_add_command_bad_arg(db):
-    reply = notify.handle_command("/dca_add abc")
-    assert "session_id" in reply.lower() or "dùng" in reply.lower()
+    assert "session_id" in notify.handle_command("/dca_add abc").lower()
 
 
-def test_callback_local_instance_dispatches_and_edits(monkeypatch):
-    seen = {}
-    monkeypatch.setattr(notify, "handle_command", lambda t: seen.setdefault("cmd", t) or "✅ ok")
-    monkeypatch.setattr(notify, "_answer_callback", lambda *a, **k: seen.__setitem__("answered", True))
-    monkeypatch.setattr(notify, "_edit_message",
-                        lambda *a, **k: seen.__setitem__("edited", (a, k)))
-    cb = {"id": "cb1", "data": "dca:paper:42", "message": {"message_id": 9, "chat": {"id": 777}}}
-    notify._handle_callback(cb)
-    assert seen["cmd"] == "/dca_add 42"
-    assert seen["answered"] is True
-    assert "edited" in seen
-
-
-def test_callback_rejects_unknown_chat(monkeypatch):
-    called = {"n": 0}
-    monkeypatch.setattr(notify, "handle_command", lambda t: called.__setitem__("n", called["n"] + 1))
-    monkeypatch.setattr(notify, "_answer_callback", lambda *a, **k: None)
-    cb = {"id": "cb1", "data": "dca:paper:42", "message": {"message_id": 9, "chat": {"id": 999}}}
-    notify._handle_callback(cb)
-    assert called["n"] == 0                                  # unauthorized chat → not dispatched
-
-
-def test_callback_sibling_instance_relays(monkeypatch):
-    seen = {}
-    monkeypatch.setattr(notify, "_proxy_command",
-                        lambda target, cmd: seen.setdefault("relay", (target, cmd)) or "✅ relayed")
-    monkeypatch.setattr(notify, "handle_command", lambda t: seen.setdefault("local", t))
-    monkeypatch.setattr(notify, "_answer_callback", lambda *a, **k: None)
-    monkeypatch.setattr(notify, "_edit_message", lambda *a, **k: None)
-    cb = {"id": "cb1", "data": "dca:live:42", "message": {"message_id": 9, "chat": {"id": 777}}}
-    notify._handle_callback(cb)
-    assert seen["relay"] == ("live", "/dca_add 42")
-    assert "local" not in seen                               # sibling session not handled locally
-
-
-def test_callback_decline_routes_to_skip(monkeypatch):
-    seen = {}
-    monkeypatch.setattr(notify, "handle_command", lambda t: seen.setdefault("cmd", t) or "✖ ok")
-    monkeypatch.setattr(notify, "_answer_callback", lambda *a, **k: None)
-    monkeypatch.setattr(notify, "_edit_message", lambda *a, **k: None)
-    cb = {"id": "cb1", "data": "dcax:paper:42", "message": {"message_id": 9, "chat": {"id": 777}}}
-    notify._handle_callback(cb)
-    assert seen["cmd"] == "/dca_skip 42"
+def test_dca_list_command_sends(db, monkeypatch):
+    _capture_send(monkeypatch)
+    _stub_snapshot(monkeypatch)
+    _session(db, current_wave=5, max_waves=6)
+    reply = notify.handle_command("/dca_list")
+    assert "1" in reply
 
 
 def test_dca_skip_command_sets_mute(db):
     from app import runtime
     from app.db import SessionLocal
     s = _session(db, current_wave=5, max_waves=6)
-    reply = notify.handle_command(f"/dca_skip {s.id}")
-    assert "bỏ qua" in reply.lower()
+    assert "bỏ qua" in notify.handle_command(f"/dca_skip {s.id}").lower()
     db2 = SessionLocal()
     assert runtime.get(db2, f"maxdca_declined:{s.id}") == "1"
     db2.close()
@@ -256,3 +226,55 @@ def test_dca_add_clears_mute(db, monkeypatch):
     db2 = SessionLocal()
     assert runtime.get(db2, f"maxdca_declined:{s.id}") == "0"
     db2.close()
+
+
+# ---- callback dispatch ----
+
+def test_callback_add_dispatches_and_edits(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(notify, "handle_command", lambda t: seen.setdefault("cmd", t) or "✅ ok")
+    monkeypatch.setattr(notify, "_answer_callback", lambda *a, **k: seen.__setitem__("ans", True))
+    monkeypatch.setattr(notify, "_edit_message", lambda *a, **k: seen.__setitem__("edit", a))
+    notify._handle_callback({"id": "c1", "data": "dca:paper:42",
+                             "message": {"message_id": 9, "chat": {"id": 777}}})
+    assert seen["cmd"] == "/dca_add 42" and seen["ans"] and "edit" in seen
+
+
+def test_callback_decline_routes_to_skip(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(notify, "handle_command", lambda t: seen.setdefault("cmd", t) or "✖ ok")
+    monkeypatch.setattr(notify, "_answer_callback", lambda *a, **k: None)
+    monkeypatch.setattr(notify, "_edit_message", lambda *a, **k: None)
+    notify._handle_callback({"id": "c1", "data": "dcax:paper:42",
+                             "message": {"message_id": 9, "chat": {"id": 777}}})
+    assert seen["cmd"] == "/dca_skip 42"
+
+
+def test_callback_dcalist_sends_list(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(notify, "handle_command", lambda t: seen.setdefault("cmd", t) or "📋 sent")
+    monkeypatch.setattr(notify, "_answer_callback", lambda *a, **k: None)
+    notify._handle_callback({"id": "c1", "data": "dcalist:paper",
+                             "message": {"message_id": 9, "chat": {"id": 777}}})
+    assert seen["cmd"] == "/dca_list"
+
+
+def test_callback_rejects_unknown_chat(monkeypatch):
+    called = {"n": 0}
+    monkeypatch.setattr(notify, "handle_command", lambda t: called.__setitem__("n", called["n"] + 1))
+    monkeypatch.setattr(notify, "_answer_callback", lambda *a, **k: None)
+    notify._handle_callback({"id": "c1", "data": "dca:paper:42",
+                             "message": {"message_id": 9, "chat": {"id": 999}}})
+    assert called["n"] == 0
+
+
+def test_callback_sibling_relays(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(notify, "_proxy_command",
+                        lambda target, cmd: seen.setdefault("relay", (target, cmd)) or "✅ relayed")
+    monkeypatch.setattr(notify, "handle_command", lambda t: seen.setdefault("local", t))
+    monkeypatch.setattr(notify, "_answer_callback", lambda *a, **k: None)
+    monkeypatch.setattr(notify, "_edit_message", lambda *a, **k: None)
+    notify._handle_callback({"id": "c1", "data": "dca:live:42",
+                             "message": {"message_id": 9, "chat": {"id": 777}}})
+    assert seen["relay"] == ("live", "/dca_add 42") and "local" not in seen

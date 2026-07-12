@@ -100,10 +100,14 @@ def _get_row(db: Session, session_id: int) -> KssSession:
 
 
 def _wave_row(db: Session, session_id: int, wave_num: int) -> KssWave | None:
+    # ``.first()`` (not ``.one_or_none()``): a legacy DB may hold duplicate (session_id, wave_num)
+    # rows from the historical DCA+/auto-chain race; one_or_none() would raise MultipleResultsFound
+    # and crash the fill hook. Return the earliest (canonical) row so bookkeeping stays deterministic.
     return (
         db.query(KssWave)
         .filter(KssWave.session_id == session_id, KssWave.wave_num == wave_num)
-        .one_or_none()
+        .order_by(KssWave.id)
+        .first()
     )
 
 
@@ -154,6 +158,14 @@ def _queue_wave_if_above_sl(
     The rung is first re-anchored to the live market (``_anchor_dca_price``) so the auto-chain
     never queues a buy above the current price (which would fill at an overpay, not a dip)."""
     nwn = int(order_dict["source_ref"].split(":")[-1])
+    # Idempotency guard against the duplicate-wave race: if this wave is already queued/recorded
+    # (e.g. a manual DCA+ queued it while the auto-chain is firing), do not queue a second copy —
+    # that historically double-bought a rung (session 42/C: wave 13 filled twice, ~$49.9k) and
+    # stranded an orphan lot the session bookkeeping could not see.
+    if _wave_row(db, session_id, nwn) is not None:
+        audit.log(db, "kss", "wave_already_queued", entity=f"kss:{session_id}",
+                  symbol=symbol, wave=nwn)
+        return False
     order_dict["price"] = _anchor_dca_price(
         db, session_id, symbol, py.distance_pct, order_dict["price"], py.entry_price
     )
@@ -1340,6 +1352,35 @@ def _maybe_queue_pyramid_add(db: Session, row: KssSession, market: float) -> Non
               wave=armed.wave_num, trigger=round(armed.target_price, 8), market=round(market, 8))
 
 
+def _guard_hard_sl(db: Session, row: KssSession, price: float) -> bool:
+    """Fast avg-anchored hard-SL net for a NON-armed dca_down session, run by the 90s guard.
+
+    The frozen hard SL was previously only sampled by the 30-min cycle, so a fast drop overshot
+    the floor (NFP: -17.3% vs a -15% floor). This cuts a genuine deep loser (price ≤ avg×(1-sl%))
+    at market between cycles. TP / trailing / DCA stay the 30-min cycle's job — this is purely the
+    disaster floor, so it mirrors the hard-SL branch of manage_open_sessions (no K-trail defer: a
+    hard SL is meant to realize the loss on a real loser). Returns True if it queued an exit."""
+    from app.config import settings
+
+    sl_pct = row.sl_pct if row.sl_pct and row.sl_pct > 0 else settings.sl_pct
+    if sl_pct <= 0 or row.avg_price <= 0 or row.total_filled_qty <= 0:
+        return False
+    floor = row.avg_price * (1 - sl_pct / 100.0)
+    if price > floor:
+        return False
+    _queue(db, {
+        "symbol": row.symbol, "side": "SELL", "quantity": row.total_filled_qty,
+        "price": 0.0, "order_type": "MARKET", "source_ref": f"pyramid:{row.id}:sl",
+        "strategy_name": f"Pyramid_{row.symbol}",
+        "note": f"Hard SL @ {price:g} (floor {floor:g}, avg {row.avg_price:g}) — 90s guard",
+    })
+    row.status = SESSION_STOPPED
+    audit.log(db, "scheduler", "stop_queued", entity=f"kss:{row.id}", symbol=row.symbol,
+              price=round(price, 8), kind="stop_loss", via="guard")
+    _cancel_pending_waves(db, row.id)  # closing → kill stale DCA orders (else they orphan)
+    return True
+
+
 def _pyramid_up_hard_sl(db: Session, row: KssSession, price: float) -> bool:
     """Disaster floor for a not-yet-armed pyramid_up position: a momentum trade has NO DCA-down
     ladder to average a loser back, so a drop past the hard SL (``sl_pct`` below avg) is cut at
@@ -1499,55 +1540,58 @@ def _maintain_live_stop(db: Session, row: KssSession, price: float) -> None:
 
 
 def run_position_guard(db: Session) -> dict:
-    """Fast, lightweight exit guard (§10.1) — decoupled from the 30-min scan. Checks only ACTIVE
-    sessions ALREADY in trailing mode, with a FRESH ticker, runs crash-detect + the dynamic channel,
-    and EXECUTES any queued exit immediately (does not wait for the 30-min auto-fill). Cheap: tickers
-    only, no universe/backtest/Grok. Returns a small summary."""
+    """Fast, lightweight exit guard (§10.1) — decoupled from the 30-min scan. With a FRESH ticker it
+    (a) runs crash-detect + the dynamic channel on ARMED (trailing) sessions, (b) runs a fast
+    avg-anchored hard-SL net on NON-armed filled sessions (so the frozen hard SL is checked every
+    ~90s instead of only every 30 min — the fix for the NFP -17.3% overshoot), and (c) EXECUTES any
+    queued KSS exit SELL immediately, freeze-immune. Cheap: tickers only, no universe/backtest/Grok."""
     from app.config import settings
     from app.market import get_current_prices
     from app.models import PENDING, PendingOrder
 
-    # Pyramid-UP sessions need their BE+ trailing stop guarded even when the global dynamic-TP
-    # toggle is off (see _evaluate_dynamic_exit) — only skip the whole guard when BOTH the
-    # feature is off AND there is no pyramid_up session that could need it.
-    has_pyramid_up = (
-        db.query(KssSession)
-        .filter(KssSession.status == SESSION_ACTIVE, KssSession.strategy_mode == "pyramid_up")
-        .count()
-        > 0
-    )
-    if not settings.kss_dynamic_tp_enabled and not has_pyramid_up:
-        return {"checked": 0, "exited": []}
+    # Guard every ACTIVE session that holds inventory — armed ones need the dynamic channel, the
+    # rest need the hard-SL net. (The hard SL is always-on safety, independent of the dynamic-TP
+    # toggle.) Nothing filled → nothing to protect.
     active = (db.query(KssSession)
               .filter(KssSession.status == SESSION_ACTIVE,
-                      KssSession.trail_active == True)  # noqa: E712
+                      KssSession.total_filled_qty > 0)
               .all())
-    if not active:
-        return {"checked": 0, "exited": []}
-    prices = get_current_prices(list({s.symbol for s in active}), force=True)  # bypass the TTL cache
+    dyn = settings.kss_dynamic_tp_enabled
     exited: list[int] = []
-    for row in active:
-        price = prices.get(row.symbol)
-        if not price:
-            continue
-        before = row.status
-        if not _crash_exit(db, row, price):
-            _evaluate_dynamic_exit(db, row, price)  # channel: exit or ratchet
-        _maintain_live_stop(db, row, price)
-        if row.status != before and row.status != SESSION_ACTIVE:
-            exited.append(row.id)
-    db.commit()
-    # Fill the queued exit SELLs NOW (exits reduce risk → never gated). reviewer="guard" is a
-    # non-AUTO reviewer so a breaker freeze never blocks a protective exit.
-    for sid in exited:
-        for o in (db.query(PendingOrder)
-                  .filter(PendingOrder.status == PENDING, PendingOrder.side == "SELL",
-                          PendingOrder.source_ref.like(f"pyramid:{sid}:%"))
-                  .all()):
-            try:
-                orders.approve_order(db, o.id, reviewer="guard")
-            except Exception:  # a fill error must not kill the guard
-                logger.exception("position-guard fill failed for order %s", o.id)
+    if active:
+        prices = get_current_prices(list({s.symbol for s in active}), force=True)  # bypass TTL cache
+        for row in active:
+            price = prices.get(row.symbol)
+            if not price:
+                continue
+            before = row.status
+            if row.trail_active:
+                # Armed: the dynamic Ride&Trail channel owns this session (crash-detect + trail/exit).
+                if not _crash_exit(db, row, price):
+                    _evaluate_dynamic_exit(db, row, price)  # channel: exit or ratchet
+                _maintain_live_stop(db, row, price)
+            elif not (dyn and _crash_exit(db, row, price)):
+                # Non-armed: fast avg-anchored hard-SL net between 30-min cycles (crash-detect first
+                # when the dynamic feature is on). pyramid_up has no DCA-down floor of its own.
+                if row.strategy_mode == "pyramid_up":
+                    _pyramid_up_hard_sl(db, row, price)
+                else:
+                    _guard_hard_sl(db, row, price)
+            if row.status != before and row.status != SESSION_ACTIVE:
+                exited.append(row.id)
+        db.commit()
+    # Fill EVERY queued KSS exit SELL NOW, freeze-immune. reviewer="guard" is a non-AUTO reviewer,
+    # so a circuit-breaker freeze never blocks a protective exit — this also rescues SL/deadline
+    # SELLs the 30-min cycle queued but could not fill during a freeze (auto_fill_due_orders no-ops
+    # while frozen). Exits reduce risk and are never gated (the never-gate-exits rule).
+    for o in (db.query(PendingOrder)
+              .filter(PendingOrder.status == PENDING, PendingOrder.side == "SELL",
+                      PendingOrder.source_ref.like("pyramid:%"))
+              .all()):
+        try:
+            orders.approve_order(db, o.id, reviewer="guard")
+        except Exception:  # a fill error must not kill the guard
+            logger.exception("position-guard fill failed for order %s", o.id)
     return {"checked": len(active), "exited": exited}
 
 

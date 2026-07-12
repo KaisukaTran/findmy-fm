@@ -148,6 +148,38 @@ def _anchor_dca_price(
     return round(min(anchors) * (1 - distance_pct / 100.0), 8)
 
 
+def _pending_wave_notional(db: Session, session_id: int) -> float:
+    """USD of this session's still-pending BUY waves (queued but not yet filled), so the deploy
+    cap counts committed-but-unfilled rungs, not just filled cost."""
+    from sqlalchemy import func
+
+    from app.models import APPROVED, PENDING, PendingOrder
+
+    total = (
+        db.query(func.coalesce(func.sum(PendingOrder.quantity * PendingOrder.price), 0.0))
+        .filter(
+            PendingOrder.side == "BUY",
+            PendingOrder.status.in_((PENDING, APPROVED)),
+            PendingOrder.source_ref.like(f"pyramid:{session_id}:%"),
+        )
+        .scalar()
+    )
+    return float(total or 0.0)
+
+
+def _session_deploy_headroom(db: Session, session_id: int, deployed_cost: float) -> float:
+    """USD still deployable on this session before hitting ``max_session_deploy_usd``
+    (filled cost + pending waves). Returns +inf when the cap is off (0) — the wall for going
+    live: a session can never deploy more than the cap no matter how many waves it queues."""
+    from app.config import settings
+
+    cap = settings.max_session_deploy_usd
+    if cap <= 0:
+        return float("inf")
+    committed = (deployed_cost or 0.0) + _pending_wave_notional(db, session_id)
+    return max(0.0, cap - committed)
+
+
 def _queue_wave_if_above_sl(
     db: Session, py: PyramidSession, session_id: int, symbol: str, order_dict: dict
 ) -> bool:
@@ -173,6 +205,11 @@ def _queue_wave_if_above_sl(
     if floor > 0 and order_dict["price"] <= floor:
         audit.log(db, "kss", "wave_below_sl", entity=f"kss:{session_id}", symbol=symbol,
                   wave=nwn, price=round(order_dict["price"], 8), sl_price=round(floor, 8))
+        return False
+    wave_cost = order_dict["quantity"] * order_dict["price"]
+    if wave_cost > _session_deploy_headroom(db, session_id, py.total_cost):
+        audit.log(db, "kss", "deploy_cap_hit", entity=f"kss:{session_id}", symbol=symbol,
+                  wave=nwn, cost=round(wave_cost, 2))
         return False
     pending, _ = _queue(db, order_dict)
     db.add(
@@ -878,6 +915,15 @@ def queue_next_wave(db: Session, session_id: int, amount_usd: float | None = Non
             "Nới SL của session hoặc giảm max_waves trước."
         )
     cost = next_wave.quantity * next_wave.target_price
+    headroom = _session_deploy_headroom(db, session_id, py.total_cost)
+    if cost > headroom:
+        from app.config import settings
+
+        raise ValueError(
+            f"Sóng {next_wave_num} (${cost:,.0f}) vượt trần triển khai/session "
+            f"(${settings.max_session_deploy_usd:,.0f}; còn ${headroom:,.0f}). "
+            "Tăng max_session_deploy_usd hoặc bỏ session này."
+        )
     if cost > py.remaining_fund:
         # Reservation exhausted — fund this rung from idle account cash (manual override).
         idle = _idle_deployable(db)

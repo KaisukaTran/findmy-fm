@@ -26,6 +26,8 @@
     <input name="equity_backup_pct" type="number" step="any" min="0" max="90" value="{{ '%.0f'|format(k.equity_backup_pct) }}" required></label>
   <label title="CHẶN CỨNG: tiền mặt tài khoản không bao giờ được xuống dưới mức này. Mỗi lệnh MUA bị khớp một phần đúng bằng tiền còn lại (hoặc bị giữ lại nếu không đủ cả lát tối thiểu) → Cash không bao giờ âm. 0 = Cash luôn ≥ 0. Lệnh BÁN không bị chặn.">Sàn tiền mặt $ <span class="varname">cash_floor_usd</span>
     <input name="cash_floor_usd" type="number" step="any" min="0" value="{{ '%.0f'|format(k.cash_floor_usd) }}" required></label>
+  <label title="TRẦN CỨNG: 1 session không bao giờ được triển khai (đã bơm + sóng đang chờ) quá số USD này. MỌI sóng — auto-DCA, DCA+ thủ công, nút ➕ Telegram — vượt trần sẽ bị TỪ CHỐI. Đây là bức tường bảo toàn vốn cho live (thảm hoạ C từng bơm $162k vô giới hạn). 0 = tắt. Live: đặt ~15-20% equity.">Trần deploy/session $ <span class="varname">max_session_deploy_usd</span>
+    <input name="max_session_deploy_usd" type="number" step="any" min="0" value="{{ '%.0f'|format(k.max_session_deploy_usd) }}" required></label>
   <label title="Chặn mở session mới cho coin đã thua K lần ĐÓNG LỆNH liên tiếp (một lần lãi sẽ phá chuỗi). Tăng để khó bị chặn hơn.">Chặn sau K lần thua <span class="varname">loss_streak_block_k</span>
     <input name="loss_streak_block_k" type="number" step="1" min="1" max="20" value="{{ k.loss_streak_block_k }}" required></label>
   <label title="Chỉ tính các lần đóng lệnh trong N ngày gần nhất — lỗ cũ trôi ra ngoài cửa sổ thì coin tự được giao dịch lại.">Cửa sổ lỗ (ngày) <span class="varname">loss_streak_window_days</span>

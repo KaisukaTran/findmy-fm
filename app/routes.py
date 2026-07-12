@@ -409,6 +409,7 @@ class KssSettingsBody(BaseModel):
     loss_reentry_weeks_2: int | None = Field(None, ge=1, le=520)
     loss_reentry_blacklist_after: int | None = Field(None, ge=1, le=50)
     loss_reentry_pardon: str | None = None
+    max_session_deploy_usd: float | None = Field(None, ge=0)
     min_expectancy_pct: float | None = Field(None, ge=-100, le=100)
     min_win_rate: float | None = Field(None, ge=0, le=100)
     min_confidence: float | None = Field(None, ge=0, le=100)  # S4: consensus threshold

@@ -235,6 +235,9 @@ class Settings(BaseSettings):
     loss_reentry_blacklist_after: int = Field(default=3, description="Hard-SL count at which a coin is blacklisted (blocked indefinitely). Clear a coin via loss_reentry_pardon.")
     loss_reentry_pardon: str = Field(default="", description="Comma-separated symbols exempt from the loss re-entry block (manual pardon / un-blacklist). e.g. 'C, MIRA'.")
 
+    # --- Per-session deploy cap (capital-preservation wall, Phase 0 live-readiness) ---
+    max_session_deploy_usd: float = Field(default=0.0, description="Hard ceiling on the total USD a SINGLE session may deploy (filled + still-pending waves). Any wave — auto-chain, manual DCA+, or the Telegram '➕' button — that would breach it is refused. 0 = off. The missing 'top fix': the C disaster deployed $162k unbounded. Set this for live (e.g. ~15-20% of equity).")
+
     # --- Grok scanner gate: a Grok (xAI) endorse/veto pass over qualified candidates ---
     grok_scanner_enabled: bool = Field(default=False, description="Have Grok review scanner candidates that passed every deterministic gate (one batched call/scan). Needs xai_api_key. Off = no cost, deterministic behaviour unchanged.")
     grok_scanner_batch_max: int = Field(default=60, ge=1, le=300, description="Max candidates Grok reviews per scan (single batched call). Set high enough to cover EVERY 'trade' candidate so none opens unreviewed; the batch is sorted by expectancy so the strongest are kept if it ever truncates. Larger = more tokens/call.")

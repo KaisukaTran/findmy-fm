@@ -71,6 +71,7 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "loss_reentry_weeks_2": int,
     "loss_reentry_blacklist_after": int,
     "loss_reentry_pardon": str,  # comma-separated manual pardon list
+    "max_session_deploy_usd": float,  # hard ceiling on total USD deployed per session (0=off)
     "min_expectancy_pct": float,
     "max_avg_mae_pct": float,  # drawdown gate (0=off) + ranking: shallower backtest dip = better
     "min_win_rate": float,

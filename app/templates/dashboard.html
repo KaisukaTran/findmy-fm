@@ -166,6 +166,7 @@
       <div class="panel mt-16">
         <h2>Phân tích lỗ — nguyên nhân / thời gian / giá trị / cặp</h2>
         <div hx-get="/partials/losses" hx-trigger="tab-shown from:closest [data-tab-panel], every 30s [tabActive(this) && document.visibilityState==='visible'], refresh-losses from:body" hx-swap="innerHTML"></div>
+        <div class="mt-16" hx-get="/partials/lossautopsy" hx-trigger="tab-shown from:closest [data-tab-panel], refresh-losses from:body" hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
       </div>
     </div>
 

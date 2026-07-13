@@ -1,0 +1,101 @@
+{% set cause_label = {
+  'dup_wave': 'Trùng sóng (bug cấu trúc)',
+  'size_outlier': 'Vốn xuống bất thường (≥P95)',
+  'pyramid_up_reversal': 'Đảo chiều ngay base (pyramid_up)',
+  'deep_ladder_sl': 'Cắt lỗ ở sóng sâu (dca_down)',
+  'orphan': 'Mồ côi (không rõ session)',
+  'reversal': 'Đảo chiều thị trường (tín hiệu ổn, thị trường đổi hướng)',
+} %}
+{% set cause_badge = {
+  'dup_wave': 'breaker-frozen',
+  'size_outlier': 'veto',
+  'pyramid_up_reversal': 'hyperopt-on',
+  'deep_ladder_sl': 'ml-on',
+  'orphan': 'telegram-off',
+  'reversal': '',
+} %}
+{% set metric_label = {
+  'consensus': 'Consensus %',
+  'win_rate_lb': 'WinRate LB %',
+  'expectancy': 'Expectancy',
+  'worst_mae': 'Worst MAE %',
+  'avg_mae': 'Avg MAE %',
+} %}
+
+<div class="cards mb-12">
+  <div class="card"><div class="label" data-tip="Số KSS session có ít nhất một lệnh bán đã chốt (exit).">Số session có exit</div>
+    <div class="value">{{ A.summary.sessions }}</div></div>
+  <div class="card"><div class="label" data-tip="Số session thắng / lỗ trong tổng số có exit.">Thắng/Lỗ</div>
+    <div class="value"><span class="pos">{{ A.summary.winners }}</span> / <span class="neg">{{ A.summary.losers }}</span></div></div>
+  <div class="card"><div class="label" data-tip="Tổng lãi/lỗ đã chốt của mọi session có exit.">Net đã chốt</div>
+    <div class="value {{ 'pos' if A.summary.net_realized >= 0 else 'neg' }}">${{ A.summary.net_realized | money_kmb }}</div></div>
+  <div class="card"><div class="label" data-tip="Tổng lỗ (chỉ các session lỗ).">Tổng lỗ</div>
+    <div class="value neg">${{ A.summary.loss_total | money_kmb }}</div></div>
+</div>
+
+<h3 class="section-subhead">Phân biệt Thắng vs Lỗ tại thời điểm vào (tín hiệu scanner)</h3>
+<div class="scroll mb-14"><table class="tbl">
+  <thead><tr>
+    <th data-tip="Nếu cột THẮNG và cột LỖ trùng nhau ⇒ scanner KHÔNG phân biệt được thắng/lỗ bằng chỉ số này — siết ngưỡng chỉ số đó sẽ giết cả lệnh thắng lẫn lệnh lỗ.">Chỉ số</th>
+    <th>THẮNG med (p25–p75)</th>
+    <th>LỖ med (p25–p75)</th>
+  </tr></thead>
+  <tbody>
+    {% for metric, label in metric_label.items() %}
+    {% set d = A.discrimination.get(metric) %}
+    <tr>
+      <td>{{ label }}</td>
+      <td class="pos">{% if d and d.win %}{{ "%.2f"|format(d.win.med) }} ({{ "%.2f"|format(d.win.p25) }}–{{ "%.2f"|format(d.win.p75) }}) <span class="muted fs-11">n={{ d.win.n }}</span>{% else %}—{% endif %}</td>
+      <td class="neg">{% if d and d.loss %}{{ "%.2f"|format(d.loss.med) }} ({{ "%.2f"|format(d.loss.p25) }}–{{ "%.2f"|format(d.loss.p75) }}) <span class="muted fs-11">n={{ d.loss.n }}</span>{% else %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table></div>
+
+<h3 class="section-subhead">Lỗ theo nguyên nhân gốc</h3>
+{% if A.by_root_cause %}
+<div class="scroll mb-14"><table class="tbl">
+  <thead><tr><th>Nguyên nhân</th><th>Số session</th><th>Tổng lỗ</th></tr></thead>
+  <tbody>
+    {% for tag, c in A.by_root_cause.items() %}
+    <tr>
+      <td><span class="badge {{ cause_badge.get(tag,'') }}" data-tip="{{ cause_label.get(tag, tag) }}">{{ tag }}</span></td>
+      <td>{{ c.count }}</td>
+      <td class="neg">${{ c.total | money_kmb }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table></div>
+{% else %}<p class="pos mb-14">Chưa có session lỗ nào. 🎉</p>{% endif %}
+
+<h3 class="section-subhead">Từng session (lỗ nặng nhất trước)</h3>
+{% if A.cases %}
+{% set worst = A.cases[:120] %}
+<div class="scroll"><table class="tbl">
+  <caption class="muted fs-11">{% if A.cases|length > 120 %}Chỉ hiện 120/{{ A.cases|length }} session lỗ nặng nhất.{% endif %}</caption>
+  <thead><tr>
+    <th>Session</th><th>Cặp</th><th>Mode</th><th>Trạng thái</th>
+    <th>Net $</th><th title="Tổng vốn đã xuống của session.">Vốn xuống $</th>
+    <th>Sóng</th><th>Consensus%</th><th>WinRateLB%</th><th>worstMAE%</th>
+    <th>Grok</th><th>Nguyên nhân</th>
+  </tr></thead>
+  <tbody>
+    {% for c in worst %}
+    <tr>
+      <td class="muted">{{ c.sid if c.sid is not none else '–' }}</td>
+      <td>{{ c.symbol }}</td>
+      <td>{{ c.mode }}</td>
+      <td>{{ c.status }}</td>
+      <td class="{{ 'pos' if c.net >= 0 else 'neg' }}">${{ c.net | money_kmb }}</td>
+      <td class="muted">{% if c.deploy_usd is not none %}${{ c.deploy_usd | money_kmb }}{% else %}—{% endif %}</td>
+      <td class="muted">{% if c.waves_reached is not none %}{{ c.waves_reached }}/{{ c.max_waves }}{% else %}—{% endif %}</td>
+      <td>{% if c.consensus is not none %}{{ "%.0f"|format(c.consensus) }}{% else %}—{% endif %}</td>
+      <td>{% if c.win_rate_lb is not none %}{{ "%.0f"|format(c.win_rate_lb) }}{% else %}—{% endif %}</td>
+      <td>{% if c.worst_mae is not none %}{{ "%.1f"|format(c.worst_mae) }}{% else %}—{% endif %}</td>
+      <td>{{ '✓' if c.grok_endorsed else '–' }}</td>
+      <td>{% if c.root_cause %}<span class="badge {{ cause_badge.get(c.root_cause,'') }}" data-tip="{{ cause_label.get(c.root_cause, c.root_cause) }}">{{ c.root_cause }}</span>{% else %}<span class="muted">–</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table></div>
+{% else %}<p class="pos">Chưa có session nào có exit. 🎉</p>{% endif %}

@@ -24,6 +24,7 @@ from app import (
     execution,
     guardian,
     hyperopt,
+    lossautopsy,
     ml,
     notify,
     notify_discord,
@@ -997,6 +998,19 @@ def api_losses(db: Session = Depends(get_db)):
 def partial_losses(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         "partials/losses.html", {"request": request, "L": portfolio.loss_analysis(db)}
+    )
+
+
+@api_router.get("/api/lossautopsy")
+def api_lossautopsy(db: Session = Depends(get_db)):
+    """Session-level loss autopsy (entry-signal join + root cause + discrimination) as JSON."""
+    return lossautopsy.autopsy(db)
+
+
+@ui_router.get("/partials/lossautopsy", response_class=HTMLResponse)
+def partial_lossautopsy(request: Request, db: Session = Depends(get_db)):
+    return templates.TemplateResponse(
+        "partials/lossautopsy.html", {"request": request, "A": lossautopsy.autopsy(db)}
     )
 
 

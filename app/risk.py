@@ -11,7 +11,7 @@ note to the pending order, so the user keeps final judgment at approval time.
 
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -77,6 +77,17 @@ def daily_loss(db: Session) -> float:
     total = (
         db.query(func.coalesce(func.sum(Fill.realized_pnl), 0.0))
         .filter(Fill.executed_at >= start, Fill.executed_at <= end, Fill.realized_pnl < 0)
+        .scalar()
+    )
+    return abs(float(total or 0.0))
+
+
+def weekly_loss(db: Session) -> float:
+    """Sum of realized losses (positive number) from fills in the rolling last 7 days."""
+    start = utcnow() - timedelta(days=7)
+    total = (
+        db.query(func.coalesce(func.sum(Fill.realized_pnl), 0.0))
+        .filter(Fill.executed_at >= start, Fill.realized_pnl < 0)
         .scalar()
     )
     return abs(float(total or 0.0))

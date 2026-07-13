@@ -44,9 +44,17 @@ def metrics(db: Session) -> dict:
     perf = portfolio.performance_view(db)
     eq = max(portfolio.equity(db), 1e-9)
     dl = risk.daily_loss(db)
+    wl = risk.weekly_loss(db)
+    # NOTE: drawdown_usd is intentionally NOT included — portfolio.performance_view()
+    # does not expose peak-equity (only max_drawdown_pct over the curve), and building
+    # peak-equity tracking is out of scope here. max_drawdown_usd stays a reserved,
+    # unwired knob until that plumbing exists.
     return {
         "drawdown_pct": perf["max_drawdown_pct"],
         "daily_loss_pct": dl / eq * 100,
+        "daily_loss_usd": dl,
+        "weekly_loss_usd": wl,
+        "weekly_loss_pct": wl / eq * 100,
         "consecutive_losses": _consecutive_losses(db),
     }
 
@@ -71,6 +79,18 @@ def evaluate(db: Session) -> dict:
         reasons.append(
             f"consecutive_losses {m['consecutive_losses']} >= limit {settings.max_consecutive_losses}"
         )
+    if settings.daily_loss_hard_usd > 0 and m["daily_loss_usd"] >= settings.daily_loss_hard_usd:
+        reasons.append(
+            f"daily_loss ${m['daily_loss_usd']:.2f} >= limit ${settings.daily_loss_hard_usd:.2f}"
+        )
+    if settings.weekly_loss_hard_pct > 0 and m["weekly_loss_pct"] > settings.weekly_loss_hard_pct:
+        reasons.append(
+            f"weekly_loss {m['weekly_loss_pct']:.1f}% > limit {settings.weekly_loss_hard_pct}%"
+        )
+    if settings.weekly_loss_hard_usd > 0 and m["weekly_loss_usd"] >= settings.weekly_loss_hard_usd:
+        reasons.append(
+            f"weekly_loss ${m['weekly_loss_usd']:.2f} >= limit ${settings.weekly_loss_hard_usd:.2f}"
+        )
 
     currently_frozen = runtime.is_frozen(db)
 
@@ -78,7 +98,13 @@ def evaluate(db: Session) -> dict:
     # streak can never clear → it must NOT block auto-rearm, or a loss-streak freeze
     # deadlocks forever. The cooldown time-out is the streak's reset. Only CURRENT-state
     # reasons (drawdown, daily-loss) keep the breaker frozen past the cooldown.
-    blocking = [r for r in reasons if "consecutive_losses" not in r]
+    # The WEEKLY-loss reasons are excluded for the same reason: a 7-day rolling window
+    # won't clear during a short cooldown, so treating it as "current state" would
+    # freeze the breaker for days. After cooldown it attempts rearm; if the weekly loss
+    # is still breached it simply re-trips next cycle (freeze → cooldown → re-check).
+    blocking = [
+        r for r in reasons if "consecutive_losses" not in r and "weekly_loss" not in r
+    ]
 
     if reasons and not currently_frozen:
         reason_str = "; ".join(reasons)

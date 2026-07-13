@@ -53,6 +53,7 @@ _MUTABLE_SETTINGS = (
     "live_trading", "live_max_order_notional",
     "maker_orders", "order_fill_timeout_sec", "live_use_testnet",
     "telegram_notify_trades", "telegram_notify_risk", "telegram_digest_hours",
+    "overextension_penalty_enabled", "overextension_penalty_weight", "overextension_lookback_bars",
 )
 
 

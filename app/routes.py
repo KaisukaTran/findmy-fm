@@ -446,6 +446,9 @@ class KssSettingsBody(BaseModel):
     rel_strength_margin_pct: float | None = Field(None, ge=0, le=50)
     regime_ramp_enabled: bool | None = None
     mae_quartile_gate_enabled: bool | None = None
+    overextension_penalty_enabled: bool | None = None
+    overextension_penalty_weight: float | None = Field(None, ge=0)
+    overextension_lookback_bars: int | None = Field(None, ge=1, le=200)
     # Pyramid-UP regime router (docs/pyramid-up-plan.md)
     strategy_router_enabled: bool | None = None
     pyramid_up_min_rel_strength: float | None = Field(None, ge=-100, le=100)

@@ -86,6 +86,9 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "rel_strength_margin_pct": float,
     "regime_ramp_enabled": _to_bool,  # breadth-aware soft throttle of new opens/scan (never a stop)
     "mae_quartile_gate_enabled": _to_bool,  # drop worst-quartile worst_mae candidates per scan
+    "overextension_penalty_enabled": _to_bool,  # SOFT rank-penalty for recent run-up (never a gate)
+    "overextension_penalty_weight": float,
+    "overextension_lookback_bars": int,
     # Pyramid-UP regime router (docs/pyramid-up-plan.md) — OFF by default, zero behavior change
     "strategy_router_enabled": _to_bool,
     "pyramid_up_min_rel_strength": float,

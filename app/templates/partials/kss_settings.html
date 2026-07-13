@@ -128,6 +128,15 @@
       <option value="1" {% if k.mae_quartile_gate_enabled %}selected{% endif %}>Bật</option>
       <option value="0" {% if not k.mae_quartile_gate_enabled %}selected{% endif %}>Tắt</option>
     </select></label>
+  <label title="Phạt xếp hạng MỀM (KHÔNG chặn — docs/loss-cases.md Phase 3): phiên thua thường mở khi coin đã chạy tăng mạnh trước đó. Khi bật, trừ điểm consensus xếp hạng mở lệnh tỷ lệ với mức tăng gần đây của coin — coin nóng vẫn được mở nếu còn suất, chỉ bị xếp SAU coin mát hơn. Tắt mặc định = xếp hạng y hệt hôm nay.">Phạt overextension (mềm) <span class="varname">overextension_penalty_enabled</span>
+    <select name="overextension_penalty_enabled" class="select-inline">
+      <option value="1" {% if k.overextension_penalty_enabled %}selected{% endif %}>Bật</option>
+      <option value="0" {% if not k.overextension_penalty_enabled %}selected{% endif %}>Tắt</option>
+    </select></label>
+  <label title="Số điểm consensus bị trừ trên mỗi 1%% tăng giá N-phiên gần đây (chỉ tính phần tăng, coin đứng yên/giảm không bị trừ). Vd 0.5 và coin tăng +13%% → trừ 6.5 điểm khỏi thứ hạng mở lệnh của coin đó.">Overextension: trọng số/1%% <span class="varname">overextension_penalty_weight</span>
+    <input name="overextension_penalty_weight" type="number" step="0.1" min="0" value="{{ '%.1f'|format(k.overextension_penalty_weight) }}"></label>
+  <label title="Số phiên (nến) nhìn lại để đo mức tăng gần đây cho phạt overextension.">Overextension: số phiên lookback <span class="varname">overextension_lookback_bars</span>
+    <input name="overextension_lookback_bars" type="number" step="1" min="1" max="200" value="{{ k.overextension_lookback_bars }}"></label>
   <h3 class="section-subhead">━ Chế độ Pyramid-UP (theo đà tăng) ━</h3>
   <label title="Công tắc tổng cho regime router (docs/pyramid-up-plan.md): khi bật, scanner phân loại mỗi ứng viên 'pyramid_up' (vào theo đà tăng) hoặc 'dca_down' (mua khi giảm, đường cũ) dựa trên tín hiệu TA trước khi mở. Tắt = mọi ứng viên vẫn là 'dca_down' — không đổi hành vi.">Bật regime router <span class="varname">strategy_router_enabled</span>
     <select name="strategy_router_enabled" class="select-inline">

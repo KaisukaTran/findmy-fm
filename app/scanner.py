@@ -469,6 +469,14 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
                 # from its TA before deferring the open. OFF by default (strategy_router_enabled
                 # =False) → always 'dca_down', identical to pre-router behaviour.
                 strategy_mode = _route_strategy_mode(ta, candles, _btc_ret)
+                # SOFT overextension rank-penalty (docs/loss-cases.md Phase 3): score the coin's
+                # recent run-up here (candles in scope) so _open_rank_key can de-prioritize hot
+                # entries without ever blocking them. Runtime-visible: tag the reason when the
+                # penalty is actually live (enabled AND the coin has positive heat to penalise).
+                overext_score = _overextension_score(candles)
+                if settings.overextension_penalty_enabled and overext_score > 0:
+                    penalty = settings.overextension_penalty_weight * overext_score
+                    cand.reason = (cand.reason or "") + f" | overext {overext_score:.0f}% (−{penalty:.0f} rank)"
                 # Defer the actual open until after the batched Grok review.
                 to_open.append({
                     "cand": cand, "symbol": symbol, "entry": candles[-1]["close"],
@@ -478,7 +486,7 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
                     "expectancy": wr["expectancy"], "ta": ta,
                     "win_rate_lb": wr["win_rate_lb"], "trials": wr["trials"],
                     "avg_mae": wr["avg_mae"], "worst_mae": wr["worst_mae"],
-                    "strategy_mode": strategy_mode,
+                    "strategy_mode": strategy_mode, "overext_score": overext_score,
                 })
         candidates.append(cand)
 
@@ -580,6 +588,15 @@ def _nbar_return(candles: list, n: int) -> float | None:
         return None
     prev = candles[-1 - n]["close"]
     return (candles[-1]["close"] / prev - 1) * 100.0 if prev else None
+
+
+def _overextension_score(candles: list) -> float:
+    """Positive-only recent 'heat' for the SOFT overextension rank-penalty (docs/loss-cases.md
+    Phase 3): the N-bar %% return over ``settings.overextension_lookback_bars``, clamped to ≥0 —
+    a flat or falling coin scores 0.0 (never rewarded; only a run-up is penalised later in
+    ``_open_rank_key``). Returns 0.0 when the return can't be computed (too few candles)."""
+    r = _nbar_return(candles, settings.overextension_lookback_bars)
+    return max(0.0, r) if r is not None else 0.0
 
 
 def _btc_ref_return(candle_map: dict, n: int) -> float | None:
@@ -706,9 +723,20 @@ def _open_rank_key(c: dict) -> tuple:
     win_rate_lb≈93% and expectancy≈tp−cost are near-constant and cannot rank. ``worst_mae`` (the
     single worst adverse excursion across trials, signed ≤ 0) then breaks ties toward shallower-tail
     (safer) entries — it discriminates far better than ``avg_mae`` (which is compressed); win_rate_lb
-    and expectancy are last-resort tiebreaks."""
+    and expectancy are last-resort tiebreaks.
+
+    Optional SOFT overextension penalty (docs/loss-cases.md Phase 3, off by default): losing
+    sessions tended to open when the coin had already run up hard, so when
+    ``settings.overextension_penalty_enabled`` is on, ``overextension_penalty_weight`` consensus-
+    points are subtracted per 1%% of the candidate's positive N-bar run-up (``overext_score``,
+    never negative) BEFORE ranking — de-prioritizing hot entries without ever dropping them (this
+    only reorders ``to_open``; it never removes a candidate). When disabled, the returned tuple is
+    byte-identical to the pre-penalty tuple."""
+    consensus = c.get("consensus", 0.0)
+    if settings.overextension_penalty_enabled:
+        consensus -= settings.overextension_penalty_weight * c.get("overext_score", 0.0)
     return (
-        c.get("consensus", 0.0),
+        consensus,
         c.get("worst_mae", 0.0),
         c.get("win_rate_lb", 0.0),
         c.get("expectancy", 0.0),

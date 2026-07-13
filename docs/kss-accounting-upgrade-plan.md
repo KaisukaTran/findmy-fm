@@ -33,7 +33,7 @@ attribution), causing premature/underwater exits — not in the headline account
 | # | Observation | Severity |
 |---|---|---|
 | A | **Fees excluded from session cost** (`total_cost += qty×price`, no fee), but aggregate includes fees → `session_avg` understates true cost; a "3% TP" really nets ~2.6–2.7% after round-trip fees+slippage. Single-session still positive, but thinner than it looks. | low |
-| B | **`isolated_fund` is only a per-session cap** (`remaining_fund = isolated_fund − total_cost`); it is NOT checked against **global cash**. Many sessions × $1k can over-commit real capital — only `max_deployed_pct` at *open* time guards this. | medium |
+| B | **`isolated_fund` is only a per-session cap** (`remaining_fund = isolated_fund − total_cost`); it is NOT checked against **global cash**. Many sessions × $1k can over-commit real capital. (Previously this row cited `max_deployed_pct` as the open-time guard — that was a FALSE claim; the knob gated nothing and was deleted 2026-07-13. The real open-gate is `equity_backup_pct`.) | medium |
 | C | **Oversell clamp masks desync**: when a session sells `total_filled_qty` but the shared `Position` holds less, the clamp ([orders.py:289](app/orders.py#L289)) sells partial; the session marks COMPLETED while the book still holds leftover. | medium |
 | D | **Exit qty = `session.total_filled_qty`** assumes the session owns that slice of the shared `Position`; with sharing it can sell another owner's lot. | medium |
 | E | Per-session / per-OPUS **unrealized views** can look inconsistent with the aggregate, but the **portfolio equity uses the aggregate only** — so headline numbers are right (informational views差). | info |

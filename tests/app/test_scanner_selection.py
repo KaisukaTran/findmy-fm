@@ -142,29 +142,6 @@ def _c(closes):
     return [{"close": x} for x in closes]
 
 
-def test_ramp_factor_curve():
-    assert scanner._ramp_factor(0.30) == pytest.approx(0.2)   # weak breadth → min throttle
-    assert scanner._ramp_factor(0.60) == pytest.approx(1.0)   # strong → full
-    assert scanner._ramp_factor(0.05) == pytest.approx(0.2)   # clamp low
-    assert scanner._ramp_factor(0.95) == pytest.approx(1.0)   # clamp high
-
-
-def test_market_breadth_fraction_rising():
-    cmap = {"A": (_c([1, 2]), True), "B": (_c([2, 1]), True), "C": (_c([1, 1]), True)}
-    assert scanner._market_breadth(cmap, ["A", "B", "C"], 1) == pytest.approx(2 / 3)  # A,C ≥0
-
-
-def test_effective_open_cap_throttles_in_weak_breadth(db, monkeypatch):
-    monkeypatch.setattr(settings, "max_new_sessions_per_scan", 5)
-    monkeypatch.setattr(settings, "rel_strength_lookback_bars", 1)
-    monkeypatch.setattr(scanner.audit, "log", lambda *a, **k: None)
-    weak = {f"C{i}": (_c([2, 1]), True) for i in range(10)}    # all falling → breadth 0 → factor 0.2
-    monkeypatch.setattr(settings, "regime_ramp_enabled", True)
-    assert scanner._effective_open_cap(db, weak, list(weak)) == 1   # 5×0.2 → max(1,1)
-    monkeypatch.setattr(settings, "regime_ramp_enabled", False)
-    assert scanner._effective_open_cap(db, weak, list(weak)) == 5   # off → unchanged base
-
-
 # ---------------------------------------------------------------------------
 # Phase C2: relative-quartile worst_mae gate
 # ---------------------------------------------------------------------------

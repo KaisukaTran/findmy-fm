@@ -5,7 +5,7 @@ so low-confidence (thin-data) votes count less.
 
 S4: the backtest agent's vote is EXCLUDED from the consensus score (weight 0) so
 the consensus becomes a pure market-context signal from {trend, dip, volatility,
-liquidity, ml}.  The backtest evidence (E, win_lb, loss_rate, days) is OWNED by
+liquidity}.  The backtest evidence (E, win_lb, loss_rate, days) is OWNED by
 the hard gates in ``decide`` — keeping it in the consensus caused the score to be
 largely the backtest agreeing with itself and prevented the 5 signal agents from
 ever vetoing a trade.  The vote row is still persisted for audit purposes.
@@ -21,7 +21,6 @@ DEFAULT_WEIGHTS = {
     "trend": 0.20,
     "volatility": 0.15,
     "liquidity": 0.10,
-    "ml": 0.30,
 }
 
 

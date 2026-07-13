@@ -60,7 +60,6 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "max_concurrent_sessions": int,
     "max_new_sessions_per_scan": int,  # cap NEW opens per scan (0=off); ramp gradually, best-first
     "max_sessions_per_symbol": int,  # K-1: 1 = one ladder per coin (no blended cost basis)
-    "max_deployed_pct": float,
     "equity_backup_pct": float,
     "cash_floor_usd": float,  # hard floor: account cash may never drop below this (0 = never <0)
     "loss_streak_block_k": int,
@@ -84,7 +83,6 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "rel_strength_enabled": _to_bool,  # skip coins materially weaker than BTC over the lookback
     "rel_strength_lookback_bars": int,
     "rel_strength_margin_pct": float,
-    "regime_ramp_enabled": _to_bool,  # breadth-aware soft throttle of new opens/scan (never a stop)
     "mae_quartile_gate_enabled": _to_bool,  # drop worst-quartile worst_mae candidates per scan
     "overextension_penalty_enabled": _to_bool,  # SOFT rank-penalty for recent run-up (never a gate)
     "overextension_penalty_weight": float,
@@ -127,6 +125,12 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "opus_solo_min_consensus": float,
     "opus_lessons_max": int,
     "opus_history_n": int,
+    # Market-wide BTC regime gate (shadow-first; see app/regime.py) — OFF by default.
+    "regime_gate_enabled": _to_bool,
+    "regime_gate_enforcing": _to_bool,
+    "regime_sma_fast": int,
+    "regime_sma_slow": int,
+    "regime_hysteresis_pct": float,
 }
 
 # ---------------------------------------------------------------------------
@@ -305,7 +309,7 @@ def set_consensus_weights(db: Session, weights: dict[str, float]) -> dict[str, f
     """
     import json as _json
 
-    allowed = {"trend", "dip", "volatility", "liquidity", "ml"}
+    allowed = {"trend", "dip", "volatility", "liquidity"}
     cleaned: dict[str, float] = dict(DEFAULT_WEIGHTS)  # start from defaults (backtest=0)
     for k, v in weights.items():
         if k in allowed:

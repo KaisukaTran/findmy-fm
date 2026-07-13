@@ -25,7 +25,11 @@ return over the same window; require:
 - Cheap: BTC candles fetched once/scan; coin candles already prefetched for the backtest.
 - Audit `skipped_rel_strength` (coin, coin_ret, btc_ret).
 
-## B. Breadth-aware ramp (SOFT throttle — never a hard block)
+## B. Breadth-aware ramp (SOFT throttle — never a hard block) — **REMOVED 2026-07-13**
+> Built as `regime_ramp_enabled` (off by default), then deleted: 0 audit rows ever, and by its own
+> 0.2-floor × max(1,…) construction it could never halt opens — structurally incapable of the one
+> thing it existed for. A real market regime gate is deferred to the D3 phase.
+
 Scale how MANY new sessions open per scan by market breadth, instead of refusing to open:
 
     breadth = % of scanned universe NOT in a confirmed downtrend

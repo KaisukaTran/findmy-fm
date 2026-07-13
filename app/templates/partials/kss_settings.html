@@ -62,7 +62,7 @@
     <input name="min_expectancy_pct" type="number" step="0.1" min="-100" max="100" value="{{ '%.1f'|format(k.min_expectancy_pct) }}" required></label>
   <label title="Win-rate tối thiểu (cận dưới Wilson) để đủ điều kiện trade. Cặp với gate kỳ vọng tạo thành quy tắc: trade khi E ≥ ngưỡng VÀ win-rate ≥ ngưỡng này.">Win-rate tối thiểu % <span class="varname">min_win_rate</span>
     <input name="min_win_rate" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.min_win_rate) }}" required></label>
-  <label title="Ngưỡng đồng thuận tối thiểu của 5 agent thị trường (trend/dip/volatility/liquidity/ml). S4: backtest bị loại khỏi điểm đồng thuận — chứng cứ backtest thuộc về các gate cứng (E, win_lb). Giá trị mặc định mới: 45%.">Đồng thuận tối thiểu % <span class="varname">min_confidence</span>
+  <label title="Ngưỡng đồng thuận tối thiểu của 4 agent thị trường (trend/dip/volatility/liquidity). S4: backtest bị loại khỏi điểm đồng thuận — chứng cứ backtest thuộc về các gate cứng (E, win_lb). Giá trị mặc định mới: 45%.">Đồng thuận tối thiểu % <span class="varname">min_confidence</span>
     <input name="min_confidence" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.min_confidence) }}" required></label>
   <label title="Số lần thử backtest TỐI THIỂU để edge đáng tin (win-rate 100% từ vài lần thử là nhiễu). Tăng để lọc mẫu mỏng. Mặc định 15.">Số lần thử tối thiểu <span class="varname">min_trials</span>
     <input name="min_trials" type="number" step="1" min="1" max="200" value="{{ k.min_trials }}" required></label>
@@ -116,11 +116,6 @@
     <input name="rel_strength_lookback_bars" type="number" step="1" min="1" value="{{ k.rel_strength_lookback_bars }}"></label>
   <label title="Cho phép thua BTC tối đa bao nhiêu % trước khi gate chặn (2 = được lag BTC ≤2%; 0 = phải bằng BTC).">RS: biên thua BTC % <span class="varname">rel_strength_margin_pct</span>
     <input name="rel_strength_margin_pct" type="number" step="0.5" min="0" value="{{ '%.1f'|format(k.rel_strength_margin_pct) }}"></label>
-  <label title="Throttle MỀM theo breadth: thị trường yếu rộng (ít coin tăng) → mở ít session/scan hơn (ramp chậm), không bao giờ dừng hẳn (≥1) và KHÔNG chặn theo hướng BTC. Tắt mặc định.">Ramp theo breadth <span class="varname">regime_ramp_enabled</span>
-    <select name="regime_ramp_enabled" class="select-inline">
-      <option value="1" {% if k.regime_ramp_enabled %}selected{% endif %}>Bật</option>
-      <option value="0" {% if not k.regime_ramp_enabled %}selected{% endif %}>Tắt</option>
-    </select></label>
   <label title="Gate drawdown TUYỆT ĐỐI: bỏ coin có avg_mae backtest (nhịp cắm sâu điển hình dưới avg trước khi thoát) SÂU HƠN % này (vd 12 = loại coin lịch sử thường cắm >12% trước khi hồi). 0 = tắt (vẫn dùng để xếp hạng: drawdown nông hơn → ưu tiên). Phân biệt được coin mà win-rate ~100% bão hòa không tách được.">Gate drawdown tuyệt đối % <span class="varname">max_avg_mae_pct</span>
     <input name="max_avg_mae_pct" type="number" step="0.5" min="0" max="100" value="{{ '%.1f'|format(k.max_avg_mae_pct) }}"></label>
   <label title="Gate drawdown TƯƠNG ĐỐI: trong mỗi lần quét, loại nhóm worst_mae (cú cắm sâu nhất so với avg) thuộc quartile tệ nhất. Theo từng scan nên không 'nuke' cả vũ trụ như ngưỡng tuyệt đối. Cần ≥4 ứng viên. Tắt mặc định.">Gate drawdown quartile <span class="varname">mae_quartile_gate_enabled</span>
@@ -155,6 +150,23 @@
     <input name="pyramid_up_max_adds" type="number" step="1" min="0" max="3" value="{{ k.pyramid_up_max_adds }}"></label>
   <label title="Quản trị rủi ro Pyramid-UP: sau mỗi add khớp, SL dời lên break-even-plus = avg×(1+%này) (sàn ở mức hòa phí) — mỗi add là một 'free-roll', rủi ro net không vượt quá rủi ro của sóng gốc.">Khóa lãi sau add % <span class="varname">pyramid_up_lock_pct</span>
     <input name="pyramid_up_lock_pct" type="number" step="0.1" min="0" max="100" value="{{ '%.1f'|format(k.pyramid_up_lock_pct) }}"></label>
+  <h3 class="section-subhead">━ Regime gate BTC (thị trường) ━</h3>
+  <label title="Công tắc tổng cho regime gate BTC (SHADOW-FIRST): khi bật, mỗi lần scan sẽ phân loại xu hướng BTC (SMA 50d/200d, có hysteresis) thành risk_on/risk_off/neutral/unknown và ghi audit. Tắt = không phân loại, không audit, không tốn gì cả.">Bật regime gate <span class="varname">regime_gate_enabled</span>
+    <select name="regime_gate_enabled" class="select-inline">
+      <option value="1" {% if k.regime_gate_enabled %}selected{% endif %}>Bật</option>
+      <option value="0" {% if not k.regime_gate_enabled %}selected{% endif %}>Tắt</option>
+    </select></label>
+  <label title="Khi bật gate VÀ bật enforcing VÀ trạng thái là risk_off: CHẶN mọi phiên KSS MỚI trong lần scan này (không đụng session/sóng/exit đang chạy). Tắt (mặc định) = chế độ SHADOW — vẫn phân loại + audit 'đáng lẽ chặn N phiên' nhưng KHÔNG chặn gì — chỉ bật sau khi đã xem dữ liệu shadow.">Chế độ enforcing (chặn thật) <span class="varname">regime_gate_enforcing</span>
+    <select name="regime_gate_enforcing" class="select-inline">
+      <option value="1" {% if k.regime_gate_enforcing %}selected{% endif %}>Bật (chặn thật)</option>
+      <option value="0" {% if not k.regime_gate_enforcing %}selected{% endif %}>Tắt (shadow — chỉ audit)</option>
+    </select></label>
+  <label title="Chu kỳ SMA nhanh (ngày) cho bộ phân loại regime BTC.">SMA nhanh (ngày) <span class="varname">regime_sma_fast</span>
+    <input name="regime_sma_fast" type="number" step="1" min="1" max="500" value="{{ k.regime_sma_fast }}"></label>
+  <label title="Chu kỳ SMA chậm (ngày) cho bộ phân loại regime BTC — 'đường 200 ngày'.">SMA chậm (ngày) <span class="varname">regime_sma_slow</span>
+    <input name="regime_sma_slow" type="number" step="1" min="1" max="500" value="{{ k.regime_sma_slow }}"></label>
+  <label title="Biên độ % quanh SMA chậm cần vượt qua để LẬT trạng thái regime — chống nhiễu quanh đường 200 ngày. Giá chạm gần đường nhưng còn trong biên thì giữ nguyên trạng thái cũ.">Biên hysteresis % <span class="varname">regime_hysteresis_pct</span>
+    <input name="regime_hysteresis_pct" type="number" step="0.1" min="0" max="50" value="{{ '%.1f'|format(k.regime_hysteresis_pct) }}"></label>
   <h3 class="section-subhead">━ OPUS God Mode (học &amp; sao chép) ━</h3>
   <label title="Chế độ SAO CHÉP: ưu tiên mở các coin mà engine luật (đang có lãi) vừa chấm 'trade' trong lần quét này; OPUS phải giải thích nếu đi chệch. Chỉ là gợi ý mềm trong prompt, không phải lọc cứng.">Chế độ sao chép <span class="varname">opus_copy_mode</span>
     <select name="opus_copy_mode" class="select-inline">
@@ -208,8 +220,6 @@
       <input name="volatility" type="number" step="0.01" min="0" max="1" value="{{ '%.2f'|format(cw.volatility) }}" required></label>
     <label title="Agent thanh khoản.">Liquidity
       <input name="liquidity" type="number" step="0.01" min="0" max="1" value="{{ '%.2f'|format(cw.liquidity) }}" required></label>
-    <label title="Agent ML dự báo.">ML
-      <input name="ml" type="number" step="0.01" min="0" max="1" value="{{ '%.2f'|format(cw.ml) }}" required></label>
     <button type="submit" class="ok">Lưu trọng số</button>
   </form>
 </div>

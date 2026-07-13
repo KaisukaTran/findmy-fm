@@ -468,24 +468,6 @@ const actions = {
     toast(r.sent ? "Đã gửi cảnh báo kiểm tra thành công." : "Cảnh báo kiểm tra thất bại — kiểm tra cấu hình Telegram.",
       r.sent ? "success" : "error");
   },
-  async toggleHyperopt(desired) {
-    const enable = desired === "on";
-    if (enable &&
-        !confirm("Bật Hyperopt? Hệ thống sẽ điều chỉnh tham số KSS bằng Optuna.")) return;
-    if (!enable &&
-        !confirm("Tắt Hyperopt? Điều chỉnh tham số sẽ dừng.")) return;
-    await api("POST", "/api/hyperopt", { enabled: enable });
-    refreshStatus();
-  },
-  async toggleMl(desired) {
-    const enable = desired === "on";
-    if (enable &&
-        !confirm("Bật ML? Một mô hình sẽ được huấn luyện để dự đoán chất lượng mở vị.")) return;
-    if (!enable &&
-        !confirm("Tắt ML? Lọc dựa trên mô hình sẽ bị tắt.")) return;
-    await api("POST", "/api/ml", { enabled: enable });
-    refreshStatus();
-  },
 };
 
 document.addEventListener("click", (e) => {
@@ -601,7 +583,6 @@ document.addEventListener("submit", async (e) => {
       deadline_days: num(f.get("deadline_days")),
       max_concurrent_sessions: num(f.get("max_concurrent_sessions")),
       max_sessions_per_symbol: num(f.get("max_sessions_per_symbol")),
-      max_deployed_pct: num(f.get("max_deployed_pct")),
       equity_backup_pct: num(f.get("equity_backup_pct")),
       cash_floor_usd: num(f.get("cash_floor_usd")),
       loss_streak_block_k: num(f.get("loss_streak_block_k")),
@@ -629,7 +610,6 @@ document.addEventListener("submit", async (e) => {
       rel_strength_enabled: f.get("rel_strength_enabled") === "1",
       rel_strength_lookback_bars: num(f.get("rel_strength_lookback_bars")),
       rel_strength_margin_pct: num(f.get("rel_strength_margin_pct")),
-      regime_ramp_enabled: f.get("regime_ramp_enabled") === "1",
       mae_quartile_gate_enabled: f.get("mae_quartile_gate_enabled") === "1",
       strategy_router_enabled: f.get("strategy_router_enabled") === "1",
       pyramid_up_min_rel_strength: num(f.get("pyramid_up_min_rel_strength")),
@@ -674,7 +654,6 @@ document.addEventListener("submit", async (e) => {
       dip: num(f.get("dip")),
       volatility: num(f.get("volatility")),
       liquidity: num(f.get("liquidity")),
-      ml: num(f.get("ml")),
     });
     toast("Đã lưu trọng số đồng thuận.", "success");
   } else if (form.id === "preview-form") {

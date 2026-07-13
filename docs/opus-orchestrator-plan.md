@@ -112,7 +112,7 @@ Cadence: `opus_interval_min` = **5 min** (confirmed §11), cost-bounded by §6.
 3. **Parse → validate → clamp** in `policy.py`:
    - Strict JSON schema; reject/repair malformed output (fail-safe = do nothing).
    - Each intent must reference a *validated candidate* or an *existing OPUS position*.
-   - Clamp size to: per-trade notional cap, `max_deployed_pct`, remaining risk budget,
+   - Clamp size to: per-trade notional cap, remaining risk budget,
      min-notional, fee-floor (net edge ≥ 2× highest fee). Drop anything that can't fit.
    - Optional: run the existing **AI Guardian** as an independent second veto.
 4. **Route** surviving intents as orders to the **approval queue** (source=`opus`), which

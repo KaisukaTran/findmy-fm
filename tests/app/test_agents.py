@@ -117,7 +117,6 @@ def test_s4_aggregate_excludes_backtest_vote():
         AgentVote("trend", 0.5, 1.0, ""),
         AgentVote("volatility", 0.5, 1.0, ""),
         AgentVote("liquidity", 0.5, 1.0, ""),
-        AgentVote("ml", 0.5, 1.0, ""),
     ]
     with_backtest = signal_only + [AgentVote("backtest", 1.0, 1.0, "")]
 
@@ -137,11 +136,10 @@ def test_s4_aggregate_custom_weights_override():
         AgentVote("dip", 0.0, 1.0, ""),
         AgentVote("volatility", 0.0, 1.0, ""),
         AgentVote("liquidity", 0.0, 1.0, ""),
-        AgentVote("ml", 0.0, 1.0, ""),
     ]
     # All weight on trend (score=1.0) → consensus should be close to 100
     result = aggregate(votes, weights={"trend": 1.0, "dip": 0.0, "volatility": 0.0,
-                                       "liquidity": 0.0, "ml": 0.0, "backtest": 0.0})
+                                       "liquidity": 0.0, "backtest": 0.0})
     assert result > 95.0
 
 
@@ -150,7 +148,7 @@ def test_s4_runtime_consensus_weights_roundtrip(db):
     from app import runtime
 
     saved = runtime.set_consensus_weights(db, {
-        "trend": 0.30, "dip": 0.20, "volatility": 0.10, "liquidity": 0.10, "ml": 0.30,
+        "trend": 0.30, "dip": 0.20, "volatility": 0.10, "liquidity": 0.10,
         "backtest": 0.99,   # must be forced to 0
     })
     assert saved["backtest"] == 0.0

@@ -23,9 +23,7 @@ from app import (
     costs,
     execution,
     guardian,
-    hyperopt,
     lossautopsy,
-    ml,
     notify,
     notify_discord,
     orders,
@@ -266,8 +264,6 @@ def _automation_state(db: Session) -> dict:
         "guardian": guardian.enabled(),
         "telegram": notify.is_running(),
         "discord": notify_discord.is_running() or notify_discord.webhook_enabled(),
-        "hyperopt": settings.hyperopt_enabled,
-        "ml": settings.ml_enabled,
         "grok_scanner": settings.grok_scanner_enabled,
         "ta_lib": settings.ta_lib_enabled,
         "ta_external": settings.ta_external_enabled,
@@ -400,7 +396,6 @@ class KssSettingsBody(BaseModel):
     deadline_days: int | None = Field(None, ge=1, le=365)
     max_concurrent_sessions: int | None = Field(None, ge=1, le=500)  # raised for wide-scale paper tests (~universe size)
     max_sessions_per_symbol: int | None = Field(None, ge=0, le=20)
-    max_deployed_pct: float | None = Field(None, gt=0, le=100)
     equity_backup_pct: float | None = Field(None, ge=0, le=90)
     cash_floor_usd: float | None = Field(None, ge=0)  # hard cash floor (0 = never negative)
     loss_streak_block_k: int | None = Field(None, ge=1, le=20)
@@ -444,7 +439,6 @@ class KssSettingsBody(BaseModel):
     rel_strength_enabled: bool | None = None
     rel_strength_lookback_bars: int | None = Field(None, ge=1, le=90)
     rel_strength_margin_pct: float | None = Field(None, ge=0, le=50)
-    regime_ramp_enabled: bool | None = None
     mae_quartile_gate_enabled: bool | None = None
     overextension_penalty_enabled: bool | None = None
     overextension_penalty_weight: float | None = Field(None, ge=0)
@@ -467,6 +461,12 @@ class KssSettingsBody(BaseModel):
     opus_solo_min_consensus: float | None = Field(None, ge=0, le=100)
     opus_lessons_max: int | None = Field(None, ge=0, le=50)
     opus_history_n: int | None = Field(None, ge=0, le=200)
+    # Market-wide BTC regime gate (shadow-first; see app/regime.py) — OFF by default.
+    regime_gate_enabled: bool | None = None
+    regime_gate_enforcing: bool | None = None
+    regime_sma_fast: int | None = Field(None, gt=0, le=500)
+    regime_sma_slow: int | None = Field(None, gt=0, le=500)
+    regime_hysteresis_pct: float | None = Field(None, ge=0, le=50)
 
 
 @api_router.get("/api/kss-settings")
@@ -486,7 +486,6 @@ class ConsensusWeightsBody(BaseModel):
     dip: float | None = Field(None, ge=0, le=1)
     volatility: float | None = Field(None, ge=0, le=1)
     liquidity: float | None = Field(None, ge=0, le=1)
-    ml: float | None = Field(None, ge=0, le=1)
 
 
 @api_router.get("/api/consensus-weights")
@@ -825,51 +824,6 @@ def partial_savings(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         "partials/savings.html", {"request": request, "s": savings.summary(db)}
     )
-
-
-# --- Phase C: hyperopt + ML endpoints -----------------------------------
-
-
-class EnableBody(BaseModel):
-    enabled: bool
-
-
-@api_router.get("/api/params")
-def get_params(db: Session = Depends(get_db)):
-    from app.models import PairParams
-
-    rows = db.query(PairParams).order_by(PairParams.score.desc()).all()
-    return [r.to_dict() for r in rows]
-
-
-@api_router.post("/api/hyperopt", dependencies=[Depends(require_api_key)])
-def set_hyperopt(body: EnableBody):
-    settings.hyperopt_enabled = body.enabled
-    return {"enabled": settings.hyperopt_enabled}
-
-
-@api_router.post("/api/hyperopt/run", dependencies=[Depends(require_api_key)])
-def run_hyperopt(db: Session = Depends(get_db)):
-    tuned = [hyperopt.run_for(db, s) for s in settings.watchlist]
-    return {"tuned": [t.to_dict() for t in tuned if t is not None]}
-
-
-@api_router.get("/api/ml")
-def get_ml(db: Session = Depends(get_db)):
-    m = ml.load_latest(db)
-    return {"enabled": settings.ml_enabled, "model": m.to_dict() if m else None}
-
-
-@api_router.post("/api/ml", dependencies=[Depends(require_api_key)])
-def set_ml(body: EnableBody):
-    settings.ml_enabled = body.enabled
-    return {"enabled": settings.ml_enabled}
-
-
-@api_router.post("/api/ml/retrain", dependencies=[Depends(require_api_key)])
-def retrain_ml(db: Session = Depends(get_db)):
-    m = ml.train(db)
-    return {"trained": m.to_dict() if m else None}
 
 
 # --- dashboard (HTMX) ---------------------------------------------------

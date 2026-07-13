@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from app import audit, costengine, hyperopt, ml, orders, runtime
+from app import audit, costengine, orders, regime, runtime
 from app.agents import SIGNAL_AGENTS, BacktestAgent, aggregate, decide
 from app.backtest import estimate_win_rate
 from app.config import settings
@@ -212,19 +212,7 @@ def _thresholds() -> dict:
 
 
 def _effective_params(db: Session, symbol: str) -> tuple[float, float, int]:
-    """Return (distance_pct, tp_pct, max_waves) for a symbol.
-
-    Uses hyperopt-tuned values when hyperopt_enabled and a row exists;
-    falls back to global scan_* defaults in all other cases.
-
-    Design: hyperopt tunes WATCHLIST symbols only; this function falls back to global
-    scan_* params for non-watchlist (universe) symbols by design. This keeps tuning
-    focused and allows the global defaults to govern exploration.
-    """
-    if settings.hyperopt_enabled:
-        row = hyperopt.best_params(db, symbol)
-        if row is not None:
-            return row.distance_pct, row.tp_pct, row.max_waves
+    """Return (distance_pct, tp_pct, max_waves) for a symbol: always the global scan_* defaults."""
     return settings.scan_distance_pct, settings.scan_tp_pct, settings.scan_max_waves
 
 
@@ -282,9 +270,6 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
         audit.log(db, "scanner", "scan_skipped", entity=f"run:{scan.id}", reason=why)
         db.commit()
         return {"scan_id": scan.id, "mode": mode, "candidates": [], "skipped": why}
-
-    # Load ML model once for the whole scan; None when ml disabled.
-    ml_model = ml.load_latest(db) if settings.ml_enabled else None
 
     # S6: per-stage monotonic checkpoints — accumulated ms totals, cheap.
     _t0 = time.monotonic()
@@ -374,7 +359,6 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
             "win_rate": wr["win_rate"], "win_rate_lb": wr["win_rate_lb"],
             "trials": wr["trials"],
             "avg_days_to_tp": wr["avg_days_to_tp"],
-            "ml_model": ml_model,
         }
 
         _tv = time.monotonic()
@@ -497,7 +481,34 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
 
     _t_grok = time.monotonic()
     to_open = _drop_worst_mae_quartile(db, to_open)  # relative drawdown gate (Phase C2)
-    _review_and_open(db, to_open, mode, per_scan_cap=_effective_open_cap(db, _candle_map, to_fetch))
+
+    # Market-wide BTC regime gate (SHADOW-FIRST; app/regime.py). Off by default: skipped
+    # entirely (no evaluation, no audit, no cost). When on, classifies BTC's trend once/scan
+    # and ALWAYS audits the state (shadow observability, both modes). Enforcement (NEW OPENS
+    # ONLY — never existing sessions/waves/exits) only fires when BOTH regime_gate_enabled AND
+    # regime_gate_enforcing are True and the state is risk_off; otherwise (shadow mode, or a
+    # non-risk_off state) opens proceed normally.
+    if settings.regime_gate_enabled:
+        btc_closes = _btc_daily_closes(_candle_map)
+        regime_result = regime.evaluate(db, btc_closes)
+        regime_state = regime_result.get("state")
+        audit.log(db, "scanner", "regime_state", state=regime_state,
+                  last_close=regime_result.get("last_close"),
+                  sma_fast=regime_result.get("sma_fast"),
+                  sma_slow=regime_result.get("sma_slow"),
+                  enforcing=settings.regime_gate_enforcing)
+        if regime_state == regime.RISK_OFF and to_open:
+            if settings.regime_gate_enforcing:
+                for c in to_open:
+                    c["cand"].decision = "skip"
+                    c["cand"].reason = (c["cand"].reason or "") + \
+                        " | chặn: regime BTC risk_off (thị trường yếu)"
+                audit.log(db, "scanner", "regime_gate_blocked_opens", count=len(to_open))
+                to_open = []
+            else:
+                audit.log(db, "scanner", "regime_gate_shadow_would_block", count=len(to_open))
+
+    _review_and_open(db, to_open, mode, per_scan_cap=settings.max_new_sessions_per_scan)
     t_grok_open_ms = int((time.monotonic() - _t_grok) * 1000)
     # Split grok/open: grok is the dominant cost; open is fast DB work.
     # We cannot split them without modifying _review_and_open, so we report
@@ -605,6 +616,29 @@ def _btc_ref_return(candle_map: dict, n: int) -> float | None:
     return _nbar_return(btc, n)
 
 
+def _btc_daily_closes(candle_map: dict) -> list[float]:
+    """BTC daily closes for the market-wide regime gate (app/regime.py).
+
+    BTC is in the default watchlist, so it is normally already in this scan's prefetched
+    candle map (``_candle_map`` from ``_prefetch_candles``) — reused for free. If BTC isn't
+    present (e.g. a custom watchlist, or BTC got pre-blocked this scan), do ONE cheap fetch
+    with enough bars for the slow SMA. Never raises: any failure returns [] so
+    ``regime.evaluate`` reports 'unknown' (never blocks).
+    """
+    candles, _hit = candle_map.get("BTC", ([], False))
+    if candles:
+        return [c["close"] for c in candles]
+    try:
+        limit = settings.regime_sma_slow + 10
+        fetched, _hit2 = candle_cache.get_candles(
+            settings.data_exchange, "BTC", settings.backtest_timeframe, limit, _provider_factory
+        )
+        return [c["close"] for c in fetched]
+    except Exception:
+        logger.exception("regime gate: BTC candle fetch failed")
+        return []
+
+
 def _rel_strength_veto(coin_candles: list, btc_ret: float | None) -> str | None:
     """Returns a reason to SKIP a coin materially weaker than BTC over the lookback (the 'alt bleeding
     vs BTC' pattern). None when the gate is off, BTC data is missing, or the coin keeps pace. A coin
@@ -641,18 +675,6 @@ def _route_strategy_mode(ta: dict, coin_candles: list, btc_ret: float | None) ->
     )
 
 
-def _market_breadth(candle_map: dict, symbols: list, n: int) -> float:
-    """Fraction (0..1) of the universe whose last-n-bar return is ≥ 0 (rising) — a cheap breadth
-    proxy from the already-prefetched candles (no per-coin TA). 0.5 when nothing is measurable."""
-    rets = [r for s in symbols if (r := _nbar_return(candle_map.get(s, ([], False))[0], n)) is not None]
-    return (sum(1 for r in rets if r >= 0) / len(rets)) if rets else 0.5
-
-
-def _ramp_factor(breadth: float) -> float:
-    """Soft-throttle curve: 0.2 at breadth ≤30%, ramping linearly to 1.0 at breadth ≥60%. Never 0."""
-    return 0.2 + 0.8 * max(0.0, min(1.0, (breadth - 0.30) / 0.30))
-
-
 def _drop_worst_mae_quartile(db: Session, to_open: list[dict]) -> list[dict]:
     """RELATIVE drawdown gate: among the gate-survivors of this scan, drop the worst quartile by
     ``worst_mae`` (deepest single dip below avg). Per-scan/relative, so it never nukes the universe
@@ -671,19 +693,6 @@ def _drop_worst_mae_quartile(db: Session, to_open: list[dict]) -> list[dict]:
         else:
             kept.append(c)
     return kept
-
-
-def _effective_open_cap(db: Session, candle_map: dict, symbols: list) -> int:
-    """``max_new_sessions_per_scan`` scaled by market breadth when ``regime_ramp_enabled`` — fewer
-    new opens in a broadly-weak market (never a hard stop; ≥1). 0 (unlimited) is left unchanged."""
-    base = settings.max_new_sessions_per_scan
-    if not settings.regime_ramp_enabled or base <= 0:
-        return base
-    breadth = _market_breadth(candle_map, symbols, settings.rel_strength_lookback_bars)
-    eff = max(1, round(base * _ramp_factor(breadth)))
-    if eff < base:
-        audit.log(db, "scanner", "regime_ramp", breadth=round(breadth, 2), cap=eff, base=base)
-    return eff
 
 
 def _trade_block_reason(db: Session, symbol: str) -> str | None:
@@ -717,7 +726,7 @@ def _open_rank_key(c: dict) -> tuple:
     """Best-first ranking key for opens AND the Grok batch (kept identical so Grok reviews exactly
     the candidates that will open). Sorted descending.
 
-    Leads with CONSENSUS — the market-context score {trend,dip,volatility,liquidity,ml} that
+    Leads with CONSENSUS — the market-context score {trend,dip,volatility,liquidity} that
     actually varies across coins (≈46–80) — because the backtest metrics saturate: a 4%-TP DCA
     with a 30-day deadline "wins" ~100% of historical trials for nearly every liquid coin, so
     win_rate_lb≈93% and expectancy≈tp−cost are near-constant and cannot rank. ``worst_mae`` (the
@@ -1123,7 +1132,7 @@ def _open_session(
     isolated_fund: float | None = None,
     strategy_mode: str = "dca_down",
 ) -> int:
-    """Open a KSS session using effective (possibly hyperopt-tuned) params.
+    """Open a KSS session using effective (global scan_*) params.
 
     ``isolated_fund`` defaults to the projected full-ladder cost (req a) so the reservation
     matches what the ladder will actually consume; callers may pass a precomputed value.

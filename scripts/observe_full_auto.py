@@ -6,7 +6,7 @@ This drives the *real* scheduler cycle against a deterministic synthetic provide
 so we can watch the whole full-auto pipeline end-to-end:
 
     scan -> candidate -> KSS session -> auto-approve (auto-trader + policy)
-          -> auto-fill -> guardian veto -> hyperopt/ML retrain -> breaker freeze
+          -> auto-fill -> guardian veto -> breaker freeze
 
 It mutates nothing real: a throwaway SQLite DB under the system temp dir.
 
@@ -84,11 +84,6 @@ def _enable_full_auto():
     settings.autoapprove_enabled = True     # policy approves remaining KSS orders
     settings.autoapprove_sources = ["kss"]
     settings.guardian_enabled = False       # no API key / no network -> keep off
-    settings.hyperopt_enabled = True
-    settings.ml_enabled = True
-    settings.ml_min_samples = 1
-    settings.hyperopt_interval_hours = 0    # force a retrain every cycle
-    settings.ml_retrain_hours = 0
     # make the gate permissive so the synthetic uptrend yields trades
     settings.watchlist = list(_UNIVERSE)
     settings.scan_top_n = 0
@@ -105,9 +100,7 @@ def _fmt(s: dict) -> str:
             f"auto_filled={L(s['auto_filled']):>2}  "
             f"tp_queued={L(s['tp_queued']):>2}  "
             f"deadlines_closed={L(s['deadlines_closed']):>2}  "
-            f"guardian_vetoes={s['guardian_vetoes']:>2}  "
-            f"hyperopt_runs={s['hyperopt_runs']:>2}  "
-            f"ml_trained={str(s['ml_trained'])}")
+            f"guardian_vetoes={s['guardian_vetoes']:>2}")
 
 
 def main() -> None:

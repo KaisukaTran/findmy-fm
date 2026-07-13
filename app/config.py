@@ -40,6 +40,20 @@ class Settings(BaseSettings):
         default=["http://localhost:8000", "http://127.0.0.1:8000"],
         description="Allowed CORS origins (no wildcard with credentials).",
     )
+    auth_max_failures: int = Field(
+        default=10,
+        description="Failed X-API-Key attempts from one IP within auth_lockout_window_sec "
+        "before that IP is locked out.",
+    )
+    auth_lockout_window_sec: int = Field(
+        default=60,
+        description="Sliding window (seconds) over which failed-auth attempts are counted.",
+    )
+    auth_lockout_sec: int = Field(
+        default=60,
+        description="How long (seconds) an IP stays locked out after tripping "
+        "auth_max_failures. 429 with Retry-After during lockout.",
+    )
 
     # --- Database (single SQLite file) ---
     database_url: str = Field(
@@ -179,7 +193,6 @@ class Settings(BaseSettings):
     rel_strength_enabled: bool = Field(default=False, description="Entry gate (relative strength vs BTC): only open a coin whose recent return keeps pace with BTC — skip if its N-bar return < BTC's N-bar return − margin. Blocks 'alts bleeding vs BTC' (the pattern behind our open-book losses) WITHOUT a blanket BTC-down block: a strong alt while BTC falls still passes (it outperforms). N = rel_strength_lookback_bars, margin = rel_strength_margin_pct. False = off.")
     rel_strength_lookback_bars: int = Field(default=7, description="Lookback (daily bars) for the relative-strength-vs-BTC entry gate.")
     rel_strength_margin_pct: float = Field(default=2.0, description="Allowed underperformance vs BTC before the relative-strength gate blocks a coin (2 = may lag BTC by up to 2%%; 0 = must match BTC).")
-    regime_ramp_enabled: bool = Field(default=False, description="Breadth-aware SOFT throttle: scale max_new_sessions_per_scan down when the market is broadly weak (few coins rising), so exposure ramps slower in a risk-off regime. Never a hard stop (≥1 open) and NEVER blocks on BTC direction alone — it only reduces the COUNT of new opens. False = off.")
     mae_quartile_gate_enabled: bool = Field(default=False, description="Relative drawdown gate: among the candidates that pass every other gate in a scan, drop the worst quartile by backtested worst_mae (deepest single dip below avg). RELATIVE (per-scan), so it never nukes the universe the way an absolute worst_mae cutoff does (−15%% would reject ~81%%). Needs ≥4 candidates. False = off.")
     overextension_penalty_enabled: bool = Field(default=False, description="SOFT rank-penalty (NOT a gate, docs/loss-cases.md Phase 3): losing sessions tended to open when the coin had already run up hard, so when the scanner can't open every candidate, de-prioritize (never block) hot entries by subtracting a penalty from the open-ranking's leading consensus term, proportional to the coin's recent run-up (overextension_lookback_bars N-bar %% return, positive-only — a flat/falling coin is never rewarded). False = off (byte-identical ranking to today).")
     overextension_penalty_weight: float = Field(default=0.5, description="Consensus-points subtracted per 1%% of positive N-bar run-up when overextension_penalty_enabled. E.g. weight=0.5 and a +13%% run-up → −6.5 points off that candidate's OPEN-RANKING key only (does not touch the persisted consensus_pct).")
@@ -194,7 +207,7 @@ class Settings(BaseSettings):
     pyramid_up_lock_pct: float = Field(default=1.0, description="Pyramid-UP risk management: after each add fills, the stop moves to break-even-plus = avg×(1+this%%) (floored at the fee break-even) — every add is a free-roll, net risk never exceeds the risk taken on the base wave.")
 
     min_win_rate: float = Field(default=60.0, description="Min backtested win-rate %% (Wilson lower bound) to qualify. Paired with min_expectancy_pct as the primary trade rule: a pair trades when E ≥ min_expectancy_pct AND win-rate ≥ this.")
-    min_confidence: float = Field(default=45.0, description="Min agent consensus %% to qualify a pair. S4: default lowered from 70 to 45 because the consensus is now a pure market-context score from {{trend,dip,volatility,liquidity,ml}} (backtest weight=0); the hard gates (E, win_lb) own the backtest evidence.")
+    min_confidence: float = Field(default=45.0, description="Min agent consensus %% to qualify a pair. S4: default lowered from 70 to 45 because the consensus is now a pure market-context score from {{trend,dip,volatility,liquidity}} (backtest weight=0); the hard gates (E, win_lb) own the backtest evidence.")
     deadline_days: int = Field(default=30, description="Max days a KSS session may wait for TP.")
     auto_trade: bool = Field(
         default=False,
@@ -220,7 +233,6 @@ class Settings(BaseSettings):
     walk_forward_split: float = Field(default=0.5, description="Fraction of history used in-sample; metric is out-of-sample.")
     max_concurrent_sessions: int = Field(default=10, description="Cap on simultaneously active sessions.")
     max_new_sessions_per_scan: int = Field(default=5, ge=0, description="Cap on NEW KSS sessions opened in a single scan (0 = no limit). Ramps exposure gradually instead of opening the whole concurrent budget at once; within the cap the highest win-rate-lower-bound / most-tried candidates open first.")
-    max_deployed_pct: float = Field(default=50.0, description="(legacy) Cap total isolated funds as %% of equity. The KSS open-gate now uses equity_backup_pct instead.")
     equity_backup_pct: float = Field(default=25.0, description="Reserve %% of LIVE equity the bot never deploys (backup). KSS open-gate budget = (100 − this)%% × equity.")
     scan_min_notional: float = Field(default=10.0, description="Skip dust micro-trades below this USD notional/wave.")
 
@@ -298,6 +310,10 @@ class Settings(BaseSettings):
     daily_loss_hard_pct: float = Field(default=5.0, description="Circuit breaker: freeze auto when today's realized loss %% exceeds this.")
     max_consecutive_losses: int = Field(default=4, description="Circuit breaker: freeze auto after this many losing SELL fills in a row.")
     breaker_cooldown_min: int = Field(default=60, description="Minutes the breaker stays frozen before it may auto-rearm.")
+    daily_loss_hard_usd: float = Field(default=0.0, description="Absolute USD realized-loss cap for one UTC day. 0 = off (use daily_loss_hard_pct). Trips the breaker when today's realized loss ≥ this many USD — binds regardless of equity size, unlike the % rule.")
+    weekly_loss_hard_pct: float = Field(default=0.0, description="Rolling 7-day realized loss as % of equity. 0 = off. Catches a slow multi-day bleed that never breaches the daily rule.")
+    weekly_loss_hard_usd: float = Field(default=0.0, description="Rolling 7-day realized loss absolute USD cap. 0 = off.")
+    max_drawdown_usd: float = Field(default=0.0, description="Absolute USD equity-drawdown cap. 0 = off (use max_drawdown_pct). Only wired if portfolio exposes peak equity; otherwise documented as reserved.")
 
     # --- AI Guardian (Phase B): LLM veto layer over auto-approvals ---
     guardian_enabled: bool = Field(default=False, description="Run the Claude veto layer before auto-approving. Needs anthropic_api_key.")
@@ -336,15 +352,6 @@ class Settings(BaseSettings):
     discord_webhook_url: SecretStr = Field(default=SecretStr(""), description="Discord channel webhook URL for pushing alerts. Empty = no Discord push. Never logged.")
     discord_bot_token: SecretStr = Field(default=SecretStr(""), description="Discord bot token for the 2-way command gateway. Requires the privileged MESSAGE CONTENT intent enabled in the Developer Portal. Empty = no inbound commands.")
     discord_channel_id: str = Field(default="", description="Only messages in this Discord channel id are accepted as commands (auth boundary). Empty = commands off.")
-
-    # --- Phase C: per-pair hyperopt + ML win-rate (off by default) ---
-    hyperopt_enabled: bool = Field(default=False, description="Tune KSS params per pair (grid search; falls back to global scan_* when off).")
-    hyperopt_trials: int = Field(default=50, description="Param combinations evaluated per pair (out-of-sample objective).")
-    hyperopt_interval_hours: int = Field(default=24, description="Hours between background hyperopt runs.")
-    ml_enabled: bool = Field(default=False, description="Augment agent votes with a learned win-rate model.")
-    ml_min_samples: int = Field(default=200, description="Min training samples before the ML model is used.")
-    ml_weight: float = Field(default=0.25, description="Aggregator weight for the ML agent vote.")
-    ml_retrain_hours: int = Field(default=24, description="Hours between background ML retrains.")
 
     # --- Pending-queue auto-approval policy (AI clears safe orders) ---
     autoapprove_enabled: bool = Field(default=False, description="Let the AI auto-approve pending orders matching the rule.")
@@ -395,6 +402,32 @@ class Settings(BaseSettings):
     vat_pct: float = Field(default=10.0, ge=0, description="VAT %% charged on the withdrawn amount, per withdrawal.")
     ai_monthly_claude_usd: float = Field(default=25.0, ge=0, description="Fallback estimate of Claude (Anthropic) API spend per month, used when a period has no metered cost.")
     ai_monthly_grok_usd: float = Field(default=20.0, ge=0, description="Fallback estimate of Grok (xAI) API spend per month, used when a period has no metered cost.")
+
+    # --- Market-wide BTC regime gate (SHADOW-FIRST; see app/regime.py) ---
+    # No per-coin veto can stop a CORRELATED selloff across the whole book (17/18 historical
+    # loss cases were SL cascades in a broad market dump). This classifies BTC's daily trend
+    # (50d/200d SMA with hysteresis) into risk_on/risk_off/neutral/unknown and, only when
+    # explicitly flipped to enforcing, blocks NEW session opens (never DCA waves, never exits).
+    regime_gate_enabled: bool = Field(
+        default=False,
+        description="Master switch for the BTC regime gate. Off = the gate does nothing at "
+        "all — no classification, no audit, zero cost. On = evaluate every scan and audit the "
+        "state (shadow observability), regardless of regime_gate_enforcing.",
+    )
+    regime_gate_enforcing: bool = Field(
+        default=False,
+        description="When regime_gate_enabled AND this is True AND the state is risk_off: "
+        "BLOCK all NEW session opens this scan (never touches existing sessions/waves/exits). "
+        "False (default) = SHADOW mode — the gate still classifies + audits 'would have "
+        "blocked N opens' but opens proceed normally. Flip on only after reviewing shadow data.",
+    )
+    regime_sma_fast: int = Field(default=50, gt=0, description="Fast SMA period (days) for the BTC regime classifier.")
+    regime_sma_slow: int = Field(default=200, gt=0, description="Slow SMA period (days) for the BTC regime classifier — the '200d line'.")
+    regime_hysteresis_pct: float = Field(
+        default=2.0, ge=0,
+        description="Band (%) around the slow SMA required to FLIP the regime state — prevents "
+        "whipsaw around the 200d line. A close just inside the band holds the previous state.",
+    )
 
 
 settings = Settings()

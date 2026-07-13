@@ -83,7 +83,7 @@ ruff check app tests/app
 - **Loss-minimizing / cost-aware** (`#3,#4`, `app/costengine.py` + backtest):
   win-rate is **walk-forward / out-of-sample**; extra gates `loss_rate ≤ max_loss_rate`,
   `net_edge = TP − round-trip cost ≥ min_net_edge` (rejects unprofitable micro-trades);
-  caps `max_concurrent_sessions`, `max_deployed_pct`, `scan_min_notional`.
+  caps `max_concurrent_sessions`, `scan_min_notional`.
 - **All-pairs universe** (`#5`, `providers.all_symbols`): scan every pair above
   `min_quote_volume`, capped at `scan_max_symbols`.
 - **Charts** (`#6`, `app/charts.py`): server-rendered **SVG** (zero JS, CSP-perfect):

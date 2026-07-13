@@ -12,10 +12,10 @@ def test_kss_settings_body_accepts_new_knobs():
     from app.routes import KssSettingsBody
 
     dumped = KssSettingsBody(
-        rel_strength_enabled=True, regime_ramp_enabled=True, mae_quartile_gate_enabled=True,
+        rel_strength_enabled=True, mae_quartile_gate_enabled=True,
         kss_dynamic_tp_enabled=True, kss_tp_gap_pct=6.0, entry_momentum_gate=False,
     ).model_dump(exclude_none=True)
-    for k in ("rel_strength_enabled", "regime_ramp_enabled", "mae_quartile_gate_enabled",
+    for k in ("rel_strength_enabled", "mae_quartile_gate_enabled",
               "kss_dynamic_tp_enabled", "kss_tp_gap_pct", "entry_momentum_gate"):
         assert k in dumped, f"{k} dropped by KssSettingsBody"
     assert dumped["kss_tp_gap_pct"] == 6.0

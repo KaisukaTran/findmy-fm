@@ -1,0 +1,23 @@
+# Never bake secrets, live DB, or local state into the image
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.bak*
+*.log
+logs_uvicorn.*
+.git/
+.gitignore
+.venv/
+__pycache__/
+*.pyc
+.coverage
+.claude/
+.pytest_cache/
+scratchpad/
+docs/
+tests/

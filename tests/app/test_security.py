@@ -100,3 +100,64 @@ def test_csrf_ignores_get(csrf_app):
     c = TestClient(csrf_app)
     r = c.get("/read", headers={"Origin": "http://evil.example"})
     assert r.status_code == 200
+
+
+# --- require_api_key: brute-force lockout ------------------------------------
+
+from app.main import app as fastapi_app  # noqa: E402
+
+
+@pytest.fixture
+def auth_client(monkeypatch):
+    """A real client against the full app, with auth ON and a strong key, and
+    the brute-force window/threshold shrunk so tests stay fast."""
+    monkeypatch.setattr(settings, "require_auth", True)
+    monkeypatch.setattr(settings, "api_key", SecretStr("a-strong-unique-key"))
+    monkeypatch.setattr(settings, "auth_max_failures", 3)
+    monkeypatch.setattr(settings, "auth_lockout_window_sec", 60)
+    monkeypatch.setattr(settings, "auth_lockout_sec", 30)
+    security._reset_auth_throttle()
+    with TestClient(fastapi_app) as c:
+        yield c
+    security._reset_auth_throttle()
+
+
+def test_lockout_trips_after_max_failures(auth_client):
+    for _ in range(settings.auth_max_failures):
+        r = auth_client.post("/api/guardian", json={"enabled": True},
+                              headers={"X-API-Key": "wrong-key"})
+        assert r.status_code == 401
+
+    r = auth_client.post("/api/guardian", json={"enabled": True},
+                          headers={"X-API-Key": "wrong-key"})
+    assert r.status_code == 429
+    assert "Retry-After" in r.headers
+
+
+def test_correct_key_resets_failure_counter(auth_client):
+    for _ in range(settings.auth_max_failures - 1):
+        r = auth_client.post("/api/guardian", json={"enabled": True},
+                              headers={"X-API-Key": "wrong-key"})
+        assert r.status_code == 401
+
+    ok = auth_client.post("/api/guardian", json={"enabled": True},
+                           headers={"X-API-Key": "a-strong-unique-key"})
+    assert ok.status_code == 200
+
+    # Counter reset — another round of wrong keys must NOT immediately 429.
+    for _ in range(settings.auth_max_failures):
+        r = auth_client.post("/api/guardian", json={"enabled": True},
+                              headers={"X-API-Key": "wrong-key"})
+        assert r.status_code == 401
+
+
+def test_no_lockout_when_auth_disabled(monkeypatch):
+    monkeypatch.setattr(settings, "require_auth", False)
+    monkeypatch.setattr(settings, "auth_max_failures", 3)
+    security._reset_auth_throttle()
+    with TestClient(fastapi_app) as c:
+        for _ in range(10):
+            r = c.post("/api/guardian", json={"enabled": True},
+                        headers={"X-API-Key": "wrong-key"})
+            assert r.status_code == 200
+    security._reset_auth_throttle()

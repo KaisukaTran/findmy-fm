@@ -25,7 +25,7 @@ class CreateSession(BaseModel):
     tp_pct: float = Field(..., gt=0)
     timeout_x_min: float = Field(30.0, gt=0)
     gap_y_min: float = Field(5.0, ge=0)
-    note: str | None = None
+    note: str | None = Field(default=None, max_length=500)
 
 
 class AdjustSession(BaseModel):

@@ -15,6 +15,10 @@ __pycache__/
 
 # Local DB + settings backups (never commit; may contain secrets from .env)
 data/backups/
+# Ad-hoc DB snapshots written straight into data/ by the phantom/adopt scripts
+# (named findmy.db.bak-<tag>-<ts>) — the *.db globs above don't catch the .bak suffix.
+data/*.bak*
+*.bak-*
 
 # OS
 .DS_Store

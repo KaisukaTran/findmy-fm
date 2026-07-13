@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import hmac
 import logging
+import threading
+import time
 
 from fastapi import FastAPI, Header, HTTPException, status
 from slowapi import Limiter
@@ -48,16 +50,72 @@ _DEFAULT_KEYS = {"", "dev-key", "change_this_api_key"}
 _MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
-def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
-    """Reject the request unless a valid API key is presented (when auth is enabled)."""
+# --- Brute-force lockout on repeated failed X-API-Key attempts ---------------
+#
+# In-process, per-IP tracker: a list of failure timestamps (monotonic clock) plus
+# an optional lockout_until. Single uvicorn process + sync dependency, so a plain
+# dict guarded by one lock is enough — no need for a shared cache/store.
+_auth_failures: dict[str, list[float]] = {}
+_auth_lockout_until: dict[str, float] = {}
+_auth_throttle_lock = threading.Lock()
+
+
+def _reset_auth_throttle() -> None:
+    """Clear the brute-force tracker. Test-only helper for deterministic runs."""
+    with _auth_throttle_lock:
+        _auth_failures.clear()
+        _auth_lockout_until.clear()
+
+
+def require_api_key(request: Request, x_api_key: str | None = Header(default=None)) -> None:
+    """Reject the request unless a valid API key is presented (when auth is enabled).
+
+    Also throttles brute-force guessing: an IP that racks up
+    `settings.auth_max_failures` wrong/missing-key attempts within
+    `settings.auth_lockout_window_sec` seconds is locked out (429 + Retry-After)
+    for `settings.auth_lockout_sec` seconds. A correct key clears the IP's record.
+    """
     if not settings.require_auth:
         return
+    ip = get_remote_address(request)
+    now = time.monotonic()
+
+    with _auth_throttle_lock:
+        lockout_until = _auth_lockout_until.get(ip, 0.0)
+        if now < lockout_until:
+            retry_after = int(lockout_until - now) + 1
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many failed auth attempts",
+                headers={"Retry-After": str(retry_after)},
+            )
+
     expected = settings.api_key.get_secret_value()
-    if not x_api_key or not hmac.compare_digest(x_api_key, expected):
+    if x_api_key and hmac.compare_digest(x_api_key, expected):
+        with _auth_throttle_lock:
+            _auth_failures.pop(ip, None)
+            _auth_lockout_until.pop(ip, None)
+        return
+
+    window = settings.auth_lockout_window_sec
+    with _auth_throttle_lock:
+        attempts = [t for t in _auth_failures.get(ip, []) if now - t < window]
+        attempts.append(now)
+        _auth_failures[ip] = attempts
+        just_tripped = len(attempts) > settings.auth_max_failures
+        if just_tripped:
+            _auth_lockout_until[ip] = now + settings.auth_lockout_sec
+
+    if just_tripped:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing API key",
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed auth attempts",
+            headers={"Retry-After": str(settings.auth_lockout_sec)},
         )
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or missing API key",
+    )
 
 
 def validate_auth_config() -> None:

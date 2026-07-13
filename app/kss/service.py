@@ -451,23 +451,51 @@ def start_pyramid_up_session(db: Session, session_id: int) -> dict:
     # −kss_trail_arm_pct, SYMMETRIC with the up-side arm (+kss_trail_arm_pct confirms the uptrend →
     # arm trailing; −kss_trail_arm_pct confirms a reversal → flip to dca_down). Reuses the existing
     # arm knob (no new config) AND avoids a hair-trigger: a 1.5% DCA-spacing rung would flip on
-    # ordinary intraday noise, abandoning the momentum thesis on every minor dip. Sized by
-    # kss_first_wave_usd. If the market falls to it, _maybe_queue_pyramid_defensive fills it and the
-    # session flips to dca_down (see _handle_pyramid_up_fill).
+    # ordinary intraday noise, abandoning the momentum thesis on every minor dip. If the market
+    # falls to it, _maybe_queue_pyramid_defensive fills it and the session flips to dca_down (see
+    # _handle_pyramid_up_fill).
+    #
+    # Sizing (fixed post-ZBT #570): NOT a flat kss_first_wave_usd — that over-averages exactly when
+    # the momentum thesis is failing (a shrunk base wave got a full-fat defensive, 3.2x its size).
+    # Size by COST relative to the ACTUAL base wave, capped at the session's remaining
+    # max_session_deploy_usd headroom, so a filled defensive can never blow past what the base
+    # itself deployed nor the per-session deploy cap.
     from app.config import settings
 
     defensive_price = round(
         row.entry_price * (1 - settings.kss_trail_arm_pct / 100.0),
         pyramid_up.price_precision(row.entry_price),
     )
+    step_size = info.get("stepSize", 0.00001)
+    min_qty = info.get("minQty", 0.00001)
+    base_wave_cost = base.qty * row.entry_price
+    headroom = _session_deploy_headroom(db, session_id, 0.0)
+    defensive_target_cost = min(base_wave_cost, headroom)
     defensive_qty = pyramid_up._round_qty(
-        settings.kss_first_wave_usd / defensive_price if defensive_price > 0 else 0.0,
-        info.get("stepSize", 0.00001), info.get("minQty", 0.00001),
+        defensive_target_cost / defensive_price if defensive_price > 0 else 0.0,
+        step_size, min_qty,
     )
-    db.add(KssWave(
-        session_id=session_id, wave_num=DEFENSIVE_WAVE_NUM, quantity=defensive_qty,
-        target_price=defensive_price, status=WAVE_ARMED,
-    ))
+    defensive_cost = defensive_qty * defensive_price
+    # Tolerance = one stepSize rounding increment (the max _round_qty can overshoot the raw target
+    # by) so an exact-fit rung isn't spuriously omitted by float/rounding noise at the boundary.
+    tolerance = max(defensive_price * step_size, 1e-6)
+    if defensive_price <= 0 or defensive_cost > headroom + tolerance:
+        # Even a minQty-floored rung would breach the remaining deploy headroom — a session that
+        # cannot fit even a minimal averaging buy should ride the hard SL, not over-deploy.
+        audit.log(db, "kss", "pyramid_defensive_omitted_no_headroom", entity=f"kss:{row.id}",
+                  symbol=row.symbol, base_wave_cost=round(base_wave_cost, 2),
+                  headroom=round(headroom, 2) if headroom != float("inf") else headroom,
+                  defensive_cost=round(defensive_cost, 2))
+        defensive_qty = 0.0
+    else:
+        db.add(KssWave(
+            session_id=session_id, wave_num=DEFENSIVE_WAVE_NUM, quantity=defensive_qty,
+            target_price=defensive_price, status=WAVE_ARMED,
+        ))
+        # N2: reserve the defensive's cost in isolated_fund too — the up-ladder-only reservation
+        # computed at create time (create_pyramid_up_session) never accounted for it, so a filled
+        # defensive could silently push total_cost past the session's own reservation.
+        row.isolated_fund += defensive_cost
 
     row.status = SESSION_ACTIVE
     row.started_at = utcnow()
@@ -763,6 +791,7 @@ def _flip_to_dca_down(db: Session, row: KssSession, avg: float, filled_price: fl
     # on_fill's `total_filled_qty += filled_qty` would DOUBLE-count the position and oversell on the
     # next TP/SL. held_qty×avg == the real total_cost (avg = cost/qty), so the reconstruction exact.
     held_qty = row.total_filled_qty
+    orig_entry = row.entry_price  # pre-flip pyramid_up entry, for lossautopsy attribution only
     row.entry_price = avg
     py = _to_pyramid(row)
     py.status = PyramidSessionStatus.ACTIVE
@@ -781,7 +810,8 @@ def _flip_to_dca_down(db: Session, row: KssSession, avg: float, filled_price: fl
             row.current_wave = nwn - 1  # frozen on_fill advanced it; nothing was queued
 
     audit.log(db, "kss", "pyramid_up_flipped", entity=f"kss:{row.id}", symbol=row.symbol,
-              reason="defensive_dca", avg=round(avg, 8), price=round(filled_price, 8))
+              reason="defensive_dca", avg=round(avg, 8), price=round(filled_price, 8),
+              orig_entry=round(orig_entry, 8))
     return {"action": "pyramid_up_flipped",
             "message": f"Session {row.id} flipped to dca_down (defensive DCA filled @ {filled_price:g})"}
 

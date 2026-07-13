@@ -19,6 +19,7 @@ from app.models import (
     SESSION_ACTIVE,
     WAVE_ARMED,
     WAVE_FILLED,
+    AuditLog,
     KssSession,
     KssWave,
     PendingOrder,
@@ -161,3 +162,117 @@ def test_defensive_fires_despite_symbol_at_cap(db, monkeypatch):
     service._maybe_queue_pyramid_defensive(db, s, 0.0250 * 0.98)
     assert db.query(PendingOrder).filter(
         PendingOrder.source_ref == f"pyramid:{s.id}:wave:{DEF}").count() == 1
+
+
+# --- N1/N2 fix: defensive rung sizing + isolated_fund reservation (ZBT #570 postmortem) --------
+#
+# The defensive rung used to be a FLAT ``kss_first_wave_usd`` slug regardless of the base wave's
+# actual (possibly budget-shrunk) size, and the session's ``isolated_fund`` reservation only ever
+# summed the up-ladder — never the defensive. ZBT #570: base ~$467, defensive filled ~$1,496 (3.2x
+# the base), total_cost 196% of isolated_fund, then an 8.6-day ride to the hard SL for -$302.
+
+
+def _create_started(db, monkeypatch, *, entry=1.0, scan_fund=1500.0,
+                     step_size=0.0001, min_qty=0.0001, max_session_deploy_usd=0.0):
+    """Build + start a real pyramid_up session end-to-end (create_pyramid_up_session +
+    start_pyramid_up_session), with the exchange info / capital knobs controllable per test."""
+    monkeypatch.setattr(market, "get_exchange_info",
+                        lambda sym: {"stepSize": step_size, "minQty": min_qty})
+    monkeypatch.setattr(market, "get_current_prices", lambda syms, force=False: {"AAA": entry})
+    monkeypatch.setattr(settings, "scan_fund", scan_fund)
+    monkeypatch.setattr(settings, "pyramid_up_max_adds", 2)
+    monkeypatch.setattr(settings, "pyramid_up_step_pct", 2.0)
+    monkeypatch.setattr(settings, "pyramid_up_size_ratio", 0.7)
+    monkeypatch.setattr(settings, "max_session_deploy_usd", max_session_deploy_usd)
+    row = service.create_pyramid_up_session(db, symbol="AAA", entry_price=entry, tp_pct=4.0,
+                                            deadline_days=30)
+    service.start_pyramid_up_session(db, row.id)
+    db.refresh(row)
+    return row
+
+
+def test_defensive_sized_by_base_wave_cost_not_flat_kss_first_wave_usd(db, monkeypatch):
+    """N1 — ZBT #570 regression: a shrunk base wave (scan_fund << kss_first_wave_usd=1500 from the
+    _cfg fixture) must get a defensive sized proportionally to ITS OWN cost, not the old flat
+    kss_first_wave_usd slug (which was 3.2x the base in the real case)."""
+    row = _create_started(db, monkeypatch, entry=1.0, scan_fund=300.0)
+    base = db.query(KssWave).filter(KssWave.session_id == row.id, KssWave.wave_num == 0).one()
+    defw = db.query(KssWave).filter(KssWave.session_id == row.id, KssWave.wave_num == DEF).one()
+    base_cost = base.quantity * row.entry_price
+    def_cost = defw.quantity * defw.target_price
+    assert base_cost < settings.kss_first_wave_usd * 0.5, base_cost  # confirms the shrunk-base setup
+    assert def_cost <= base_cost * 1.1, (def_cost, base_cost)       # ~= base, not the flat 1500 slug
+    assert def_cost < settings.kss_first_wave_usd * 0.5, def_cost
+
+
+def test_isolated_fund_includes_defensive_and_total_cost_stays_within_it(db, monkeypatch):
+    """N2 — isolated_fund must reserve the defensive's cost too, so a filled base + defensive
+    never exceeds the session's own reservation (the ZBT #570 accounting gap: total_cost hit 196%
+    of isolated_fund)."""
+    row = _create_started(db, monkeypatch, entry=1.0, scan_fund=300.0)
+    up_waves = db.query(KssWave).filter(KssWave.session_id == row.id, KssWave.wave_num >= 0).all()
+    up_ladder_cost = sum(w.quantity * w.target_price for w in up_waves)
+    defw = db.query(KssWave).filter(KssWave.session_id == row.id, KssWave.wave_num == DEF).one()
+    def_cost = defw.quantity * defw.target_price
+    assert row.isolated_fund >= (up_ladder_cost + def_cost) * 0.99
+
+    base = next(w for w in up_waves if w.wave_num == 0)
+    service.handle_fill_event(db, f"pyramid:{row.id}:wave:0", base.quantity, row.entry_price)
+    service.handle_fill_event(db, f"pyramid:{row.id}:wave:{DEF}", defw.quantity, defw.target_price)
+    db.refresh(row)
+    assert row.total_cost <= row.isolated_fund + 1e-6
+
+
+def test_defensive_sized_to_fit_deploy_cap_headroom(db, monkeypatch):
+    """Deploy-cap interaction: with max_session_deploy_usd small, the defensive is shrunk to fit
+    the remaining headroom instead of ignoring the per-session cap."""
+    row = _create_started(db, monkeypatch, entry=1.0, scan_fund=1500.0,
+                          max_session_deploy_usd=50.0)
+    base = db.query(KssWave).filter(KssWave.session_id == row.id, KssWave.wave_num == 0).one()
+    base_cost = base.quantity * row.entry_price
+    assert base_cost > 50.0, base_cost  # the cap actually binds tighter than the base itself
+    defw = db.query(KssWave).filter(KssWave.session_id == row.id, KssWave.wave_num == DEF).one()
+    def_cost = defw.quantity * defw.target_price
+    assert def_cost <= 50.0 * 1.05
+    assert def_cost < base_cost
+
+
+def test_defensive_omitted_when_even_minqty_exceeds_headroom(db, monkeypatch):
+    """Edge case: if even a minQty-floored defensive would breach the deploy-cap headroom, the
+    rung is OMITTED entirely (ride the hard SL) rather than over-deploying, with an audit trail."""
+    row = _create_started(db, monkeypatch, entry=1.0, scan_fund=1500.0,
+                          min_qty=1000.0, max_session_deploy_usd=1.0)
+    defw = db.query(KssWave).filter(KssWave.session_id == row.id,
+                                    KssWave.wave_num == DEF).one_or_none()
+    assert defw is None
+    log = db.query(AuditLog).filter(
+        AuditLog.action == "pyramid_defensive_omitted_no_headroom",
+        AuditLog.entity == f"kss:{row.id}",
+    ).one_or_none()
+    assert log is not None
+
+
+def test_defensive_uncapped_when_deploy_cap_off(db, monkeypatch):
+    """max_session_deploy_usd=0 (off) must not shrink the defensive — headroom is +inf, so sizing
+    falls back to pure base-wave-cost matching (no behavior change for the default/off posture)."""
+    row = _create_started(db, monkeypatch, entry=1.0, scan_fund=300.0,
+                          max_session_deploy_usd=0.0)
+    base = db.query(KssWave).filter(KssWave.session_id == row.id, KssWave.wave_num == 0).one()
+    defw = db.query(KssWave).filter(KssWave.session_id == row.id, KssWave.wave_num == DEF).one()
+    base_cost = base.quantity * row.entry_price
+    def_cost = defw.quantity * defw.target_price
+    assert def_cost <= base_cost * 1.1
+
+
+def test_flip_audit_logs_orig_entry(db):
+    """(Optional #3) the pre-flip pyramid_up entry is recorded on the flip audit for lossautopsy
+    attribution, alongside the new avg the session re-anchors to."""
+    import json
+
+    s = _pyr_session(db, base_qty=8000.0, base_px=0.0250)
+    orig_entry = s.entry_price
+    service.handle_fill_event(db, f"pyramid:{s.id}:wave:{DEF}", 8000.0, 0.0246)
+    log = db.query(AuditLog).filter(AuditLog.action == "pyramid_up_flipped",
+                                    AuditLog.entity == f"kss:{s.id}").one()
+    detail = json.loads(log.detail)
+    assert abs(detail["orig_entry"] - orig_entry) < 1e-6

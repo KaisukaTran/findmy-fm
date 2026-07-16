@@ -282,6 +282,25 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
     audit.log(db, "scanner", "scan_start", entity=f"run:{scan.id}", mode=mode,
               universe=len(universe))
 
+    # Config-deadlock alarm: expectancy tops out at tp − round-trip cost, so a gate above that
+    # ceiling skips the whole universe forever. The kss-settings endpoint now refuses such a pair,
+    # but a value persisted before that guard (or an .env/default) still loads — so make the halt
+    # loud instead of silent (2026-07-16: min_expectancy 3.0 vs a 2.70 ceiling ran 25 scans /
+    # 12h with zero opens and no error anywhere).
+    if costengine.expectancy_gate_unsatisfiable(settings.min_expectancy_pct, settings.scan_tp_pct):
+        _ceiling = costengine.expectancy_ceiling_pct(settings.scan_tp_pct)
+        logger.warning(
+            "expectancy gate unsatisfiable: min_expectancy_pct=%.2f%% > ceiling %.2f%% "
+            "(scan_tp %.2f%% − cost %.2f%%) — every candidate will skip; nothing can open",
+            settings.min_expectancy_pct, _ceiling, settings.scan_tp_pct,
+            costengine.round_trip_cost_pct(),
+        )
+        audit.log(db, "scanner", "gate_unsatisfiable", entity=f"run:{scan.id}",
+                  min_expectancy_pct=settings.min_expectancy_pct,
+                  expectancy_ceiling_pct=round(_ceiling, 2),
+                  scan_tp_pct=settings.scan_tp_pct,
+                  round_trip_cost_pct=round(costengine.round_trip_cost_pct(), 2))
+
     backtest_agent = BacktestAgent()
     candidates: list[Candidate] = []
     # Candidates that passed every deterministic gate; opened after the (optional)

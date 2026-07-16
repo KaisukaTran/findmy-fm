@@ -226,7 +226,7 @@ class Settings(BaseSettings):
     scan_fund: float = Field(default=1000.0, description="Isolated fund per proposed session (USD).")
 
     # --- Loss-minimizing / cost-aware gates (capital preservation) ---
-    min_expectancy_pct: float = Field(default=3.0, description="PRIMARY gate: min mean net expected PnL %% per backtested trade (after stop-loss + round-trip cost). Paired with min_win_rate as the trade rule: trade when E ≥ this AND win-rate ≥ min_win_rate.")
+    min_expectancy_pct: float = Field(default=2.0, description="PRIMARY gate: min mean net expected PnL %% per backtested trade (after stop-loss + round-trip cost). Paired with min_win_rate as the trade rule: trade when E ≥ this AND win-rate ≥ min_win_rate. MUST stay below the ceiling scan_tp_pct − round-trip cost (= 2.70%% at the default tp 3.0%%) or NO candidate can ever pass — the default was 3.0 against that same 2.70 ceiling, which silently skipped 100%% of the universe. costengine.expectancy_gate_unsatisfiable enforces this.")
     max_loss_rate: float = Field(default=20.0, description="Max backtested loss-rate %% to qualify.")
     max_avg_mae_pct: float = Field(default=0.0, description="Drawdown gate: skip a candidate whose backtested mean max-adverse-excursion (avg_mae — the typical deepest unrealized dip below the running avg before exit) is DEEPER than this %% (e.g. 12 = reject coins that historically plunge >12%% before recovering). 0 = off (still used for ranking: shallower drawdown ranks higher). Discriminates coins the saturated ~100%% win-rate cannot.")
     min_net_edge: float = Field(default=0.5, description="Min TP%% above round-trip cost to trade (micro-trade guard).")

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app import (
     charts,
     circuit,
+    costengine,
     costs,
     execution,
     guardian,
@@ -477,7 +478,25 @@ def get_kss_settings(db: Session = Depends(get_db)):
 @api_router.post("/api/kss-settings", dependencies=[Depends(require_api_key)])
 def set_kss_settings(body: KssSettingsBody, db: Session = Depends(get_db)):
     """Update the master KSS knobs (applied to NEW sessions). Persisted across restarts."""
-    return runtime.set_kss_settings(db, body.model_dump(exclude_none=True))
+    values = body.model_dump(exclude_none=True)
+    # Cross-field guard: expectancy can never exceed tp − round-trip cost, so a gate above that
+    # ceiling skips the whole universe forever with no error (the 2026-07-16 12h silent halt —
+    # min_expectancy 3.0 vs a 2.70 ceiling after tp went 4.0→3.0). Check the EFFECTIVE pair, since
+    # either knob can arrive alone and strand the other. Only requests that TOUCH the pair are
+    # judged: an already-deadlocked config must not block edits to unrelated knobs (the scanner
+    # alarm covers a deadlock that is already persisted).
+    tp = values.get("scan_tp_pct", settings.scan_tp_pct)
+    min_e = values.get("min_expectancy_pct", settings.min_expectancy_pct)
+    touches_gate = "scan_tp_pct" in values or "min_expectancy_pct" in values
+    if touches_gate and costengine.expectancy_gate_unsatisfiable(min_e, tp):
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Cấu hình tự mâu thuẫn: min_expectancy_pct {min_e:.2f}% vượt trần kỳ vọng "
+                    f"{costengine.expectancy_ceiling_pct(tp):.2f}% (= scan_tp {tp:.2f}% − chi phí "
+                    f"vòng {costengine.round_trip_cost_pct():.2f}%) → không coin nào qua được cửa, "
+                    f"scanner sẽ skip 100% universe. Hạ min_expectancy_pct hoặc nâng scan_tp_pct."),
+        )
+    return runtime.set_kss_settings(db, values)
 
 
 class ConsensusWeightsBody(BaseModel):

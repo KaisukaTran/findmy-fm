@@ -216,9 +216,15 @@ class PyramidSession:
         """
         # Calculate quantity: (wave_num + 1) pips
         raw_qty = (wave_num + 1) * self.pip_size
-        # Round to step size
-        qty = round(raw_qty / self._step_size) * self._step_size
-        qty = max(qty, self._min_qty)
+        # Round to step size. round() is to-NEAREST, so a target smaller than half a step lands
+        # on 0 — and a coarse/glitchy stepSize (e.g. DASH 2026-07-16) then floored EVERY wave to
+        # the tiny minQty, deploying ~$0 of dust instead of the intended notional. A positive
+        # target must never collapse to a dust order: snap up to at least one whole lot (the
+        # smallest tradeable unit). start()/_can_open reject it downstream if one lot > fund.
+        steps = round(raw_qty / self._step_size)
+        if steps < 1 and raw_qty > 0:
+            steps = 1
+        qty = max(steps * self._step_size, self._min_qty)
 
         # Calculate price: entry × (1 - distance%)^wave_num
         distance_factor = 1 - (self.distance_pct / 100)

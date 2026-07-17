@@ -18,7 +18,7 @@ from app import runtime
 from app.config import settings
 from app.models import Candidate, Fill, ScanRun
 from app.orchestrator import brain, distill, service
-from app.orchestrator.models import OPUS_CLOSED, OpusLesson, OpusPosition
+from app.orchestrator.models import OPUS_CLOSED, OpusLesson, OpusMetricHourly, OpusPosition
 
 
 def _enable_opus(monkeypatch):
@@ -370,3 +370,69 @@ def test_lessons_injected_into_prompt(db):
     # Bounded to opus_lessons_max bullet lines.
     bullet_lines = [ln for ln in last.splitlines() if ln.startswith("- ")]
     assert len(bullet_lines) <= settings.opus_lessons_max
+
+
+# --- Phase P2 (docs/opus-3pct-plan.md) — O-LIVE autonomy switches -----------------------
+
+
+def test_daily_loss_stop_knob_persists(db):
+    """opus_daily_loss_stop_pct round-trips through set_kss_settings + a boot-restore,
+    same settings-save path as the other opus_* knobs (test_godmode_knobs_persist above)."""
+    runtime.set_kss_settings(db, {"opus_daily_loss_stop_pct": 5.0})
+    assert settings.opus_daily_loss_stop_pct == 5.0
+
+    settings.opus_daily_loss_stop_pct = 3.0  # simulate a fresh process boot at the default
+    runtime.sync_from_db(db)
+    assert settings.opus_daily_loss_stop_pct == 5.0
+
+
+def test_kss_settings_body_accepts_daily_loss_stop_knob():
+    """Regression: the API/form body must include the new knob, else
+    model_dump(exclude_none=True) silently drops it (see test_kss_settings.py's sibling)."""
+    from app.routes import KssSettingsBody
+
+    dumped = KssSettingsBody(opus_daily_loss_stop_pct=4.5).model_dump(exclude_none=True)
+    assert dumped["opus_daily_loss_stop_pct"] == 4.5
+
+
+def test_state_carries_solo_open_and_daily_loss_stop_flags(db, monkeypatch):
+    """state() surfaces both new P2 autonomy signals for the UI/audit."""
+    monkeypatch.setattr(settings, "opus_solo_open", True)
+    monkeypatch.setattr(settings, "opus_daily_loss_stop_pct", 3.0)
+    monkeypatch.setattr(settings, "opus_allocation_usd", 1000.0)
+
+    st = service.state(db)
+    assert st["solo_open"] is True
+    assert st["daily_loss_stop_active"] is False  # no metric rows yet -> net_today 0
+
+    db.add(OpusMetricHourly(hour_ts=datetime.utcnow(), net_pnl=-50.0))  # -5% breaches -3%
+    db.commit()
+    assert service.state(db)["daily_loss_stop_active"] is True
+
+
+def test_opus_envelope_knobs_runtime_editable(db):
+    """P5: the trial's envelope/cadence knobs must round-trip through the settings body +
+    runtime persistence — a knob missing from either is silently dropped on save (the
+    god-mode plan §3 gotcha)."""
+    from app import runtime
+    from app.routes import KssSettingsBody
+
+    values = {
+        "opus_allocation_usd": 500.0,
+        "opus_max_trade_notional": 100.0,
+        "opus_kpi_target_pct": 3.0,
+        "opus_interval_min": 5,
+        "opus_daily_cost_cap_usd": 5.0,
+        "opus_ride_hard_sl_pct": 10.0,
+    }
+    dumped = KssSettingsBody(**values).model_dump(exclude_none=True)
+    for key, val in values.items():
+        assert dumped[key] == val
+        assert key in runtime.KSS_SETTING_FIELDS
+
+    runtime.set_kss_settings(db, dumped)
+    runtime.sync_from_db(db)
+    from app.config import settings as live_settings
+    assert live_settings.opus_allocation_usd == 500.0
+    assert live_settings.opus_max_trade_notional == 100.0
+    assert live_settings.opus_kpi_target_pct == 3.0

@@ -22,6 +22,13 @@ OPUS_RIDE = "ride"        # winner at the 3h mark — Opus keeps discretion (may
 OPUS_RESCUE = "rescue"    # loser at the 3h mark — handed off to a standard KSS session
 OPUS_CLOSED = "closed"
 
+# Purposes that count against OPUS's own cost-cap/KPI (spend_today, rollup_hour). Defined
+# here (not in ledger.py) because service.py needs it too and ledger.py already imports
+# service.py — importing this from ledger would create a circular import.
+# "grok_scanner" serves the KSS scanner (candidate gate), not OPUS, and must NOT drag
+# OPUS's cost cap or net P&L (P1 cost-truth v2 — it stays in app/costs.py's global AI view).
+OPUS_OWN_PURPOSES: tuple[str, ...] = ("decision", "grok_decision", "distill", "triage")
+
 
 class OpusPosition(Base):
     """One discretionary trade Opus opened, plus its watch/ride/rescue state."""
@@ -60,6 +67,10 @@ class OpusCostLedger(Base):
     ts: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Prompt-cache tokens (additive, P1 cost-truth v2): read = 0.1x input price, write (5m
+    # ephemeral) = 1.25x input price. Anthropic bills these separately from input_tokens.
+    cache_read_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cache_write_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     raw_cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     billed_cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # 2x raw
     purpose: Mapped[str] = mapped_column(String(32), nullable=False, default="decision")

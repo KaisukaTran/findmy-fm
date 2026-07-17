@@ -63,6 +63,18 @@ def test_decide_parses_and_meters_cost(db, monkeypatch):
     assert db.query(om.OpusCostLedger).count() == 1
 
 
+def test_parse_intents_accepts_reduce():
+    """P3: 'reduce' (partial take-profit) is a valid parsed action alongside open/close/hold."""
+    reply = json.dumps({"intents": [
+        {"action": "reduce", "position_id": 3, "notional": 50, "reason": "bank profit"},
+    ]})
+    out = brain._parse_intents(reply)
+    assert len(out) == 1
+    assert out[0]["action"] == "reduce"
+    assert out[0]["position_id"] == 3
+    assert out[0]["notional"] == 50
+
+
 def test_decide_bad_json_is_safe(db, monkeypatch):
     _enable(monkeypatch)
     monkeypatch.setattr(brain, "_call_opus",

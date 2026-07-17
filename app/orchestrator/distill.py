@@ -100,7 +100,12 @@ def distill_lessons(db: Session) -> int:
         )
         in_tok = int(usage.get("input_tokens", 0))
         out_tok = int(usage.get("output_tokens", 0))
-        ledger.record_cost(db, in_tok, out_tok, purpose="distill")
+        cache_read_tok = int(usage.get("cache_read_input_tokens", 0))
+        cache_write_tok = int(usage.get("cache_creation_input_tokens", 0))
+        ledger.record_cost(
+            db, in_tok, out_tok, purpose="distill",
+            cache_read_tokens=cache_read_tok, cache_write_tokens=cache_write_tok,
+        )
 
         text = raw.strip()
         if text.startswith("```"):

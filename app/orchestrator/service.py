@@ -20,6 +20,7 @@ from app.config import settings
 from app.models import AuditLog
 from app.orchestrator.models import (
     OPUS_CLOSED,
+    OPUS_OWN_PURPOSES,
     OPUS_RIDE,
     OPUS_WATCH,
     OpusCostLedger,
@@ -70,10 +71,24 @@ def _utc_day_start() -> datetime:
 
 
 def spend_today(db: Session) -> float:
-    """Billed (x2) Opus cost accrued since 00:00 UTC today."""
+    """Billed (x2) Opus cost accrued since 00:00 UTC today — OPUS's own purposes only
+    (excludes "grok_scanner", which serves the KSS scanner and must not drag OPUS's cap)."""
     total = (
         db.query(func.coalesce(func.sum(OpusCostLedger.billed_cost), 0.0))
         .filter(OpusCostLedger.ts >= _utc_day_start())
+        .filter(OpusCostLedger.purpose.in_(OPUS_OWN_PURPOSES))
+        .scalar()
+    )
+    return float(total or 0.0)
+
+
+def net_today(db: Session) -> float:
+    """Net profit since 00:00 UTC today from hourly rollups — same shape as `net_pnl_24h`
+    but anchored to the UTC calendar day (the daily-loss-stop's own clock, P2) rather than
+    a rolling 24h window."""
+    total = (
+        db.query(func.coalesce(func.sum(OpusMetricHourly.net_pnl), 0.0))
+        .filter(OpusMetricHourly.hour_ts >= _utc_day_start())
         .scalar()
     )
     return float(total or 0.0)
@@ -147,6 +162,19 @@ def decision_gap_min(db: Session) -> float:
     return base * 2.0 if spend_ratio(db) >= 0.7 else base
 
 
+def daily_loss_stop_active(db: Session) -> bool:
+    """P2 hard brake: once today's (UTC calendar day) net breaches -X% of the OPUS
+    allocation, block NEW opens until the next UTC day (closes still run — this only
+    throttles risk-taking, never exits). `opus_daily_loss_stop_pct` = 0 disables it."""
+    pct = settings.opus_daily_loss_stop_pct
+    if pct <= 0:
+        return False
+    alloc = allocation()
+    if alloc <= 0:
+        return False
+    return net_today(db) <= -(pct / 100.0) * alloc
+
+
 def pacing(db: Session) -> dict:
     """Cost/KPI pacing signals fed to Opus so it self-regulates within the cage."""
     return {
@@ -154,6 +182,8 @@ def pacing(db: Session) -> dict:
         "target_pct": settings.opus_kpi_target_pct,
         "behind_pace": behind_pace(db),
         "spend_ratio": round(spend_ratio(db), 3),
+        # P2: surface the daily-loss brake so the brain knows opens are blocked today.
+        "daily_loss_stop_active": daily_loss_stop_active(db),
     }
 
 
@@ -220,4 +250,9 @@ def state(db: Session) -> dict:
         "grok_active": bool(settings.grok_enabled and settings.xai_api_key.get_secret_value()),
         "grok_role": settings.grok_role,
         "brain_health": brain_health(db),
+        # P2/O-LIVE: surface the autonomy switches so the UI/audit reflect the cage state.
+        "daily_loss_stop_active": daily_loss_stop_active(db),
+        "solo_open": settings.opus_solo_open,
+        # P4: surface the accountability auto-freeze switch (UI badge later).
+        "auto_freeze_enabled": settings.opus_auto_freeze_enabled,
     }

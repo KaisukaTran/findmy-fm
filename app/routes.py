@@ -462,6 +462,24 @@ class KssSettingsBody(BaseModel):
     opus_solo_min_consensus: float | None = Field(None, ge=0, le=100)
     opus_lessons_max: int | None = Field(None, ge=0, le=50)
     opus_history_n: int | None = Field(None, ge=0, le=200)
+    opus_daily_loss_stop_pct: float | None = Field(None, ge=0, le=50)
+    # Accountability (P4) — daily report + rolling-window auto-freeze.
+    opus_auto_freeze_enabled: bool | None = None
+    opus_freeze_window_days: int | None = Field(None, ge=1, le=90)
+    opus_freeze_min_closed: int | None = Field(None, ge=0, le=100)
+    # Haiku triage (P3) — cheap pre-screen gate in front of each paid Opus decision.
+    opus_triage_enabled: bool | None = None
+    opus_triage_model: str | None = None
+    opus_triage_price_in_per_mtok: float | None = Field(None, ge=0)
+    opus_triage_price_out_per_mtok: float | None = Field(None, ge=0)
+    opus_max_decision_gap_min: int | None = Field(None, ge=1, le=1440)
+    # OPUS envelope/cadence knobs (P5 trial) — runtime-editable per god-mode plan §3.
+    opus_allocation_usd: float | None = Field(None, ge=0)
+    opus_max_trade_notional: float | None = Field(None, gt=0)
+    opus_kpi_target_pct: float | None = Field(None, ge=0, le=100)
+    opus_interval_min: int | None = Field(None, ge=1, le=1440)
+    opus_daily_cost_cap_usd: float | None = Field(None, ge=0)
+    opus_ride_hard_sl_pct: float | None = Field(None, ge=0, le=90)
     # Market-wide BTC regime gate (shadow-first; see app/regime.py) — OFF by default.
     regime_gate_enabled: bool | None = None
     regime_gate_enforcing: bool | None = None
@@ -606,6 +624,14 @@ def opus_metrics(hours: int = 48, db: Session = Depends(get_db)):
             for r in rows
         ],
     }
+
+
+@api_router.get("/api/opus/daily")
+def opus_daily(days: int = 14, db: Session = Depends(get_db)):
+    """UTC-calendar-day OPUS net-profit table (gross/cost/net/%/trades/WR), oldest→newest."""
+    from app.orchestrator import ledger as opus_ledger
+
+    return {"days": opus_ledger.daily_series(db, days=days)}
 
 
 @api_router.get("/api/breaker")
@@ -1101,6 +1127,7 @@ def partial_opus(request: Request, db: Session = Depends(get_db)):
             "o": opus_service.state(db),
             "pnl_svg": charts.opus_hourly_pnl_svg(labels, nets),
             "cum_svg": charts.opus_cumulative_vs_target_svg(nets, opus_ledger.target_per_hour()),
+            "daily": opus_ledger.daily_series(db, days=14),
         },
     )
 

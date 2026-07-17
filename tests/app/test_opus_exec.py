@@ -141,6 +141,156 @@ def test_open_rejected_when_opus_already_holds(db, opus_market):
     assert db.query(om.OpusPosition).count() == 1
 
 
+# --- P2/O-LIVE: cage-side consensus floor + daily-loss stop ------------
+
+
+def _seed_candidate(db, symbol: str, consensus_pct: float):
+    """One ScanRun + Candidate row so `_candidate_consensus` (the floor's data source) has
+    something real to look up, independent of `opus_market`'s `brain._candidates` mock."""
+    from app.models import Candidate, ScanRun
+    scan = ScanRun()
+    db.add(scan)
+    db.flush()
+    db.add(Candidate(scan_id=scan.id, symbol=symbol, consensus_pct=consensus_pct, decision="trade"))
+    db.commit()
+
+
+def test_open_floor_rejects_below_consensus(db, opus_market, monkeypatch):
+    """P2: the deterministic consensus floor is cage-side — enforced regardless of who
+    proposed the open, against the SAME latest-scan Candidate row the candidate gate uses."""
+    _seed_candidate(db, "BTC", consensus_pct=55.0)
+    monkeypatch.setattr(settings, "opus_solo_min_consensus", 70.0)
+    out = policy.apply_intents(db, [{"action": "open", "symbol": "BTC", "notional": 100}])
+    assert out["executed"] == []
+    reason = out["rejected"][0]["reason"]
+    assert "consensus" in reason and "floor" in reason
+    assert db.query(om.OpusPosition).count() == 0
+
+
+def test_open_floor_zero_passes(db, opus_market, monkeypatch):
+    """Floor 0 (the P2 trial value) never rejects, even against a low-consensus candidate."""
+    _seed_candidate(db, "BTC", consensus_pct=55.0)
+    monkeypatch.setattr(settings, "opus_solo_min_consensus", 0.0)
+    out = policy.apply_intents(db, [{"action": "open", "symbol": "BTC", "notional": 100}])
+    assert len(out["executed"]) == 1
+
+
+def test_open_floor_does_not_preempt_candidate_gate(db, opus_market, monkeypatch):
+    """A symbol the scanner never surfaced is rejected by the candidate whitelist FIRST,
+    before the consensus floor is even evaluated (floor set permissive here on purpose)."""
+    monkeypatch.setattr(settings, "opus_solo_min_consensus", 0.0)
+    out = policy.apply_intents(db, [{"action": "open", "symbol": "ETH", "notional": 100}])
+    assert out["executed"] == []
+    assert out["rejected"][0]["reason"].startswith("symbol not a current candidate")
+
+
+def test_daily_loss_stop_blocks_opens_but_closes_still_execute(db, opus_market, monkeypatch):
+    """Once today's net breaches -X% of the allocation, new opens are rejected but an
+    existing position can still be closed (risk reduction never waits for the brake)."""
+    monkeypatch.setattr(settings, "opus_daily_loss_stop_pct", 3.0)
+    monkeypatch.setattr(settings, "opus_allocation_usd", 1000.0)
+    db.add(om.OpusMetricHourly(hour_ts=datetime.utcnow(), net_pnl=-50.0))  # -5% breaches -3%
+    db.commit()
+    pos = _watch_pos(db, qty=1.0, avg=90.0, hours_ago=1)
+
+    out = policy.apply_intents(db, [
+        {"action": "open", "symbol": "BTC", "notional": 100},
+        {"action": "close", "position_id": pos.id},
+    ])
+    opens = [e for e in out["executed"] if e["action"] == "open"]
+    closes = [e for e in out["executed"] if e["action"] == "close"]
+    assert opens == []
+    assert len(closes) == 1
+    assert any(r["reason"] == "daily_loss_stop" for r in out["rejected"])
+
+
+def test_daily_loss_stop_inactive_above_the_line(db, opus_market, monkeypatch):
+    monkeypatch.setattr(settings, "opus_daily_loss_stop_pct", 3.0)
+    monkeypatch.setattr(settings, "opus_allocation_usd", 1000.0)
+    db.add(om.OpusMetricHourly(hour_ts=datetime.utcnow(), net_pnl=-10.0))  # only -1%
+    db.commit()
+    out = policy.apply_intents(db, [{"action": "open", "symbol": "BTC", "notional": 100}])
+    assert len(out["executed"]) == 1
+
+
+# --- P3: 'reduce' intent (partial take-profit) --------------------------
+
+
+def test_reduce_partial_sells_and_updates_qty_and_realized(db, opus_market):
+    policy.apply_intents(db, [{"action": "open", "symbol": "BTC", "notional": 200, "reason": "x"}])
+    pos = db.query(om.OpusPosition).one()
+    assert abs(pos.qty - 2.0) < 1e-6  # 200 @ 100
+
+    out = policy.apply_intents(
+        db, [{"action": "reduce", "position_id": pos.id, "notional": 100, "reason": "bank"}]
+    )
+    assert len(out["executed"]) == 1
+    assert out["executed"][0]["action"] == "reduce"
+    db.refresh(pos)
+    assert abs(pos.qty - 1.0) < 1e-6          # sold half (100 / 100)
+    assert pos.state == om.OPUS_WATCH         # a reduce never changes state
+
+    from app.models import Fill
+    fill = db.query(Fill).filter(Fill.source_ref == f"opus:{pos.id}:reduce").one()
+    assert fill.side == "SELL"
+    assert abs(pos.realized_pnl - (fill.realized_pnl or 0.0)) < 1e-9
+
+
+def test_reduce_rejects_unknown_position(db, opus_market):
+    out = policy.apply_intents(
+        db, [{"action": "reduce", "position_id": 999, "notional": 50, "reason": "bank"}]
+    )
+    assert out["executed"] == []
+    assert out["rejected"][0]["reason"].startswith("position not open")
+
+
+def test_reduce_escalates_to_close_when_remainder_is_dust(db, opus_market, monkeypatch):
+    """A reduce that would leave a tail below min notional never strands it — the whole
+    position closes instead."""
+    monkeypatch.setattr(settings, "scan_min_notional", 50.0)
+    policy.apply_intents(db, [{"action": "open", "symbol": "BTC", "notional": 200, "reason": "x"}])
+    pos = db.query(om.OpusPosition).one()
+
+    out = policy.apply_intents(
+        db, [{"action": "reduce", "position_id": pos.id, "notional": 180, "reason": "bank"}]
+    )
+    assert len(out["executed"]) == 1
+    assert out["executed"][0]["action"] == "close"
+    db.refresh(pos)
+    assert pos.state == om.OPUS_CLOSED
+
+
+def test_reduce_allowed_while_daily_loss_stop_blocks_open(db, opus_market, monkeypatch):
+    """Risk reduction (reduce) is never gated by the daily-loss brake — only new opens are."""
+    policy.apply_intents(db, [{"action": "open", "symbol": "BTC", "notional": 100, "reason": "x"}])
+    pos = db.query(om.OpusPosition).one()
+
+    monkeypatch.setattr(settings, "opus_daily_loss_stop_pct", 3.0)
+    monkeypatch.setattr(settings, "opus_allocation_usd", 1000.0)
+    db.add(om.OpusMetricHourly(hour_ts=datetime.utcnow(), net_pnl=-50.0))  # -5% breaches -3%
+    db.commit()
+
+    out = policy.apply_intents(db, [
+        {"action": "open", "symbol": "BTC", "notional": 50, "reason": "y"},
+        {"action": "reduce", "position_id": pos.id, "notional": 30, "reason": "bank"},
+    ])
+    opens = [e for e in out["executed"] if e["action"] == "open"]
+    reduces = [e for e in out["executed"] if e["action"] == "reduce"]
+    assert opens == []
+    assert len(reduces) == 1
+    assert any(r["reason"] == "daily_loss_stop" for r in out["rejected"])
+
+
+def test_daily_loss_stop_knob_zero_always_inactive(db, opus_market, monkeypatch):
+    monkeypatch.setattr(settings, "opus_daily_loss_stop_pct", 0.0)
+    monkeypatch.setattr(settings, "opus_allocation_usd", 1000.0)
+    db.add(om.OpusMetricHourly(hour_ts=datetime.utcnow(), net_pnl=-500.0))  # huge loss
+    db.commit()
+    assert service.daily_loss_stop_active(db) is False
+    out = policy.apply_intents(db, [{"action": "open", "symbol": "BTC", "notional": 100}])
+    assert len(out["executed"]) == 1
+
+
 def test_second_rescue_merges_into_existing_session(db, opus_market):
     """Two losing lots on one coin → ONE KSS session owning the combined qty (K-1), not two."""
     from app.models import SESSION_ACTIVE, KssSession

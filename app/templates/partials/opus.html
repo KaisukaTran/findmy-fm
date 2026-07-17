@@ -5,8 +5,11 @@
     <span class="badge {{ 'hyperopt-on' if o.shadow else 'full-auto-off' }}" title="Chế độ bóng: Opus chỉ ghi lại quyết định, CHƯA đặt lệnh. Tắt để cho phép đặt lệnh paper thật.">SHADOW {{ 'ON' if o.shadow else 'OFF' }}</span>
     <button class="sm {{ 'danger' if o.shadow else 'ok' }}" data-action="toggleOpusShadow" data-id="{{ 'off' if o.shadow else 'on' }}" title="{{ 'Tắt shadow → Opus sẽ ĐẶT LỆNH (paper)' if o.shadow else 'Bật shadow → chỉ ghi, không đặt lệnh' }}">{{ 'Cho đặt lệnh' if o.shadow else 'Về shadow' }}</button>
     {% if o.cost_cap_reached %}<span class="badge veto" title="Đã chạm trần chi phí Opus/ngày — tạm dừng ra quyết định mới.">COST CAP</span>{% endif %}
-    <span class="badge {{ 'guardian-on' if o.grok_active else 'full-auto-off' }}" title="Grok (xAI) đồng quyết định với OPUS: MỞ khi cả hai đồng ý, ĐÓNG khi một trong hai muốn. Cần xai_api_key.">GROK {{ 'ON' if o.grok_active else ('ENABLED (thiếu key)' if o.grok_enabled else 'OFF') }}</span>
+    <span class="badge {{ 'guardian-on' if o.grok_active else 'full-auto-off' }}" title="Grok (xAI) đồng quyết định với OPUS: mặc định MỞ khi cả hai đồng ý, ĐÓNG khi một trong hai muốn. Khi SOLO bật, OPUS có thể mở một mình không cần Grok đồng ý — Grok vẫn luôn đóng/giảm được. Cần xai_api_key.">GROK {{ 'ON' if o.grok_active else ('ENABLED (thiếu key)' if o.grok_enabled else 'OFF') }}</span>
     <button class="sm {{ 'danger' if o.grok_enabled else 'ok' }}" data-action="toggleGrok" data-id="{{ 'off' if o.grok_enabled else 'on' }}">{{ 'Tắt Grok' if o.grok_enabled else 'Bật Grok' }}</button>
+    {% if o.solo_open %}<span class="badge guardian-on" title="OPUS được mở lệnh MỘT MÌNH (không cần Grok đồng ý). Grok vẫn có quyền đóng/giảm bất kỳ lúc nào. Sàn consensus tối thiểu vẫn được cưỡng chế phía cage (opus_solo_min_consensus).">SOLO</span>{% endif %}
+    {% if o.daily_loss_stop_active %}<span class="badge veto" title="Phanh lỗ ngày: net hôm nay đã chạm −opus_daily_loss_stop_pct% vốn cấp — KHÔNG mở lệnh mới đến 00:00 UTC; vẫn được đóng/giảm.">PHANH NGÀY</span>{% endif %}
+    {% if o.auto_freeze_enabled %}<span class="badge full-auto-off" title="Tự đóng băng: nếu net 7 ngày lăn < 0 qua đủ số lệnh đóng, OPUS tự TẮT và báo Telegram.">AUTO-FREEZE</span>{% endif %}
     {% if o.brain_health == 'ok' %}
     <span class="badge full-auto-on" title="Lệnh gọi Opus gần nhất thành công.">BRAIN OK</span>
     {% elif o.brain_health == 'http_400_credit' %}
@@ -25,7 +28,7 @@
 </div>
 
 <div class="cards">
-  <div class="card"><div class="label" data-tip="Vốn cấp riêng cho OPUS. Đây là mẫu số của KPI 1%/24h. Tách rời khỏi vốn full-auto thường.">Vốn cấp</div><div class="value">${{ o.allocation_usd | money_kmb }}</div></div>
+  <div class="card"><div class="label" data-tip="Vốn cấp riêng cho OPUS. Đây là mẫu số của KPI {{ "%.0f"|format(o.kpi_target_pct) }}%/24h. Tách rời khỏi vốn full-auto thường.">Vốn cấp</div><div class="value">${{ o.allocation_usd | money_kmb }}</div></div>
   <div class="card"><div class="label" data-tip="Tổng lãi/lỗ OPUS = đã chốt + tạm tính − chi phí Opus hôm nay (×2). %% so với vốn cấp.">Lãi/Lỗ OPUS</div>
     <div class="value {{ 'pos' if o.total_pnl >= 0 else 'neg' }}">${{ o.total_pnl | money_kmb }} <span class="fs-12">({{ "%+.2f"|format(o.pnl_pct) }}%)</span></div></div>
   <div class="card"><div class="label" data-tip="Vốn đang nằm trong các vị thế OPUS đang mở = Σ (KL × giá vốn).">Đang đầu tư</div><div class="value">${{ o.deployed_usd | money_kmb }}</div></div>
@@ -33,7 +36,7 @@
   <div class="card"><div class="label" data-tip="Số vị thế Opus đang quản lý (watch/ride).">Vị thế</div><div class="value">{{ o.open_positions }}</div></div>
   <div class="card"><div class="label" data-tip="Chi phí gọi Opus hôm nay đã nhân ×2 (theo quy tắc tính chi phí trước lợi nhuận). Vượt trần thì tạm dừng.">Opus cost today</div>
     <div class="value {{ 'neg' if o.cost_cap_reached else '' }}">${{ o.spend_today_usd | money_kmb }} / ${{ o.daily_cost_cap_usd | money_kmb }}</div></div>
-  <div class="card"><div class="label" data-tip="Lợi nhuận RÒNG 24h gần nhất / allocation. Ròng = lãi gộp − phí trade − 2×chi phí Opus. Mục tiêu ≥ 1%.">KPI 24h (net)</div>
+  <div class="card"><div class="label" data-tip="Lợi nhuận RÒNG 24h gần nhất / allocation. Ròng = lãi gộp − phí trade − 2×chi phí Opus. Mục tiêu ≥ {{ "%.0f"|format(o.kpi_target_pct) }}%.">KPI 24h (net)</div>
     <div class="value {{ 'pos' if o.kpi_24h_pct >= o.kpi_target_pct else ('neg' if o.kpi_24h_pct < 0 else '') }}">{{ "%.2f"|format(o.kpi_24h_pct) }}% / {{ "%.1f"|format(o.kpi_target_pct) }}%</div></div>
 </div>
 
@@ -42,12 +45,43 @@
   {{ pnl_svg | safe }}
 </div>
 <div class="mt-10">
-  <div class="muted mb-4" title="Lũy kế lợi nhuận ròng so với đường mục tiêu tuyến tính (allocation × 1% / 24h mỗi giờ).">Lũy kế net vs mục tiêu 1%/24h</div>
+  <div class="muted mb-4" title="Lũy kế lợi nhuận ròng so với đường mục tiêu tuyến tính (allocation × {{ "%.0f"|format(o.kpi_target_pct) }}% / 24h mỗi giờ).">Lũy kế net vs mục tiêu {{ "%.0f"|format(o.kpi_target_pct) }}%/24h</div>
   {{ cum_svg | safe }}
 </div>
 
+<div class="mt-14">
+  <div class="muted mb-4" title="Rollup theo ngày UTC (gross/phí Opus/net/% vốn/số lệnh/thắng). Ẩn các ngày không có hoạt động.">Bảng KPI theo ngày</div>
+  {% set ns = namespace(rows=[]) %}
+  {% for d in daily | reverse %}
+    {% if not (d.gross == 0 and d.cost == 0 and d.trades == 0) %}
+      {% set ns.rows = ns.rows + [d] %}
+    {% endif %}
+  {% endfor %}
+  {% if ns.rows %}
+  <table class="tbl">
+    <thead><tr><th>Ngày</th><th>Gross</th><th>Phí API</th><th>Net</th><th>%/vốn</th><th title="Benchmark P5: lãi thực hiện cùng ngày của engine luật (không tính OPUS) trên vốn engine HIỆN TẠI — xấp xỉ trung thực để so 'nếu để vốn cho engine'.">Engine %</th><th>Lệnh</th><th>Thắng</th></tr></thead>
+    <tbody>
+      {% for d in ns.rows %}
+      <tr>
+        <td>{{ d.day }}</td>
+        <td>{{ "%+.2f"|format(d.gross) }}</td>
+        <td>{{ "%.2f"|format(d.cost) }}</td>
+        <td class="{{ 'pos' if d.net >= 0 else 'neg' }}">{{ "%+.2f"|format(d.net) }}</td>
+        <td class="{{ 'pos' if d.net_pct >= 0 else 'neg' }}">{{ "%+.2f"|format(d.net_pct) }}%</td>
+        <td>{% if d.engine_pct is not none %}{{ "%+.3f"|format(d.engine_pct) }}%{% else %}—{% endif %}</td>
+        <td>{{ d.trades }}</td>
+        <td>{{ d.win_trades }}/{{ d.trades }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">Chưa có dữ liệu ngày nào.</p>
+  {% endif %}
+</div>
+
 {% if o.mode and o.open_positions == 0 %}
-<p class="muted mt-10">OPUS đang bật, chưa có vị thế. Chu kỳ quyết định sẽ được kích hoạt ở pha sau (O-3).</p>
+<p class="muted mt-10">OPUS đang bật, chưa có vị thế.</p>
 {% elif not o.mode %}
 <p class="muted mt-10">OPUS đang tắt. Bấm Enable để bật chế độ điều phối nâng cao (paper).</p>
 {% endif %}

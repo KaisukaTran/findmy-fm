@@ -42,6 +42,104 @@ def test_no_agreement_no_open():
     assert [i for i in out["intents"] if i["action"] == "open"] == []
 
 
+def test_solo_open_false_matches_default_stats():
+    """solo_open defaults False — stats gain the new key, but behaviour is byte-for-byte
+    identical to the pre-P2 AND-gate (the other tests above cover the unchanged behaviour)."""
+    opus = [{"action": "open", "symbol": "BTC", "notional": 100}]
+    grok_i = [{"action": "hold", "reason": "meh"}]
+    out = consensus.combine(opus, grok_i)
+    assert out["stats"]["solo_open"] is False
+    assert [i for i in out["intents"] if i["action"] == "open"] == []  # AND-gate unchanged
+
+
+# --- P2/O-LIVE: solo_open (OPUS may open without Grok's agreement) -----
+
+
+def test_solo_open_opus_only_survives():
+    opus = [{"action": "open", "symbol": "BTC", "notional": 100, "reason": "trend"}]
+    grok_i = [{"action": "hold", "reason": "meh"}]
+    out = consensus.combine(opus, grok_i, solo_open=True)
+    opens = [i for i in out["intents"] if i["action"] == "open"]
+    assert len(opens) == 1 and opens[0]["symbol"] == "BTC"
+    assert opens[0]["notional"] == 100
+    assert out["stats"]["solo_open"] is True
+
+
+def test_solo_open_grok_only_dropped():
+    """Grok is the risk-skeptic role — it must never open alone, solo or not."""
+    opus = [{"action": "hold", "reason": "no edge"}]
+    grok_i = [{"action": "open", "symbol": "ETH", "notional": 100, "reason": "alpha"}]
+    out = consensus.combine(opus, grok_i, solo_open=True)
+    assert [i for i in out["intents"] if i["action"] == "open"] == []
+
+
+def test_solo_open_agreement_keeps_min_notional():
+    """When both agents happen to agree even in solo mode, still size conservatively."""
+    opus = [{"action": "open", "symbol": "BTC", "notional": 200, "reason": "trend"}]
+    grok_i = [{"action": "open", "symbol": "BTC", "notional": 150, "reason": "ok"}]
+    out = consensus.combine(opus, grok_i, solo_open=True)
+    opens = [i for i in out["intents"] if i["action"] == "open"]
+    assert len(opens) == 1 and opens[0]["notional"] == 150
+
+
+def test_solo_open_closes_still_union():
+    """CLOSE stays a union (either agent can exit) regardless of solo_open."""
+    opus = [{"action": "close", "position_id": 5, "reason": "exit"}]
+    grok_i = [{"action": "hold", "reason": "ok"}]
+    for solo in (False, True):
+        out = consensus.combine(opus, grok_i, solo_open=solo)
+        closes = [i for i in out["intents"] if i["action"] == "close"]
+        assert len(closes) == 1 and closes[0]["position_id"] == 5
+
+
+# --- P3: 'reduce' (partial take-profit) is risk-reduction too -----------
+
+
+def test_reduce_survives_from_either_agent():
+    opus = [{"action": "reduce", "position_id": 5, "notional": 50, "reason": "bank"}]
+    grok_i = [{"action": "hold", "reason": "ok"}]
+    out = consensus.combine(opus, grok_i)
+    reduces = [i for i in out["intents"] if i["action"] == "reduce"]
+    assert len(reduces) == 1 and reduces[0]["position_id"] == 5
+    assert reduces[0]["notional"] == 50
+    assert out["stats"]["reduces"] == 1
+
+
+def test_reduce_survives_from_grok_alone_too():
+    opus = [{"action": "hold", "reason": "ok"}]
+    grok_i = [{"action": "reduce", "position_id": 9, "notional": 20, "reason": "bank"}]
+    out = consensus.combine(opus, grok_i)
+    reduces = [i for i in out["intents"] if i["action"] == "reduce"]
+    assert len(reduces) == 1 and reduces[0]["position_id"] == 9
+
+
+def test_close_beats_reduce_on_same_position():
+    """The same position drawing both a close and a reduce (from either agent) → close wins,
+    the stronger of the two risk-reduction actions."""
+    opus = [{"action": "reduce", "position_id": 7, "notional": 30, "reason": "bank"}]
+    grok_i = [{"action": "close", "position_id": 7, "reason": "exit"}]
+    out = consensus.combine(opus, grok_i)
+    matching = [i for i in out["intents"] if i.get("position_id") == 7]
+    assert len(matching) == 1 and matching[0]["action"] == "close"
+    assert out["stats"]["closes"] == 1
+    assert out["stats"]["reduces"] == 0
+
+    # order-independent: close first, reduce second — still wins.
+    out2 = consensus.combine(grok_i, opus)
+    matching2 = [i for i in out2["intents"] if i.get("position_id") == 7]
+    assert len(matching2) == 1 and matching2[0]["action"] == "close"
+
+
+def test_reduce_solo_open_irrelevant():
+    """solo_open only governs opens; a reduce survives identically either way."""
+    opus = [{"action": "reduce", "position_id": 3, "notional": 40, "reason": "bank"}]
+    grok_i = [{"action": "hold", "reason": "ok"}]
+    for solo in (False, True):
+        out = consensus.combine(opus, grok_i, solo_open=solo)
+        reduces = [i for i in out["intents"] if i["action"] == "reduce"]
+        assert len(reduces) == 1
+
+
 # --- grok agent (mocked call) ------------------------------------------
 
 

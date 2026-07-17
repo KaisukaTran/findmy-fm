@@ -41,6 +41,9 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("candidates", "avg_mae", "FLOAT NOT NULL DEFAULT 0.0"),
     ("candidates", "worst_mae", "FLOAT NOT NULL DEFAULT 0.0"),
     ("kss_sessions", "strategy_mode", "TEXT DEFAULT 'dca_down'"),
+    ("opus_cost_ledger", "cache_read_tokens", "INTEGER NOT NULL DEFAULT 0"),
+    ("opus_cost_ledger", "cache_write_tokens", "INTEGER NOT NULL DEFAULT 0"),
+    ("candidates", "ta_json", "TEXT"),
 ]
 
 

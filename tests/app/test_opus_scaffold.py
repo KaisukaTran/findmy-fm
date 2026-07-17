@@ -74,6 +74,72 @@ def test_toggle_opus_endpoint_starts_loop(monkeypatch):
         assert r.status_code == 200 and calls["stop"] == 1
 
 
+def test_opus_daily_endpoint(monkeypatch):
+    """GET /api/opus/daily returns the UTC-day rollup series."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.orchestrator import ledger as opus_ledger
+
+    monkeypatch.setattr(
+        opus_ledger, "daily_series",
+        lambda db, days=14: [{"day": "2026-07-15", "gross": 1.0, "cost": 0.5, "net": 0.5,
+                               "net_pct": 0.05, "trades": 1, "win_trades": 1}],
+    )
+    with TestClient(app) as c:
+        r = c.get("/api/opus/daily")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["days"][0]["day"] == "2026-07-15"
+        assert body["days"][0]["net"] == 0.5
+
+
+def test_partial_opus_renders_daily_table(monkeypatch):
+    """/partials/opus shows the daily KPI table (newest first) when daily_series has rows,
+    and skips all-zero days."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.orchestrator import ledger as opus_ledger
+
+    monkeypatch.setattr(
+        opus_ledger, "daily_series",
+        lambda db, days=14: [
+            {"day": "2026-07-14", "gross": 0.0, "cost": 0.0, "net": 0.0,
+             "net_pct": 0.0, "trades": 0, "win_trades": 0, "engine_pct": None},
+            {"day": "2026-07-15", "gross": 12.0, "cost": 1.0, "net": 11.0,
+             "net_pct": 0.55, "trades": 2, "win_trades": 1, "engine_pct": 0.123},
+            {"day": "2026-07-16", "gross": -3.0, "cost": 0.5, "net": -3.5,
+             "net_pct": -0.18, "trades": 1, "win_trades": 0, "engine_pct": None},
+        ],
+    )
+    with TestClient(app) as c:
+        html = c.get("/partials/opus").text
+        assert "2026-07-15" in html and "2026-07-16" in html
+        assert "2026-07-14" not in html  # all-zero day is skipped
+        # newest first: 07-16 row appears before 07-15 row
+        assert html.index("2026-07-16") < html.index("2026-07-15")
+        assert "1/2" in html  # win_trades/trades for the 07-15 row
+
+
+def test_partial_opus_empty_daily_shows_placeholder(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.orchestrator import ledger as opus_ledger
+
+    monkeypatch.setattr(
+        opus_ledger, "daily_series",
+        lambda db, days=14: [
+            {"day": "2026-07-16", "gross": 0.0, "cost": 0.0, "net": 0.0,
+             "net_pct": 0.0, "trades": 0, "win_trades": 0},
+        ],
+    )
+    with TestClient(app) as c:
+        html = c.get("/partials/opus").text
+        assert "Chưa có dữ liệu ngày nào." in html
+
+
 def test_cost_cap_and_spend(db, monkeypatch):
     monkeypatch.setattr(settings, "opus_daily_cost_cap_usd", 5.0)
     db.add(om.OpusCostLedger(input_tokens=1000, output_tokens=500, raw_cost=2.0, billed_cost=4.0))

@@ -28,12 +28,40 @@ def _candidate_symbols(db: Session) -> set[str]:
     return {c["symbol"] for c in brain._candidates(db, k=25)}
 
 
+def _candidate_consensus(db: Session, symbol: str) -> float | None:
+    """Latest scan's deterministic consensus % for `symbol`, or None if there's no matching
+    row (mirrors brain.py's `_candidates` latest-ScanRun query, narrowed to one symbol). In
+    production a symbol that passed the `_candidate_symbols` check always has a row here
+    (same query); None only happens defensively (e.g. a scan-less test fixture) and skips
+    the floor below rather than blocking on data that doesn't exist."""
+    from app.models import Candidate, ScanRun
+    scan = db.query(ScanRun).order_by(ScanRun.id.desc()).first()
+    if not scan:
+        return None
+    row = (
+        db.query(Candidate)
+        .filter(Candidate.scan_id == scan.id, Candidate.symbol == symbol)
+        .first()
+    )
+    return row.consensus_pct if row else None
+
+
 def _open(db: Session, intent: dict, allowed: set[str], result: dict) -> None:
     symbol = intent.get("symbol")
     notional = intent.get("notional")
     # Anti-injection: only symbols the scanner actually surfaced may be opened.
     if not symbol or symbol not in allowed:
         result["rejected"].append({"intent": intent, "reason": "symbol not a current candidate"})
+        return
+    # P2: deterministic consensus floor, cage-side (not prompt-side) — applies to EVERY
+    # open regardless of who proposed it (solo or agreed). Trial sets the floor to 0 so
+    # this never rejects; a live cage can raise it without touching the prompt.
+    consensus_pct = _candidate_consensus(db, symbol)
+    if consensus_pct is not None and consensus_pct < settings.opus_solo_min_consensus:
+        result["rejected"].append({
+            "intent": intent,
+            "reason": f"consensus {consensus_pct:.1f} below solo floor {settings.opus_solo_min_consensus:.1f}",
+        })
         return
     # K-1 strategy exclusivity: never open a coin KSS already runs (no blended cost basis).
     from app.models import SESSION_ACTIVE, KssSession
@@ -120,6 +148,50 @@ def force_close(db: Session, pos: OpusPosition, reason: str) -> float | None:
     return realized
 
 
+def _reduce(db: Session, intent: dict, result: dict) -> None:
+    """Partial take-profit: sell `notional` USD worth of an open position, banking profit
+    while letting the remainder ride. If what's left after the sale would be below min
+    notional (unsellable dust), escalate to a FULL close instead — never strand a tail no
+    order could ever fill."""
+    pid = intent.get("position_id")
+    notional = intent.get("notional")
+    pos = db.get(OpusPosition, pid) if isinstance(pid, int) else None
+    if pos is None or pos.state not in {OPUS_WATCH, OPUS_RIDE}:
+        result["rejected"].append({"intent": intent, "reason": "position not open/Opus-managed"})
+        return
+    if not isinstance(notional, (int, float)) or notional <= 0:
+        result["rejected"].append({"intent": intent, "reason": "missing/invalid notional"})
+        return
+
+    price = market.get_current_prices([pos.symbol]).get(pos.symbol) or 0.0
+    if price <= 0:
+        result["rejected"].append({"intent": intent, "reason": "no price"})
+        return
+
+    sell_qty = min(float(notional) / price, pos.qty)
+    remainder_notional = (pos.qty - sell_qty) * price
+    if not costengine.notional_ok(remainder_notional):
+        # The remainder would be dust no order could fill — close the whole position instead
+        # of stranding it.
+        realized = force_close(db, pos, "reduce→close (remainder below min notional)")
+        result["executed"].append({"action": "close", "position_id": pos.id, "realized": realized})
+        return
+
+    order, _ = orders.queue_order(
+        db, symbol=pos.symbol, side="SELL", quantity=sell_qty, price=0.0, order_type="MARKET",
+        source="opus", source_ref=f"opus:{pos.id}:reduce", strategy_name="OPUS",
+        note=(intent.get("reason") or "")[:200],
+    )
+    fill = orders.approve_order(db, order.id, reviewer="opus")
+    pos.qty -= fill.quantity
+    pos.realized_pnl = (pos.realized_pnl or 0.0) + (fill.realized_pnl or 0.0)
+    audit.log(db, "opus", "reduce", entity=f"opos:{pos.id}", symbol=pos.symbol,
+              qty=round(fill.quantity, 8), realized=round(fill.realized_pnl or 0.0, 4),
+              reason=intent.get("reason"))
+    result["executed"].append({"action": "reduce", "position_id": pos.id,
+                               "qty": round(fill.quantity, 8)})
+
+
 def _close(db: Session, intent: dict, result: dict) -> None:
     pid = intent.get("position_id")
     pos = db.get(OpusPosition, pid) if isinstance(pid, int) else None
@@ -147,13 +219,25 @@ def apply_intents(db: Session, intents: list[dict]) -> dict:
         result["rejected"] = [{"intent": it, "reason": "frozen"} for it in intents]
         return result
 
+    # P2: daily-loss stop only blocks NEW opens; closes/reduces still run (risk reduction
+    # never waits for the brake to lift). Logged once per batch, not per intent.
+    daily_stop = service.daily_loss_stop_active(db)
+    if daily_stop:
+        audit.log(db, "opus", "skipped_daily_loss_stop",
+                  n=sum(1 for it in intents if it.get("action") == "open"))
+
     allowed = _candidate_symbols(db)
     for it in intents:
         try:
             if it["action"] == "open":
+                if daily_stop:
+                    result["rejected"].append({"intent": it, "reason": "daily_loss_stop"})
+                    continue
                 _open(db, it, allowed, result)
             elif it["action"] == "close":
                 _close(db, it, result)
+            elif it["action"] == "reduce":
+                _reduce(db, it, result)
             # 'hold' → nothing
         except Exception as exc:  # one bad intent must not abort the batch
             log.warning("OPUS intent failed (%s): %s", it.get("action"), type(exc).__name__)

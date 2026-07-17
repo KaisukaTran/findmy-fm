@@ -125,6 +125,25 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "opus_solo_min_consensus": float,
     "opus_lessons_max": int,
     "opus_history_n": int,
+    "opus_daily_loss_stop_pct": float,
+    # Accountability (P4): daily report + rolling-window auto-freeze.
+    "opus_auto_freeze_enabled": _to_bool,
+    "opus_freeze_window_days": int,
+    "opus_freeze_min_closed": int,
+    # Haiku triage (P3) — cheap pre-screen gate in front of each paid Opus decision.
+    "opus_triage_enabled": _to_bool,
+    "opus_triage_model": str,
+    "opus_triage_price_in_per_mtok": float,
+    "opus_triage_price_out_per_mtok": float,
+    "opus_max_decision_gap_min": int,
+    # OPUS envelope/cadence knobs (P5 trial) — the god-mode plan §3 required these to be
+    # runtime-editable; without them the $500-trial sizing could not be set or persisted.
+    "opus_allocation_usd": float,
+    "opus_max_trade_notional": float,
+    "opus_kpi_target_pct": float,
+    "opus_interval_min": int,
+    "opus_daily_cost_cap_usd": float,
+    "opus_ride_hard_sl_pct": float,
     # Market-wide BTC regime gate (shadow-first; see app/regime.py) — OFF by default.
     "regime_gate_enabled": _to_bool,
     "regime_gate_enforcing": _to_bool,

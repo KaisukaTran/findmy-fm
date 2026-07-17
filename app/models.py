@@ -323,6 +323,11 @@ class Candidate(Base):
     # vs running avg across backtest trials). Pure persistence — does not change any gate.
     avg_mae: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     worst_mae: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    # P3 (docs/opus-3pct-plan.md §2): the full TA evidence bundle (JSON), persisted only for
+    # gate-bound candidates (see scanner.py where ta_bundle.build() already runs) — a richer
+    # OPUS snapshot input than the summary fields above. NULL for candidates that never
+    # reached the gate.
+    ta_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     est_days_to_tp: Mapped[float | None] = mapped_column(Float, nullable=True)
     decision: Mapped[str] = mapped_column(String(8), nullable=False, default="skip")  # trade / skip
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)

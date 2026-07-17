@@ -366,11 +366,11 @@ class Settings(BaseSettings):
     opus_allocation_usd: float = Field(default=2000.0, description="Capital envelope carved out for OPUS mode. KPI denominator; rule-based mode sees equity minus this.")
     opus_interval_min: int = Field(default=5, description="Minutes between OPUS decision ticks.")
     opus_daily_cost_cap_usd: float = Field(default=5.0, description="Hard ceiling on Opus API spend per day; exceeded → OPUS pauses new decisions.")
-    opus_kpi_target_pct: float = Field(default=1.0, description="Net-profit KPI target on invested capital per rolling 24h (%).")
+    opus_kpi_target_pct: float = Field(default=3.0, description="Net-profit KPI target on invested capital per rolling 24h (%). A stretch target that regulates behaviour (behind-pace ⇒ more selective); not a promise.")
     opus_model: str = Field(default="claude-opus-4-8", description="Claude model id for the OPUS orchestrator brain.")
     opus_max_tokens: int = Field(default=2048, description="Max output tokens per OPUS decision call.")
-    opus_price_in_per_mtok: float = Field(default=15.0, description="Opus input price (USD per million tokens) for cost metering.")
-    opus_price_out_per_mtok: float = Field(default=75.0, description="Opus output price (USD per million tokens) for cost metering.")
+    opus_price_in_per_mtok: float = Field(default=5.0, description="Opus input price (USD per million tokens) for cost metering — Opus 4.8 list price (verified 2026-07-16).")
+    opus_price_out_per_mtok: float = Field(default=25.0, description="Opus output price (USD per million tokens) for cost metering — Opus 4.8 list price (verified 2026-07-16).")
     opus_cost_multiplier: float = Field(default=2.0, description="Multiplier applied to raw Opus cost before counting it against net profit (requirement #5).")
     opus_ride_hard_sl_pct: float = Field(default=10.0, description="Hard stop-loss for a 'ride' position so a reversing winner can't become an unbounded loss.")
     opus_max_trade_notional: float = Field(default=200.0, description="Per-trade notional cap for OPUS discretionary orders.")
@@ -381,6 +381,20 @@ class Settings(BaseSettings):
     opus_solo_min_consensus: float = Field(default=70.0, description="Deterministic-consensus floor required for a solo open.")
     opus_lessons_max: int = Field(default=8, description="Max distilled lessons injected into the system prompt.")
     opus_history_n: int = Field(default=20, description="Closed positions shown in the self-history block.")
+    opus_daily_loss_stop_pct: float = Field(default=3.0, description="Hard brake: when OPUS's realized net today (gross − billed API cost) reaches −X% of the allocation, no NEW opens until the next UTC day; closes still allowed. 0 = off.")
+
+    # --- Accountability (Phase P4, docs/opus-3pct-plan.md §2): daily report + auto-freeze ---
+    opus_auto_freeze_enabled: bool = Field(default=True, description="An toàn: tự tắt OPUS khi 7 ngày lăn liên tiếp net < 0 (đủ số lệnh đóng để có ý nghĩa) — opus_mode bị tắt; bật lại thủ công sau khi xem xét.")
+    opus_freeze_window_days: int = Field(default=7, description="Rolling window (days) the auto-freeze net/closed-count is measured over.")
+    opus_freeze_min_closed: int = Field(default=5, description="Minimum closed positions within the window before a negative net can trigger the auto-freeze (avoids freezing on a thin sample).")
+
+    # --- Haiku triage (Phase P3, docs/opus-3pct-plan.md §2): a cheap pre-screen gate in
+    # front of every paid Opus decision, so most due ticks never call the expensive brain.
+    opus_triage_enabled: bool = Field(default=False, description="Cheap pre-screen before each paid Opus decision: a Haiku call decides whether a full (expensive) decision is warranted this tick. False = every due tick goes straight to the full decision (today's behaviour).")
+    opus_triage_model: str = Field(default="claude-haiku-4-5-20251001", description="Claude model id used for the cheap Opus triage gate.")
+    opus_triage_price_in_per_mtok: float = Field(default=1.0, description="Triage input price (USD per million tokens) for cost metering — Haiku 4.5 list price (verified 2026-07-16).")
+    opus_triage_price_out_per_mtok: float = Field(default=5.0, description="Triage output price (USD per million tokens) for cost metering — Haiku 4.5 list price (verified 2026-07-16).")
+    opus_max_decision_gap_min: int = Field(default=60, description="Even when triage keeps saying no, force a full Opus decision at least this often (minutes) — the max-gap clock only advances on a FULL decision, never on a triage hold.")
 
     # --- Grok co-pilot (xAI) for consensus decisions with OPUS (off by default) ---
     # When enabled WITH a key, OPUS (Claude) and Grok (xAI) each decide on the SAME snapshot;

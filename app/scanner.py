@@ -430,6 +430,9 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
             # Grok review actually decides on), and surface a compact tag on the reason.
             ta = ta_bundle.build(candles, db, symbol)
             cand.reason = (cand.reason or "") + f" | TA: {_ta_tag(ta)}"
+            # P3: persist the full bundle too (richer OPUS snapshot input) — pure
+            # persistence, does not feed back into any gate here.
+            cand.ta_json = json.dumps(ta)
             # Hard entry-timing gate: refuse a confirmed downtrend (HTF+ST both down, strong ADX)
             # — don't catch a falling knife. Deterministic mirror of Grok's commonest veto, so it
             # protects entries even when the Grok gate is off. The TA evidence now blocks the open

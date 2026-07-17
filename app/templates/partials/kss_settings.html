@@ -173,13 +173,49 @@
       <option value="1" {% if k.opus_copy_mode %}selected{% endif %}>Bật</option>
       <option value="0" {% if not k.opus_copy_mode %}selected{% endif %}>Tắt</option>
     </select></label>
-  <label title="Cho OPUS mở lệnh một mình khi độ tin cậy đủ cao (không cần Grok đồng ý). HIỆU LỰC Ở PHA O-LIVE — hiện chưa nối thực thi, bật trước cũng chưa đặt lệnh.">OPUS mở lệnh một mình <span class="varname">opus_solo_open</span>
+  <label title="Cho OPUS mở lệnh MỘT MÌNH khi Grok bật mà không đồng ý (Grok vẫn đóng/giảm được). Sàn consensus dưới đây vẫn cưỡng chế phía cage.">OPUS mở lệnh một mình <span class="varname">opus_solo_open</span>
     <select name="opus_solo_open" class="select-inline">
       <option value="1" {% if k.opus_solo_open %}selected{% endif %}>Bật</option>
       <option value="0" {% if not k.opus_solo_open %}selected{% endif %}>Tắt</option>
     </select></label>
-  <label title="Ngưỡng consensus tối thiểu (deterministic) để OPUS được mở một mình ở chế độ solo (pha O-LIVE).">Consensus tối thiểu cho solo % <span class="varname">opus_solo_min_consensus</span>
+  <label title="Ngưỡng consensus tối thiểu (deterministic) — được cưỡng chế trong policy (cage) cho MỌI lệnh mở solo. 0 = tắt sàn.">Consensus tối thiểu cho solo % <span class="varname">opus_solo_min_consensus</span>
     <input name="opus_solo_min_consensus" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.opus_solo_min_consensus) }}"></label>
+  <label title="Phanh lỗ ngày: khi net hôm nay của OPUS chạm −X% vốn cấp thì KHÔNG mở lệnh mới nữa đến 00:00 UTC (đóng/giảm vẫn được). 0 = tắt.">Phanh lỗ ngày % <span class="varname">opus_daily_loss_stop_pct</span>
+    <input name="opus_daily_loss_stop_pct" type="number" step="0.5" min="0" value="{{ '%.1f'|format(k.opus_daily_loss_stop_pct) }}"></label>
+  <label title="Haiku sàng lọc rẻ trước mỗi lần gọi Opus đắt: nếu Haiku nói 'không có gì đáng quyết định' thì bỏ qua tick này, tiết kiệm chi phí.">Bật Haiku triage <span class="varname">opus_triage_enabled</span>
+    <select name="opus_triage_enabled" class="select-inline">
+      <option value="1" {% if k.opus_triage_enabled %}selected{% endif %}>Bật</option>
+      <option value="0" {% if not k.opus_triage_enabled %}selected{% endif %}>Tắt</option>
+    </select></label>
+  <label title="Model id dùng cho bước triage Haiku (rẻ) trước quyết định Opus đầy đủ.">Model triage <span class="varname">opus_triage_model</span>
+    <input name="opus_triage_model" type="text" value="{{ k.opus_triage_model }}"></label>
+  <label title="Giá Haiku $/1M token (in/out) để tính chi phí — token vào.">Giá Haiku $/1M token (in) <span class="varname">opus_triage_price_in_per_mtok</span>
+    <input name="opus_triage_price_in_per_mtok" type="number" step="0.1" min="0" value="{{ '%.1f'|format(k.opus_triage_price_in_per_mtok) }}"></label>
+  <label title="Giá Haiku $/1M token (in/out) để tính chi phí — token ra.">Giá Haiku $/1M token (out) <span class="varname">opus_triage_price_out_per_mtok</span>
+    <input name="opus_triage_price_out_per_mtok" type="number" step="0.1" min="0" value="{{ '%.1f'|format(k.opus_triage_price_out_per_mtok) }}"></label>
+  <label title="Dù triage nói không, vẫn buộc Opus quyết định đầy đủ ít nhất mỗi X phút.">Khoảng cách quyết định tối đa (phút) <span class="varname">opus_max_decision_gap_min</span>
+    <input name="opus_max_decision_gap_min" type="number" step="5" min="0" value="{{ k.opus_max_decision_gap_min }}"></label>
+  <label title="Tự tắt OPUS khi net cửa sổ N ngày < 0 qua đủ lệnh đóng.">Bật tự đóng băng <span class="varname">opus_auto_freeze_enabled</span>
+    <select name="opus_auto_freeze_enabled" class="select-inline">
+      <option value="1" {% if k.opus_auto_freeze_enabled %}selected{% endif %}>Bật</option>
+      <option value="0" {% if not k.opus_auto_freeze_enabled %}selected{% endif %}>Tắt</option>
+    </select></label>
+  <label title="Cửa sổ (ngày) lăn để tính net/số lệnh đóng cho tự đóng băng.">Cửa sổ tự đóng băng (ngày) <span class="varname">opus_freeze_window_days</span>
+    <input name="opus_freeze_window_days" type="number" step="1" min="1" value="{{ k.opus_freeze_window_days }}"></label>
+  <label title="Số lệnh đóng tối thiểu trong cửa sổ trước khi net âm được phép kích hoạt tự đóng băng (tránh đóng băng vì mẫu quá mỏng).">Số lệnh đóng tối thiểu <span class="varname">opus_freeze_min_closed</span>
+    <input name="opus_freeze_min_closed" type="number" step="1" min="0" value="{{ k.opus_freeze_min_closed }}"></label>
+  <label title="Vốn cấp riêng cho OPUS (mẫu số KPI). Trial 2026-07: $500; đạt gate mới nâng dần.">Vốn cấp OPUS $ <span class="varname">opus_allocation_usd</span>
+    <input name="opus_allocation_usd" type="number" step="50" min="0" value="{{ '%.0f'|format(k.opus_allocation_usd) }}"></label>
+  <label title="Trần notional mỗi lệnh mở của OPUS (cage cứng, policy clamp). Trial: $100 để không dồn 40% vốn vào một lệnh.">Trần notional/lệnh $ <span class="varname">opus_max_trade_notional</span>
+    <input name="opus_max_trade_notional" type="number" step="10" min="1" value="{{ '%.0f'|format(k.opus_max_trade_notional) }}"></label>
+  <label title="Mục tiêu net %/24h trên vốn cấp — mục tiêu KÉO DÃN điều tiết hành vi (chậm nhịp ⇒ chọn lọc hơn), không phải lời hứa.">KPI mục tiêu %/24h <span class="varname">opus_kpi_target_pct</span>
+    <input name="opus_kpi_target_pct" type="number" step="0.5" min="0" max="100" value="{{ '%.1f'|format(k.opus_kpi_target_pct) }}"></label>
+  <label title="Chu kỳ tick của vòng lặp OPUS (phút).">Chu kỳ tick (phút) <span class="varname">opus_interval_min</span>
+    <input name="opus_interval_min" type="number" step="1" min="1" value="{{ k.opus_interval_min }}"></label>
+  <label title="Trần chi phí API Opus mỗi ngày (đã ×2). Chạm trần thì ngừng quyết định mới đến 00:00 UTC.">Trần chi phí Opus $/ngày <span class="varname">opus_daily_cost_cap_usd</span>
+    <input name="opus_daily_cost_cap_usd" type="number" step="0.5" min="0" value="{{ '%.1f'|format(k.opus_daily_cost_cap_usd) }}"></label>
+  <label title="Stop-loss cứng cho vị thế 'ride' — winner đảo chiều không thể thành lỗ vô hạn (cage cứng).">Ride hard-SL % <span class="varname">opus_ride_hard_sl_pct</span>
+    <input name="opus_ride_hard_sl_pct" type="number" step="1" min="0" max="90" value="{{ '%.0f'|format(k.opus_ride_hard_sl_pct) }}"></label>
   <label title="Số 'bài học' chắt lọc tối đa được tiêm vào prompt hệ thống của OPUS (bộ nhớ học từ kết quả thật).">Số bài học tối đa <span class="varname">opus_lessons_max</span>
     <input name="opus_lessons_max" type="number" step="1" min="0" value="{{ k.opus_lessons_max }}"></label>
   <label title="Số vị thế đã đóng gần nhất của OPUS đưa vào snapshot để nó tự soi thành tích (ride/rescue lãi hay lỗ).">Lịch sử vị thế đưa vào <span class="varname">opus_history_n</span>

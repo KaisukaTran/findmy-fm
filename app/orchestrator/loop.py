@@ -25,13 +25,20 @@ _task: asyncio.Task | None = None
 def tick(db: Session) -> dict:
     """One OPUS decision cycle. Returns a small summary. Never raises."""
     from app import audit
-    from app.orchestrator import brain, ledger, policy, service, watch
+    from app.orchestrator import brain, ledger, policy, report, service, watch
 
     if not settings.opus_mode:
         return {"skipped": "off"}
 
     # 1) Always manage open positions first (3h watch → ride/KSS-rescue), even when capped.
     watch_summary = watch.run(db)
+
+    # 1b) Accountability (P4): daily Telegram report + rolling-7-day auto-freeze. Placed
+    # right after watch so both run even when the cost cap below skips the paid decision —
+    # accountability must not depend on budget. Each is self-throttled to once/UTC day and
+    # never raises (mirrors watch/distill: a reporting bug can't sink the tick).
+    report.maybe_daily_report(db)
+    report.maybe_auto_freeze(db)
 
     # 2) Cost-cap gate: pause NEW decisions when the daily Opus budget is spent.
     if service.cost_cap_reached(db):
@@ -65,6 +72,26 @@ def tick(db: Session) -> dict:
             ledger.rollup_now(db)
             return {"skipped": "throttled", "watch": watch_summary}
 
+    # 3b) Haiku triage (P3): a cheap pre-screen before the paid decision, so most due ticks
+    # never call the expensive brain at all. A "no" holds UNLESS the max-gap clock — measured
+    # from the last FULL decision, never from a hold — has expired, so a triage bug/bias can't
+    # starve the brain forever. opus_last_decision_at is NOT touched on a hold (that clock only
+    # advances on a real decision below).
+    if settings.opus_triage_enabled:
+        from app.orchestrator import triage
+
+        verdict = triage.assess(db)
+        if not verdict.get("act", True):
+            gap_elapsed_min = 1e9  # never decided yet → treat as fully due, let it through
+            if last:
+                try:
+                    gap_elapsed_min = (utcnow() - datetime.fromisoformat(last)).total_seconds() / 60.0
+                except ValueError:
+                    gap_elapsed_min = 1e9
+            if gap_elapsed_min < settings.opus_max_decision_gap_min:
+                ledger.rollup_now(db)
+                return {"skipped": "triage_hold", "watch": watch_summary}
+
     # 4) Decide + route through the sandbox. With Grok on, OPUS and Grok each decide on the
     #    SAME snapshot and consensus.combine() merges them (open=both agree, close=either).
     from app import audit
@@ -76,7 +103,8 @@ def tick(db: Session) -> dict:
     if grok.enabled():
         g = grok.decide(db)
         billed += g.get("billed_cost", 0.0)
-        merged = consensus.combine(intents, g["intents"] if g.get("ok") else [])
+        merged = consensus.combine(intents, g["intents"] if g.get("ok") else [],
+                                    solo_open=settings.opus_solo_open)
         audit.log(db, "consensus", "merge", **merged["stats"])
         intents = merged["intents"]
     runtime.set(db, "opus_last_decision_at", utcnow().isoformat())

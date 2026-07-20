@@ -224,17 +224,29 @@ def test_isolated_fund_includes_defensive_and_total_cost_stays_within_it(db, mon
 
 
 def test_defensive_sized_to_fit_deploy_cap_headroom(db, monkeypatch):
-    """Deploy-cap interaction: with max_session_deploy_usd small, the defensive is shrunk to fit
-    the remaining headroom instead of ignoring the per-session cap."""
-    row = _create_started(db, monkeypatch, entry=1.0, scan_fund=1500.0,
-                          max_session_deploy_usd=50.0)
+    """Deploy-cap interaction: create_pyramid_up_session now clamps the whole ladder to the cap,
+    so the shrink branch bites only when the runtime-editable cap is LOWERED between create and
+    start — the defensive is then shrunk to the remaining headroom instead of ignoring the cap."""
+    monkeypatch.setattr(market, "get_exchange_info",
+                        lambda sym: {"stepSize": 0.0001, "minQty": 0.0001})
+    monkeypatch.setattr(market, "get_current_prices", lambda syms, force=False: {"AAA": 1.0})
+    monkeypatch.setattr(settings, "scan_fund", 1500.0)
+    monkeypatch.setattr(settings, "pyramid_up_max_adds", 2)
+    monkeypatch.setattr(settings, "pyramid_up_step_pct", 2.0)
+    monkeypatch.setattr(settings, "pyramid_up_size_ratio", 0.7)
+    monkeypatch.setattr(settings, "max_session_deploy_usd", 0.0)   # cap off → full $1500 ladder
+    row = service.create_pyramid_up_session(db, symbol="AAA", entry_price=1.0, tp_pct=4.0,
+                                            deadline_days=30)
+    monkeypatch.setattr(settings, "max_session_deploy_usd", 500.0)  # lowered below the base cost
+    service.start_pyramid_up_session(db, row.id)
+    db.refresh(row)
     base = db.query(KssWave).filter(KssWave.session_id == row.id, KssWave.wave_num == 0).one()
-    base_cost = base.quantity * row.entry_price
-    assert base_cost > 50.0, base_cost  # the cap actually binds tighter than the base itself
+    base_cost = base.quantity * row.entry_price                     # ≈ $675 from the uncapped ladder
+    assert base_cost > 500.0, base_cost
     defw = db.query(KssWave).filter(KssWave.session_id == row.id, KssWave.wave_num == DEF).one()
     def_cost = defw.quantity * defw.target_price
-    assert def_cost <= 50.0 * 1.05
-    assert def_cost < base_cost
+    assert def_cost <= 500.0 * 1.05                                 # shrunk to the cap headroom
+    assert def_cost < base_cost                                     # not the base-sized rung
 
 
 def test_defensive_omitted_when_even_minqty_exceeds_headroom(db, monkeypatch):

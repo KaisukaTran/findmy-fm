@@ -101,6 +101,34 @@ def test_auto_chain_skipped_over_cap(db, monkeypatch):
     assert db.query(AuditLog).filter(AuditLog.action == "deploy_cap_hit").count() == 1
 
 
+# ---- enforcement: pyramid_up base ladder (create_pyramid_up_session) ----
+# The base wave is a MARKET buy that never passes _session_deploy_headroom (unlike every later
+# rung), so the cap must bound the ladder at its source. GIGGLE #11: scan_fund=1000 → a $486
+# base on a $1k book, blowing past max_session_deploy_usd=150 in one shot.
+
+def _stub_exchange_info(monkeypatch):
+    monkeypatch.setattr(market, "get_exchange_info",
+                        lambda sym: {"stepSize": 0.00001, "minQty": 0.00001})
+
+
+def test_pyramid_up_ladder_capped_by_deploy_cap(db, monkeypatch):
+    monkeypatch.setattr(settings, "max_session_deploy_usd", 150.0)
+    monkeypatch.setattr(settings, "scan_fund", 1000.0)
+    _stub_exchange_info(monkeypatch)
+    row = service.create_pyramid_up_session(
+        db, symbol="AAA", entry_price=27.0, tp_pct=4.0, deadline_days=30)
+    assert row.isolated_fund <= 150.0
+
+
+def test_pyramid_up_ladder_uses_scan_fund_when_cap_off(db, monkeypatch):
+    monkeypatch.setattr(settings, "max_session_deploy_usd", 0.0)
+    monkeypatch.setattr(settings, "scan_fund", 1000.0)
+    _stub_exchange_info(monkeypatch)
+    row = service.create_pyramid_up_session(
+        db, symbol="AAA", entry_price=27.0, tp_pct=4.0, deadline_days=30)
+    assert row.isolated_fund > 150.0     # unclamped — sized off scan_fund as before
+
+
 # ---- enforcement: the Telegram ➕ button (queue_manual_extra_wave) ----
 
 def test_button_rejected_and_rolls_back_over_cap(db, monkeypatch):

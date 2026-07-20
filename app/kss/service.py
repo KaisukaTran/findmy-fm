@@ -375,8 +375,14 @@ def create_pyramid_up_session(
     # USD knob the DCA-down path reserves before computing its own real ladder cost) purely to
     # read off its actual (rounded) total cost for isolated_fund; start_pyramid_up_session rebuilds
     # the ladder fresh at start time against this isolated_fund.
+    # max_session_deploy_usd must bound the ladder HERE: the base wave is a MARKET buy that never
+    # passes _session_deploy_headroom (unlike every later rung), so an uncapped scan_fund deploys
+    # in one shot (GIGGLE #11: $486 base on a $1k book).
+    target_fund = settings.scan_fund
+    if settings.max_session_deploy_usd > 0:
+        target_fund = min(target_fund, settings.max_session_deploy_usd)
     ladder = pyramid_up.build_ladder(
-        entry=entry_price, target_fund=settings.scan_fund, max_adds=knobs["max_adds"],
+        entry=entry_price, target_fund=target_fund, max_adds=knobs["max_adds"],
         step_pct=knobs["step_pct"], size_ratio=knobs["size_ratio"],
         step_size=info.get("stepSize", 0.00001), min_qty=info.get("minQty", 0.00001),
     )

@@ -97,6 +97,14 @@ class Settings(BaseSettings):
         default=SecretStr(""),
         description="API secret for the live exchange. Empty = live off. Never logged.",
     )
+    use_exchange_balance: bool = Field(
+        default=False,
+        description="Phase 0 capital anchor (docs/capital-scaling-2026-08-23.md §2.1): LIVE only "
+        "AND opt-in. When on, every capital-derived size (equity, position caps, ...) is based on "
+        "the REAL exchange quote-currency balance (ccxt fetch_balance()) instead of the "
+        "`account_equity` constant. Off (default), or paper, or the fetch fails -> falls back to "
+        "`account_equity` unchanged. Never affects paper.",
+    )
     # --- Live-readiness knobs (additive; inert until the live maker/async path is built) ---
     maker_orders: bool = Field(
         default=False,

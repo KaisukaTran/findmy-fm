@@ -119,6 +119,9 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "maker_orders": _to_bool,
     "order_fill_timeout_sec": int,
     "live_use_testnet": _to_bool,
+    # Phase 0 capital anchor (docs/capital-scaling-2026-08-23.md §2.1) — LIVE + opt-in only;
+    # off (default) or paper always uses settings.account_equity unchanged.
+    "use_exchange_balance": _to_bool,
     # OPUS god-mode scaffolding (docs/opus-godmode-plan.md §3) — wiring deferred, knobs persist now.
     "opus_copy_mode": _to_bool,
     "opus_solo_open": _to_bool,

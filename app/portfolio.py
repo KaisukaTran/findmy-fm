@@ -64,13 +64,15 @@ def positions_view(
     positions = db.query(Position).filter(Position.quantity > 0).all()
     if not positions:
         return []
+    from app import risk  # lazy: risk -> portfolio; avoid an import cycle at load
+
     prices = get_current_prices([p.symbol for p in positions])
     owners = _symbol_owners(db)
     # Total equity (computed inline — calling equity() here would recurse into positions_view).
     total_mv = sum(p.quantity * prices.get(p.symbol, 0.0) for p in positions)
     total_invested = sum(p.total_cost for p in positions)
     realized = float(db.query(func.coalesce(func.sum(Fill.realized_pnl), 0.0)).scalar() or 0.0)
-    equity = (settings.account_equity - total_invested + realized) + total_mv
+    equity = (risk.capital_anchor(db) - total_invested + realized) + total_mv
     eq = equity or 1.0
     rows = []
     for p in positions:
@@ -187,19 +189,28 @@ def trades_view(
 
 
 def equity(db: Session) -> float:
-    """Live mark-to-market equity = cash + open market value."""
+    """Live mark-to-market equity = cash + open market value.
+
+    ``cash``'s base is ``risk.capital_anchor(db)`` (Phase 0, docs/capital-scaling-2026-08-23.md
+    §2.1) — the real exchange balance on live when opted in, else ``settings.account_equity``
+    (paper: always, byte-identical to pre-Phase-0 behaviour).
+    """
+    from app import risk  # lazy: risk -> portfolio; avoid an import cycle at load
+
     positions = positions_view(db)
     total_market_value = sum(p["market_value"] for p in positions)
     total_invested = sum(p["total_cost"] for p in positions)
     realized_pnl = float(
         db.query(func.coalesce(func.sum(Fill.realized_pnl), 0.0)).scalar() or 0.0
     )
-    cash = settings.account_equity - total_invested + realized_pnl
+    cash = risk.capital_anchor(db) - total_invested + realized_pnl
     return cash + total_market_value
 
 
 def summary_view(db: Session) -> dict:
     """Portfolio summary: equity, realized/unrealized P&L, counts."""
+    from app import risk  # lazy: risk -> portfolio; avoid an import cycle at load
+
     positions = positions_view(db)
     total_market_value = sum(p["market_value"] for p in positions)
     total_invested = sum(p["total_cost"] for p in positions)
@@ -213,9 +224,10 @@ def summary_view(db: Session) -> dict:
         db.query(func.count(PendingOrder.id)).filter(PendingOrder.status == "pending").scalar() or 0
     )
 
-    cash = settings.account_equity - total_invested + realized_pnl
+    cash = risk.capital_anchor(db) - total_invested + realized_pnl
     total_equity = cash + total_market_value
-    base = settings.account_equity or 1.0  # % of starting capital for P&L
+    base = settings.account_equity or 1.0  # % of starting capital for P&L (unadjusted — a
+    # historical baseline for the P&L ratio, not a live cash figure; see docs/capital-scaling)
     eq = total_equity or 1.0
     return {
         "total_trades": int(total_trades),

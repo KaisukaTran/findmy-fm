@@ -51,7 +51,7 @@ _MUTABLE_SETTINGS = (
     "scan_max_symbols", "min_quote_volume", "kss_first_wave_usd",
     "max_concurrent_sessions", "max_sessions_per_symbol",
     "live_trading", "live_max_order_notional",
-    "maker_orders", "order_fill_timeout_sec", "live_use_testnet",
+    "maker_orders", "order_fill_timeout_sec", "live_use_testnet", "use_exchange_balance",
     "telegram_notify_trades", "telegram_notify_risk", "telegram_digest_hours",
     "overextension_penalty_enabled", "overextension_penalty_weight", "overextension_lookback_bars",
 )

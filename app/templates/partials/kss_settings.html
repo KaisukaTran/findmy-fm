@@ -57,6 +57,11 @@
         </select></label>
       <label title="Bỏ session ra khỏi list Liệt kê khi coin đã RỚT hơn %% này so với ENTRY (mốc bắt đầu thang, KHÔNG phải avg — DCA kéo uPnL-vs-avg về gần 0 nên avg không lọc được). Tránh mời bình quân vào 'dao rơi' đã lao sâu. 0 = không lọc.">Ẩn khỏi list nếu rớt hơn % (vs entry) <span class="varname">maxdca_max_underwater_pct</span>
         <input name="maxdca_max_underwater_pct" type="number" step="0.1" min="0" max="100" data-type="num" value="{{ '%.1f'|format(k.maxdca_max_underwater_pct) }}" required></label>
+      <label title="CHỈ ẢNH HƯỞNG LIVE_TRADING: đọc số dư THẬT từ sàn (ccxt fetch_balance) làm mỏ neo vốn thay vì hằng số account_equity trong .env. Tắt (mặc định) hoặc paper luôn dùng account_equity — trừ đi rút tiền thật (withdrawals) nếu có. Bật + fetch lỗi → tự rơi về account_equity, không chặn.">Dùng số dư sàn thật (LIVE) <span class="varname">use_exchange_balance</span>
+        <select name="use_exchange_balance" class="select-inline" data-type="bool">
+          <option value="1" {% if k.use_exchange_balance %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.use_exchange_balance %}selected{% endif %}>Tắt</option>
+        </select></label>
     </div>
   </details>
 

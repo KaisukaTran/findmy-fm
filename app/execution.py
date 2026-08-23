@@ -169,6 +169,23 @@ def fetch_live_order(pair: str, order_id: str) -> dict:
     return {"status": status, "filled": filled, "average": avg, "fee": fee, "raw_id": order.get("id")}
 
 
+def fetch_account_balance(quote: str) -> float:
+    """Fetch the REAL quote-currency balance (free + used) on ``settings.live_exchange`` via
+    ccxt ``fetch_balance()`` (Phase 0 capital anchor, docs/capital-scaling-2026-08-23.md §2.1).
+
+    Uses the same authenticated client as ``place_live_order`` — no second credentials path.
+    ``used`` is included (not just ``free``) because quote currency locked in open orders is
+    still the account's capital, just not idle. Raises on any exchange error; the caller
+    (``app.risk.capital_anchor``) must catch and fail soft. Never logs the key/secret.
+    """
+    ex = _client()
+    bal = ex.fetch_balance()
+    row = bal.get(quote) or {}
+    free = float(row.get("free") or 0.0)
+    used = float(row.get("used") or 0.0)
+    return free + used
+
+
 # --- 1.2: exchange-filter compliance (pure; live placement rounds through this) ---------
 
 

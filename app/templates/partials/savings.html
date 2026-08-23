@@ -1,6 +1,6 @@
 <div id="savings-pane"
      hx-get="/partials/savings"
-     hx-trigger="every 30s [tabActive(this) && document.visibilityState==='visible'], refresh-savings from:body"
+     hx-trigger="refresh-savings from:body"
      hx-target="this" hx-swap="outerHTML">
 
 <p class="muted mb-10-0">Coin bạn tự tích trữ (mua ngoài), tag <b>KAI</b> — ghi nhận để theo dõi + hiển thị.
@@ -24,8 +24,8 @@
     <tr>
       <td><b>{{ r.symbol }}</b> <span class="badge ml-on" title="Nguồn KAI — savings, bot không bán">{{ r.src }}</span></td>
       <td>{{ r.quantity | qty }}</td>
-      <td>${{ r.avg_cost | money }}</td>
-      <td>{{ ('$' + (r.price | money)) if r.price else '—' }}</td>
+      <td>{{ r.avg_cost | price }}</td>
+      <td>{{ (r.price | price) if r.price else '—' }}</td>
       <td>${{ r.value | money_kmb }}</td>
       <td class="{{ 'pos' if r.unrealized_pnl >= 0 else 'neg' }}">${{ r.unrealized_pnl | money_kmb }} ({{ '%+.1f'|format(r.unrealized_pnl_pct) }}%)</td>
       <td class="muted">{{ r.note or '' }}</td>

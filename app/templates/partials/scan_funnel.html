@@ -1,0 +1,33 @@
+<div id="scan-funnel"
+     hx-get="/partials/scan-funnel?window={{ f.window }}"
+     hx-trigger="every 30s [tabActive(this) && document.visibilityState==='visible'], refresh-scanner from:body"
+     hx-target="this" hx-swap="outerHTML">
+
+  <div class="perf-period">
+    {% for key, lbl in [('24h', '24h'), ('7d', '7 ngày')] %}
+    <button class="sm {{ '' if f.window == key else 'ghost' }}"
+            hx-get="/partials/scan-funnel?window={{ key }}"
+            hx-target="#scan-funnel" hx-swap="outerHTML">{{ lbl }}</button>
+    {% endfor %}
+  </div>
+
+  <div class="scroll mt-8"><table class="tbl">
+    <thead><tr>
+      <th>Giai đoạn</th>
+      <th title="Đếm từ audit_log theo action (không dùng candidates.decision — nhánh chặn muộn như Grok veto/trần lệnh/ngân sách KHÔNG cập nhật cột đó, xem comment app/scanfunnel.py).">Số lượng</th>
+      <th title="Tỉ lệ so với tổng ứng viên đã chấm trong cửa sổ (riêng 2 dòng 'bỏ cả chu kỳ' tính theo tổng chu kỳ quét).">% còn lại</th>
+      <th>Ghi chú</th>
+    </tr></thead>
+    <tbody>
+      {% for r in f.rows %}
+      <tr class="{{ 'funnel-warn' if r.warn else '' }}">
+        <td>{{ r.label }}</td>
+        <td>{{ r.count }}</td>
+        <td>{{ "%.1f"|format(r.pct) }}%</td>
+        <td class="muted">{{ r.note or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  <p class="muted fs-11 mt-6">Nguồn: audit_log (theo action) + scan_runs, cửa sổ {{ f.window }}. "Bỏ CẢ chu kỳ" = scan không đụng tới universe (ngân sách hết hoặc đã đầy concurrent) — tô đỏ khi &gt;50% số chu kỳ quét.</p>
+</div>

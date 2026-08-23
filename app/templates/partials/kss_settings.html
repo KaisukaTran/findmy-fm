@@ -1,226 +1,288 @@
 <p class="muted mb-10-0">Cấu hình tổng cho chiến lược KSS — áp dụng cho các session <b>mới</b>.
   Lưu bền qua restart. (Session đang chạy giữ tham số cũ, trừ SL/Trailing đọc động.)</p>
 
-<form id="kss-settings-form">
-  <label title="Khoảng cách giá giữa các sóng DCA. Giá sóng n = entry×(1−d%)^n.">Distance % <span class="varname">scan_distance_pct</span>
-    <input name="scan_distance_pct" type="number" step="0.1" min="0.1" value="{{ '%.2f'|format(k.scan_distance_pct) }}" required></label>
-  <label title="Chốt lời: bán toàn bộ khi giá ≥ avg×(1+TP%).">TP % <span class="varname">scan_tp_pct</span>
-    <input name="scan_tp_pct" type="number" step="0.1" min="0.1" value="{{ '%.2f'|format(k.scan_tp_pct) }}" required></label>
-  <label title="Mỗi mục tiêu chốt lời cộng thêm bao nhiêu LẦN phí khứ hồi (mua+bán = 2×phí sàn cao nhất) lên trên TP%, để TP luôn vượt phí có biên an toàn. 1.2 = +120% phí; 1.5 = +150% phí; 1.0 = vừa đủ phí. Áp dụng cả paper lẫn live.">Phủ phí khi TP (×phí) <span class="varname">tp_fee_coverage</span>
-    <input name="tp_fee_coverage" type="number" step="0.1" min="0" max="10" value="{{ '%.2f'|format(k.tp_fee_coverage) }}" required></label>
-  <label title="Số sóng DCA tối đa mỗi session.">Số sóng (max) <span class="varname">scan_max_waves</span>
-    <input name="scan_max_waves" type="number" step="1" min="1" value="{{ k.scan_max_waves }}" required></label>
-  <label title="(cũ) Vốn cô lập đặt cứng mỗi session. Không còn dùng cho scanner: mỗi session giờ TỰ tính vốn = tổng chi phí cả thang DCA (sóng đầu × số sóng × giá). Vẫn dùng cho session tạo thủ công.">Vốn/session $ (cũ) <span class="varname">scan_fund</span>
-    <input name="scan_fund" type="number" step="any" min="1" value="{{ '%.0f'|format(k.scan_fund) }}" required></label>
-  <label title="Cắt lỗ: bán toàn bộ khi giá ≤ avg×(1−SL%). 0 = tắt.">SL % <span class="varname">sl_pct</span>
-    <input name="sl_pct" type="number" step="0.1" min="0" value="{{ '%.2f'|format(k.sl_pct) }}" required></label>
-  <label title="Trailing stop: khi có lãi, bán nếu giá ≤ đỉnh×(1−Trail%). 0 = tắt.">Trailing % <span class="varname">trailing_pct</span>
-    <input name="trailing_pct" type="number" step="0.1" min="0" value="{{ '%.2f'|format(k.trailing_pct) }}" required></label>
-  <label title="Số ngày tối đa chờ TP trước khi đóng session.">Deadline (ngày) <span class="varname">deadline_days</span>
-    <input name="deadline_days" type="number" step="1" min="1" value="{{ k.deadline_days }}" required></label>
-  <label title="Số session KSS tối đa chạy song song. Tăng để mở thêm coin khi còn vốn.">Số session tối đa <span class="varname">max_concurrent_sessions</span>
-    <input name="max_concurrent_sessions" type="number" step="1" min="1" value="{{ k.max_concurrent_sessions }}" required></label>
-  <label title="Số session KSS tối đa MỖI coin. 1 (K-1) = một thang DCA/coin nên avg session = avg Position → không trộn giá vốn (tránh 'chốt lời mà thực ra lỗ' / kẹt TP do K-2). 0 = không giới hạn. Khuyến nghị 1.">Session tối đa / coin <span class="varname">max_sessions_per_symbol</span>
-    <input name="max_sessions_per_symbol" type="number" step="1" min="0" max="20" value="{{ k.max_sessions_per_symbol }}" required></label>
-  <label title="Tỷ lệ % equity (theo giá thị trường) LUÔN giữ lại làm dự phòng, không bao giờ triển khai. Ngân sách mở session = (100 − số này)% × equity. Session đã khớp <50% kế hoạch chỉ khóa phần đã mua (phần dư cho session khác mượn); ≥50% thì khóa toàn bộ kế hoạch. Giảm để dùng nhiều vốn hơn.">Dự phòng % equity <span class="varname">equity_backup_pct</span>
-    <input name="equity_backup_pct" type="number" step="any" min="0" max="90" value="{{ '%.0f'|format(k.equity_backup_pct) }}" required></label>
-  <label title="CHẶN CỨNG: tiền mặt tài khoản không bao giờ được xuống dưới mức này. Mỗi lệnh MUA bị khớp một phần đúng bằng tiền còn lại (hoặc bị giữ lại nếu không đủ cả lát tối thiểu) → Cash không bao giờ âm. 0 = Cash luôn ≥ 0. Lệnh BÁN không bị chặn.">Sàn tiền mặt $ <span class="varname">cash_floor_usd</span>
-    <input name="cash_floor_usd" type="number" step="any" min="0" value="{{ '%.0f'|format(k.cash_floor_usd) }}" required></label>
-  <label title="TRẦN CỨNG: 1 session không bao giờ được triển khai (đã bơm + sóng đang chờ) quá số USD này. MỌI sóng — auto-DCA, DCA+ thủ công, nút ➕ Telegram — vượt trần sẽ bị TỪ CHỐI. Đây là bức tường bảo toàn vốn cho live (thảm hoạ C từng bơm $162k vô giới hạn). 0 = tắt. Live: đặt ~15-20% equity.">Trần deploy/session $ <span class="varname">max_session_deploy_usd</span>
-    <input name="max_session_deploy_usd" type="number" step="any" min="0" value="{{ '%.0f'|format(k.max_session_deploy_usd) }}" required></label>
-  <label title="Hiện nút '➕ Thêm DCA' trên thẻ Liệt kê (Telegram). TẮT = list chỉ THÔNG BÁO (thang nào cạn nấc) + nút Bỏ qua → không lỡ tay bơm thêm DCA hàng loạt vào coin đang lỗ. Lệnh /dca_add <id> vẫn luôn dùng được khi anh chủ động.">Cho bấm ➕ Thêm DCA <span class="varname">maxdca_allow_add</span>
-    <select name="maxdca_allow_add" class="select-inline">
-      <option value="1" {% if k.maxdca_allow_add %}selected{% endif %}>Bật</option>
-      <option value="0" {% if not k.maxdca_allow_add %}selected{% endif %}>Tắt</option>
-    </select></label>
-  <label title="Bỏ session ra khỏi list Liệt kê khi coin đã RỚT hơn %% này so với ENTRY (mốc bắt đầu thang, KHÔNG phải avg — DCA kéo uPnL-vs-avg về gần 0 nên avg không lọc được). Tránh mời bình quân vào 'dao rơi' đã lao sâu. 0 = không lọc.">Ẩn khỏi list nếu rớt hơn % (vs entry) <span class="varname">maxdca_max_underwater_pct</span>
-    <input name="maxdca_max_underwater_pct" type="number" step="0.1" min="0" max="100" value="{{ '%.1f'|format(k.maxdca_max_underwater_pct) }}" required></label>
-  <label title="Chặn mở session mới cho coin đã thua K lần ĐÓNG LỆNH liên tiếp (một lần lãi sẽ phá chuỗi). Tăng để khó bị chặn hơn.">Chặn sau K lần thua <span class="varname">loss_streak_block_k</span>
-    <input name="loss_streak_block_k" type="number" step="1" min="1" max="20" value="{{ k.loss_streak_block_k }}" required></label>
-  <label title="Chỉ tính các lần đóng lệnh trong N ngày gần nhất — lỗ cũ trôi ra ngoài cửa sổ thì coin tự được giao dịch lại.">Cửa sổ lỗ (ngày) <span class="varname">loss_streak_window_days</span>
-    <input name="loss_streak_window_days" type="number" step="1" min="1" max="365" value="{{ k.loss_streak_window_days }}" required></label>
-  <label title="GIÃN VÀO COIN ĐÃ LỖ: sau khi coin bị CẮT LỖ (hard-SL), chặn mở lại theo bậc leo thang — lần 1 chặn N₁ tuần, lần 2 chặn N₂ tuần, lần ≥ ngưỡng blacklist thì chặn vĩnh viễn. Chỉ đếm lần chạm hard-SL (source_ref …:sl); trailing stop KHÔNG tính. Không đụng exit/DCA của session đang chạy.">Giãn vào mã đã lỗ <span class="varname">loss_reentry_enabled</span>
-    <select name="loss_reentry_enabled" class="select-inline">
-      <option value="1" {% if k.loss_reentry_enabled %}selected{% endif %}>Bật</option>
-      <option value="0" {% if not k.loss_reentry_enabled %}selected{% endif %}>Tắt</option>
-    </select></label>
-  <label title="Số TUẦN chặn mở lại sau lần chạm hard-SL ĐẦU TIÊN của coin. Tự hết chặn khi qua đủ số tuần này kể từ lần cắt lỗ.">Chặn lần 1 (tuần) <span class="varname">loss_reentry_weeks_1</span>
-    <input name="loss_reentry_weeks_1" type="number" step="1" min="1" max="520" value="{{ k.loss_reentry_weeks_1 }}" required></label>
-  <label title="Số TUẦN chặn sau lần chạm hard-SL THỨ HAI (≈2 tháng = 8 tuần). Cắt lỗ lặp lại → thời gian nghỉ dài hơn.">Chặn lần 2 (tuần) <span class="varname">loss_reentry_weeks_2</span>
-    <input name="loss_reentry_weeks_2" type="number" step="1" min="1" max="520" value="{{ k.loss_reentry_weeks_2 }}" required></label>
-  <label title="Số lần chạm hard-SL để coin bị BLACKLIST (chặn vĩnh viễn). Gỡ 1 coin bằng ô 'Ân xá' bên dưới.">Blacklist sau N lần <span class="varname">loss_reentry_blacklist_after</span>
-    <input name="loss_reentry_blacklist_after" type="number" step="1" min="1" max="50" value="{{ k.loss_reentry_blacklist_after }}" required></label>
-  <label title="Danh sách coin ĐƯỢC MIỄN chặn (ân xá / gỡ blacklist thủ công), cách nhau bằng dấu phẩy. Ví dụ: C, MIRA. Để trống = không miễn ai.">Ân xá (bỏ chặn) <span class="varname">loss_reentry_pardon</span>
-    <input name="loss_reentry_pardon" type="text" placeholder="vd: C, MIRA" value="{{ k.loss_reentry_pardon }}"></label>
-  <div class="muted" style="grid-column: 1 / -1; margin: 2px 0 6px;">
-    Đang bị chặn mở lại:
-    {% if blocked %}
-      {% for b in blocked %}<span class="varname" title="{{ b.reason }}">{{ b.symbol }} ({{ b.hard_sls }}×SL)</span>{% if not loop.last %} · {% endif %}{% endfor %}
-    {% else %}<span>không có coin nào.</span>{% endif %}
-  </div>
-  <label title="Gate CHÍNH: kỳ vọng net trung bình mỗi lệnh backtest (đã trừ SL + phí). Coin chỉ trade khi E ≥ ngưỡng này VÀ win-rate ≥ ngưỡng dưới.">Kỳ vọng tối thiểu E % <span class="varname">min_expectancy_pct</span>
-    <input name="min_expectancy_pct" type="number" step="0.1" min="-100" max="100" value="{{ '%.1f'|format(k.min_expectancy_pct) }}" required></label>
-  <label title="Win-rate tối thiểu (cận dưới Wilson) để đủ điều kiện trade. Cặp với gate kỳ vọng tạo thành quy tắc: trade khi E ≥ ngưỡng VÀ win-rate ≥ ngưỡng này.">Win-rate tối thiểu % <span class="varname">min_win_rate</span>
-    <input name="min_win_rate" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.min_win_rate) }}" required></label>
-  <label title="Ngưỡng đồng thuận tối thiểu của 4 agent thị trường (trend/dip/volatility/liquidity). S4: backtest bị loại khỏi điểm đồng thuận — chứng cứ backtest thuộc về các gate cứng (E, win_lb). Giá trị mặc định mới: 45%.">Đồng thuận tối thiểu % <span class="varname">min_confidence</span>
-    <input name="min_confidence" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.min_confidence) }}" required></label>
-  <label title="Số lần thử backtest TỐI THIỂU để edge đáng tin (win-rate 100% từ vài lần thử là nhiễu). Tăng để lọc mẫu mỏng. Mặc định 15.">Số lần thử tối thiểu <span class="varname">min_trials</span>
-    <input name="min_trials" type="number" step="1" min="1" max="200" value="{{ k.min_trials }}" required></label>
-  <label title="GATE THỜI ĐIỂM VÀO: chặn mở coin đang DOWNTREND xác nhận — khung lớn (HTF) VÀ Supertrend đều xuống VÀ ADX ≥ ngưỡng này (tránh 'bắt dao rơi'). 0 = tắt. Đây là bản deterministic của veto hay gặp nhất của Grok, hoạt động cả khi Grok tắt. Mặc định 25.">Chặn downtrend (ADX≥) <span class="varname">block_downtrend_adx</span>
-    <input name="block_downtrend_adx" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.block_downtrend_adx) }}" required></label>
-  <label title="GATE THỜI ĐIỂM VÀO (chặt hơn block_downtrend_adx): bỏ qua coin có động lượng NGẮN HẠN đang giảm — Supertrend xuống VÀ MACD histogram < 0 — để không mở thang DCA vào coin đang rơi (sẽ chỉ nằm đỏ tới khi bật lại). Bắt các nhịp giảm nhẹ mà gate downtrend (cần HTF+ST+ADX cùng xác nhận) bỏ lọt. Chạy cả khi Grok tắt.">Chặn động lượng giảm (falling-knife) <span class="varname">entry_momentum_gate</span>
-    <select name="entry_momentum_gate" class="select-inline">
-      <option value="1" {% if k.entry_momentum_gate %}selected{% endif %}>Bật</option>
-      <option value="0" {% if not k.entry_momentum_gate %}selected{% endif %}>Tắt</option>
-    </select></label>
-  <label title="Notional sóng đầu mỗi session. >0 = đặt cỡ lệnh đầu theo USD (dùng nhiều vốn hơn); 0 = cỡ pip mặc định (rất nhỏ).">Giá trị lệnh đầu (USD) <span class="varname">kss_first_wave_usd</span>
-    <input name="kss_first_wave_usd" type="number" step="any" min="0" value="{{ '%.2f'|format(k.kss_first_wave_usd) }}"></label>
-  <label title="Trần số coin mỗi lần quét. Tăng để quét nhiều coin hơn (mặc định 50).">Số coin quét tối đa <span class="varname">scan_max_symbols</span>
-    <input name="scan_max_symbols" type="number" step="1" min="1" value="{{ k.scan_max_symbols }}"></label>
-  <label title="Chỉ quét coin có quote-volume ≥ ngưỡng này. Giảm để quét thêm coin nhỏ (mặc định 1,000,000).">Thanh khoản tối thiểu (quote vol) <span class="varname">min_quote_volume</span>
-    <input name="min_quote_volume" type="number" step="any" min="0" value="{{ '%.0f'|format(k.min_quote_volume) }}"></label>
-  <h3 class="section-subhead">━ Trailing TP động (Ride &amp; Trail — chốt lời linh hoạt) ━</h3>
-  <label title="BẬT trailing-TP động (docs/kss-dynamic-tp-plan.md): khi 1 session vượt avg×(1+distance%) nó HỦY thang DCA còn lại và chuyển sang SL trailing theo ATR + TP nổi (sàn phí ×3 nên không exit tự động nào lỗ). TẮT = giữ nguyên hành vi TP cố định hiện tại.">Trailing-TP động <span class="varname">kss_dynamic_tp_enabled</span>
-    <select name="kss_dynamic_tp_enabled" class="select-inline">
-      <option value="1" {% if k.kss_dynamic_tp_enabled %}selected{% endif %}>Bật</option>
-      <option value="0" {% if not k.kss_dynamic_tp_enabled %}selected{% endif %}>Tắt</option>
-    </select></label>
-  <label title="TP nổi cách SL đã ratchet bao nhiêu %. Giá trị lớn → gần như chỉ còn trailing-SL (chandelier).">TP cách SL % <span class="varname">kss_tp_gap_pct</span>
-    <input name="kss_tp_gap_pct" type="number" step="0.1" min="0" value="{{ '%.1f'|format(k.kss_tp_gap_pct) }}"></label>
-  <label title="Hệ số sàn-phí: CẢ TP lẫn SL không bao giờ dưới avg×(1+ hệ_số×phí_khứ_hồi) → không exit tự động nào lỗ, kể cả phí. ≥1; 3 = thoải mái trên phí.">Sàn phí (×phí khứ hồi) <span class="varname">kss_exit_fee_mult</span>
-    <input name="kss_exit_fee_mult" type="number" step="0.5" min="1" value="{{ '%.1f'|format(k.kss_exit_fee_mult) }}"></label>
-  <label title="Khoảng cách SL trailing = hệ số này × ATR ngày của coin (thích nghi biến động — không nghẹt vì nhiễu, vẫn thoát khi đảo chiều thật).">Trailing × ATR <span class="varname">kss_trail_atr_mult</span>
-    <input name="kss_trail_atr_mult" type="number" step="0.1" min="0" value="{{ '%.1f'|format(k.kss_trail_atr_mult) }}"></label>
-  <label title="Sàn khoảng cách trailing: SL không bao giờ bám sát đỉnh hơn % này (coin êm vẫn có chỗ thở). Cũng là fallback khi thiếu ATR.">Trailing tối thiểu % <span class="varname">kss_trail_min_pct</span>
-    <input name="kss_trail_min_pct" type="number" step="0.1" min="0" value="{{ '%.1f'|format(k.kss_trail_min_pct) }}"></label>
-  <label title="Ride & Trail: vị thế có lãi RIDE tự do (bỏ cap TP cố định, chỉ hard SL bảo vệ) tới khi đỉnh ≥ avg×(1+%này) mới ARM trailing. Cao hơn = chạy xa hơn nhưng rủi ro giveback (đảo chiều trước khi arm → về hard SL = lỗ).">Arm trailing tại +% <span class="varname">kss_trail_arm_pct</span>
-    <input name="kss_trail_arm_pct" type="number" step="0.5" min="0" value="{{ '%.1f'|format(k.kss_trail_arm_pct) }}"></label>
-  <label title="Khi đã arm, SL không bao giờ khoá ÍT hơn %này (floor = max(fee_floor, avg×(1+%này))) → trail ATR rộng không kéo SL về break-even. Nên < arm%.">Khoá lãi tối thiểu % <span class="varname">kss_trail_lock_pct</span>
-    <input name="kss_trail_lock_pct" type="number" step="0.5" min="0" value="{{ '%.1f'|format(k.kss_trail_lock_pct) }}"></label>
-  <label title="Chu kỳ (giây) vòng guard nhẹ kiểm exit session ĐANG MỞ bằng ticker, tách khỏi scan 30 phút. Nhỏ = cửa sổ gap hẹp hơn.">Guard kiểm exit (giây) <span class="varname">kss_exit_check_sec</span>
-    <input name="kss_exit_check_sec" type="number" step="1" min="5" value="{{ k.kss_exit_check_sec }}"></label>
-  <label title="Crash-detect: nếu một lần guard thấy giá rớt > % này so với lần quan sát trước VÀ giá ≤ SL → bán market NGAY (chặn chảy máu trên gap). 0 = tắt.">Crash-detect % <span class="varname">kss_crash_drop_pct</span>
-    <input name="kss_crash_drop_pct" type="number" step="0.5" min="0" value="{{ '%.1f'|format(k.kss_crash_drop_pct) }}"></label>
-  <label title="CHỈ LIVE: duy trì lệnh STOP-MARKET treo sẵn trên sàn tại SL (bảo vệ gap ở mức mili-giây). Vô hiệu ở paper / khi automation tắt.">Stop sàn native (LIVE) <span class="varname">kss_live_stop_orders</span>
-    <select name="kss_live_stop_orders" class="select-inline">
-      <option value="1" {% if k.kss_live_stop_orders %}selected{% endif %}>Bật</option>
-      <option value="0" {% if not k.kss_live_stop_orders %}selected{% endif %}>Tắt</option>
-    </select></label>
-  <h3 class="section-subhead">━ Lọc &amp; chọn coin nâng cao (relative-strength / breadth / drawdown) ━</h3>
-  <label title="Gate sức mạnh tương đối vs BTC: chỉ mở coin có return gần đây không thua BTC quá biên. Chặn 'alt yếu hơn BTC' (nguyên nhân lỗ sổ mở) mà KHÔNG chặn cứng theo BTC down — alt mạnh khi BTC giảm vẫn vào (nó outperform). Tắt mặc định.">Gate mạnh-hơn-BTC <span class="varname">rel_strength_enabled</span>
-    <select name="rel_strength_enabled" class="select-inline">
-      <option value="1" {% if k.rel_strength_enabled %}selected{% endif %}>Bật</option>
-      <option value="0" {% if not k.rel_strength_enabled %}selected{% endif %}>Tắt</option>
-    </select></label>
-  <label title="Số phiên (nến ngày) tính return cho gate mạnh-hơn-BTC + breadth.">RS: số phiên lookback <span class="varname">rel_strength_lookback_bars</span>
-    <input name="rel_strength_lookback_bars" type="number" step="1" min="1" value="{{ k.rel_strength_lookback_bars }}"></label>
-  <label title="Cho phép thua BTC tối đa bao nhiêu % trước khi gate chặn (2 = được lag BTC ≤2%; 0 = phải bằng BTC).">RS: biên thua BTC % <span class="varname">rel_strength_margin_pct</span>
-    <input name="rel_strength_margin_pct" type="number" step="0.5" min="0" value="{{ '%.1f'|format(k.rel_strength_margin_pct) }}"></label>
-  <label title="Gate drawdown TUYỆT ĐỐI: bỏ coin có avg_mae backtest (nhịp cắm sâu điển hình dưới avg trước khi thoát) SÂU HƠN % này (vd 12 = loại coin lịch sử thường cắm >12% trước khi hồi). 0 = tắt (vẫn dùng để xếp hạng: drawdown nông hơn → ưu tiên). Phân biệt được coin mà win-rate ~100% bão hòa không tách được.">Gate drawdown tuyệt đối % <span class="varname">max_avg_mae_pct</span>
-    <input name="max_avg_mae_pct" type="number" step="0.5" min="0" max="100" value="{{ '%.1f'|format(k.max_avg_mae_pct) }}"></label>
-  <label title="Gate drawdown TƯƠNG ĐỐI: trong mỗi lần quét, loại nhóm worst_mae (cú cắm sâu nhất so với avg) thuộc quartile tệ nhất. Theo từng scan nên không 'nuke' cả vũ trụ như ngưỡng tuyệt đối. Cần ≥4 ứng viên. Tắt mặc định.">Gate drawdown quartile <span class="varname">mae_quartile_gate_enabled</span>
-    <select name="mae_quartile_gate_enabled" class="select-inline">
-      <option value="1" {% if k.mae_quartile_gate_enabled %}selected{% endif %}>Bật</option>
-      <option value="0" {% if not k.mae_quartile_gate_enabled %}selected{% endif %}>Tắt</option>
-    </select></label>
-  <label title="Phạt xếp hạng MỀM (KHÔNG chặn — docs/loss-cases.md Phase 3): phiên thua thường mở khi coin đã chạy tăng mạnh trước đó. Khi bật, trừ điểm consensus xếp hạng mở lệnh tỷ lệ với mức tăng gần đây của coin — coin nóng vẫn được mở nếu còn suất, chỉ bị xếp SAU coin mát hơn. Tắt mặc định = xếp hạng y hệt hôm nay.">Phạt overextension (mềm) <span class="varname">overextension_penalty_enabled</span>
-    <select name="overextension_penalty_enabled" class="select-inline">
-      <option value="1" {% if k.overextension_penalty_enabled %}selected{% endif %}>Bật</option>
-      <option value="0" {% if not k.overextension_penalty_enabled %}selected{% endif %}>Tắt</option>
-    </select></label>
-  <label title="Số điểm consensus bị trừ trên mỗi 1%% tăng giá N-phiên gần đây (chỉ tính phần tăng, coin đứng yên/giảm không bị trừ). Vd 0.5 và coin tăng +13%% → trừ 6.5 điểm khỏi thứ hạng mở lệnh của coin đó.">Overextension: trọng số/1%% <span class="varname">overextension_penalty_weight</span>
-    <input name="overextension_penalty_weight" type="number" step="0.1" min="0" value="{{ '%.1f'|format(k.overextension_penalty_weight) }}"></label>
-  <label title="Số phiên (nến) nhìn lại để đo mức tăng gần đây cho phạt overextension.">Overextension: số phiên lookback <span class="varname">overextension_lookback_bars</span>
-    <input name="overextension_lookback_bars" type="number" step="1" min="1" max="200" value="{{ k.overextension_lookback_bars }}"></label>
-  <h3 class="section-subhead">━ Chế độ Pyramid-UP (theo đà tăng) ━</h3>
-  <label title="Công tắc tổng cho regime router (docs/pyramid-up-plan.md): khi bật, scanner phân loại mỗi ứng viên 'pyramid_up' (vào theo đà tăng) hoặc 'dca_down' (mua khi giảm, đường cũ) dựa trên tín hiệu TA trước khi mở. Tắt = mọi ứng viên vẫn là 'dca_down' — không đổi hành vi.">Bật regime router <span class="varname">strategy_router_enabled</span>
-    <select name="strategy_router_enabled" class="select-inline">
-      <option value="1" {% if k.strategy_router_enabled %}selected{% endif %}>Bật</option>
-      <option value="0" {% if not k.strategy_router_enabled %}selected{% endif %}>Tắt</option>
-    </select></label>
-  <label title="Gate regime Pyramid-UP: return sức-mạnh-tương-đối-vs-BTC (%) tối thiểu một ứng viên phải vượt để được định tuyến sang 'pyramid_up' thay vì 'dca_down'. Cao hơn = chỉ coin outperform BTC rõ rệt nhất mới vào chế độ scale-vào-đà-tăng.">RS tối thiểu cho Pyramid-UP % <span class="varname">pyramid_up_min_rel_strength</span>
-    <input name="pyramid_up_min_rel_strength" type="number" step="0.1" min="-100" max="100" value="{{ '%.1f'|format(k.pyramid_up_min_rel_strength) }}"></label>
-  <label title="Gate regime Pyramid-UP: ADX (độ mạnh xu hướng) tối thiểu một ứng viên phải có để định tuyến sang 'pyramid_up'. Dưới ngưỡng này xu hướng tăng quá yếu/nhiễu để cưỡi theo; rơi về 'dca_down'.">ADX tối thiểu cho Pyramid-UP <span class="varname">pyramid_up_min_adx</span>
-    <input name="pyramid_up_min_adx" type="number" step="0.5" min="0" max="100" value="{{ '%.1f'|format(k.pyramid_up_min_adx) }}"></label>
-  <label title="Ladder Pyramid-UP: % trên giá entry giữa mỗi lần kích hoạt add-on (add lần n kích hoạt tại entry×(1+%này)^n). Nhỏ hơn = add kích hoạt sớm hơn/gần nhau hơn; lớn hơn = chờ một nhịp tăng mạnh hơn được xác nhận mới scale vào.">Bước % mỗi add-on <span class="varname">pyramid_up_step_pct</span>
-    <input name="pyramid_up_step_pct" type="number" step="0.1" min="0.1" max="50" value="{{ '%.1f'|format(k.pyramid_up_step_pct) }}"></label>
-  <label title="Ladder Pyramid-UP: mỗi add-on có khối lượng = tỷ lệ này × khối lượng sóng trước (anti-martingale — giảm dần nghiêm ngặt). Giới hạn trong (0, 1) không bao gồm biên; vd 0.7 = mỗi add bằng 70%% sóng trước.">Tỷ lệ khối lượng add-on <span class="varname">pyramid_up_size_ratio</span>
-    <input name="pyramid_up_size_ratio" type="number" step="0.01" min="0.01" max="0.99" value="{{ '%.2f'|format(k.pyramid_up_size_ratio) }}"></label>
-  <label title="Ladder Pyramid-UP: số sóng add-on tối đa trên sóng entry gốc (chặn cứng ở 3 dù đặt giá trị này cao hơn — pyramid_up.MAX_ADDS_CAP). 0 = chỉ sóng gốc, không scale vào.">Số add-on tối đa <span class="varname">pyramid_up_max_adds</span>
-    <input name="pyramid_up_max_adds" type="number" step="1" min="0" max="3" value="{{ k.pyramid_up_max_adds }}"></label>
-  <label title="Quản trị rủi ro Pyramid-UP: sau mỗi add khớp, SL dời lên break-even-plus = avg×(1+%này) (sàn ở mức hòa phí) — mỗi add là một 'free-roll', rủi ro net không vượt quá rủi ro của sóng gốc.">Khóa lãi sau add % <span class="varname">pyramid_up_lock_pct</span>
-    <input name="pyramid_up_lock_pct" type="number" step="0.1" min="0" max="100" value="{{ '%.1f'|format(k.pyramid_up_lock_pct) }}"></label>
-  <h3 class="section-subhead">━ Regime gate BTC (thị trường) ━</h3>
-  <label title="Công tắc tổng cho regime gate BTC (SHADOW-FIRST): khi bật, mỗi lần scan sẽ phân loại xu hướng BTC (SMA 50d/200d, có hysteresis) thành risk_on/risk_off/neutral/unknown và ghi audit. Tắt = không phân loại, không audit, không tốn gì cả.">Bật regime gate <span class="varname">regime_gate_enabled</span>
-    <select name="regime_gate_enabled" class="select-inline">
-      <option value="1" {% if k.regime_gate_enabled %}selected{% endif %}>Bật</option>
-      <option value="0" {% if not k.regime_gate_enabled %}selected{% endif %}>Tắt</option>
-    </select></label>
-  <label title="Khi bật gate VÀ bật enforcing VÀ trạng thái là risk_off: CHẶN mọi phiên KSS MỚI trong lần scan này (không đụng session/sóng/exit đang chạy). Tắt (mặc định) = chế độ SHADOW — vẫn phân loại + audit 'đáng lẽ chặn N phiên' nhưng KHÔNG chặn gì — chỉ bật sau khi đã xem dữ liệu shadow.">Chế độ enforcing (chặn thật) <span class="varname">regime_gate_enforcing</span>
-    <select name="regime_gate_enforcing" class="select-inline">
-      <option value="1" {% if k.regime_gate_enforcing %}selected{% endif %}>Bật (chặn thật)</option>
-      <option value="0" {% if not k.regime_gate_enforcing %}selected{% endif %}>Tắt (shadow — chỉ audit)</option>
-    </select></label>
-  <label title="Chu kỳ SMA nhanh (ngày) cho bộ phân loại regime BTC.">SMA nhanh (ngày) <span class="varname">regime_sma_fast</span>
-    <input name="regime_sma_fast" type="number" step="1" min="1" max="500" value="{{ k.regime_sma_fast }}"></label>
-  <label title="Chu kỳ SMA chậm (ngày) cho bộ phân loại regime BTC — 'đường 200 ngày'.">SMA chậm (ngày) <span class="varname">regime_sma_slow</span>
-    <input name="regime_sma_slow" type="number" step="1" min="1" max="500" value="{{ k.regime_sma_slow }}"></label>
-  <label title="Biên độ % quanh SMA chậm cần vượt qua để LẬT trạng thái regime — chống nhiễu quanh đường 200 ngày. Giá chạm gần đường nhưng còn trong biên thì giữ nguyên trạng thái cũ.">Biên hysteresis % <span class="varname">regime_hysteresis_pct</span>
-    <input name="regime_hysteresis_pct" type="number" step="0.1" min="0" max="50" value="{{ '%.1f'|format(k.regime_hysteresis_pct) }}"></label>
-  <h3 class="section-subhead">━ OPUS God Mode (học &amp; sao chép) ━</h3>
-  <label title="Chế độ SAO CHÉP: ưu tiên mở các coin mà engine luật (đang có lãi) vừa chấm 'trade' trong lần quét này; OPUS phải giải thích nếu đi chệch. Chỉ là gợi ý mềm trong prompt, không phải lọc cứng.">Chế độ sao chép <span class="varname">opus_copy_mode</span>
-    <select name="opus_copy_mode" class="select-inline">
-      <option value="1" {% if k.opus_copy_mode %}selected{% endif %}>Bật</option>
-      <option value="0" {% if not k.opus_copy_mode %}selected{% endif %}>Tắt</option>
-    </select></label>
-  <label title="Cho OPUS mở lệnh MỘT MÌNH khi Grok bật mà không đồng ý (Grok vẫn đóng/giảm được). Sàn consensus dưới đây vẫn cưỡng chế phía cage.">OPUS mở lệnh một mình <span class="varname">opus_solo_open</span>
-    <select name="opus_solo_open" class="select-inline">
-      <option value="1" {% if k.opus_solo_open %}selected{% endif %}>Bật</option>
-      <option value="0" {% if not k.opus_solo_open %}selected{% endif %}>Tắt</option>
-    </select></label>
-  <label title="Ngưỡng consensus tối thiểu (deterministic) — được cưỡng chế trong policy (cage) cho MỌI lệnh mở solo. 0 = tắt sàn.">Consensus tối thiểu cho solo % <span class="varname">opus_solo_min_consensus</span>
-    <input name="opus_solo_min_consensus" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.opus_solo_min_consensus) }}"></label>
-  <label title="Phanh lỗ ngày: khi net hôm nay của OPUS chạm −X% vốn cấp thì KHÔNG mở lệnh mới nữa đến 00:00 UTC (đóng/giảm vẫn được). 0 = tắt.">Phanh lỗ ngày % <span class="varname">opus_daily_loss_stop_pct</span>
-    <input name="opus_daily_loss_stop_pct" type="number" step="0.5" min="0" value="{{ '%.1f'|format(k.opus_daily_loss_stop_pct) }}"></label>
-  <label title="Haiku sàng lọc rẻ trước mỗi lần gọi Opus đắt: nếu Haiku nói 'không có gì đáng quyết định' thì bỏ qua tick này, tiết kiệm chi phí.">Bật Haiku triage <span class="varname">opus_triage_enabled</span>
-    <select name="opus_triage_enabled" class="select-inline">
-      <option value="1" {% if k.opus_triage_enabled %}selected{% endif %}>Bật</option>
-      <option value="0" {% if not k.opus_triage_enabled %}selected{% endif %}>Tắt</option>
-    </select></label>
-  <label title="Model id dùng cho bước triage Haiku (rẻ) trước quyết định Opus đầy đủ.">Model triage <span class="varname">opus_triage_model</span>
-    <input name="opus_triage_model" type="text" value="{{ k.opus_triage_model }}"></label>
-  <label title="Giá Haiku $/1M token (in/out) để tính chi phí — token vào.">Giá Haiku $/1M token (in) <span class="varname">opus_triage_price_in_per_mtok</span>
-    <input name="opus_triage_price_in_per_mtok" type="number" step="0.1" min="0" value="{{ '%.1f'|format(k.opus_triage_price_in_per_mtok) }}"></label>
-  <label title="Giá Haiku $/1M token (in/out) để tính chi phí — token ra.">Giá Haiku $/1M token (out) <span class="varname">opus_triage_price_out_per_mtok</span>
-    <input name="opus_triage_price_out_per_mtok" type="number" step="0.1" min="0" value="{{ '%.1f'|format(k.opus_triage_price_out_per_mtok) }}"></label>
-  <label title="Dù triage nói không, vẫn buộc Opus quyết định đầy đủ ít nhất mỗi X phút.">Khoảng cách quyết định tối đa (phút) <span class="varname">opus_max_decision_gap_min</span>
-    <input name="opus_max_decision_gap_min" type="number" step="5" min="0" value="{{ k.opus_max_decision_gap_min }}"></label>
-  <label title="Tự tắt OPUS khi net cửa sổ N ngày < 0 qua đủ lệnh đóng.">Bật tự đóng băng <span class="varname">opus_auto_freeze_enabled</span>
-    <select name="opus_auto_freeze_enabled" class="select-inline">
-      <option value="1" {% if k.opus_auto_freeze_enabled %}selected{% endif %}>Bật</option>
-      <option value="0" {% if not k.opus_auto_freeze_enabled %}selected{% endif %}>Tắt</option>
-    </select></label>
-  <label title="Cửa sổ (ngày) lăn để tính net/số lệnh đóng cho tự đóng băng.">Cửa sổ tự đóng băng (ngày) <span class="varname">opus_freeze_window_days</span>
-    <input name="opus_freeze_window_days" type="number" step="1" min="1" value="{{ k.opus_freeze_window_days }}"></label>
-  <label title="Số lệnh đóng tối thiểu trong cửa sổ trước khi net âm được phép kích hoạt tự đóng băng (tránh đóng băng vì mẫu quá mỏng).">Số lệnh đóng tối thiểu <span class="varname">opus_freeze_min_closed</span>
-    <input name="opus_freeze_min_closed" type="number" step="1" min="0" value="{{ k.opus_freeze_min_closed }}"></label>
-  <label title="Vốn cấp riêng cho OPUS (mẫu số KPI). Trial 2026-07: $500; đạt gate mới nâng dần.">Vốn cấp OPUS $ <span class="varname">opus_allocation_usd</span>
-    <input name="opus_allocation_usd" type="number" step="50" min="0" value="{{ '%.0f'|format(k.opus_allocation_usd) }}"></label>
-  <label title="Trần notional mỗi lệnh mở của OPUS (cage cứng, policy clamp). Trial: $100 để không dồn 40% vốn vào một lệnh.">Trần notional/lệnh $ <span class="varname">opus_max_trade_notional</span>
-    <input name="opus_max_trade_notional" type="number" step="10" min="1" value="{{ '%.0f'|format(k.opus_max_trade_notional) }}"></label>
-  <label title="Mục tiêu net %/24h trên vốn cấp — mục tiêu KÉO DÃN điều tiết hành vi (chậm nhịp ⇒ chọn lọc hơn), không phải lời hứa.">KPI mục tiêu %/24h <span class="varname">opus_kpi_target_pct</span>
-    <input name="opus_kpi_target_pct" type="number" step="0.5" min="0" max="100" value="{{ '%.1f'|format(k.opus_kpi_target_pct) }}"></label>
-  <label title="Chu kỳ tick của vòng lặp OPUS (phút).">Chu kỳ tick (phút) <span class="varname">opus_interval_min</span>
-    <input name="opus_interval_min" type="number" step="1" min="1" value="{{ k.opus_interval_min }}"></label>
-  <label title="Trần chi phí API Opus mỗi ngày (đã ×2). Chạm trần thì ngừng quyết định mới đến 00:00 UTC.">Trần chi phí Opus $/ngày <span class="varname">opus_daily_cost_cap_usd</span>
-    <input name="opus_daily_cost_cap_usd" type="number" step="0.5" min="0" value="{{ '%.1f'|format(k.opus_daily_cost_cap_usd) }}"></label>
-  <label title="Stop-loss cứng cho vị thế 'ride' — winner đảo chiều không thể thành lỗ vô hạn (cage cứng).">Ride hard-SL % <span class="varname">opus_ride_hard_sl_pct</span>
-    <input name="opus_ride_hard_sl_pct" type="number" step="1" min="0" max="90" value="{{ '%.0f'|format(k.opus_ride_hard_sl_pct) }}"></label>
-  <label title="Số 'bài học' chắt lọc tối đa được tiêm vào prompt hệ thống của OPUS (bộ nhớ học từ kết quả thật).">Số bài học tối đa <span class="varname">opus_lessons_max</span>
-    <input name="opus_lessons_max" type="number" step="1" min="0" value="{{ k.opus_lessons_max }}"></label>
-  <label title="Số vị thế đã đóng gần nhất của OPUS đưa vào snapshot để nó tự soi thành tích (ride/rescue lãi hay lỗ).">Lịch sử vị thế đưa vào <span class="varname">opus_history_n</span>
-    <input name="opus_history_n" type="number" step="1" min="1" value="{{ k.opus_history_n }}"></label>
-  <button type="submit" class="ok">Lưu cấu hình KSS</button>
+<!-- R7: form cố ý chỉ `load` một lần (hx-trigger="load" ở dashboard.html) — một
+     refresh toàn cục KHÔNG được nạp lại form trong khi anh đang gõ dở (sẽ mất input
+     chưa lưu). Giữ hành vi này, nhưng thêm affordance nhẹ để tự tải lại khi biết
+     chắc cấu hình có thể đã đổi ở nơi khác (Telegram /set…, script). Tự tham chiếu
+     tới #kss-settings-panel (bọc ngoài ở dashboard.html) — bấm sẽ nạp lại TOÀN BỘ
+     khối này, bỏ mọi input chưa lưu. -->
+<div class="muted fs-12 mb-8 flex-spaced">
+  <span>Cấu hình có thể đã đổi ở nơi khác (Telegram, script) — form chỉ tải một lần để không mất phần đang gõ dở.</span>
+  <button type="button" class="sm ghost" hx-get="/partials/kss-settings" hx-target="#kss-settings-panel" hx-swap="innerHTML">↻ Tải lại (bỏ thay đổi chưa lưu)</button>
+</div>
+
+<form id="kss-settings-form" novalidate>
+  <details class="settings-section" open>
+    <summary>Thang &amp; TP/SL lõi</summary>
+    <div class="settings-grid">
+      <label title="Khoảng cách giá giữa các sóng DCA. Giá sóng n = entry×(1−d%)^n.">Distance % <span class="varname">scan_distance_pct</span>
+        <input name="scan_distance_pct" type="number" step="0.1" min="0.1" data-type="num" value="{{ '%.2f'|format(k.scan_distance_pct) }}" required></label>
+      <label title="Chốt lời: bán toàn bộ khi giá ≥ avg×(1+TP%).">TP % <span class="varname">scan_tp_pct</span>
+        <input name="scan_tp_pct" type="number" step="0.1" min="0.1" data-type="num" value="{{ '%.2f'|format(k.scan_tp_pct) }}" required></label>
+      <label title="Mỗi mục tiêu chốt lời cộng thêm bao nhiêu LẦN phí khứ hồi (mua+bán = 2×phí sàn cao nhất) lên trên TP%, để TP luôn vượt phí có biên an toàn. 1.2 = +120% phí; 1.5 = +150% phí; 1.0 = vừa đủ phí. Áp dụng cả paper lẫn live.">Phủ phí khi TP (×phí) <span class="varname">tp_fee_coverage</span>
+        <input name="tp_fee_coverage" type="number" step="0.1" min="0" max="10" data-type="num" value="{{ '%.2f'|format(k.tp_fee_coverage) }}" required></label>
+      <label title="Số sóng DCA tối đa mỗi session.">Số sóng (max) <span class="varname">scan_max_waves</span>
+        <input name="scan_max_waves" type="number" step="1" min="1" data-type="num" value="{{ k.scan_max_waves }}" required></label>
+      <label title="(cũ) Vốn cô lập đặt cứng mỗi session. Không còn dùng cho scanner: mỗi session giờ TỰ tính vốn = tổng chi phí cả thang DCA (sóng đầu × số sóng × giá). Vẫn dùng cho session tạo thủ công.">Vốn/session $ (cũ) <span class="varname">scan_fund</span>
+        <input name="scan_fund" type="number" step="any" min="1" data-type="num" value="{{ '%.0f'|format(k.scan_fund) }}" required></label>
+      <label title="Cắt lỗ: bán toàn bộ khi giá ≤ avg×(1−SL%). 0 = tắt.">SL % <span class="varname">sl_pct</span>
+        <input name="sl_pct" type="number" step="0.1" min="0" data-type="num" value="{{ '%.2f'|format(k.sl_pct) }}" required></label>
+      <label title="Trailing stop: khi có lãi, bán nếu giá ≤ đỉnh×(1−Trail%). 0 = tắt.">Trailing % <span class="varname">trailing_pct</span>
+        <input name="trailing_pct" type="number" step="0.1" min="0" data-type="num" value="{{ '%.2f'|format(k.trailing_pct) }}" required></label>
+      <label title="Số ngày tối đa chờ TP trước khi đóng session.">Deadline (ngày) <span class="varname">deadline_days</span>
+        <input name="deadline_days" type="number" step="1" min="1" data-type="num" value="{{ k.deadline_days }}" required></label>
+    </div>
+  </details>
+
+  <details class="settings-section" open>
+    <summary>Vốn &amp; giới hạn phiên</summary>
+    <div class="settings-grid">
+      <label title="Số session KSS tối đa chạy song song. Tăng để mở thêm coin khi còn vốn.">Số session tối đa <span class="varname">max_concurrent_sessions</span>
+        <input name="max_concurrent_sessions" type="number" step="1" min="1" data-type="num" value="{{ k.max_concurrent_sessions }}" required></label>
+      <label title="Số session KSS tối đa MỖI coin. 1 (K-1) = một thang DCA/coin nên avg session = avg Position → không trộn giá vốn (tránh 'chốt lời mà thực ra lỗ' / kẹt TP do K-2). 0 = không giới hạn. Khuyến nghị 1.">Session tối đa / coin <span class="varname">max_sessions_per_symbol</span>
+        <input name="max_sessions_per_symbol" type="number" step="1" min="0" max="20" data-type="num" value="{{ k.max_sessions_per_symbol }}" required></label>
+      <label title="Trần số phiên MỚI được mở trong MỘT lần quét (0 = không giới hạn). Tăng vốn từ từ thay vì mở hết ngân sách concurrent cùng lúc; trong trần này, ứng viên có win-rate-lower-bound/số lần thử cao nhất được mở trước.">Trần phiên mới / lần quét <span class="varname">max_new_sessions_per_scan</span>
+        <input name="max_new_sessions_per_scan" type="number" step="1" min="0" max="100" data-type="num" value="{{ k.max_new_sessions_per_scan }}"></label>
+      <label title="Tỷ lệ % equity (theo giá thị trường) LUÔN giữ lại làm dự phòng, không bao giờ triển khai. Ngân sách mở session = (100 − số này)% × equity. Session đã khớp <50% kế hoạch chỉ khóa phần đã mua (phần dư cho session khác mượn); ≥50% thì khóa toàn bộ kế hoạch. Giảm để dùng nhiều vốn hơn.">Dự phòng % equity <span class="varname">equity_backup_pct</span>
+        <input name="equity_backup_pct" type="number" step="any" min="0" max="90" data-type="num" value="{{ '%.0f'|format(k.equity_backup_pct) }}" required></label>
+      <label title="CHẶN CỨNG: tiền mặt tài khoản không bao giờ được xuống dưới mức này. Mỗi lệnh MUA bị khớp một phần đúng bằng tiền còn lại (hoặc bị giữ lại nếu không đủ cả lát tối thiểu) → Cash không bao giờ âm. 0 = Cash luôn ≥ 0. Lệnh BÁN không bị chặn.">Sàn tiền mặt $ <span class="varname">cash_floor_usd</span>
+        <input name="cash_floor_usd" type="number" step="any" min="0" data-type="num" value="{{ '%.0f'|format(k.cash_floor_usd) }}" required></label>
+      <label title="TRẦN CỨNG: 1 session không bao giờ được triển khai (đã bơm + sóng đang chờ) quá số USD này. MỌI sóng — auto-DCA, DCA+ thủ công, nút ➕ Telegram — vượt trần sẽ bị TỪ CHỐI. Đây là bức tường bảo toàn vốn cho live (thảm hoạ C từng bơm $162k vô giới hạn). 0 = tắt. Live: đặt ~15-20% equity.">Trần deploy/session $ <span class="varname">max_session_deploy_usd</span>
+        <input name="max_session_deploy_usd" type="number" step="any" min="0" data-type="num" value="{{ '%.0f'|format(k.max_session_deploy_usd) }}" required></label>
+      <label title="Hiện nút '➕ Thêm DCA' trên thẻ Liệt kê (Telegram). TẮT = list chỉ THÔNG BÁO (thang nào cạn nấc) + nút Bỏ qua → không lỡ tay bơm thêm DCA hàng loạt vào coin đang lỗ. Lệnh /dca_add <id> vẫn luôn dùng được khi anh chủ động.">Cho bấm ➕ Thêm DCA <span class="varname">maxdca_allow_add</span>
+        <select name="maxdca_allow_add" class="select-inline" data-type="bool">
+          <option value="1" {% if k.maxdca_allow_add %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.maxdca_allow_add %}selected{% endif %}>Tắt</option>
+        </select></label>
+      <label title="Bỏ session ra khỏi list Liệt kê khi coin đã RỚT hơn %% này so với ENTRY (mốc bắt đầu thang, KHÔNG phải avg — DCA kéo uPnL-vs-avg về gần 0 nên avg không lọc được). Tránh mời bình quân vào 'dao rơi' đã lao sâu. 0 = không lọc.">Ẩn khỏi list nếu rớt hơn % (vs entry) <span class="varname">maxdca_max_underwater_pct</span>
+        <input name="maxdca_max_underwater_pct" type="number" step="0.1" min="0" max="100" data-type="num" value="{{ '%.1f'|format(k.maxdca_max_underwater_pct) }}" required></label>
+    </div>
+  </details>
+
+  <details class="settings-section">
+    <summary>Chặn tái vào sau lỗ</summary>
+    <div class="settings-grid">
+      <label title="Chặn mở session mới cho coin đã thua K lần ĐÓNG LỆNH liên tiếp (một lần lãi sẽ phá chuỗi). Tăng để khó bị chặn hơn.">Chặn sau K lần thua <span class="varname">loss_streak_block_k</span>
+        <input name="loss_streak_block_k" type="number" step="1" min="1" max="20" data-type="num" value="{{ k.loss_streak_block_k }}" required></label>
+      <label title="Chỉ tính các lần đóng lệnh trong N ngày gần nhất — lỗ cũ trôi ra ngoài cửa sổ thì coin tự được giao dịch lại.">Cửa sổ lỗ (ngày) <span class="varname">loss_streak_window_days</span>
+        <input name="loss_streak_window_days" type="number" step="1" min="1" max="365" data-type="num" value="{{ k.loss_streak_window_days }}" required></label>
+      <label title="GIÃN VÀO COIN ĐÃ LỖ: sau khi coin bị CẮT LỖ (hard-SL), chặn mở lại theo bậc leo thang — lần 1 chặn N₁ tuần, lần 2 chặn N₂ tuần, lần ≥ ngưỡng blacklist thì chặn vĩnh viễn. Chỉ đếm lần chạm hard-SL (source_ref …:sl); trailing stop KHÔNG tính. Không đụng exit/DCA của session đang chạy.">Giãn vào mã đã lỗ <span class="varname">loss_reentry_enabled</span>
+        <select name="loss_reentry_enabled" class="select-inline" data-type="bool">
+          <option value="1" {% if k.loss_reentry_enabled %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.loss_reentry_enabled %}selected{% endif %}>Tắt</option>
+        </select></label>
+      <label title="Số TUẦN chặn mở lại sau lần chạm hard-SL ĐẦU TIÊN của coin. Tự hết chặn khi qua đủ số tuần này kể từ lần cắt lỗ.">Chặn lần 1 (tuần) <span class="varname">loss_reentry_weeks_1</span>
+        <input name="loss_reentry_weeks_1" type="number" step="1" min="1" max="520" data-type="num" value="{{ k.loss_reentry_weeks_1 }}" required></label>
+      <label title="Số TUẦN chặn sau lần chạm hard-SL THỨ HAI (≈2 tháng = 8 tuần). Cắt lỗ lặp lại → thời gian nghỉ dài hơn.">Chặn lần 2 (tuần) <span class="varname">loss_reentry_weeks_2</span>
+        <input name="loss_reentry_weeks_2" type="number" step="1" min="1" max="520" data-type="num" value="{{ k.loss_reentry_weeks_2 }}" required></label>
+      <label title="Số lần chạm hard-SL để coin bị BLACKLIST (chặn vĩnh viễn). Gỡ 1 coin bằng ô 'Ân xá' bên dưới.">Blacklist sau N lần <span class="varname">loss_reentry_blacklist_after</span>
+        <input name="loss_reentry_blacklist_after" type="number" step="1" min="1" max="50" data-type="num" value="{{ k.loss_reentry_blacklist_after }}" required></label>
+      <label title="Danh sách coin ĐƯỢC MIỄN chặn (ân xá / gỡ blacklist thủ công), cách nhau bằng dấu phẩy. Ví dụ: C, MIRA. Để trống = không miễn ai.">Ân xá (bỏ chặn) <span class="varname">loss_reentry_pardon</span>
+        <input name="loss_reentry_pardon" type="text" data-type="str" placeholder="vd: C, MIRA" value="{{ k.loss_reentry_pardon }}"></label>
+      <div class="muted settings-note-full">
+        Đang bị chặn mở lại:
+        {% if blocked %}
+          {% for b in blocked %}<span class="varname" title="{{ b.reason }}">{{ b.symbol }} ({{ b.hard_sls }}×SL)</span>{% if not loop.last %} · {% endif %}{% endfor %}
+        {% else %}<span>không có coin nào.</span>{% endif %}
+      </div>
+    </div>
+  </details>
+
+  <details class="settings-section">
+    <summary>Cổng scanner</summary>
+    <div class="settings-grid">
+      <label title="Gate CHÍNH: kỳ vọng net trung bình mỗi lệnh backtest (đã trừ SL + phí). Coin chỉ trade khi E ≥ ngưỡng này VÀ win-rate ≥ ngưỡng dưới.">Kỳ vọng tối thiểu E % <span class="varname">min_expectancy_pct</span>
+        <input name="min_expectancy_pct" type="number" step="0.1" min="-100" max="100" data-type="num" value="{{ '%.1f'|format(k.min_expectancy_pct) }}" required></label>
+      <label title="Win-rate tối thiểu (cận dưới Wilson) để đủ điều kiện trade. Cặp với gate kỳ vọng tạo thành quy tắc: trade khi E ≥ ngưỡng VÀ win-rate ≥ ngưỡng này.">Win-rate tối thiểu % <span class="varname">min_win_rate</span>
+        <input name="min_win_rate" type="number" step="1" min="0" max="100" data-type="num" value="{{ '%.0f'|format(k.min_win_rate) }}" required></label>
+      <label title="Ngưỡng đồng thuận tối thiểu của 4 agent thị trường (trend/dip/volatility/liquidity). S4: backtest bị loại khỏi điểm đồng thuận — chứng cứ backtest thuộc về các gate cứng (E, win_lb). Giá trị mặc định mới: 45%.">Đồng thuận tối thiểu % <span class="varname">min_confidence</span>
+        <input name="min_confidence" type="number" step="1" min="0" max="100" data-type="num" value="{{ '%.0f'|format(k.min_confidence) }}" required></label>
+      <label title="Số lần thử backtest TỐI THIỂU để edge đáng tin (win-rate 100% từ vài lần thử là nhiễu). Tăng để lọc mẫu mỏng. Mặc định 15.">Số lần thử tối thiểu <span class="varname">min_trials</span>
+        <input name="min_trials" type="number" step="1" min="1" max="200" data-type="num" value="{{ k.min_trials }}" required></label>
+      <label title="GATE THỜI ĐIỂM VÀO: chặn mở coin đang DOWNTREND xác nhận — khung lớn (HTF) VÀ Supertrend đều xuống VÀ ADX ≥ ngưỡng này (tránh 'bắt dao rơi'). 0 = tắt. Đây là bản deterministic của veto hay gặp nhất của Grok, hoạt động cả khi Grok tắt. Mặc định 25.">Chặn downtrend (ADX≥) <span class="varname">block_downtrend_adx</span>
+        <input name="block_downtrend_adx" type="number" step="1" min="0" max="100" data-type="num" value="{{ '%.0f'|format(k.block_downtrend_adx) }}" required></label>
+      <label title="GATE THỜI ĐIỂM VÀO (chặt hơn block_downtrend_adx): bỏ qua coin có động lượng NGẮN HẠN đang giảm — Supertrend xuống VÀ MACD histogram < 0 — để không mở thang DCA vào coin đang rơi (sẽ chỉ nằm đỏ tới khi bật lại). Bắt các nhịp giảm nhẹ mà gate downtrend (cần HTF+ST+ADX cùng xác nhận) bỏ lọt. Chạy cả khi Grok tắt.">Chặn động lượng giảm (falling-knife) <span class="varname">entry_momentum_gate</span>
+        <select name="entry_momentum_gate" class="select-inline" data-type="bool">
+          <option value="1" {% if k.entry_momentum_gate %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.entry_momentum_gate %}selected{% endif %}>Tắt</option>
+        </select></label>
+      <label title="Notional sóng đầu mỗi session. >0 = đặt cỡ lệnh đầu theo USD (dùng nhiều vốn hơn); 0 = cỡ pip mặc định (rất nhỏ).">Giá trị lệnh đầu (USD) <span class="varname">kss_first_wave_usd</span>
+        <input name="kss_first_wave_usd" type="number" step="any" min="0" data-type="num" value="{{ '%.2f'|format(k.kss_first_wave_usd) }}"></label>
+      <label title="Trần số coin mỗi lần quét. Tăng để quét nhiều coin hơn (mặc định 50).">Số coin quét tối đa <span class="varname">scan_max_symbols</span>
+        <input name="scan_max_symbols" type="number" step="1" min="1" data-type="num" value="{{ k.scan_max_symbols }}"></label>
+      <label title="Chỉ quét coin có quote-volume ≥ ngưỡng này. Giảm để quét thêm coin nhỏ (mặc định 1,000,000).">Thanh khoản tối thiểu (quote vol) <span class="varname">min_quote_volume</span>
+        <input name="min_quote_volume" type="number" step="any" min="0" data-type="num" value="{{ '%.0f'|format(k.min_quote_volume) }}"></label>
+    </div>
+  </details>
+
+  <details class="settings-section">
+    <summary>Ride &amp; Trail động</summary>
+    <div class="settings-grid">
+      <label title="BẬT trailing-TP động (docs/kss-dynamic-tp-plan.md): khi 1 session vượt avg×(1+distance%) nó HỦY thang DCA còn lại và chuyển sang SL trailing theo ATR + TP nổi (sàn phí ×3 nên không exit tự động nào lỗ). TẮT = giữ nguyên hành vi TP cố định hiện tại.">Trailing-TP động <span class="varname">kss_dynamic_tp_enabled</span>
+        <select name="kss_dynamic_tp_enabled" class="select-inline" data-type="bool">
+          <option value="1" {% if k.kss_dynamic_tp_enabled %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.kss_dynamic_tp_enabled %}selected{% endif %}>Tắt</option>
+        </select></label>
+      <label title="TP nổi cách SL đã ratchet bao nhiêu %. Giá trị lớn → gần như chỉ còn trailing-SL (chandelier).">TP cách SL % <span class="varname">kss_tp_gap_pct</span>
+        <input name="kss_tp_gap_pct" type="number" step="0.1" min="0" data-type="num" value="{{ '%.1f'|format(k.kss_tp_gap_pct) }}"></label>
+      <label title="Hệ số sàn-phí: CẢ TP lẫn SL không bao giờ dưới avg×(1+ hệ_số×phí_khứ_hồi) → không exit tự động nào lỗ, kể cả phí. ≥1; 3 = thoải mái trên phí.">Sàn phí (×phí khứ hồi) <span class="varname">kss_exit_fee_mult</span>
+        <input name="kss_exit_fee_mult" type="number" step="0.5" min="1" data-type="num" value="{{ '%.1f'|format(k.kss_exit_fee_mult) }}"></label>
+      <label title="Khoảng cách SL trailing = hệ số này × ATR ngày của coin (thích nghi biến động — không nghẹt vì nhiễu, vẫn thoát khi đảo chiều thật).">Trailing × ATR <span class="varname">kss_trail_atr_mult</span>
+        <input name="kss_trail_atr_mult" type="number" step="0.1" min="0" data-type="num" value="{{ '%.1f'|format(k.kss_trail_atr_mult) }}"></label>
+      <label title="Sàn khoảng cách trailing: SL không bao giờ bám sát đỉnh hơn % này (coin êm vẫn có chỗ thở). Cũng là fallback khi thiếu ATR.">Trailing tối thiểu % <span class="varname">kss_trail_min_pct</span>
+        <input name="kss_trail_min_pct" type="number" step="0.1" min="0" data-type="num" value="{{ '%.1f'|format(k.kss_trail_min_pct) }}"></label>
+      <label title="Ride & Trail: vị thế có lãi RIDE tự do (bỏ cap TP cố định, chỉ hard SL bảo vệ) tới khi đỉnh ≥ avg×(1+%này) mới ARM trailing. Cao hơn = chạy xa hơn nhưng rủi ro giveback (đảo chiều trước khi arm → về hard SL = lỗ).">Arm trailing tại +% <span class="varname">kss_trail_arm_pct</span>
+        <input name="kss_trail_arm_pct" type="number" step="0.5" min="0" data-type="num" value="{{ '%.1f'|format(k.kss_trail_arm_pct) }}"></label>
+      <label title="Khi đã arm, SL không bao giờ khoá ÍT hơn %này (floor = max(fee_floor, avg×(1+%này))) → trail ATR rộng không kéo SL về break-even. Nên < arm%.">Khoá lãi tối thiểu % <span class="varname">kss_trail_lock_pct</span>
+        <input name="kss_trail_lock_pct" type="number" step="0.5" min="0" data-type="num" value="{{ '%.1f'|format(k.kss_trail_lock_pct) }}"></label>
+      <label title="Chu kỳ (giây) vòng guard nhẹ kiểm exit session ĐANG MỞ bằng ticker, tách khỏi scan 30 phút. Nhỏ = cửa sổ gap hẹp hơn.">Guard kiểm exit (giây) <span class="varname">kss_exit_check_sec</span>
+        <input name="kss_exit_check_sec" type="number" step="1" min="5" data-type="num" value="{{ k.kss_exit_check_sec }}"></label>
+      <label title="Crash-detect: nếu một lần guard thấy giá rớt > % này so với lần quan sát trước VÀ giá ≤ SL → bán market NGAY (chặn chảy máu trên gap). 0 = tắt.">Crash-detect % <span class="varname">kss_crash_drop_pct</span>
+        <input name="kss_crash_drop_pct" type="number" step="0.5" min="0" data-type="num" value="{{ '%.1f'|format(k.kss_crash_drop_pct) }}"></label>
+      <label title="CHỈ LIVE: duy trì lệnh STOP-MARKET treo sẵn trên sàn tại SL (bảo vệ gap ở mức mili-giây). Vô hiệu ở paper / khi automation tắt.">Stop sàn native (LIVE) <span class="varname">kss_live_stop_orders</span>
+        <select name="kss_live_stop_orders" class="select-inline" data-type="bool">
+          <option value="1" {% if k.kss_live_stop_orders %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.kss_live_stop_orders %}selected{% endif %}>Tắt</option>
+        </select></label>
+    </div>
+  </details>
+
+  <details class="settings-section">
+    <summary>Lọc coin nâng cao</summary>
+    <div class="settings-grid">
+      <label title="Gate sức mạnh tương đối vs BTC: chỉ mở coin có return gần đây không thua BTC quá biên. Chặn 'alt yếu hơn BTC' (nguyên nhân lỗ sổ mở) mà KHÔNG chặn cứng theo BTC down — alt mạnh khi BTC giảm vẫn vào (nó outperform). Tắt mặc định.">Gate mạnh-hơn-BTC <span class="varname">rel_strength_enabled</span>
+        <select name="rel_strength_enabled" class="select-inline" data-type="bool">
+          <option value="1" {% if k.rel_strength_enabled %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.rel_strength_enabled %}selected{% endif %}>Tắt</option>
+        </select></label>
+      <label title="Số phiên (nến ngày) tính return cho gate mạnh-hơn-BTC + breadth.">RS: số phiên lookback <span class="varname">rel_strength_lookback_bars</span>
+        <input name="rel_strength_lookback_bars" type="number" step="1" min="1" data-type="num" value="{{ k.rel_strength_lookback_bars }}"></label>
+      <label title="Cho phép thua BTC tối đa bao nhiêu % trước khi gate chặn (2 = được lag BTC ≤2%; 0 = phải bằng BTC).">RS: biên thua BTC % <span class="varname">rel_strength_margin_pct</span>
+        <input name="rel_strength_margin_pct" type="number" step="0.5" min="0" data-type="num" value="{{ '%.1f'|format(k.rel_strength_margin_pct) }}"></label>
+      <label title="Gate drawdown TUYỆT ĐỐI: bỏ coin có avg_mae backtest (nhịp cắm sâu điển hình dưới avg trước khi thoát) SÂU HƠN % này (vd 12 = loại coin lịch sử thường cắm >12% trước khi hồi). 0 = tắt (vẫn dùng để xếp hạng: drawdown nông hơn → ưu tiên). Phân biệt được coin mà win-rate ~100% bão hòa không tách được.">Gate drawdown tuyệt đối % <span class="varname">max_avg_mae_pct</span>
+        <input name="max_avg_mae_pct" type="number" step="0.5" min="0" max="100" data-type="num" value="{{ '%.1f'|format(k.max_avg_mae_pct) }}"></label>
+      <label title="Gate drawdown TƯƠNG ĐỐI: trong mỗi lần quét, loại nhóm worst_mae (cú cắm sâu nhất so với avg) thuộc quartile tệ nhất. Theo từng scan nên không 'nuke' cả vũ trụ như ngưỡng tuyệt đối. Cần ≥4 ứng viên. Tắt mặc định.">Gate drawdown quartile <span class="varname">mae_quartile_gate_enabled</span>
+        <select name="mae_quartile_gate_enabled" class="select-inline" data-type="bool">
+          <option value="1" {% if k.mae_quartile_gate_enabled %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.mae_quartile_gate_enabled %}selected{% endif %}>Tắt</option>
+        </select></label>
+      <label title="Phạt xếp hạng MỀM (KHÔNG chặn — docs/loss-cases.md Phase 3): phiên thua thường mở khi coin đã chạy tăng mạnh trước đó. Khi bật, trừ điểm consensus xếp hạng mở lệnh tỷ lệ với mức tăng gần đây của coin — coin nóng vẫn được mở nếu còn suất, chỉ bị xếp SAU coin mát hơn. Tắt mặc định = xếp hạng y hệt hôm nay.">Phạt overextension (mềm) <span class="varname">overextension_penalty_enabled</span>
+        <select name="overextension_penalty_enabled" class="select-inline" data-type="bool">
+          <option value="1" {% if k.overextension_penalty_enabled %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.overextension_penalty_enabled %}selected{% endif %}>Tắt</option>
+        </select></label>
+      <label title="Số điểm consensus bị trừ trên mỗi 1%% tăng giá N-phiên gần đây (chỉ tính phần tăng, coin đứng yên/giảm không bị trừ). Vd 0.5 và coin tăng +13%% → trừ 6.5 điểm khỏi thứ hạng mở lệnh của coin đó.">Overextension: trọng số/1%% <span class="varname">overextension_penalty_weight</span>
+        <input name="overextension_penalty_weight" type="number" step="0.1" min="0" data-type="num" value="{{ '%.1f'|format(k.overextension_penalty_weight) }}"></label>
+      <label title="Số phiên (nến) nhìn lại để đo mức tăng gần đây cho phạt overextension.">Overextension: số phiên lookback <span class="varname">overextension_lookback_bars</span>
+        <input name="overextension_lookback_bars" type="number" step="1" min="1" max="200" data-type="num" value="{{ k.overextension_lookback_bars }}"></label>
+    </div>
+  </details>
+
+  <details class="settings-section">
+    <summary>Pyramid-UP <span class="badge {{ 'full-auto-on' if k.strategy_router_enabled else 'full-auto-off' }}">{{ 'BẬT' if k.strategy_router_enabled else 'TẮT' }}</span></summary>
+    <div class="settings-grid">
+      <label title="Công tắc tổng cho regime router (docs/pyramid-up-plan.md): khi bật, scanner phân loại mỗi ứng viên 'pyramid_up' (vào theo đà tăng) hoặc 'dca_down' (mua khi giảm, đường cũ) dựa trên tín hiệu TA trước khi mở. Tắt = mọi ứng viên vẫn là 'dca_down' — không đổi hành vi.">Bật regime router <span class="varname">strategy_router_enabled</span>
+        <select name="strategy_router_enabled" class="select-inline" data-type="bool">
+          <option value="1" {% if k.strategy_router_enabled %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.strategy_router_enabled %}selected{% endif %}>Tắt</option>
+        </select></label>
+      <label title="Gate regime Pyramid-UP: return sức-mạnh-tương-đối-vs-BTC (%) tối thiểu một ứng viên phải vượt để được định tuyến sang 'pyramid_up' thay vì 'dca_down'. Cao hơn = chỉ coin outperform BTC rõ rệt nhất mới vào chế độ scale-vào-đà-tăng.">RS tối thiểu cho Pyramid-UP % <span class="varname">pyramid_up_min_rel_strength</span>
+        <input name="pyramid_up_min_rel_strength" type="number" step="0.1" min="-100" max="100" data-type="num" value="{{ '%.1f'|format(k.pyramid_up_min_rel_strength) }}"></label>
+      <label title="Gate regime Pyramid-UP: ADX (độ mạnh xu hướng) tối thiểu một ứng viên phải có để định tuyến sang 'pyramid_up'. Dưới ngưỡng này xu hướng tăng quá yếu/nhiễu để cưỡi theo; rơi về 'dca_down'.">ADX tối thiểu cho Pyramid-UP <span class="varname">pyramid_up_min_adx</span>
+        <input name="pyramid_up_min_adx" type="number" step="0.5" min="0" max="100" data-type="num" value="{{ '%.1f'|format(k.pyramid_up_min_adx) }}"></label>
+      <label title="Ladder Pyramid-UP: % trên giá entry giữa mỗi lần kích hoạt add-on (add lần n kích hoạt tại entry×(1+%này)^n). Nhỏ hơn = add kích hoạt sớm hơn/gần nhau hơn; lớn hơn = chờ một nhịp tăng mạnh hơn được xác nhận mới scale vào.">Bước % mỗi add-on <span class="varname">pyramid_up_step_pct</span>
+        <input name="pyramid_up_step_pct" type="number" step="0.1" min="0.1" max="50" data-type="num" value="{{ '%.1f'|format(k.pyramid_up_step_pct) }}"></label>
+      <label title="Ladder Pyramid-UP: mỗi add-on có khối lượng = tỷ lệ này × khối lượng sóng trước (anti-martingale — giảm dần nghiêm ngặt). Giới hạn trong (0, 1) không bao gồm biên; vd 0.7 = mỗi add bằng 70%% sóng trước.">Tỷ lệ khối lượng add-on <span class="varname">pyramid_up_size_ratio</span>
+        <input name="pyramid_up_size_ratio" type="number" step="0.01" min="0.01" max="0.99" data-type="num" value="{{ '%.2f'|format(k.pyramid_up_size_ratio) }}"></label>
+      <label title="Ladder Pyramid-UP: số sóng add-on tối đa trên sóng entry gốc (chặn cứng ở 3 dù đặt giá trị này cao hơn — pyramid_up.MAX_ADDS_CAP). 0 = chỉ sóng gốc, không scale vào.">Số add-on tối đa <span class="varname">pyramid_up_max_adds</span>
+        <input name="pyramid_up_max_adds" type="number" step="1" min="0" max="3" data-type="num" value="{{ k.pyramid_up_max_adds }}"></label>
+      <label title="Quản trị rủi ro Pyramid-UP: sau mỗi add khớp, SL dời lên break-even-plus = avg×(1+%này) (sàn ở mức hòa phí) — mỗi add là một 'free-roll', rủi ro net không vượt quá rủi ro của sóng gốc.">Khóa lãi sau add % <span class="varname">pyramid_up_lock_pct</span>
+        <input name="pyramid_up_lock_pct" type="number" step="0.1" min="0" max="100" data-type="num" value="{{ '%.1f'|format(k.pyramid_up_lock_pct) }}"></label>
+    </div>
+  </details>
+
+  <details class="settings-section">
+    <summary>Regime gate BTC <span class="badge {{ 'full-auto-on' if (k.regime_gate_enabled and k.regime_gate_enforcing) else 'full-auto-off' }}">{{ 'ENFORCING' if (k.regime_gate_enabled and k.regime_gate_enforcing) else ('SHADOW' if k.regime_gate_enabled else 'TẮT') }}</span></summary>
+    <div class="settings-grid">
+      <label title="Công tắc tổng cho regime gate BTC (SHADOW-FIRST): khi bật, mỗi lần scan sẽ phân loại xu hướng BTC (SMA 50d/200d, có hysteresis) thành risk_on/risk_off/neutral/unknown và ghi audit. Tắt = không phân loại, không audit, không tốn gì cả.">Bật regime gate <span class="varname">regime_gate_enabled</span>
+        <select name="regime_gate_enabled" class="select-inline" data-type="bool">
+          <option value="1" {% if k.regime_gate_enabled %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.regime_gate_enabled %}selected{% endif %}>Tắt</option>
+        </select></label>
+      <label title="Khi bật gate VÀ bật enforcing VÀ trạng thái là risk_off: CHẶN mọi phiên KSS MỚI trong lần scan này (không đụng session/sóng/exit đang chạy). Tắt (mặc định) = chế độ SHADOW — vẫn phân loại + audit 'đáng lẽ chặn N phiên' nhưng KHÔNG chặn gì — chỉ bật sau khi đã xem dữ liệu shadow.">Chế độ enforcing (chặn thật) <span class="varname">regime_gate_enforcing</span>
+        <select name="regime_gate_enforcing" class="select-inline" data-type="bool">
+          <option value="1" {% if k.regime_gate_enforcing %}selected{% endif %}>Bật (chặn thật)</option>
+          <option value="0" {% if not k.regime_gate_enforcing %}selected{% endif %}>Tắt (shadow — chỉ audit)</option>
+        </select></label>
+      <label title="Chu kỳ SMA nhanh (ngày) cho bộ phân loại regime BTC.">SMA nhanh (ngày) <span class="varname">regime_sma_fast</span>
+        <input name="regime_sma_fast" type="number" step="1" min="1" max="500" data-type="num" value="{{ k.regime_sma_fast }}"></label>
+      <label title="Chu kỳ SMA chậm (ngày) cho bộ phân loại regime BTC — 'đường 200 ngày'.">SMA chậm (ngày) <span class="varname">regime_sma_slow</span>
+        <input name="regime_sma_slow" type="number" step="1" min="1" max="500" data-type="num" value="{{ k.regime_sma_slow }}"></label>
+      <label title="Biên độ % quanh SMA chậm cần vượt qua để LẬT trạng thái regime — chống nhiễu quanh đường 200 ngày. Giá chạm gần đường nhưng còn trong biên thì giữ nguyên trạng thái cũ.">Biên hysteresis % <span class="varname">regime_hysteresis_pct</span>
+        <input name="regime_hysteresis_pct" type="number" step="0.1" min="0" max="50" data-type="num" value="{{ '%.1f'|format(k.regime_hysteresis_pct) }}"></label>
+    </div>
+  </details>
+
+  <details class="settings-section">
+    <summary>OPUS God Mode <span class="badge full-auto-off">$0 lợi nhuận</span></summary>
+    <div class="settings-grid">
+      <label title="Chế độ SAO CHÉP: ưu tiên mở các coin mà engine luật (đang có lãi) vừa chấm 'trade' trong lần quét này; OPUS phải giải thích nếu đi chệch. Chỉ là gợi ý mềm trong prompt, không phải lọc cứng.">Chế độ sao chép <span class="varname">opus_copy_mode</span>
+        <select name="opus_copy_mode" class="select-inline" data-type="bool">
+          <option value="1" {% if k.opus_copy_mode %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.opus_copy_mode %}selected{% endif %}>Tắt</option>
+        </select></label>
+      <label title="Cho OPUS mở lệnh MỘT MÌNH khi Grok bật mà không đồng ý (Grok vẫn đóng/giảm được). Sàn consensus dưới đây vẫn cưỡng chế phía cage.">OPUS mở lệnh một mình <span class="varname">opus_solo_open</span>
+        <select name="opus_solo_open" class="select-inline" data-type="bool">
+          <option value="1" {% if k.opus_solo_open %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.opus_solo_open %}selected{% endif %}>Tắt</option>
+        </select></label>
+      <label title="Ngưỡng consensus tối thiểu (deterministic) — được cưỡng chế trong policy (cage) cho MỌI lệnh mở solo. 0 = tắt sàn.">Consensus tối thiểu cho solo % <span class="varname">opus_solo_min_consensus</span>
+        <input name="opus_solo_min_consensus" type="number" step="1" min="0" max="100" data-type="num" value="{{ '%.0f'|format(k.opus_solo_min_consensus) }}"></label>
+      <label title="Phanh lỗ ngày: khi net hôm nay của OPUS chạm −X% vốn cấp thì KHÔNG mở lệnh mới nữa đến 00:00 UTC (đóng/giảm vẫn được). 0 = tắt.">Phanh lỗ ngày % <span class="varname">opus_daily_loss_stop_pct</span>
+        <input name="opus_daily_loss_stop_pct" type="number" step="0.5" min="0" data-type="num" value="{{ '%.1f'|format(k.opus_daily_loss_stop_pct) }}"></label>
+      <label title="Haiku sàng lọc rẻ trước mỗi lần gọi Opus đắt: nếu Haiku nói 'không có gì đáng quyết định' thì bỏ qua tick này, tiết kiệm chi phí.">Bật Haiku triage <span class="varname">opus_triage_enabled</span>
+        <select name="opus_triage_enabled" class="select-inline" data-type="bool">
+          <option value="1" {% if k.opus_triage_enabled %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.opus_triage_enabled %}selected{% endif %}>Tắt</option>
+        </select></label>
+      <label title="Model id dùng cho bước triage Haiku (rẻ) trước quyết định Opus đầy đủ.">Model triage <span class="varname">opus_triage_model</span>
+        <input name="opus_triage_model" type="text" data-type="str" value="{{ k.opus_triage_model }}"></label>
+      <label title="Giá Haiku $/1M token (in/out) để tính chi phí — token vào.">Giá Haiku $/1M token (in) <span class="varname">opus_triage_price_in_per_mtok</span>
+        <input name="opus_triage_price_in_per_mtok" type="number" step="0.1" min="0" data-type="num" value="{{ '%.1f'|format(k.opus_triage_price_in_per_mtok) }}"></label>
+      <label title="Giá Haiku $/1M token (in/out) để tính chi phí — token ra.">Giá Haiku $/1M token (out) <span class="varname">opus_triage_price_out_per_mtok</span>
+        <input name="opus_triage_price_out_per_mtok" type="number" step="0.1" min="0" data-type="num" value="{{ '%.1f'|format(k.opus_triage_price_out_per_mtok) }}"></label>
+      <label title="Dù triage nói không, vẫn buộc Opus quyết định đầy đủ ít nhất mỗi X phút.">Khoảng cách quyết định tối đa (phút) <span class="varname">opus_max_decision_gap_min</span>
+        <input name="opus_max_decision_gap_min" type="number" step="5" min="0" data-type="num" value="{{ k.opus_max_decision_gap_min }}"></label>
+      <label title="Tự tắt OPUS khi net cửa sổ N ngày < 0 qua đủ lệnh đóng.">Bật tự đóng băng <span class="varname">opus_auto_freeze_enabled</span>
+        <select name="opus_auto_freeze_enabled" class="select-inline" data-type="bool">
+          <option value="1" {% if k.opus_auto_freeze_enabled %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.opus_auto_freeze_enabled %}selected{% endif %}>Tắt</option>
+        </select></label>
+      <label title="Cửa sổ (ngày) lăn để tính net/số lệnh đóng cho tự đóng băng.">Cửa sổ tự đóng băng (ngày) <span class="varname">opus_freeze_window_days</span>
+        <input name="opus_freeze_window_days" type="number" step="1" min="1" data-type="num" value="{{ k.opus_freeze_window_days }}"></label>
+      <label title="Số lệnh đóng tối thiểu trong cửa sổ trước khi net âm được phép kích hoạt tự đóng băng (tránh đóng băng vì mẫu quá mỏng).">Số lệnh đóng tối thiểu <span class="varname">opus_freeze_min_closed</span>
+        <input name="opus_freeze_min_closed" type="number" step="1" min="0" data-type="num" value="{{ k.opus_freeze_min_closed }}"></label>
+      <label title="Vốn cấp riêng cho OPUS (mẫu số KPI). Trial 2026-07: $500; đạt gate mới nâng dần.">Vốn cấp OPUS $ <span class="varname">opus_allocation_usd</span>
+        <input name="opus_allocation_usd" type="number" step="any" min="0" data-type="num" value="{{ '%.0f'|format(k.opus_allocation_usd) }}"></label>
+      <label title="Trần notional mỗi lệnh mở của OPUS (cage cứng, policy clamp). Trial: $100 để không dồn 40% vốn vào một lệnh.">Trần notional/lệnh $ <span class="varname">opus_max_trade_notional</span>
+        <input name="opus_max_trade_notional" type="number" step="any" min="1" data-type="num" value="{{ '%.0f'|format(k.opus_max_trade_notional) }}"></label>
+      <label title="Mục tiêu net %/24h trên vốn cấp — mục tiêu KÉO DÃN điều tiết hành vi (chậm nhịp ⇒ chọn lọc hơn), không phải lời hứa.">KPI mục tiêu %/24h <span class="varname">opus_kpi_target_pct</span>
+        <input name="opus_kpi_target_pct" type="number" step="0.5" min="0" max="100" data-type="num" value="{{ '%.1f'|format(k.opus_kpi_target_pct) }}"></label>
+      <label title="Chu kỳ tick của vòng lặp OPUS (phút).">Chu kỳ tick (phút) <span class="varname">opus_interval_min</span>
+        <input name="opus_interval_min" type="number" step="1" min="1" data-type="num" value="{{ k.opus_interval_min }}"></label>
+      <label title="Trần chi phí API Opus mỗi ngày (đã ×2). Chạm trần thì ngừng quyết định mới đến 00:00 UTC.">Trần chi phí Opus $/ngày <span class="varname">opus_daily_cost_cap_usd</span>
+        <input name="opus_daily_cost_cap_usd" type="number" step="0.5" min="0" data-type="num" value="{{ '%.1f'|format(k.opus_daily_cost_cap_usd) }}"></label>
+      <label title="Stop-loss cứng cho vị thế 'ride' — winner đảo chiều không thể thành lỗ vô hạn (cage cứng).">Ride hard-SL % <span class="varname">opus_ride_hard_sl_pct</span>
+        <input name="opus_ride_hard_sl_pct" type="number" step="1" min="0" max="90" data-type="num" value="{{ '%.0f'|format(k.opus_ride_hard_sl_pct) }}"></label>
+      <label title="Số 'bài học' chắt lọc tối đa được tiêm vào prompt hệ thống của OPUS (bộ nhớ học từ kết quả thật).">Số bài học tối đa <span class="varname">opus_lessons_max</span>
+        <input name="opus_lessons_max" type="number" step="1" min="0" data-type="num" value="{{ k.opus_lessons_max }}"></label>
+      <label title="Số vị thế đã đóng gần nhất của OPUS đưa vào snapshot để nó tự soi thành tích (ride/rescue lãi hay lỗ).">Lịch sử vị thế đưa vào <span class="varname">opus_history_n</span>
+        <input name="opus_history_n" type="number" step="1" min="1" data-type="num" value="{{ k.opus_history_n }}"></label>
+    </div>
+  </details>
+
+  <button type="submit" class="ok mt-8">Lưu cấu hình KSS</button>
 </form>
 
 <div class="settings-subpanel">

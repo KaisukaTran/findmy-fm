@@ -14,6 +14,12 @@ header {
 }
 header h1 { font-size: 18px; margin: 0; }
 header .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+/* P1: PAPER/LIVE mode badge, high-contrast — LIVE must read as a warning at
+   a glance. .mode-live/.mode-paper is a template-derived class from mode.label
+   (routes.py mode.cls is untouched — kept alongside for its own semantics). */
+.badge.mode-badge { font-weight: 700; letter-spacing: .02em; padding: 3px 10px; }
+.badge.mode-badge.mode-paper { color: var(--muted); border-color: var(--line); background: transparent; }
+.badge.mode-badge.mode-live { color: #fff; background: var(--red); border-color: var(--red); }
 main { padding: 16px 24px; max-width: 1680px; margin: 0 auto; }
 .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
 /* grid-2: a fixed 2-column grid (e.g. the Trading 2×2), collapsing to 1 col when narrow. */
@@ -46,15 +52,18 @@ main { padding: 16px 24px; max-width: 1680px; margin: 0 auto; }
 .badge.telegram-on { color: var(--accent); border-color: var(--accent); }
 .badge.telegram-off { color: var(--muted); border-color: var(--muted); }
 .badge.veto { color: var(--red); border-color: var(--red); font-weight: 600; }
+/* .hyperopt-on / .ml-on are kept as generic badge colors reused by live features
+   (opus.html SHADOW/parse-error badge; positions/trades/savings "OPUS"/"KAI"
+   source tag) even though the original hyperopt.py/ml.py modules were removed
+   in 630c684 — see docs/ui-rebuild-brief.md P4 item 2. .hyperopt-off/.ml-off
+   and .statusbar-hyperopt/.statusbar-ml had zero remaining template references
+   (grepped app/templates/, app/static/app.js) and were deleted here. */
 .badge.hyperopt-on { color: #e3b341; border-color: #e3b341; font-weight: 600; }
-.badge.hyperopt-off { color: var(--muted); border-color: var(--muted); }
 .badge.ml-on { color: #bc8cff; border-color: #bc8cff; font-weight: 600; }
 .badge.strategy-dca { color: #2f81f7; border-color: #2f81f7; }
 .badge.strategy-pyr { color: #2ea043; border-color: #2ea043; font-weight: 600; }
-.badge.ml-off { color: var(--muted); border-color: var(--muted); }
 .statusbar-full-auto, .statusbar-breaker,
-.statusbar-guardian, .statusbar-telegram,
-.statusbar-hyperopt, .statusbar-ml { display: inline-flex; align-items: center; gap: 4px; }
+.statusbar-guardian, .statusbar-telegram { display: inline-flex; align-items: center; gap: 4px; }
 button {
   background: var(--accent); color: #fff; border: 0; border-radius: 6px;
   padding: 6px 12px; cursor: pointer; font-size: 13px;
@@ -140,12 +149,23 @@ button { white-space: nowrap; }
   border-color: var(--line); margin-bottom: 0;
   box-shadow: inset 3px 0 0 var(--accent);
 }
+/* P1: secondary nav group (Chi phí / Tích trữ) separated visually from the
+   6 primary items by a thin divider. Hidden on the narrow horizontal-wrap
+   layout below, where a mid-list rule line has no useful meaning. */
+.sidebar-sep { border: 0; border-top: 1px solid var(--line); margin: 8px 4px; }
 /* Narrow screens: sidebar folds to a horizontal wrap above the content. */
 @media (max-width: 900px) {
-  .layout { flex-direction: column; }
+  /* P4 item 1: the base rule's align-items:flex-start (needed to top-align the
+     desktop row layout) was never reset here — once flex-direction flips to
+     column, flex-start sizes .content to its own max-content width along the
+     now-horizontal cross axis instead of stretching it to the viewport, so
+     any wide-enough descendant (e.g. the KPI .cards grid, an un-.scroll-ed
+     table) pulled <body> into real horizontal overflow at 375px. */
+  .layout { flex-direction: column; align-items: stretch; }
   .sidebar { position: static; flex: none; width: 100%; }
   .sidebar-nav { flex-direction: row; flex-wrap: wrap; gap: 4px; }
   .sidebar-nav .tab { width: auto; }
+  .sidebar-sep { display: none; }
 }
 
 /* Phase 3.4 token polish: tabular numerics so dense $/% columns line up. */
@@ -323,6 +343,68 @@ button { white-space: nowrap; }
   border: 1px solid var(--line); border-radius: 8px; background: var(--bg);
 }
 
+/* --- P1 (R8): kss_settings.html:55 inline style= removal --------------- */
+.settings-note-full { grid-column: 1 / -1; margin: 2px 0 6px; }
+
+/* --- P2 R5: <details> accordion sections in the KSS settings form (native
+   HTML, zero JS/Alpine — see docs/ui-rebuild-brief.md §0 CSP-build caveat). */
+.settings-section {
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 10px; margin-bottom: 10px; background: var(--bg);
+}
+.settings-section summary {
+  cursor: pointer; font-weight: 600; font-size: 13px; color: var(--fg);
+  list-style: revert; padding: 2px 0;
+  display: flex; align-items: center; gap: 8px;
+}
+.settings-section[open] summary {
+  margin-bottom: 8px; border-bottom: 1px solid var(--line); padding-bottom: 6px;
+}
+
+/* --- P2 R6: multi-column layout for the settings field groups at desktop
+   width — was a single 66+-row column even at 1280px+. Below 1280px this stays
+   the existing single-column flex (unchanged mobile/tablet behaviour). */
+.settings-grid { display: flex; flex-direction: column; gap: 8px; }
+@media (min-width: 1280px) {
+  .settings-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 8px 16px; align-items: start;
+  }
+  .settings-grid > .settings-note-full { grid-column: 1 / -1; }
+}
+
+/* --- P2 R4: tap/focus-reachable tooltip (title= alone is hover-only, dead on
+   a phone). Reuses the label's own title= via CSS attr() — no markup/text
+   duplication, no JS. :focus-within fires the instant the user taps into the
+   label's own input/select to edit it (exactly when the explanation helps). */
+#kss-settings-form label[title],
+#live-exec-form label[title],
+#grok-fail-mode-form label[title],
+#consensus-weights-form label[title] {
+  position: relative;
+}
+#kss-settings-form label[title]::before,
+#live-exec-form label[title]::before,
+#grok-fail-mode-form label[title]::before,
+#consensus-weights-form label[title]::before {
+  content: "ⓘ "; opacity: .55; cursor: help;
+}
+#kss-settings-form label[title]:hover::after,
+#kss-settings-form label[title]:focus-within::after,
+#live-exec-form label[title]:hover::after,
+#live-exec-form label[title]:focus-within::after,
+#grok-fail-mode-form label[title]:hover::after,
+#grok-fail-mode-form label[title]:focus-within::after,
+#consensus-weights-form label[title]:hover::after,
+#consensus-weights-form label[title]:focus-within::after {
+  content: attr(title);
+  position: absolute; left: 0; top: 100%; z-index: 40;
+  width: max-content; max-width: 280px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 8px; font-size: 11px; line-height: 1.4; color: var(--fg);
+  white-space: normal; box-shadow: 0 4px 14px rgba(0,0,0,.5);
+}
+
 /* inline select inside a label (grok fail-mode) */
 .select-inline { padding: 2px 6px; border-radius: 4px; border: 1px solid var(--line); width: auto; }
 
@@ -385,33 +467,63 @@ button { white-space: nowrap; }
   white-space: normal; max-width: 260px; line-height: 1.4;
 }
 
-/* --- P6: Mobile "Automation ▾" popover (<600px) ----------------------- */
-/* Desktop default: hide the mobile wrapper entirely (pure CSS, no JS needed).
-   The inline strip (.auto-inline) shows naturally as a flex child of .statusbar. */
-.auto-mobile-wrap { display: none; }
+/* --- P1 (P-9 fix): "Automation ▾" strip — ONE DOM block for both
+   breakpoints (was duplicated markup: .auto-mobile-wrap + .auto-inline).
+   >=600px: .auto-content is always visible inline, .auto-toggle is hidden.
+   <600px: .auto-toggle shows; .auto-content becomes a click-to-open popover,
+   shown only when the wrapping button toggles Alpine's :class="auto-open". */
+.auto-toggle { display: none; }
+
+.auto-content {
+  display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
 
 @media (max-width: 599px) {
-  /* Hide the desktop inline strip on narrow viewports. */
-  .auto-inline { display: none; }
-
-  /* Show the mobile wrapper (contains the button + popover). */
-  .auto-mobile-wrap {
-    display: inline-flex;
-    align-items: center;
-    position: relative;   /* anchor for the absolute popover */
+  .auto-toggle {
+    display: inline-flex; align-items: center;
   }
 
-  /* The popover: Alpine x-show manages display (none/block).
-     We use flex layout for the stacked badges when visible. */
-  .auto-popover {
+  /* Anchor for the popover — the whole statusbar is already a flex/relative
+     context via [x-data]; give it a positioning root explicitly. */
+  .statusbar { position: relative; }
+
+  .auto-content {
+    display: none; /* hidden unless .auto-open */
+  }
+  .auto-content.auto-open {
     position: absolute;
     top: calc(100% + 4px); left: 0;
     min-width: 200px; width: max-content; max-width: 92vw;
     z-index: 200;
     background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
     padding: 10px 12px;
-    display: flex; flex-direction: column; gap: 8px;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
     font-size: 12px;
   }
-  /* x-cloak hides it before Alpine initialises; after that x-show takes over */
+  .auto-content.auto-open .sep { display: none; }
 }
+
+/* P3: scanner funnel — highlight the whole-cycle "bỏ CẢ chu kỳ" row(s) when the
+   reason dominates the window (>50% of scan cycles) — the single most important
+   fact the funnel exists to surface (docs/ui-rebuild-brief.md §5.1.1). */
+.funnel-warn td { background: rgba(229, 83, 75, .12); color: var(--red); font-weight: 600; }
+
+/* P3: loss-cause badges — their own domain, never .badge.ml-on/.hyperopt-on/
+   .breaker-frozen/.veto (those mean unrelated things on other tabs). Two
+   taxonomies stay distinct on purpose (see docs/ui-rebuild-brief.md §5.4):
+   .cause-src-* = losses.html's per-fill source tag (OPUS/KSS-SL/KSS-Trail/
+   KSS-TP?/Khác); .cause-root-* = lossautopsy.html's finer per-session
+   root_cause (dup_wave/size_outlier/pyramid_up_reversal/deep_ladder_sl/
+   orphan/reversal). */
+.badge.cause-src-opus { color: #bc8cff; border-color: #bc8cff; font-weight: 600; }
+.badge.cause-src-kss-sl { color: var(--red); border-color: var(--red); }
+.badge.cause-src-kss-trail { color: #e3b341; border-color: #e3b341; }
+.badge.cause-src-kss-tp { color: var(--muted); border-color: var(--muted); }
+.badge.cause-src-other { color: var(--muted); border-color: var(--muted); }
+
+.badge.cause-root-dup-wave { color: var(--red); border-color: var(--red); font-weight: 600; }
+.badge.cause-root-size-outlier { color: #e3b341; border-color: #e3b341; font-weight: 600; }
+.badge.cause-root-pyramid-up-reversal { color: #2ea043; border-color: #2ea043; font-weight: 600; }
+.badge.cause-root-deep-ladder-sl { color: #bc8cff; border-color: #bc8cff; font-weight: 600; }
+.badge.cause-root-orphan { color: var(--muted); border-color: var(--muted); }
+.badge.cause-root-reversal { color: var(--accent); border-color: var(--accent); }

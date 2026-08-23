@@ -16,9 +16,9 @@
           <td>{{ f.symbol }}</td>
           <td>{{ f.side }}</td>
           <td>{{ f.quantity | qty }}</td>
-          <td>{{ f.price | money }}</td>
-          <td class="muted">{{ f.fee | money_kmb }}</td>
-          <td class="{{ 'pos' if f.realized_pnl >= 0 else 'neg' }}">{{ '%+.2f' | format(f.realized_pnl) }}</td>
+          <td>{{ f.price | price }}</td>
+          <td class="muted">${{ f.fee | money }}</td>
+          <td class="{{ 'pos' if f.realized_pnl >= 0 else 'neg' }}">${{ f.realized_pnl | money }}</td>
         </tr>
         {% endfor %}
       </tbody>

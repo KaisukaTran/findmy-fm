@@ -53,13 +53,13 @@
           hx-target="#calendar-day" hx-swap="innerHTML"{% endif %}>
         <div class="cal-day">{{ c.day }}</div>
         {% if c.has %}
-        <div class="cal-pnl {{ 'pos' if c.pnl >= 0 else 'neg' }}">{{ '%+.2f' | format(c.pnl) }}</div>
+        <div class="cal-pnl {{ 'pos' if c.pnl >= 0 else 'neg' }}">${{ c.pnl | money }}</div>
         <div class="cal-cnt muted">{{ c.closed }} lệnh</div>
         {% endif %}
       </td>
       {% endfor %}
       <td class="cal-wk {{ 'pos' if wk.pnl >= 0 else 'neg' }}">
-        {{ '%+.0f' | format(wk.pnl) if wk.closed else '·' }}
+        {{ '$' ~ (wk.pnl | money) if wk.closed else '·' }}
       </td>
     </tr>
     {% endfor %}
@@ -79,7 +79,7 @@
           hx-get="/partials/calendar?view=month&year={{ ctx.year }}&month={{ m.month }}"
           hx-target="#calendar-wrap" hx-swap="innerHTML"{% endif %}>
         <td>{{ m.name }}</td>
-        <td class="{{ 'pos' if m.pnl >= 0 else 'neg' }}">{{ '%+.2f' | format(m.pnl) }}</td>
+        <td class="{{ 'pos' if m.pnl >= 0 else 'neg' }}">${{ m.pnl | money }}</td>
         <td>{{ m.closed }}</td>
         <td class="pos">{{ m.wins }}</td>
         <td class="neg">{{ m.losses }}</td>

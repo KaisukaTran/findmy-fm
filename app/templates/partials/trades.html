@@ -1,6 +1,6 @@
 <div id="trades-pane" class="scroll"
      hx-get="/partials/trades?page={{ page }}&side={{ side }}"
-     hx-trigger="every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body"
+     hx-trigger="refresh-trading from:body"
      hx-target="this" hx-swap="outerHTML">
 <div class="audit-filters">
   {% for key, label in [('ALL', '≡ Tất cả'), ('BUY', '🟢 BUY'), ('SELL', '🔴 SELL')] %}
@@ -28,9 +28,9 @@
       <td>{{ r.symbol }}</td>
       <td class="{{ 'pos' if r.side == 'BUY' else 'neg' }}">{{ r.side }}</td>
       <td>{{ r.quantity | qty }}</td>
-      <td>{{ r.price | money }}</td>
-      <td>{{ "%.4f"|format(r.fee) }}</td>
-      <td class="{{ 'pos' if r.realized_pnl >= 0 else 'neg' }}">{{ r.realized_pnl | money_kmb }}</td>
+      <td>{{ r.price | price }}</td>
+      <td class="muted">${{ r.fee | money }}</td>
+      <td class="{{ 'pos' if r.realized_pnl >= 0 else 'neg' }}">${{ r.realized_pnl | money_kmb }}</td>
       <td><span class="badge {{ 'ml-on' if r.source == 'OPUS' else ('active' if r.source == 'KSS' else '') }}">{{ r.source }}</span></td>
     </tr>
     {% endfor %}

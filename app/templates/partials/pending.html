@@ -1,6 +1,6 @@
 <div id="pending-pane"
      hx-get="/partials/pending?page={{ page }}"
-     hx-trigger="every 10s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body"
+     hx-trigger="refresh-trading from:body"
      hx-target="this" hx-swap="outerHTML">
 <div class="flex-spaced mb-8">
   <span class="muted" title="Quy tắc tự duyệt: chỉ duyệt lệnh từ các nguồn này có notional (KL×giá) ≤ ngưỡng. Notional lớn hơn vẫn phải người duyệt.">auto-approve:</span> <span class="muted">{{ aa_sources }} ≤ $<input id="aa-max-input" type="number" min="1" step="1"
@@ -34,8 +34,8 @@
       <td>{{ o.symbol }}</td>
       <td class="{{ 'pos' if o.side == 'BUY' else 'neg' }}">{{ o.side }}</td>
       <td>{{ o.quantity | qty }}</td>
-      <td>{{ (o.price | money) if o.price else "mkt" }}</td>
-      <td class="muted">{{ (o.mkt | money) if o.mkt else "—" }}</td>
+      <td>{{ (o.price | price) if o.price else "mkt" }}</td>
+      <td class="muted">{{ (o.mkt | price) if o.mkt else "—" }}</td>
       <td class="muted">${{ o.notional | money_kmb }}</td>
       <td class="muted">{{ o.source }}{% if o.risk_note %} ⚠{% endif %}{% if o.get('auto_veto') %} <span class="badge veto" title="{{ o.get('auto_veto_reason') or '' }}">VETOED</span>{% endif %}</td>
       <td>

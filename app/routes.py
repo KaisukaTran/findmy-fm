@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import math
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -32,6 +33,7 @@ from app import (
     portfolio,
     runtime,
     savings,
+    scanfunnel,
     scanner,
     scheduler,
     timefmt,
@@ -45,7 +47,15 @@ from app.security import require_api_key
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
-# Display filters: money = ##,###.## (thousands + 2dp); qty keeps crypto precision.
+# --- Money/price filters (docs/ui-rebuild-brief.md §8 — the ONE rule, everything else
+# derives from it): `money_kmb` -> aggregate/KPI figures (equity, cash, totals) —
+# abbreviated K/M/B; `money` -> per-row money AMOUNTS (P&L, fees, position value) —
+# plain thousands+2dp; `price` -> COIN PRICES (avg_entry_price, current_price, ladder
+# rungs) — adaptive precision so a sub-cent altcoin never rounds to "0.00" (P-4b).
+# `money`/`money_kmb` do NOT include "$" (callers prepend it — the existing, unchanged
+# convention); `price` DOES include "$" itself (self-contained, so a template can never
+# forget it — this was P-4b's actual bug: avg_entry_price/current_price had neither the
+# right precision nor a "$"). Every money/price figure rendered anywhere must carry "$".
 templates.env.filters["money"] = lambda v: f"{float(v or 0):,.2f}"
 
 
@@ -63,7 +73,29 @@ def _money_kmb(v) -> str:
     return f"{sign}{a / 1e9:.2f}B"
 
 
+def _price(v) -> str:
+    """Coin price, adaptive precision, "$"-prefixed (P-4b): >= $1 -> 2dp; $0.01-$1 ->
+    4dp (covers most altcoins, e.g. a $0.0355 coin renders "$0.0355", not "$0.04");
+    < $0.01 -> enough decimals for ~6 significant digits (capped at 8dp) so a
+    sub-cent coin (e.g. $0.0035) never rounds to the unreadable "$0.00"."""
+    try:
+        n = float(v or 0)
+    except (TypeError, ValueError):
+        n = 0.0
+    a = abs(n)
+    if a == 0:
+        return "$0.00"
+    if a >= 1:
+        return f"${n:,.2f}"
+    if a >= 0.01:
+        return f"${n:,.4f}"
+    exp = math.floor(math.log10(a))  # position of the first significant digit
+    decimals = min(8, -exp + 5)
+    return f"${n:.{decimals}f}"
+
+
 templates.env.filters["money_kmb"] = _money_kmb
+templates.env.filters["price"] = _price
 templates.env.filters["qty"] = lambda v: f"{float(v or 0):,.6f}"
 templates.env.filters["ladder"] = charts.pyramid_ladder_svg  # session dict -> SVG
 # Display timezone: stored UTC -> local (Vietnam GMT+7) HH:MM:SS / full datetime.
@@ -1201,6 +1233,18 @@ def partial_performance(request: Request, period: str = "all", db: Session = Dep
             "equity_svg": charts.equity_curve_svg(p["equity_curve"], p["equity_times"]),
             "winloss_svg": charts.winloss_bars_svg(p["wins"], p["losses"]),
         },
+    )
+
+
+@ui_router.get("/partials/scan-funnel", response_class=HTMLResponse)
+def partial_scan_funnel(request: Request, window: str = "24h", db: Session = Depends(get_db)):
+    """Scanner funnel (§5.1.1): "why isn't the bot opening trades?" as one table,
+    trailing 24h/7d. Poll tier T2 (30s) — see the template's own hx-get/hx-trigger."""
+    if window not in scanfunnel.WINDOWS:
+        window = "24h"
+    f = scanfunnel.funnel_view(db, window=window)
+    return templates.TemplateResponse(
+        "partials/scan_funnel.html", {"request": request, "f": f}
     )
 
 

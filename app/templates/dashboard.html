@@ -13,8 +13,10 @@
 <body x-data="ui">
   <header>
     <h1>FINDMY-FM <span class="muted">· KSS Pyramid DCA</span>
-      <span class="badge {{ mode.cls }}" title="Chế độ của instance này — Paper :8000 / Live :8001. Không nhầm hai bảng điều khiển.">{{ mode.label }}</span></h1>
-    <div hx-get="/partials/status" hx-trigger="load, every 5s [document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML"></div>
+      <span class="badge mode-badge {{ mode.cls }} {{ 'mode-live' if 'LIVE' in mode.label else 'mode-paper' }}" title="Chế độ của instance này — Paper :8000 / Live :8001. Không nhầm hai bảng điều khiển.">{{ mode.label }}</span></h1>
+    <!-- x-data lives on this wrapper, NOT inside status.html: the partial is
+         re-swapped on each status poll, which would reset the popover mid-interaction. -->
+    <div x-data="autoBar" hx-get="/partials/status" hx-trigger="load, every 5s [document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML"></div>
     <div class="actions">
       <button class="ghost" @click="toggleOrder">+ Lệnh</button>
       <button class="ghost" @click="toggleKss">+ Phiên KSS</button>
@@ -26,32 +28,29 @@
   <main>
     <div class="layout">
       <!-- Left sidebar nav. data-tab drives app.js showTab — presentation-only,
-           no JS change: showTab toggles .active on [data-tab] and shows the panel. -->
+           no JS change: showTab toggles .active on [data-tab] and shows the panel.
+           P1 IA: 6 primary tabs (Chiến lược lands first) + a separator + 2
+           secondary tabs (Chi phí / Tích trữ — less-frequently-viewed, manual data). -->
       <aside class="sidebar">
         <nav class="sidebar-nav" role="tablist" aria-label="Điều hướng">
-          <button class="tab active" data-tab="overview" role="tab" aria-selected="true"><span class="nav-ico" aria-hidden="true">▦</span><span>Tổng quan</span></button>
-          <button class="tab" data-tab="trading" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">⇅</span><span>Giao dịch</span></button>
-          <button class="tab" data-tab="opus" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">◈</span><span>OPUS</span></button>
+          <button class="tab active" data-tab="strategy" role="tab" aria-selected="true"><span class="nav-ico" aria-hidden="true">▦</span><span>Chiến lược</span></button>
+          <button class="tab" data-tab="book" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">⇅</span><span>Sổ đang mở</span></button>
           <button class="tab" data-tab="losses" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">⚠</span><span>Phân tích lỗ</span></button>
           <button class="tab" data-tab="calendar" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">⊞</span><span>Lịch P&amp;L</span></button>
+          <button class="tab" data-tab="config" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">⚙</span><span>Cấu hình</span></button>
+          <button class="tab" data-tab="logs" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">☰</span><span>Nhật ký</span></button>
+          <hr class="sidebar-sep" aria-hidden="true">
           <button class="tab" data-tab="costs" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">₫</span><span>Chi phí</span></button>
           <button class="tab" data-tab="savings" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">◆</span><span>Tích trữ</span></button>
-          <button class="tab" data-tab="strategy" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">⚙</span><span>Chiến lược</span></button>
-          <button class="tab" data-tab="logs" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">☰</span><span>Nhật ký</span></button>
         </nav>
       </aside>
       <div class="content">
-
-    <!-- Summary cards (KPI strip — overview only; all detail stays in tables) -->
-    <div hx-get="/partials/summary" hx-trigger="load, every 15s [document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML">
-      <span class="htmx-indicator loading-row">Đang tải…</span>
-    </div>
 
     <!-- Create-order modal -->
     <div class="modal" x-show="orderOpen" x-cloak role="dialog" aria-modal="true">
       <div class="modal-header">
         <h2>Đặt lệnh thủ công</h2>
-        <button type="button" class="sm ghost modal-close" @click="orderOpen=false" aria-label="Đóng">✕</button>
+        <button type="button" class="sm ghost modal-close" @click="toggleOrder" aria-label="Đóng">✕</button>
       </div>
       <form id="order-form">
         <label>Symbol<input name="symbol" value="BTC" required /></label>
@@ -71,7 +70,7 @@
     <div class="modal" x-show="kssOpen" x-cloak role="dialog" aria-modal="true">
       <div class="modal-header">
         <h2>Tạo phiên KSS mới</h2>
-        <button type="button" class="sm ghost modal-close" @click="kssOpen=false" aria-label="Đóng">✕</button>
+        <button type="button" class="sm ghost modal-close" @click="toggleKss" aria-label="Đóng">✕</button>
       </div>
       <form id="kss-form">
         <label>Symbol<input name="symbol" value="BTC" required /></label>
@@ -88,7 +87,7 @@
     <div class="modal" x-show="previewOpen" x-cloak role="dialog" aria-modal="true">
       <div class="modal-header">
         <h2>Xem trước kim tự tháp (dự báo)</h2>
-        <button type="button" class="sm ghost modal-close" @click="previewOpen=false" aria-label="Đóng">✕</button>
+        <button type="button" class="sm ghost modal-close" @click="togglePreview" aria-label="Đóng">✕</button>
       </div>
       <form id="preview-form">
         <label>Symbol<input name="symbol" value="BTC" /></label>
@@ -102,13 +101,31 @@
       <div id="preview-output"></div>
     </div>
 
-    <!-- TAB: Tổng quan (Overview) -->
-    <div data-tab-panel="overview">
+    <!-- TAB: Chiến lược (Strategy — LANDING). Merges the old Overview content
+         (KPI strip + performance + scanner + scanner-stats) plus a funnel
+         placeholder (endpoint arrives in P3). This is the ONLY tab where the
+         .cards KPI strip is allowed (owner decision). -->
+    <div data-tab-panel="strategy">
+      <!-- Summary cards (KPI strip) — the ONE place .cards is allowed (owner
+           decision). It now lives INSIDE [data-tab-panel="strategy"], so the
+           poll carries the panel guard too (§9): no background polling while
+           the user is on another tab. refresh-status still refreshes it
+           immediately when an action changes account state. -->
+      <div hx-get="/partials/summary" hx-trigger="load, every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-status from:body" hx-swap="innerHTML">
+        <span class="htmx-indicator loading-row">Đang tải…</span>
+      </div>
       <div class="panel mt-16">
         <h2>Hiệu suất (Performance)</h2>
         <!-- Initial lazy load only; the returned #perf partial owns its own polling
              so the period toggle survives refreshes (it bakes ?period into its hx-get). -->
         <div hx-get="/partials/performance" hx-trigger="load, tab-shown from:closest [data-tab-panel]" hx-swap="innerHTML"></div>
+      </div>
+      <div class="panel mt-16">
+        <h2>Phễu quét (Scanner funnel) — vì sao bot không vào lệnh?</h2>
+        <!-- Initial lazy load only; the returned #scan-funnel partial owns its own
+             polling (T2/30s) so the window toggle survives refreshes (bakes
+             ?window into its hx-get, same pattern as #perf above). -->
+        <div hx-get="/partials/scan-funnel" hx-trigger="load, tab-shown from:closest [data-tab-panel]" hx-swap="innerHTML"></div>
       </div>
       <div class="panel mt-16">
         <h2>Agent Scanner</h2>
@@ -117,10 +134,12 @@
       </div>
     </div>
 
-    <!-- TAB: Giao dịch (Trading) -->
-    <div data-tab-panel="trading">
-      <!-- 2×2 cards: top = KSS + Positions, bottom = Pending + Trades (≤20 rows each).
-           KSS sits top-left (the primary manage/DCA+ surface); Pending moved below it. -->
+    <!-- TAB: Sổ đang mở (Open book). KSS + Positions are the two primary
+         tables; Pending + Trades are demoted to a togglable history sub-view
+         (Alpine x-show) whose partials only fetch once opened, via the
+         "show-history" event dispatched from app.js's data-action handler
+         (never inline JS) — see toggleHistory in app.js. -->
+    <div data-tab-panel="book">
       <div class="grid grid-2 mt-16">
         <div class="panel">
           <h2>KSS Sessions</h2>
@@ -136,28 +155,25 @@
                hx-trigger="tab-shown from:closest [data-tab-panel], load"
                hx-swap="innerHTML"></div>
         </div>
-        <div class="panel">
-          <h2>Hàng chờ duyệt (Pending)</h2>
-          <div class="scroll"
-               hx-get="/partials/pending"
-               hx-trigger="tab-shown from:closest [data-tab-panel], load"
-               hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
-        </div>
-        <div class="panel">
-          <h2>Lịch sử giao dịch (Trades)</h2>
-          <div class="scroll"
-               hx-get="/partials/trades"
-               hx-trigger="tab-shown from:closest [data-tab-panel], load"
-               hx-swap="innerHTML"></div>
-        </div>
       </div>
-    </div>
-
-    <!-- TAB: OPUS orchestrator mode -->
-    <div data-tab-panel="opus">
-      <div class="panel mt-16">
-        <h2>OPUS orchestrator (Opus tự điều phối · paper)</h2>
-        <div hx-get="/partials/opus" hx-trigger="tab-shown from:closest [data-tab-panel], every 10s [tabActive(this) && document.visibilityState==='visible'], refresh-opus from:body" hx-swap="innerHTML"></div>
+      <div class="panel mt-16" x-data="historyPanel">
+        <button type="button" class="sm ghost" data-action="toggleHistory" @click="toggle" :aria-expanded="open">Lịch sử &amp; hàng chờ ▾</button>
+        <div class="grid grid-2 mt-16" x-show="open" x-cloak>
+          <div class="panel">
+            <h2>Hàng chờ duyệt (Pending)</h2>
+            <div class="scroll"
+                 hx-get="/partials/pending"
+                 hx-trigger="show-history from:body"
+                 hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
+          </div>
+          <div class="panel">
+            <h2>Lịch sử giao dịch (Trades)</h2>
+            <div class="scroll"
+                 hx-get="/partials/trades"
+                 hx-trigger="show-history from:body"
+                 hx-swap="innerHTML"></div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -166,7 +182,7 @@
       <div class="panel mt-16">
         <h2>Phân tích lỗ — nguyên nhân / thời gian / giá trị / cặp</h2>
         <div hx-get="/partials/losses" hx-trigger="tab-shown from:closest [data-tab-panel], every 30s [tabActive(this) && document.visibilityState==='visible'], refresh-losses from:body" hx-swap="innerHTML"></div>
-        <div class="mt-16" hx-get="/partials/lossautopsy" hx-trigger="tab-shown from:closest [data-tab-panel], refresh-losses from:body" hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
+        <div class="mt-16" hx-get="/partials/lossautopsy" hx-trigger="tab-shown from:closest [data-tab-panel], every 30s [tabActive(this) && document.visibilityState==='visible'], refresh-losses from:body" hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
       </div>
     </div>
 
@@ -178,38 +194,28 @@
       </div>
     </div>
 
-    <!-- TAB: Chi phí (operating costs — trade/withdraw/VAT/AI) -->
-    <div data-tab-panel="costs">
+    <!-- TAB: Cấu hình (Config). KSS settings + Go-live, plus OPUS demoted here
+         from its own top-level tab (still $0 profit / 5 blockers per memory —
+         kept fully functional, just lower nav weight). -->
+    <div data-tab-panel="config">
+      <!-- The settings form spans the FULL content width: its .settings-grid
+           only becomes multi-column (R6) when the container is wide enough for
+           2×240px tracks. Inside the old half-width .grid panel (493px @1280px)
+           the media query fired but still laid out a single column. -->
       <div class="panel mt-16">
-        <h2>Chi phí vận hành</h2>
-        <div hx-get="/partials/costs?period=month"
-             hx-trigger="tab-shown from:closest [data-tab-panel], load"
-             hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
+        <h2>Cấu hình KSS (tổng)</h2>
+        <!-- load once only: a global refresh must NOT reload the form while the user is
+             editing (it would clobber unsaved input). Saving keeps the typed values. -->
+        <div id="kss-settings-panel" hx-get="/partials/kss-settings" hx-trigger="load" hx-swap="innerHTML"></div>
       </div>
-    </div>
-
-    <!-- TAB: Tích trữ (KAI savings — protected holdings the bot never sells) -->
-    <div data-tab-panel="savings">
-      <div class="panel mt-16">
-        <h2>Tích trữ (KAI) — bot không bán</h2>
-        <div hx-get="/partials/savings"
-             hx-trigger="tab-shown from:closest [data-tab-panel], load"
-             hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
-      </div>
-    </div>
-
-    <!-- TAB: Chiến lược (Strategy / Params) -->
-    <div data-tab-panel="strategy">
-      <div class="grid mt-16">
-        <div class="panel">
-          <h2>Cấu hình KSS (tổng)</h2>
-          <!-- load once only: a global refresh must NOT reload the form while the user is
-               editing (it would clobber unsaved input). Saving keeps the typed values. -->
-          <div hx-get="/partials/kss-settings" hx-trigger="load" hx-swap="innerHTML"></div>
-        </div>
+      <div class="grid grid-2 mt-16">
         <div class="panel">
           <h2>Go-live (PAPER / LIVE)</h2>
           <div hx-get="/partials/live-trading" hx-trigger="load, tab-shown from:closest [data-tab-panel], refresh-live from:body, refresh-status from:body" hx-swap="innerHTML"></div>
+        </div>
+        <div class="panel">
+          <h2>OPUS orchestrator (Opus tự điều phối · paper — hiện $0 lợi nhuận, xem OPUS God Mode bên dưới)</h2>
+          <div hx-get="/partials/opus" hx-trigger="tab-shown from:closest [data-tab-panel], every 30s [tabActive(this) && document.visibilityState==='visible'], refresh-opus from:body" hx-swap="innerHTML"></div>
         </div>
       </div>
     </div>
@@ -231,6 +237,26 @@
                hx-trigger="tab-shown from:closest [data-tab-panel], load"
                hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
         </div>
+      </div>
+    </div>
+
+    <!-- TAB: Chi phí (operating costs — trade/withdraw/VAT/AI) -->
+    <div data-tab-panel="costs">
+      <div class="panel mt-16">
+        <h2>Chi phí vận hành</h2>
+        <div hx-get="/partials/costs?period=month"
+             hx-trigger="tab-shown from:closest [data-tab-panel], load"
+             hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
+      </div>
+    </div>
+
+    <!-- TAB: Tích trữ (KAI savings — protected holdings the bot never sells) -->
+    <div data-tab-panel="savings">
+      <div class="panel mt-16">
+        <h2>Tích trữ (KAI) — bot không bán</h2>
+        <div hx-get="/partials/savings"
+             hx-trigger="tab-shown from:closest [data-tab-panel], load"
+             hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
       </div>
     </div>
       </div><!-- /.content -->

@@ -6,13 +6,16 @@
   'orphan': 'Mồ côi (không rõ session)',
   'reversal': 'Đảo chiều thị trường (tín hiệu ổn, thị trường đổi hướng)',
 } %}
+{# P3 §5.4/§8: own class domain — never .badge.ml-on/.hyperopt-on/.breaker-frozen/
+   .veto (those mean unrelated things on other tabs: OPUS ownership, an unused
+   hyperopt feature, circuit-breaker state, Guardian vetoes). #}
 {% set cause_badge = {
-  'dup_wave': 'breaker-frozen',
-  'size_outlier': 'veto',
-  'pyramid_up_reversal': 'hyperopt-on',
-  'deep_ladder_sl': 'ml-on',
-  'orphan': 'telegram-off',
-  'reversal': '',
+  'dup_wave': 'cause-root-dup-wave',
+  'size_outlier': 'cause-root-size-outlier',
+  'pyramid_up_reversal': 'cause-root-pyramid-up-reversal',
+  'deep_ladder_sl': 'cause-root-deep-ladder-sl',
+  'orphan': 'cause-root-orphan',
+  'reversal': 'cause-root-reversal',
 } %}
 {% set metric_label = {
   'consensus': 'Consensus %',
@@ -22,15 +25,13 @@
   'avg_mae': 'Avg MAE %',
 } %}
 
-<div class="cards mb-12">
-  <div class="card"><div class="label" data-tip="Số KSS session có ít nhất một lệnh bán đã chốt (exit).">Số session có exit</div>
-    <div class="value">{{ A.summary.sessions }}</div></div>
-  <div class="card"><div class="label" data-tip="Số session thắng / lỗ trong tổng số có exit.">Thắng/Lỗ</div>
-    <div class="value"><span class="pos">{{ A.summary.winners }}</span> / <span class="neg">{{ A.summary.losers }}</span></div></div>
-  <div class="card"><div class="label" data-tip="Tổng lãi/lỗ đã chốt của mọi session có exit.">Net đã chốt</div>
-    <div class="value {{ 'pos' if A.summary.net_realized >= 0 else 'neg' }}">${{ A.summary.net_realized | money_kmb }}</div></div>
-  <div class="card"><div class="label" data-tip="Tổng lỗ (chỉ các session lỗ).">Tổng lỗ</div>
-    <div class="value neg">${{ A.summary.loss_total | money_kmb }}</div></div>
+{# P3 §5.4/§8: .cards is reserved for the Chiến lược landing tab only — this is
+   the same thin-summary-line pattern kss.html (P2) already established. #}
+<div class="muted mb-10">
+  <span title="Số KSS session có ít nhất một lệnh bán đã chốt (exit).">Session có exit: <b>{{ A.summary.sessions }}</b></span> ·
+  <span title="Số session thắng / lỗ trong tổng số có exit.">Thắng/Lỗ: <b class="pos">{{ A.summary.winners }}</b>/<b class="neg">{{ A.summary.losers }}</b></span> ·
+  <span title="Tổng lãi/lỗ đã chốt của mọi session có exit.">Net đã chốt: <b class="{{ 'pos' if A.summary.net_realized >= 0 else 'neg' }}">${{ A.summary.net_realized | money_kmb }}</b></span> ·
+  <span title="Tổng lỗ (chỉ các session lỗ).">Tổng lỗ: <b class="neg">${{ A.summary.loss_total | money_kmb }}</b></span>
 </div>
 
 <h3 class="section-subhead">Phân biệt Thắng vs Lỗ tại thời điểm vào (tín hiệu scanner)</h3>

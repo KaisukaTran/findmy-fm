@@ -12,7 +12,7 @@
 ] %}
 <div id="positions-pane" class="scroll"
      hx-get="/partials/positions?page={{ page }}{{ qs | safe }}"
-     hx-trigger="every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body"
+     hx-trigger="every 10s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body"
      hx-target="this" hx-swap="outerHTML">
 {% if rows %}
 <table class="tbl">
@@ -33,8 +33,8 @@
     <tr>
       <td>{{ r.symbol }}</td>
       <td>{{ r.quantity | qty }}</td>
-      <td>{{ r.avg_entry_price | money }}</td>
-      <td>{{ r.current_price | money }}</td>
+      <td>{{ r.avg_entry_price | price }}</td>
+      <td>{{ r.current_price | price }}</td>
       <td>${{ r.market_value | money_kmb }} <span class="muted fs-11">{{ "%.1f"|format(r.market_value_pct) }}%</span></td>
       <td class="{{ 'pos' if r.unrealized_pnl >= 0 else 'neg' }}">
         ${{ r.unrealized_pnl | money_kmb }} ({{ "%.1f"|format(r.unrealized_pnl_pct) }}%)

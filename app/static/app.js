@@ -468,6 +468,13 @@ const actions = {
     toast(r.sent ? "Đã gửi cảnh báo kiểm tra thành công." : "Cảnh báo kiểm tra thất bại — kiểm tra cấu hình Telegram.",
       r.sent ? "success" : "error");
   },
+  // P1: "Sổ đang mở" history sub-view (Pending + Trades). Alpine's own
+  // @click on the same button toggles x-show; this data-action dispatches
+  // the htmx trigger so the two lazy partials fetch (CSP-safe — no inline
+  // JS, single delegated listener like every other mutation here).
+  toggleHistory() {
+    htmx.trigger(document.body, "show-history");
+  },
 };
 
 document.addEventListener("click", (e) => {
@@ -520,10 +527,11 @@ document.addEventListener("click", (e) => {
   if (tabBtn) showTab(tabBtn.dataset.tab);
 });
 document.addEventListener("DOMContentLoaded", () => {
-  // U8: restore tab from hash on load; fallback to overview.
+  // U8: restore tab from hash on load; fallback to "strategy" (the P1 landing
+  // tab — "overview"/"trading"/"opus" tab ids no longer exist, see dashboard.html).
   const hash = location.hash.replace("#", "").trim();
-  const valid = ["overview", "trading", "opus", "losses", "calendar", "strategy", "logs"];
-  showTab(valid.includes(hash) ? hash : "overview");
+  const valid = ["strategy", "book", "losses", "calendar", "config", "logs", "costs", "savings"];
+  showTab(valid.includes(hash) ? hash : "strategy");
 });
 
 // Close the ladder modal when clicking the dark backdrop (outside the box).
@@ -571,74 +579,46 @@ document.addEventListener("submit", async (e) => {
     refreshTrading(); refreshStatus();
   } else if (form.id === "kss-settings-form") {
     e.preventDefault();
-    const f = new FormData(form);
-    await api("POST", "/api/kss-settings", {
-      scan_distance_pct: num(f.get("scan_distance_pct")),
-      scan_tp_pct: num(f.get("scan_tp_pct")),
-      tp_fee_coverage: num(f.get("tp_fee_coverage")),
-      scan_max_waves: num(f.get("scan_max_waves")),
-      scan_fund: num(f.get("scan_fund")),
-      sl_pct: num(f.get("sl_pct")),
-      trailing_pct: num(f.get("trailing_pct")),
-      deadline_days: num(f.get("deadline_days")),
-      max_concurrent_sessions: num(f.get("max_concurrent_sessions")),
-      max_sessions_per_symbol: num(f.get("max_sessions_per_symbol")),
-      equity_backup_pct: num(f.get("equity_backup_pct")),
-      cash_floor_usd: num(f.get("cash_floor_usd")),
-      loss_streak_block_k: num(f.get("loss_streak_block_k")),
-      loss_streak_window_days: num(f.get("loss_streak_window_days")),
-      min_expectancy_pct: num(f.get("min_expectancy_pct")),
-      min_win_rate: num(f.get("min_win_rate")),
-      min_confidence: num(f.get("min_confidence")),
-      min_trials: num(f.get("min_trials")),
-      block_downtrend_adx: num(f.get("block_downtrend_adx")),
-      kss_first_wave_usd: num(f.get("kss_first_wave_usd")),
-      scan_max_symbols: num(f.get("scan_max_symbols")),
-      min_quote_volume: num(f.get("min_quote_volume")),
-      entry_momentum_gate: f.get("entry_momentum_gate") === "1",
-      max_avg_mae_pct: num(f.get("max_avg_mae_pct")),
-      kss_dynamic_tp_enabled: f.get("kss_dynamic_tp_enabled") === "1",
-      kss_tp_gap_pct: num(f.get("kss_tp_gap_pct")),
-      kss_exit_fee_mult: num(f.get("kss_exit_fee_mult")),
-      kss_trail_atr_mult: num(f.get("kss_trail_atr_mult")),
-      kss_trail_min_pct: num(f.get("kss_trail_min_pct")),
-      kss_trail_arm_pct: num(f.get("kss_trail_arm_pct")),
-      kss_trail_lock_pct: num(f.get("kss_trail_lock_pct")),
-      kss_exit_check_sec: num(f.get("kss_exit_check_sec")),
-      kss_crash_drop_pct: num(f.get("kss_crash_drop_pct")),
-      kss_live_stop_orders: f.get("kss_live_stop_orders") === "1",
-      rel_strength_enabled: f.get("rel_strength_enabled") === "1",
-      rel_strength_lookback_bars: num(f.get("rel_strength_lookback_bars")),
-      rel_strength_margin_pct: num(f.get("rel_strength_margin_pct")),
-      mae_quartile_gate_enabled: f.get("mae_quartile_gate_enabled") === "1",
-      strategy_router_enabled: f.get("strategy_router_enabled") === "1",
-      pyramid_up_min_rel_strength: num(f.get("pyramid_up_min_rel_strength")),
-      pyramid_up_min_adx: num(f.get("pyramid_up_min_adx")),
-      pyramid_up_step_pct: num(f.get("pyramid_up_step_pct")),
-      pyramid_up_size_ratio: num(f.get("pyramid_up_size_ratio")),
-      pyramid_up_max_adds: num(f.get("pyramid_up_max_adds")),
-      pyramid_up_lock_pct: num(f.get("pyramid_up_lock_pct")),
-      opus_copy_mode: f.get("opus_copy_mode") === "1",
-      opus_solo_open: f.get("opus_solo_open") === "1",
-      opus_solo_min_consensus: num(f.get("opus_solo_min_consensus")),
-      opus_daily_loss_stop_pct: num(f.get("opus_daily_loss_stop_pct")),
-      opus_triage_enabled: f.get("opus_triage_enabled") === "1",
-      ...(f.get("opus_triage_model") ? { opus_triage_model: f.get("opus_triage_model") } : {}),
-      opus_triage_price_in_per_mtok: num(f.get("opus_triage_price_in_per_mtok")),
-      opus_triage_price_out_per_mtok: num(f.get("opus_triage_price_out_per_mtok")),
-      opus_max_decision_gap_min: num(f.get("opus_max_decision_gap_min")),
-      opus_auto_freeze_enabled: f.get("opus_auto_freeze_enabled") === "1",
-      opus_freeze_window_days: num(f.get("opus_freeze_window_days")),
-      opus_freeze_min_closed: num(f.get("opus_freeze_min_closed")),
-      opus_allocation_usd: num(f.get("opus_allocation_usd")),
-      opus_max_trade_notional: num(f.get("opus_max_trade_notional")),
-      opus_kpi_target_pct: num(f.get("opus_kpi_target_pct")),
-      opus_interval_min: num(f.get("opus_interval_min")),
-      opus_daily_cost_cap_usd: num(f.get("opus_daily_cost_cap_usd")),
-      opus_ride_hard_sl_pct: num(f.get("opus_ride_hard_sl_pct")),
-      opus_lessons_max: num(f.get("opus_lessons_max")),
-      opus_history_n: num(f.get("opus_history_n")),
-    });
+    // Never fail silently: the browser refuses to fire `submit` for an invalid
+    // form, and with the fields split across collapsed <details> sections it
+    // cannot even show WHICH control is at fault — so a single bad value made
+    // "Lưu" a no-op with no POST, no toast, no error (this is exactly what
+    // shipped: opus_max_trade_notional had step="10" while its live value was
+    // 100). Belt-and-braces: open the offending section, point at it, say so.
+    if (!form.checkValidity()) {
+      const bad = form.querySelector(":invalid");
+      if (bad) {
+        const sec = bad.closest("details");
+        if (sec) sec.open = true;
+        bad.reportValidity();
+        bad.focus();
+        toast("Không lưu được: ô \"" + (bad.name || "?") + "\" không hợp lệ — " + bad.validationMessage, "error");
+      }
+      return;
+    }
+    // R1 (docs/ui-rebuild-brief.md §7, the P-1 capital-safety fix): build the
+    // payload FROM THE FORM ITSELF — this used to hand-list ~64 field names by
+    // hand while this form rendered 82, so 17 knobs (max_session_deploy_usd —
+    // the per-session capital wall — plus loss_reentry_*, regime_gate_*,
+    // overextension_*, maxdca_*, opus_triage_model) were silently dropped: the
+    // UI reported "saved" and the value never changed. (7 more knobs live in
+    // the sibling live-exec / grok-fail-mode forms, which do send their own.) Now every
+    // `<input name>`/`<select name>` inside this form is walked generically and
+    // coerced via its own `data-type="num|bool|str"` attribute — adding a field
+    // to the template is enough; there is no list here to fall out of sync.
+    const payload = {};
+    for (const el of form.elements) {
+      if (!el.name || el.disabled) continue;
+      const dtype = el.dataset.type;
+      if (dtype === "bool") {
+        payload[el.name] = el.value === "" ? null : el.value === "1";
+      } else if (dtype === "num") {
+        payload[el.name] = num(el.value);
+      } else {
+        payload[el.name] = el.value === "" ? null : el.value;
+      }
+    }
+    await api("POST", "/api/kss-settings", payload);
     toast("Đã lưu cấu hình KSS — áp dụng cho phiên mới.", "success");
     refreshTrading(); refreshStatus();
   } else if (form.id === "live-exec-form") {
@@ -739,5 +719,25 @@ document.addEventListener("alpine:init", () => {
     toggleOrder() { this.orderOpen = !this.orderOpen; },
     toggleKss() { this.kssOpen = !this.kssOpen; },
     togglePreview() { this.previewOpen = !this.previewOpen; },
+  }));
+
+  // P1: this is Alpine's **CSP build** — it evaluates property PATHS and method
+  // REFERENCES only, never expressions. So `x-data="{ open: false }"` +
+  // `@click="open = !open"` silently never toggles (verified live: the history
+  // partials fetched but the panel stayed display:none, and
+  // `:aria-expanded="open.toString()"` threw). Every piece of Alpine state must
+  // therefore be a registered component with real methods, like `ui` above.
+  Alpine.data("historyPanel", () => ({
+    open: false,
+    toggle() { this.open = !this.open; },
+  }));
+
+  // Automation strip (<600px popover). Registered here — and mounted on the
+  // wrapper in dashboard.html, OUTSIDE the 5s-polled status partial — so the
+  // open state survives every status refresh instead of snapping shut.
+  Alpine.data("autoBar", () => ({
+    open: false,
+    toggle() { this.open = !this.open; },
+    get openCls() { return this.open ? "auto-open" : ""; },
   }));
 });

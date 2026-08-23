@@ -493,6 +493,8 @@ class KssSettingsBody(BaseModel):
     maker_orders: bool | None = None
     order_fill_timeout_sec: int | None = Field(None, ge=0)
     live_use_testnet: bool | None = None
+    # Phase 0 capital anchor (docs/capital-scaling-2026-08-23.md §2.1) — LIVE + opt-in only.
+    use_exchange_balance: bool | None = None
     # OPUS god-mode scaffolding (docs/opus-godmode-plan.md §3) — wiring deferred to later phases.
     opus_copy_mode: bool | None = None
     opus_solo_open: bool | None = None

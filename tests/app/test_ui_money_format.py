@@ -182,3 +182,43 @@ def test_subcent_position_price_renders_readable_on_positions_partial(client, db
     rvn_row = r.text[r.text.index("RVN"): r.text.index("RVN") + 300]
     assert "$0.00343314" in rvn_row  # avg (sub-cent) — not "0.00"
     assert "$0.00318000" in rvn_row  # current (sub-cent) — not "0.00"
+
+
+# --- committed-capital KPI (docs/capital-scaling-2026-08-23.md §8.1) --------
+# "Cash" alone misreads utilisation: most of it is earmarked for the resting DCA
+# rungs of open ladders. The owner's ">95% deployed" target is managed on the
+# COMMITTED figure, so summary_view must expose it and the KPI strip must show it.
+
+def test_summary_view_exposes_committed_capital(tmp_path):
+    from app import portfolio
+    from app.db import SessionLocal, init_db
+    from app.models import PendingOrder
+
+    init_db()
+    db = SessionLocal()
+    try:
+        before = portfolio.summary_view(db)
+        for key in ("committed", "committed_pct", "free_cash", "free_cash_pct",
+                    "pending_buy_notional"):
+            assert key in before, f"summary_view must expose {key}"
+
+        # A resting BUY limit is committed capital, not idle cash.
+        db.add(PendingOrder(symbol="ZZZ", side="BUY", order_type="LIMIT",
+                            quantity=10.0, price=2.0, source="kss",
+                            source_ref="pyramid:999:wave:1", status="pending"))
+        db.commit()
+        after = portfolio.summary_view(db)
+        assert after["pending_buy_notional"] == pytest.approx(before["pending_buy_notional"] + 20.0)
+        assert after["committed"] == pytest.approx(before["committed"] + 20.0)
+        # ...and the same $20 leaves free cash, while raw `cash` is unchanged (nothing filled).
+        assert after["free_cash"] == pytest.approx(before["free_cash"] - 20.0)
+        assert after["cash"] == pytest.approx(before["cash"])
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_kpi_strip_renders_committed_and_free_cash(client):
+    html = client.get("/partials/summary").text
+    assert "Đã cam kết" in html
+    assert "Tiền tự do" in html

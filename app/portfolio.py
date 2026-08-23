@@ -226,10 +226,30 @@ def summary_view(db: Session) -> dict:
 
     cash = risk.capital_anchor(db) - total_invested + realized_pnl
     total_equity = cash + total_market_value
+
+    # COMMITTED capital (docs/capital-scaling-2026-08-23.md §8.1). "Cash" alone is misleading as
+    # a utilisation read: most of it is already earmarked for the resting DCA rungs of open
+    # ladders (measured 2026-08-23: $551 cash, of which $383 was pending BUY limits). The owner's
+    # ">95% deployed" target is managed on THIS number — driving raw `invested` to 95% instead
+    # would starve the rungs and leave ladders unable to average down.
+    pending_buy_notional = float(
+        db.query(func.coalesce(func.sum(PendingOrder.quantity * PendingOrder.price), 0.0))
+        .filter(PendingOrder.status == "pending", PendingOrder.side == "BUY")
+        .scalar()
+        or 0.0
+    )
+    committed = total_invested + pending_buy_notional
+    free_cash = cash - pending_buy_notional  # cash with no job yet — the real idle money
+
     base = settings.account_equity or 1.0  # % of starting capital for P&L (unadjusted — a
     # historical baseline for the P&L ratio, not a live cash figure; see docs/capital-scaling)
     eq = total_equity or 1.0
     return {
+        "pending_buy_notional": pending_buy_notional,
+        "committed": committed,
+        "committed_pct": committed / eq * 100,
+        "free_cash": free_cash,
+        "free_cash_pct": free_cash / eq * 100,
         "total_trades": int(total_trades),
         "pending_count": int(pending_count),
         "positions_count": len(positions),

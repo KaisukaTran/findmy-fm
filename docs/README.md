@@ -11,6 +11,7 @@ Documentation for the v2 lean rebuild (`app/`). Start with the
 | [kss.md](kss.md) | **KSS Pyramid DCA** strategy — wave formulas, session lifecycle, REST endpoints. |
 | [AGENTS.md](AGENTS.md) | **Multi-agent scanner** + backtested auto-trading: universe → backtest → vote → gate → act. |
 | [go-live.md](go-live.md) | Operator runbook to arm the **real-money** execution path (shipped OFF). |
+| [testnet-setup.md](testnet-setup.md) | Set up Binance **Spot testnet** keys and validate the live path with fake funds first. |
 | [telegram-setup.md](telegram-setup.md) | Telegram bot setup, command reference, and security boundary. |
 
 ## Plans & proposals

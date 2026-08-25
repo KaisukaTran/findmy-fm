@@ -35,7 +35,7 @@ git worktree add ../FINDMY-live live  # creates d:\FINDMY-live on branch `live`
 # 2) give the live worktree its own env with TESTNET keys
 cd d:\FINDMY-live
 copy ..\FINDMY\.env.live.example .env
-#   then edit .env → paste your https://testnet.binance.vision HMAC keys
+#   then edit .env → paste your https://testnet.binance.vision HMAC keys (docs/testnet-setup.md)
 
 # 3) (optional) a `dev` branch for paper experiments
 cd d:\FINDMY

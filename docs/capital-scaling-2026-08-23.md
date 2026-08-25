@@ -188,6 +188,32 @@ tiền** ở mọi N ≤ 12 (0 lần bị chặn vì thiếu tiền).
 chế độ và **tiến về 1,0 trong một đợt giảm** — khi đó 12 phiên cùng khớp đủ 4 rung sẽ cần $1.729 trên
 một sổ $1.074. Đó chính là lý do §4.2 (bất biến tiền mặt cứng) là bắt buộc chứ không phải tuỳ chọn.
 
+### 5.2b ĐÍNH CHÍNH sau khi áp dụng (đo trực tiếp 2026-08-23 17:47–18:02) [V]
+
+`max_concurrent_sessions` đã được nâng **12 → 14**. Kết quả đo trên sổ thật **bác bỏ hai luận điểm ở
+§4.1 và §5.2 khi áp vào ảnh chụp hiện tại** — ghi lại đầy đủ vì đây là bằng chứng ngược:
+
+1. **Trần concurrency KHÔNG còn là ràng buộc bind.** Sau khi nâng lên 14, còn dư **3 slot** nhưng
+   **0 phiên mở thêm** trong 15 phút quan sát: ngân sách còn **$101,11**, một phiên mới cần **$144,09**.
+   Cái bind bây giờ là **cổng ngân sách**, không phải số lượng.
+2. **`committed_pct` phẳng ở 84,7%** qua 4 mẫu (84,76 → 84,70), `locked` đứng yên $709,54.
+3. **Mục tiêu >95% không đạt được bằng knob.** Kể cả `equity_backup_pct = 0` cũng chỉ mở thêm 2 phiên
+   → **~93,0%**. Bảng đầy đủ: backup 25%→0 phiên (84,8%) · 15%→1 (88,9%) · 5%→2 (93,0%) · 0%→2 (93,0%).
+4. **Đề xuất I-3 ở §4.1 ("`_session_lock` = dùng + rung kế tiếp") SẼ LÀM TỆ HƠN ở trạng thái này.**
+   Tính lại từng phiên: nó chỉ giảm khoá ~$8 cho 4 phiên sâu (rung kế tiếp là rung TO nhất nên
+   `dùng + rung kế` ≈ trọn reserve) nhưng **tăng khoá $29–43 cho mỗi phiên nông** (7 phiên) → tổng khoá
+   ~$920 > ngân sách $810. Con số "phantom $88–108" trong §1.2/§5 là **trung bình theo thời gian của cả
+   cửa sổ 33 ngày**, KHÔNG phải ảnh chụp hôm nay ($177,43 bị khoá chưa tiêu, nhưng phân bố lệch về
+   4 phiên sâu). ⇒ **I-3 phải được mô phỏng lại trên phân bố ladder-depth thực tế trước khi ship.**
+
+**Đòn bẩy duy nhất còn lại để lên >95%: nhiều phiên hơn nhưng NHỎ hơn.** `kss_first_wave_usd` $15 → $10
+hạ mỗi ladder từ $144,09 xuống **$96,06** → cùng ngân sách nuôi được ~50% số ladder. Mô phỏng đã chứng
+minh tổng vốn đặt chỗ **bất biến theo `w_pct`** (luôn = 75% equity), nên không mất mức triển khai — chỉ
+trải ra nhiều coin hơn và bắt được nhiều tín hiệu hơn (funnel đang chặn rất nhiều ứng viên vì hết slot).
+⚠ **Chưa đo:** lãi mỗi phiên giảm tuyến tính theo cỡ sóng; vế "nhiều lệnh hơn bù lại được" là **giả
+thuyết**, vì §5.1 chỉ chứng minh tuyến tính trên **cùng một tập lệnh**. Cần chạy lại `S3_sweep` với số
+phiên thay đổi trước khi đổi.
+
 ### 5.3 Trần năng lực — con số quyết định
 
 Ràng buộc: rung sâu nhất ≤ X% thanh khoản 24h của mã đó. Universe hiện tại là small-cap, thanh khoản

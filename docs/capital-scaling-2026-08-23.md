@@ -188,14 +188,33 @@ tiền** ở mọi N ≤ 12 (0 lần bị chặn vì thiếu tiền).
 chế độ và **tiến về 1,0 trong một đợt giảm** — khi đó 12 phiên cùng khớp đủ 4 rung sẽ cần $1.729 trên
 một sổ $1.074. Đó chính là lý do §4.2 (bất biến tiền mặt cứng) là bắt buộc chứ không phải tuỳ chọn.
 
-### 5.2b ĐÍNH CHÍNH sau khi áp dụng (đo trực tiếp 2026-08-23 17:47–18:02) [V]
+### 5.2b Đo sau khi áp dụng — ràng buộc bind LUÂN PHIÊN (2026-08-23 → 08-24) [V]
+
+**Ảnh chụp 17:47–18:02 ngày 08-23** (4 mẫu, 5'/lần): `committed_pct` phẳng **84,76 → 84,70%**,
+`locked` đứng yên $709,54, **0 phiên mở thêm** dù còn 3 slot — ngân sách còn $101,11, một phiên mới
+cần $144,09. Tại thời điểm đó cái bind là **cổng ngân sách**, không phải số lượng.
+
+**Nhưng sau ~1 ngày, bức tranh đảo ngược** (đo 08-24 19:0x): 3 phiên chốt lời giải phóng vốn
+(ZAMA +$3,71 · ONDO +$6,19 · OSMO +$1,02 trail) → **6 phiên mới đã mở** (STRK, APT, DYDX, ALGO, MEME,
+BERA) → **14/14 active, trần concurrency lại bind**, headroom ngân sách $296,76 (đủ 2 ladder nữa nhưng
+hết slot). Equity $1.096,19, committed **82,0%** (tụt vì 4 phiên mới còn nông — mới có sóng đầu, các
+rung sau sẽ được xếp hàng dần và kéo committed lên).
+
+⇒ **Đính chính kết luận sớm của chính tài liệu này: nâng `max_concurrent` 12→14 CÓ tác dụng.** Sai lầm
+là đọc một ảnh chụp tĩnh: vốn ở chiến lược này **quay vòng qua TP**, nên ràng buộc bind **luân phiên**
+giữa *ngân sách* (ngay sau khi mở loạt mới) và *số lượng* (ngay sau khi một loạt TP trả tiền về). Bất
+kỳ kết luận nào về "cái gì đang bind" đều phải đo trên **nhiều chu kỳ TP**, không phải một ảnh chụp.
+
+⇒ **Mục tiêu >95% vẫn chưa đạt** (82,0%), nhưng lý do bây giờ là **hết slot**, không phải hết tiền —
+tức đúng thứ mà "nhiều phiên hơn nhưng nhỏ hơn" (cuối mục này) giải quyết.
+
+**Phần dưới đây giữ nguyên vì vẫn đúng, nhưng phải đọc với cảnh báo trên:**
+
 
 `max_concurrent_sessions` đã được nâng **12 → 14**. Kết quả đo trên sổ thật **bác bỏ hai luận điểm ở
 §4.1 và §5.2 khi áp vào ảnh chụp hiện tại** — ghi lại đầy đủ vì đây là bằng chứng ngược:
 
-1. **Trần concurrency KHÔNG còn là ràng buộc bind.** Sau khi nâng lên 14, còn dư **3 slot** nhưng
-   **0 phiên mở thêm** trong 15 phút quan sát: ngân sách còn **$101,11**, một phiên mới cần **$144,09**.
-   Cái bind bây giờ là **cổng ngân sách**, không phải số lượng.
+1. *(Đã đính chính ở trên — chỉ đúng cho ảnh chụp 08-23, không đúng qua nhiều chu kỳ TP.)*
 2. **`committed_pct` phẳng ở 84,7%** qua 4 mẫu (84,76 → 84,70), `locked` đứng yên $709,54.
 3. **Mục tiêu >95% không đạt được bằng knob.** Kể cả `equity_backup_pct = 0` cũng chỉ mở thêm 2 phiên
    → **~93,0%**. Bảng đầy đủ: backup 25%→0 phiên (84,8%) · 15%→1 (88,9%) · 5%→2 (93,0%) · 0%→2 (93,0%).

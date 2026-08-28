@@ -253,3 +253,26 @@ between the two live models, and turning it off is the way back.**
   preflight. Both were written and unit-verified offline — **the testnet round trip itself
   (1.8) still has to be run on a machine that can reach `testnet.binance.vision`.**
 - **NEXT = 1.8** run the e2e on testnet, then re-run the 1.10 security pass, then 1.7 (5m).
+
+## Progress — 2026-08-25 (1.5 verified on Binance testnet, fill leg still open)
+First real run of `scripts/testnet_e2e.py` against Binance Spot testnet, on the live worktree
+after merging this branch (fast-forward from `live` @ 88c1c68):
+- rung built from testnet's own book: 0.00019 BTC @ 77564.6 ($14.74, 0.2% below last);
+- **`sync_resting_orders` placed it in advance as exchange order 9431257, `status=open`, the
+  local row still PENDING** — the 1.5 model working on a real venue: post-only accepted (no
+  -2010), the exchange link stamped, nothing pretending to be a fill;
+- cancelled cleanly on exit, nothing left on the book.
+**Not yet proven:** the fill leg. The price never dipped 0.2% inside the 90s window, so
+`reconcile_live_orders` had nothing to book. Re-run with a tighter rung (e.g.
+`--distance-pct 0.03 --wait-sec 300`) to see NEW→FILLED become exactly one Fill + Position
+update. After that, the full DoD (a real KSS session with its resting TP following avg) needs
+the live instance itself running on testnet with `MAKER_ORDERS=true`.
+
+### Guard interaction found while merging (fixed)
+`live`'s 90s position guard (cf1077c) force-fills EVERY queued KSS exit SELL so a hard stop is
+freeze-immune. Under 1.5 the resting take-profit is one of those rows, so the guard would have
+pulled it off the book and re-placed it every tick — and because `_live_execute` raises "no fill
+price" on a resting order *before* stamping the new exchange id, each pass could leave an
+untracked live order behind. The guard now skips `:tp` rows while the resting model is on
+(MARKET risk exits still fill immediately, freeze-immune) and pulls a closed session's resting
+orders off the book at once instead of waiting for the 30-min cycle.

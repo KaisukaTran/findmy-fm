@@ -74,7 +74,8 @@ badge so the two dashboards are never confused.
 ## Caveats
 - **Testnet keys required** for the live instance to actually place (testnet) orders; without them it
   just runs as a second paper app.
-- **Live maker trading is not functional yet** — async order tracking + the resting-maker model
-  (live-readiness tasks 1.4/1.5, see `docs/plan/live-readiness-plan.md`) are still pending, so a
-  non-immediately-filled live limit currently raises (the safe "no fill price" path). The live testnet
-  instance today validates the *plumbing*; finish 1.4/1.5 against it before switching to real funds.
+- **Live maker trading is code-complete but not yet proven on testnet** — async order tracking
+  (1.4) and the resting-maker model (1.5) have landed, so with `MAKER_ORDERS=true` the rungs and the
+  take-profit rest on the exchange and `reconcile_live_orders` books their fills. The end-to-end
+  testnet round trip (1.8, `scripts/testnet_e2e.py`) is the remaining gate before real funds — see
+  `docs/testnet-setup.md` and `docs/plan/live-readiness-plan.md`.

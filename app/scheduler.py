@@ -192,13 +192,15 @@ def run_cycle(db: Session) -> dict:
     # Live maker model (1.5): rungs queued above rest on the exchange NOW instead of waiting
     # for the market to reach them. Self-guards (no-op on paper / maker off), so it runs
     # unconditionally — cancels must drain even while frozen; placement re-gates per order.
+    resting_tp = service.sync_resting_tp(db)
     resting = orders.sync_resting_orders(db)
     filled = orders.auto_fill_due_orders(db) if settings.auto_trade and not frozen else []
     auto_approved = [] if frozen else orders.auto_approve_by_policy(db)  # self-guards on autoapprove_enabled
     audit.log(db, "scheduler", "cycle", deadlines_closed=len(closed), tp_queued=len(tp),
               candidates=len(scan["candidates"]), auto_filled=len(filled),
               auto_approved=len(auto_approved), reconciled=len(reconciled),
-              resting_placed=resting["placed"], resting_cancelled=resting["cancelled"], frozen=frozen,
+              resting_placed=resting["placed"], resting_cancelled=resting["cancelled"],
+              resting_tp=resting_tp["queued"] + resting_tp["replaced"], frozen=frozen,
               guardian_vetoes=guardian_vetoes, veto_expired=veto_expired,
               hyperopt_runs=hyperopt_runs, ml_trained=ml_trained)
     db.commit()
@@ -215,6 +217,7 @@ def run_cycle(db: Session) -> dict:
         "auto_approved": auto_approved,
         "reconciled": reconciled,
         "resting": resting,
+        "resting_tp": resting_tp,
         "frozen": frozen,
         "guardian_vetoes": guardian_vetoes,
         "veto_expired": veto_expired,

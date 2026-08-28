@@ -15,7 +15,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app import audit, orders
+from app import audit, models, orders
 from app.kss.pyramid import PyramidSession, PyramidSessionStatus, WaveInfo
 from app.models import (
     SESSION_ACTIVE,
@@ -26,6 +26,7 @@ from app.models import (
     WAVE_SENT,
     KssSession,
     KssWave,
+    PendingOrder,
 )
 
 logger = logging.getLogger(__name__)
@@ -442,6 +443,14 @@ def _handle_tp_triggered(db: Session, row: KssSession, result: dict) -> None:
     below the true cost basis + fees."""
     from app.market import get_current_prices
 
+    # 1.5 live maker: the exit rests on the exchange and follows avg (sync_resting_tp), so a
+    # fill that trips the TP must NOT also queue a market sell. Keep the session ACTIVE — the
+    # resting order completes it when the venue fills it.
+    if orders.resting_model_active():
+        row.status = SESSION_ACTIVE
+        audit.log(db, "kss", "tp_resting", entity=f"kss:{row.id}", symbol=row.symbol)
+        return
+
     mkt = get_current_prices([row.symbol]).get(row.symbol) or 0.0
     if mkt and not _tp_clears_cost(db, row.symbol, mkt):
         row.status = SESSION_ACTIVE  # K-2 defer (on_fill had set TP_TRIGGERED)
@@ -665,7 +674,9 @@ def manage_open_sessions(db: Session) -> list[int]:
         py = _to_pyramid(row)
         if py.total_filled_qty <= 0:
             continue
-        res = py.check_tp(price)
+        # 1.5 live maker: the exit already rests on the exchange (sync_resting_tp), so
+        # triggering a market TP here would sell the same inventory twice.
+        res = None if orders.resting_model_active() else py.check_tp(price)
         if res and not _tp_clears_cost(db, row.symbol, price):
             # K-2 defer: market hit the session TP but it would realize below true cost+fees.
             py.status = PyramidSessionStatus.ACTIVE
@@ -702,6 +713,107 @@ def manage_open_sessions(db: Session) -> list[int]:
                 _save_state(row, py)
     db.commit()
     return triggered
+
+
+# --- live resting take-profit (live-readiness 1.5) ----------------------
+
+# Relative change worth a cancel + replace. avg only moves on a fill, so anything above
+# float noise is a real move; the threshold only stops churn on an unchanged target.
+_TP_DRIFT = 1e-6
+
+
+def _drifted(current: float, desired: float) -> bool:
+    return abs(current - desired) > max(abs(current), abs(desired), 1e-12) * _TP_DRIFT
+
+
+def _k2_floor_price(db: Session, symbol: str) -> float:
+    """Lowest price a resting TP may sit at without realizing below the TRUE aggregate cost
+    basis + 2x fee — the K-2 invariant applied in advance instead of at trigger time. 0.0
+    when there is no aggregate basis to clear."""
+    from app import costengine
+    from app.models import Position
+
+    pos = db.query(Position).filter(Position.symbol == symbol).one_or_none()
+    if pos is None or pos.quantity <= 0 or pos.avg_entry_price <= 0:
+        return 0.0
+    return pos.avg_entry_price * (1 + costengine.min_profit_pct() / 100.0)
+
+
+def _resting_tp_rows(db: Session) -> list[PendingOrder]:
+    """Every queued take-profit order (one per session at most)."""
+    return (
+        db.query(PendingOrder)
+        .filter(
+            PendingOrder.status == models.PENDING,
+            PendingOrder.source == "kss",
+            PendingOrder.source_ref.like("pyramid:%:tp"),
+        )
+        .all()
+    )
+
+
+def sync_resting_tp(db: Session) -> dict:
+    """Keep one resting take-profit SELL per ACTIVE session on the exchange (live maker only).
+
+    The other half of the 1.5 model shift: rather than waiting for the market to reach the
+    take-profit and then selling at market, the exit rests on the book from the moment a
+    session holds inventory. Its target follows the session average — every wave fill lowers
+    avg, so the order is cancelled and re-queued at the new price (the plan's "cancel+replace
+    on avg change"). The price never sits below the K-2 floor, so an exit placed in advance
+    can no more realize under the true cost basis than a triggered one could.
+
+    This only maintains the *queue*: `orders.sync_resting_orders` does the placing, and a TP
+    whose session is no longer ACTIVE is rejected here, which is what takes it off the book.
+    No-op unless `orders.resting_model_active()`. Returns counts for the cycle summary.
+    """
+    out = {"queued": 0, "replaced": 0, "dropped": 0}
+    if not orders.resting_model_active():
+        return out
+
+    live_sessions: set[int] = set()
+    for row in db.query(KssSession).filter(KssSession.status == SESSION_ACTIVE).all():
+        py = _to_pyramid(row)
+        qty = py.total_filled_qty
+        price = max(py.estimated_tp_price, _k2_floor_price(db, row.symbol))
+        if qty <= 0 or price <= 0:
+            continue
+        live_sessions.add(row.id)
+        existing = next(
+            (o for o in _resting_tp_rows(db) if o.source_ref == f"pyramid:{row.id}:tp"), None
+        )
+        if existing is None:
+            _queue(db, {
+                "symbol": row.symbol, "side": "SELL", "quantity": qty, "price": price,
+                "order_type": "LIMIT", "source_ref": f"pyramid:{row.id}:tp",
+                "strategy_name": f"Pyramid_{row.symbol}",
+                "note": f"resting TP {qty} @ {price:.6f} (avg={py.avg_price:.6f})",
+            })
+            out["queued"] += 1
+        elif _drifted(existing.price, price) or _drifted(existing.quantity, qty):
+            # A wave filled: avg (and the size to exit) moved, so the resting exit must move
+            # with it. Cancel first — the venue refusing means we leave it and retry.
+            if existing.exchange_order_id and not orders._cancel_resting(db, existing):
+                continue
+            existing.price = price
+            existing.quantity = qty
+            audit.log(db, "kss", "tp_replaced", entity=f"kss:{row.id}", symbol=row.symbol,
+                      price=round(price, 8), qty=round(qty, 8))
+            out["replaced"] += 1
+
+    # A session that stopped or completed must not keep an exit on the book.
+    for order in _resting_tp_rows(db):
+        try:
+            session_id = int(str(order.source_ref).split(":")[1])
+        except (IndexError, ValueError):
+            continue
+        if session_id not in live_sessions:
+            order.status = models.REJECTED
+            order.reviewer = "resting-tp"
+            order.decided_at = datetime.utcnow()
+            out["dropped"] += 1
+
+    db.commit()
+    return out
 
 
 def manage_orphan_positions(db: Session) -> list[str]:

@@ -241,7 +241,13 @@ def auto_fill_due_orders(db: Session) -> list[int]:
         return []
     pend = (
         db.query(PendingOrder)
-        .filter(PendingOrder.status == PENDING, PendingOrder.source == "kss")
+        .filter(
+            PendingOrder.status == PENDING,
+            PendingOrder.source == "kss",
+            # An order already resting on the exchange (1.5) is the venue's to fill —
+            # approving it here would place a SECOND order for the same rung.
+            PendingOrder.exchange_order_id.is_(None),
+        )
         .all()
     )
     if not pend:
@@ -334,6 +340,15 @@ def _live_execute(db: Session, order: PendingOrder) -> Fill:
     exits are never gated. Raises (never silently papers) if a guard or the exchange fails."""
     from app import execution
     from app.data.providers import live_provider
+
+    # 1.5: this order is already live on the exchange — placing again would double the
+    # exposure. The deterministic clientOrderId would recover it, but the caller expects a
+    # fill here, so refuse loudly instead of reporting a phantom one.
+    if order.exchange_order_id:
+        raise ValueError(
+            f"order {order.id} already rests on the exchange as {order.exchange_order_id} — "
+            "cancel it before placing again"
+        )
 
     ref_price = order.price if order.price > 0 else (
         get_current_prices([order.symbol]).get(order.symbol) or 0.0
@@ -501,6 +516,173 @@ def reconcile_live_orders(db: Session) -> list[int]:
             order.decided_at = order.decided_at or datetime.utcnow()
     db.commit()
     return booked
+
+
+# --- live resting-maker model (live-readiness 1.5) ----------------------
+
+
+def resting_model_active() -> bool:
+    """True when live orders must REST on the exchange instead of waiting for the market.
+
+    Live **and** ``maker_orders`` only. Paper keeps its synchronous simulated fill, and live
+    with maker off keeps the legacy "wait until market reaches the limit, then send a
+    marketable order" model — so MAKER_ORDERS is the switch between the two live models and
+    turning it off is the way back.
+    """
+    from app import execution
+
+    return bool(execution.live_enabled() and settings.maker_orders)
+
+
+def _cancel_resting(db: Session, order: PendingOrder) -> bool:
+    """Cancel *order*'s resting exchange order and unlink the row.
+
+    False when the venue refused: the link is then KEPT so the next cycle retries. Dropping
+    ``exchange_order_id`` after a failed cancel would orphan a live order nothing tracks.
+    """
+    from app import execution
+    from app.data.providers import live_provider
+
+    try:
+        execution.cancel_live_order(
+            live_provider().pair(order.symbol), str(order.exchange_order_id)
+        )
+    except Exception:  # transient venue error — retry next cycle
+        logger.exception(
+            "resting: cancel failed for order %s (exch %s)", order.id, order.exchange_order_id
+        )
+        return False
+    order.exchange_order_id = None
+    order.exchange_status = None
+    return True
+
+
+def _place_resting(db: Session, order: PendingOrder) -> bool:
+    """Place one queued order as a resting post-only LIMIT and link it to the row.
+
+    Re-gates exactly like ``_live_execute``: a BUY is new exposure (Guardian veto, breaker,
+    notional cap, cash floor); a SELL exit is never gated. Returns True when the order now
+    rests on the exchange. Never raises — a placement failure leaves the order queued for
+    the next cycle.
+    """
+    from app import execution
+    from app.data.providers import live_provider
+
+    if order.side == "BUY":
+        if order.auto_veto or runtime.is_frozen(db):
+            return False
+        notional = order.price * order.quantity
+        if notional > settings.live_max_order_notional:
+            logger.info(
+                "resting: order %s notional %.2f exceeds cap %.2f — not placed",
+                order.id, notional, settings.live_max_order_notional,
+            )
+            return False
+        try:
+            _apply_cash_cap(db, order)  # may shrink the qty to what free cash funds
+        except InsufficientCashError:
+            return False
+
+    try:
+        res = execution.place_live_order(
+            live_provider().pair(order.symbol), order.side, order.quantity, order.price,
+            "LIMIT", maker_orders=True,
+            client_order_id=execution.client_order_id(order.id),  # idempotent (1.10)
+        )
+    except Exception:  # exchange/filter error — stays queued, retried next cycle
+        logger.exception("resting: placement failed for order %s", order.id)
+        return False
+
+    # Post-only rejected = the market is already at/through the rung, so resting there is
+    # impossible right now. Leave it queued; the next cycle retries once the book moves away.
+    if res.get("status") == "rejected" or res.get("raw_id") is None:
+        return False
+
+    order.exchange_order_id = str(res["raw_id"])
+    status = str(res.get("status") or "").lower()
+    # A venue that already reports terminal (an immediate fill) still needs that fill booked,
+    # and reconcile_live_orders skips terminal rows — so leave the status unset for it.
+    order.exchange_status = None if status in _TERMINAL_EXCHANGE_STATUS else (status or None)
+    audit.log(
+        db, "orders", "resting_placed", entity=f"order:{order.id}", symbol=order.symbol,
+        side=order.side, qty=round(order.quantity, 8), price=round(order.price, 8),
+        exchange_order_id=order.exchange_order_id,
+    )
+    return True
+
+
+def sync_resting_orders(db: Session) -> dict:
+    """Keep the exchange's resting maker orders in step with the local queue (live only).
+
+    The 1.5 model shift: instead of waiting for the market to reach a wave's limit and then
+    sending a marketable order, every queued KSS limit is placed on the exchange IN ADVANCE
+    and rests there until the venue fills it — ``reconcile_live_orders`` (1.4) books the fill
+    and advances the ladder. Each cycle:
+
+      * **cancel** a resting order whose row was rejected, or one that outlived
+        ``order_fill_timeout_sec`` (0 = wait forever, the DCA default);
+      * **place** every queued KSS limit that is not on the exchange yet.
+
+    A *replace* is therefore a cancel now and a place on the next pass: the local row is the
+    record of what was placed, so changing its price/qty is what drives a re-place.
+
+    Only ``source='kss'`` limits rest — manual orders keep human approval, and risk exits
+    (SL/trailing/deadline/OPUS-close) are MARKET by design and must never rest. No-op unless
+    ``resting_model_active()``. Returns counts for the cycle summary.
+    """
+    out = {"placed": 0, "cancelled": 0}
+    if not resting_model_active():
+        return out
+
+    linked = (
+        db.query(PendingOrder)
+        .filter(
+            PendingOrder.exchange_order_id.isnot(None),
+            (PendingOrder.exchange_status.is_(None))
+            | (PendingOrder.exchange_status.notin_(_TERMINAL_EXCHANGE_STATUS)),
+        )
+        .all()
+    )
+    timeout = settings.order_fill_timeout_sec
+    now = datetime.utcnow()
+    for order in linked:
+        # Only rows this model owns: an order the operator rejected, or a rung that waited
+        # past the timeout. APPROVED/EXECUTED rows belong to the synchronous path — a
+        # partially filled one of those must keep resting for reconcile to finish it.
+        if order.status == REJECTED:
+            if _cancel_resting(db, order):
+                out["cancelled"] += 1
+        elif order.status == PENDING and timeout > 0 and order.created_at is not None:
+            if (now - order.created_at).total_seconds() > timeout and _cancel_resting(db, order):
+                out["cancelled"] += 1
+                order.status = REJECTED
+                order.reviewer = "resting-timeout"
+                order.decided_at = now
+                audit.log(db, "orders", "resting_timeout", entity=f"order:{order.id}",
+                          symbol=order.symbol, timeout_sec=timeout)
+
+    # Resting a rung in advance IS the auto-fill of this model, so it follows the same
+    # switch: with auto_trade off the operator approves by hand (the synchronous path).
+    # Cancellation above is not gated — a rejected or timed-out order must always come off
+    # the book.
+    if settings.auto_trade:
+        due = (
+            db.query(PendingOrder)
+            .filter(
+                PendingOrder.status == PENDING,
+                PendingOrder.source == "kss",
+                PendingOrder.order_type == "LIMIT",
+                PendingOrder.price > 0,
+                PendingOrder.exchange_order_id.is_(None),
+            )
+            .all()
+        )
+        for order in due:
+            if _place_resting(db, order):
+                out["placed"] += 1
+
+    db.commit()
+    return out
 
 
 # --- paper execution ----------------------------------------------------

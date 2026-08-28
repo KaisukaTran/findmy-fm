@@ -148,6 +148,18 @@ def place_live_order(
     }
 
 
+def cancel_live_order(pair: str, order_id: str) -> None:
+    """Cancel a resting exchange order (live-readiness 1.5 cancel+replace).
+
+    Raises on any exchange error so the caller keeps the local link to the order and
+    retries next cycle — silently dropping ``exchange_order_id`` after a failed cancel
+    would orphan a live order nothing tracks any more. Never logs the secret.
+    """
+    ex = _client()
+    ex.cancel_order(order_id, pair)
+    logger.info("LIVE cancelled resting order %s on %s", order_id, pair)
+
+
 def fetch_live_order(pair: str, order_id: str) -> dict:
     """Fetch the live status of a resting order and return a normalised dict
     ``{status, filled, average, fee, raw_id}``.

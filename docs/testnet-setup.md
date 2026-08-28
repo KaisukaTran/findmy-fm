@@ -23,11 +23,12 @@ and cancel. **What it does not prove:** fills at production prices (see caveats 
   to the *trading* client in `app/execution.py:_client`). So a price derived from production
   can rest, or be post-only rejected, against testnet's thinner book. Expect divergence; it
   is a property of the harness, not a bug in the strategy.
-- **Maker resting orders are not wired yet.** Live-readiness **1.5** (place waves/TP as
-  resting `LIMIT_MAKER` in advance) is still open, so a live limit that does not fill
-  immediately still raises the safe "no fill price" path in `app/orders.py:_live_execute`.
-  For a first end-to-end round trip keep **`MAKER_ORDERS=false`** — the synchronous
-  wait-then-place model then sends a marketable order that actually fills.
+- **Two live models, one switch.** With **`MAKER_ORDERS=true`** the resting model (task 1.5)
+  is active: every queued rung and each session's take-profit sit on the exchange in advance
+  and the venue fills them, which is what actually earns the maker/spread saving. With
+  **`MAKER_ORDERS=false`** the legacy model applies — the app waits for the market to reach a
+  limit and then sends a marketable order. Start on the resting model; flipping the flag off
+  is the way back if anything surprises you.
 
 ---
 
@@ -64,7 +65,7 @@ LIVE_EXCHANGE=binance             # the default is kraken — testnet here is Bi
 LIVE_API_KEY=<testnet key>
 LIVE_API_SECRET=<testnet secret>
 LIVE_MAX_ORDER_NOTIONAL=25        # per-BUY cap; keep it small even on testnet
-MAKER_ORDERS=false                # see §0 — flip to true only after task 1.5 lands
+MAKER_ORDERS=true                 # resting model (§0); false = legacy wait-then-market
 DATABASE_URL=sqlite:///./data/live.db
 SCHEDULER_LOCK_PORT=8802
 ```
@@ -93,6 +94,20 @@ so loudly — clear it by hand on the testnet UI.
 `--place` is refused unless `LIVE_USE_TESTNET=true`, so real keys can't be exercised by
 accident, and refused when `--notional` exceeds `LIVE_MAX_ORDER_NOTIONAL`.
 
+Once the preflight is green, run the whole live path end to end in one command:
+
+```powershell
+python scripts/testnet_e2e.py                                  # rung 0.2% below market, wait 90s
+python scripts/testnet_e2e.py --distance-pct 0.05 --wait-sec 180
+```
+
+It queues a KSS rung, lets `sync_resting_orders` place it as a resting `LIMIT_MAKER`, polls
+`reconcile_live_orders` until the venue fills it (or the window ends), and cancels whatever is
+left. The exchange side is real; only the database is disposable (`data/testnet_e2e.db`), so
+neither the paper nor the live book is touched. A run that ends "no fill inside the window" is
+not a failure — the price simply never dipped to the rung; placement, status and cancel are
+still proven.
+
 ## 4. Start the live instance
 
 ```powershell
@@ -115,8 +130,10 @@ Confirm two things:
    `exchange_order_id` / `exchange_status`.
 4. Check the cycle audit's `reconciled` counter — `orders.reconcile_live_orders` runs first
    in every scheduler cycle and books partials of resting orders.
-5. Verify an exit: TP/SL/trailing leave as **MARKET** by design (risk exits are never
-   slowed, never blocked by the breaker or the notional cap).
+5. Verify the exit. With the resting model on, the take-profit sits on the book as a LIMIT
+   SELL and is re-priced whenever a fill moves the average; SL, trailing and the deadline
+   stay **MARKET** by design (risk exits are never slowed, never blocked by the breaker or
+   the notional cap).
 
 ## 6. Troubleshooting
 
@@ -130,12 +147,13 @@ Confirm two things:
 | `NetworkError` on `exchangeInfo` | testnet host unreachable (firewall, VPN, corporate proxy) | check connectivity to `testnet.binance.vision:443` |
 | `429` / `418` | rate limit / IP ban | back off; the guard lives in `execution.used_weight_from_headers` + `classify_rate_error` |
 | App runs but never places | `LIVE_TRADING=false` or missing keys → `execution.live_enabled()` false | read the boot log line; it names which one |
-| "no fill price" on a live limit | the order rested instead of filling — task 1.5 is still open | set `MAKER_ORDERS=false` (§0) |
+| "no fill price" on a live limit | a limit rested under the legacy model | turn `MAKER_ORDERS=true` so rungs rest by design (§0) |
+| a rung never rests, log says post-only rejected | the book already reached that price, so a maker order cannot rest there | expected; it retries next cycle, or rest it further below |
 
 ## 7. Before switching to real funds
 
-1. Finish live-readiness **1.5** (resting maker model) and get a green end-to-end round trip
-   on testnet — that is the definition of done for **1.8** in
+1. Get a green end-to-end round trip on testnet (`scripts/testnet_e2e.py`) — the resting
+   model (**1.5**) is in, so this is the remaining definition of done for **1.8** in
    [plan/live-readiness-plan.md](plan/live-readiness-plan.md).
 2. Re-run the **1.10** security pass on the live path.
 3. Only then: real HMAC keys, `LIVE_USE_TESTNET=false`, and a deliberately tiny

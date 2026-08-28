@@ -59,7 +59,7 @@ Precedence: this spec > Plans table.
 | 1.2 | Exchange-filter helper: round price→tickSize, qty→stepSize, enforce minNotional + PERCENT_PRICE `[tdd:required]` | unit tests vs real SOLUSDT filters pass | 1.1 | **cc:DONE 2026-06-15** (`execution.round_to_filters`) |
 | 1.3 | Maker placement: `postOnly`/LIMIT_MAKER for entry+TP; MARKET for SL/trailing/close; handle -2010 REJECTED `[tdd:required]` | maker path sets LIMIT_MAKER; risk exits stay MARKET | 1.1 | **cc:DONE 2026-06-15** — `order_placement`/`is_post_only_reject`/`filters_from_market`; LIMIT→postOnly+filter-rounded, MARKET stays taker; -2010→`status='rejected'`; 8 tests. TP→maker waits on 1.5 (TP is still a MARKET order) |
 | 1.4 | Async order tracking: persist exchange order id + status on KssWave/PendingOrder; a `reconcile_live_orders()` scheduler step applies Fills on FILLED/PARTIAL `[tdd:required]` | a NEW→FILLED transition creates exactly one Fill + Position update | 1.1,1.3 | **cc:DONE 2026-06-15** — columns paper-safe via `_ADDED_COLUMNS`; `reconcile_live_orders()` gated by `live_enabled()`; 8 tests |
-| 1.5 | Live KSS/OPUS model shift: in live mode place resting waves/TP in advance (not "wait-then-market"); cancel+replace on avg/target change `[tdd:required]` | live wave rests on exchange; paper unchanged | 1.4 | cc:TODO |
+| 1.5 | Live KSS/OPUS model shift: in live mode place resting waves/TP in advance (not "wait-then-market"); cancel+replace on avg/target change `[tdd:required]` | live wave rests on exchange; paper unchanged | 1.4 | **cc:DONE 2026-08-25** — `orders.sync_resting_orders` (waves) + `kss.service.sync_resting_tp` (TP follows avg); gated by `resting_model_active()` = live AND `maker_orders`; 32 tests |
 | 1.6 | Rate-limit guard: read X-MBX-USED-WEIGHT-1M + backoff; 429 honor Retry-After; 418 → halt live + alert `[tdd:required]` | guard backs off; 418 stops live | 1.1 | **cc:DONE 2026-06-15** (`used_weight_from_headers`/`weight_backoff_seconds`/`classify_rate_error`) |
 | 1.7 | 5m support: kline pagination (>1000), intraday lookback cap, scan_interval≤5 config `[tdd:required]` | 7-day 5m fetch returns >1000 bars via pagination | - | cc:TODO (touches shared candle path — deferred for paper safety) |
 | 1.8 | Testnet harness: `set_sandbox_mode`, `live_use_testnet` flag; end-to-end place→fill→reconcile on testnet `[tdd:skip:manual-testnet]` | full round-trip works on testnet | 1.1-1.6 | **cc:PARTIAL** — flag + `set_sandbox_mode` wired in `_client`; manual testnet e2e pending |
@@ -222,3 +222,34 @@ merged to `live`, then run on testnet. Build order:
 resting `LIMIT_MAKER` → exchange fills on a dip → `reconcile_live_orders` creates the Fill → Position
 updates → TP/SL fire; filters + rate-limit guard clean. Green round-trip + user sign-off → only THEN
 consider real funds with a tiny `live_max_order_notional`.
+
+## Progress — 2026-08-25 (1.5 live resting model SHIPPED, paper-safe)
+Full `tests/app/` shows no new failures; 32 new tests in `test_resting_live.py` (19) and
+`test_resting_tp.py` (13). Everything is gated by `orders.resting_model_active()` =
+`execution.live_enabled()` **and** `settings.maker_orders`, so paper is untouched and live
+with maker OFF keeps the legacy wait-then-market model — **MAKER_ORDERS is the switch
+between the two live models, and turning it off is the way back.**
+- **Entries rest (`orders.sync_resting_orders`).** Each cycle: place every queued KSS limit
+  that has no exchange link (re-gated per order exactly like `_live_execute` — veto, breaker,
+  notional cap, cash floor on BUY; a SELL exit is never gated), and cancel a rung that was
+  rejected or outlived `order_fill_timeout_sec`. A post-only reject or a placement error
+  leaves the rung queued for the next cycle rather than inventing an exchange link; a failed
+  cancel KEEPS the link (unlinking would orphan a live order). A venue that reports terminal
+  at placement is left with no `exchange_status` on purpose — reconcile skips terminal rows
+  and that fill still needs booking.
+- **Exits rest (`kss.service.sync_resting_tp`).** One resting LIMIT SELL per ACTIVE session at
+  `max(session TP target incl. fee buffer, K-2 floor)`, re-priced (cancel + re-queue) on every
+  avg move, rejected when the session leaves ACTIVE. K-2 applied in advance: an exit placed
+  early can no more realize under the true aggregate basis than a triggered one could.
+- **No double-selling / double-buying.** `auto_fill_due_orders` skips orders already resting;
+  `_live_execute` refuses to re-place one; `manage_open_sessions` skips the TP branch and
+  `_handle_tp_triggered` keeps the session ACTIVE in this mode (SL/trailing/deadline still
+  fire and stay MARKET by design).
+- **Decisions taken** (the plan's recommended defaults, unchanged from config): fill timeout
+  `order_fill_timeout_sec=0` (wait forever, the DCA behaviour); TP resting in advance with
+  cancel+replace; VIP0 assumed (maker wins the spread, not the fee).
+- **Harness:** `scripts/testnet_e2e.py` runs queue → rest → reconcile → cancel against real
+  testnet on a throwaway DB (one command), and `scripts/testnet_check.py` is the key/permission
+  preflight. Both were written and unit-verified offline — **the testnet round trip itself
+  (1.8) still has to be run on a machine that can reach `testnet.binance.vision`.**
+- **NEXT = 1.8** run the e2e on testnet, then re-run the 1.10 security pass, then 1.7 (5m).

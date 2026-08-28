@@ -124,6 +124,7 @@ def run_cycle(db: Session) -> dict:
     closed = service.sweep_deadlines(db)
     tp = service.manage_open_sessions(db)
     service.manage_orphan_positions(db)  # TP/SL leftover positions no session/OPUS covers
+    # Max-DCA is PULL-only now (folded into /summary + a 'Liệt kê' button) — no proactive push.
     scan: dict
     try:
         scan = scanner.run_scan(db)

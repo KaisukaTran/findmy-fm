@@ -226,10 +226,16 @@ def test_arm_fires_one_telegram_alert(db, monkeypatch):
 
 # ----- Phase 5: position guard + crash-detect -----
 
-def test_guard_noop_when_disabled(db, monkeypatch):
+def test_guard_no_channel_exit_when_disabled(db, monkeypatch):
+    """With dynamic-TP off the guard performs NO channel exit on an armed session. (It still runs
+    the always-on hard-SL net for filled sessions — see test_kss_guard_p0 — but that only cuts a
+    session below its floor; a healthy one is untouched.)"""
     monkeypatch.setattr(settings, "kss_dynamic_tp_enabled", False)
-    _session(db, trail_active=True, trail_sl_price=110.0)
-    assert service.run_position_guard(db)["checked"] == 0
+    s = _session(db, trail_active=True, trail_sl_price=110.0)
+    _price(monkeypatch, 108.0)                      # would be a channel exit if dynamic were ON
+    res = service.run_position_guard(db)
+    db.refresh(s)
+    assert res["exited"] == [] and s.status == SESSION_ACTIVE
 
 
 def test_guard_executes_channel_exit_immediately(db, monkeypatch):

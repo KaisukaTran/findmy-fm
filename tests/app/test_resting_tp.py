@@ -235,3 +235,80 @@ def test_queued_exit_is_placed_by_sync_resting_orders(db, monkeypatch):
 
     assert placed == [{"side": "SELL", "type": "LIMIT", "maker": True}]
     assert _tp_order(db, row.id).exchange_order_id == "X7"
+
+
+# --- interaction with the 90s position guard --------------------------------
+
+
+def test_guard_does_not_force_fill_the_resting_tp(db, monkeypatch):
+    """The guard force-fills queued KSS exit SELLs every 90s. The resting TP is a standing
+    limit on the exchange, not a protective exit — filling it here would pull it off the book
+    and re-place it, and could orphan a live order."""
+    _live(monkeypatch)
+    approved: list[int] = []
+    monkeypatch.setattr(orders, "approve_order",
+                        lambda db, oid, reviewer=None: approved.append(oid))
+    monkeypatch.setattr("app.market.get_current_prices",
+                        lambda syms, force=False: {"SOL": 10.5})
+    row = _session(db, avg=10.0, qty=3.0)
+    service.sync_resting_tp(db)
+    tp = _tp_order(db, row.id)
+    tp.exchange_order_id = "X1"
+    tp.exchange_status = "open"
+    db.commit()
+
+    service.run_position_guard(db)
+
+    assert approved == []
+    db.refresh(tp)
+    assert tp.status == PENDING and tp.exchange_order_id == "X1"
+
+
+def test_guard_still_fills_a_protective_exit(db, monkeypatch):
+    """The never-gate-exits rule: a queued MARKET stop must still fill immediately."""
+    _live(monkeypatch)
+    approved: list[int] = []
+    monkeypatch.setattr(orders, "approve_order",
+                        lambda db, oid, reviewer=None: approved.append(oid))
+    monkeypatch.setattr("app.market.get_current_prices",
+                        lambda syms, force=False: {"SOL": 10.5})
+    row = _session(db, avg=10.0, qty=3.0)
+    sl, _ = orders.queue_order(
+        db, symbol="SOL", side="SELL", quantity=3.0, price=0.0, order_type="MARKET",
+        source="kss", source_ref=f"pyramid:{row.id}:sl",
+    )
+
+    service.run_position_guard(db)
+
+    assert approved == [sl.id]
+
+
+def test_guard_pulls_the_resting_tp_off_the_book_after_a_stop(db, monkeypatch):
+    """A hard SL closes the session; its resting exit must leave the exchange at once, not in
+    half an hour when the next 30-min cycle happens to run."""
+    _live(monkeypatch)
+    cancelled: list[str] = []
+    monkeypatch.setattr(execution, "cancel_live_order",
+                        lambda pair, oid: cancelled.append(oid))
+    monkeypatch.setattr(execution, "place_live_order",
+                        lambda *a, **k: {"raw_id": "X9", "status": "open",
+                                         "price": 0.0, "quantity": 0.0, "fee": 0.0})
+    monkeypatch.setattr(orders, "approve_order", lambda db, oid, reviewer=None: None)
+    row = _session(db, avg=10.0, qty=3.0)
+    row.sl_pct = 10.0
+    db.commit()
+    service.sync_resting_tp(db)
+    tp = _tp_order(db, row.id)
+    tp.exchange_order_id = "X1"
+    tp.exchange_status = "open"
+    db.commit()
+    # Price far below the hard-SL floor → _guard_hard_sl stops the session.
+    monkeypatch.setattr("app.market.get_current_prices",
+                        lambda syms, force=False: {"SOL": 5.0})
+
+    out = service.run_position_guard(db)
+
+    assert out["exited"] == [row.id]
+    db.refresh(tp)
+    assert tp.status == REJECTED
+    assert "X1" in cancelled

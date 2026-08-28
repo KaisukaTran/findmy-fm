@@ -26,10 +26,31 @@
     <input name="equity_backup_pct" type="number" step="any" min="0" max="90" value="{{ '%.0f'|format(k.equity_backup_pct) }}" required></label>
   <label title="CHẶN CỨNG: tiền mặt tài khoản không bao giờ được xuống dưới mức này. Mỗi lệnh MUA bị khớp một phần đúng bằng tiền còn lại (hoặc bị giữ lại nếu không đủ cả lát tối thiểu) → Cash không bao giờ âm. 0 = Cash luôn ≥ 0. Lệnh BÁN không bị chặn.">Sàn tiền mặt $ <span class="varname">cash_floor_usd</span>
     <input name="cash_floor_usd" type="number" step="any" min="0" value="{{ '%.0f'|format(k.cash_floor_usd) }}" required></label>
+  <label title="TRẦN CỨNG: 1 session không bao giờ được triển khai (đã bơm + sóng đang chờ) quá số USD này. MỌI sóng — auto-DCA, DCA+ thủ công, nút ➕ Telegram — vượt trần sẽ bị TỪ CHỐI. Đây là bức tường bảo toàn vốn cho live (thảm hoạ C từng bơm $162k vô giới hạn). 0 = tắt. Live: đặt ~15-20% equity.">Trần deploy/session $ <span class="varname">max_session_deploy_usd</span>
+    <input name="max_session_deploy_usd" type="number" step="any" min="0" value="{{ '%.0f'|format(k.max_session_deploy_usd) }}" required></label>
   <label title="Chặn mở session mới cho coin đã thua K lần ĐÓNG LỆNH liên tiếp (một lần lãi sẽ phá chuỗi). Tăng để khó bị chặn hơn.">Chặn sau K lần thua <span class="varname">loss_streak_block_k</span>
     <input name="loss_streak_block_k" type="number" step="1" min="1" max="20" value="{{ k.loss_streak_block_k }}" required></label>
   <label title="Chỉ tính các lần đóng lệnh trong N ngày gần nhất — lỗ cũ trôi ra ngoài cửa sổ thì coin tự được giao dịch lại.">Cửa sổ lỗ (ngày) <span class="varname">loss_streak_window_days</span>
     <input name="loss_streak_window_days" type="number" step="1" min="1" max="365" value="{{ k.loss_streak_window_days }}" required></label>
+  <label title="GIÃN VÀO COIN ĐÃ LỖ: sau khi coin bị CẮT LỖ (hard-SL), chặn mở lại theo bậc leo thang — lần 1 chặn N₁ tuần, lần 2 chặn N₂ tuần, lần ≥ ngưỡng blacklist thì chặn vĩnh viễn. Chỉ đếm lần chạm hard-SL (source_ref …:sl); trailing stop KHÔNG tính. Không đụng exit/DCA của session đang chạy.">Giãn vào mã đã lỗ <span class="varname">loss_reentry_enabled</span>
+    <select name="loss_reentry_enabled" class="select-inline">
+      <option value="1" {% if k.loss_reentry_enabled %}selected{% endif %}>Bật</option>
+      <option value="0" {% if not k.loss_reentry_enabled %}selected{% endif %}>Tắt</option>
+    </select></label>
+  <label title="Số TUẦN chặn mở lại sau lần chạm hard-SL ĐẦU TIÊN của coin. Tự hết chặn khi qua đủ số tuần này kể từ lần cắt lỗ.">Chặn lần 1 (tuần) <span class="varname">loss_reentry_weeks_1</span>
+    <input name="loss_reentry_weeks_1" type="number" step="1" min="1" max="520" value="{{ k.loss_reentry_weeks_1 }}" required></label>
+  <label title="Số TUẦN chặn sau lần chạm hard-SL THỨ HAI (≈2 tháng = 8 tuần). Cắt lỗ lặp lại → thời gian nghỉ dài hơn.">Chặn lần 2 (tuần) <span class="varname">loss_reentry_weeks_2</span>
+    <input name="loss_reentry_weeks_2" type="number" step="1" min="1" max="520" value="{{ k.loss_reentry_weeks_2 }}" required></label>
+  <label title="Số lần chạm hard-SL để coin bị BLACKLIST (chặn vĩnh viễn). Gỡ 1 coin bằng ô 'Ân xá' bên dưới.">Blacklist sau N lần <span class="varname">loss_reentry_blacklist_after</span>
+    <input name="loss_reentry_blacklist_after" type="number" step="1" min="1" max="50" value="{{ k.loss_reentry_blacklist_after }}" required></label>
+  <label title="Danh sách coin ĐƯỢC MIỄN chặn (ân xá / gỡ blacklist thủ công), cách nhau bằng dấu phẩy. Ví dụ: C, MIRA. Để trống = không miễn ai.">Ân xá (bỏ chặn) <span class="varname">loss_reentry_pardon</span>
+    <input name="loss_reentry_pardon" type="text" placeholder="vd: C, MIRA" value="{{ k.loss_reentry_pardon }}"></label>
+  <div class="muted" style="grid-column: 1 / -1; margin: 2px 0 6px;">
+    Đang bị chặn mở lại:
+    {% if blocked %}
+      {% for b in blocked %}<span class="varname" title="{{ b.reason }}">{{ b.symbol }} ({{ b.hard_sls }}×SL)</span>{% if not loop.last %} · {% endif %}{% endfor %}
+    {% else %}<span>không có coin nào.</span>{% endif %}
+  </div>
   <label title="Gate CHÍNH: kỳ vọng net trung bình mỗi lệnh backtest (đã trừ SL + phí). Coin chỉ trade khi E ≥ ngưỡng này VÀ win-rate ≥ ngưỡng dưới.">Kỳ vọng tối thiểu E % <span class="varname">min_expectancy_pct</span>
     <input name="min_expectancy_pct" type="number" step="0.1" min="-100" max="100" value="{{ '%.1f'|format(k.min_expectancy_pct) }}" required></label>
   <label title="Win-rate tối thiểu (cận dưới Wilson) để đủ điều kiện trade. Cặp với gate kỳ vọng tạo thành quy tắc: trade khi E ≥ ngưỡng VÀ win-rate ≥ ngưỡng này.">Win-rate tối thiểu % <span class="varname">min_win_rate</span>

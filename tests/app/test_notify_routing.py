@@ -67,18 +67,29 @@ def test_send_instance_override_labels_target(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Silent-by-default rule: telegram_push_enabled gates PROACTIVE pushes only
+# Silent-by-default rule: telegram_push_enabled gates TRADE/DIGEST pushes only.
+# RISK pushes bypass the master mute (safety alerts must never be silenced by a
+# convenience flag) — they are gated solely by telegram_notify_risk.
 # ---------------------------------------------------------------------------
 
 
-def test_push_disabled_by_default(monkeypatch):
-    """event() must stay silent when the master push switch is off — even with the
-    per-category trade/risk switches on. This is the 'reply only when asked' rule."""
+def test_push_disabled_still_silences_trades_but_risk_fires(monkeypatch):
+    """With the master push switch off: routine TRADE pushes stay silent, but a RISK
+    alert (SL/breaker) still goes out — it is gated only by telegram_notify_risk."""
     monkeypatch.setattr(settings, "telegram_push_enabled", False)
     monkeypatch.setattr(settings, "telegram_notify_trades", True)
     monkeypatch.setattr(settings, "telegram_notify_risk", True)
     sent = _capture_telegram(monkeypatch)
     assert notify.event("trade", "BUY 1 BTC") is False
+    assert notify.event("risk", "SL hit") is True
+    assert sent == ["[PAPER] SL hit"]
+
+
+def test_risk_push_silenced_only_by_its_own_kill_switch(monkeypatch):
+    """telegram_notify_risk=False fully disables risk pushes, even independent of the master."""
+    monkeypatch.setattr(settings, "telegram_push_enabled", False)
+    monkeypatch.setattr(settings, "telegram_notify_risk", False)
+    sent = _capture_telegram(monkeypatch)
     assert notify.event("risk", "SL hit") is False
     assert sent == []
 

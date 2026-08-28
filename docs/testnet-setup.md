@@ -36,8 +36,11 @@ and cancel. **What it does not prove:** fills at production prices (see caveats 
 1. Open **https://testnet.binance.vision** — this is the *Spot* testnet (the futures
    testnet is a different site and is not used here).
 2. Log in with the GitHub account link on that page.
-3. Generate an **HMAC_SHA256** key. Copy the **API key** and the **secret** immediately —
-   the secret is shown once and cannot be recovered.
+3. Generate an **HMAC_SHA256** key. Tick **TRADE** (place/cancel) and **USER_DATA**
+   (balance + order status) — both are required; **USER_STREAM** is optional today and
+   needed when fills move to the user-data WebSocket, so tick it too. Leave the FIX_API
+   boxes alone: they only apply to Ed25519 keys. Copy the **API key** and the **secret**
+   immediately — the secret is shown once and cannot be recovered.
 4. Optional: restrict the key to your IP. If you do, a changing home IP will surface as
    `-2015` later.
 5. The new account arrives pre-funded with test assets; check them in step 3.

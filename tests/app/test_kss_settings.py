@@ -6,6 +6,21 @@ from app import runtime
 from app.config import settings
 
 
+def test_kss_settings_body_accepts_new_knobs():
+    """Regression: the API/form body must include the dynamic-TP + entry-eval knobs, else
+    model_dump(exclude_none=True) silently drops them and the Strategy form can't save them."""
+    from app.routes import KssSettingsBody
+
+    dumped = KssSettingsBody(
+        rel_strength_enabled=True, regime_ramp_enabled=True, mae_quartile_gate_enabled=True,
+        kss_dynamic_tp_enabled=True, kss_tp_gap_pct=6.0, entry_momentum_gate=False,
+    ).model_dump(exclude_none=True)
+    for k in ("rel_strength_enabled", "regime_ramp_enabled", "mae_quartile_gate_enabled",
+              "kss_dynamic_tp_enabled", "kss_tp_gap_pct", "entry_momentum_gate"):
+        assert k in dumped, f"{k} dropped by KssSettingsBody"
+    assert dumped["kss_tp_gap_pct"] == 6.0
+
+
 def test_set_kss_settings_persists_and_restores(db):
     runtime.set_kss_settings(db, {"scan_max_waves": 6, "sl_pct": 12.0, "scan_distance_pct": 2.0})
     assert settings.scan_max_waves == 6

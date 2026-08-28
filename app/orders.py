@@ -14,12 +14,12 @@ Position is the derived running state per symbol.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import audit, runtime
+from app.clock import utcnow
 from app.config import settings
 from app.market import get_current_prices
 from app.models import (
@@ -155,7 +155,7 @@ def reject_order(
     order.status = REJECTED
     order.reject_reason = reason
     order.reviewer = reviewer
-    order.decided_at = datetime.utcnow()
+    order.decided_at = utcnow()
     db.commit()
     db.refresh(order)
     return order
@@ -291,7 +291,7 @@ def approve_order(db: Session, order_id: int, reviewer: str | None = None) -> Fi
     _apply_cash_cap(db, order)
     order.status = APPROVED
     order.reviewer = reviewer
-    order.decided_at = datetime.utcnow()
+    order.decided_at = utcnow()
     db.flush()
 
     fill = _execute(db, order)
@@ -341,14 +341,16 @@ def _live_execute(db: Session, order: PendingOrder) -> Fill:
     from app import execution
     from app.data.providers import live_provider
 
-    # 1.5: this order is already live on the exchange — placing again would double the
-    # exposure. The deterministic clientOrderId would recover it, but the caller expects a
-    # fill here, so refuse loudly instead of reporting a phantom one.
+    # 1.5: this row already rests on the exchange. Reaching here means someone wants it
+    # filled NOW (an operator approval, or the position-guard forcing a crash exit), so take
+    # the resting order off the book first — a row must never have two live orders. A cancel
+    # that fails aborts the placement: placing anyway would double the exposure.
     if order.exchange_order_id:
-        raise ValueError(
-            f"order {order.id} already rests on the exchange as {order.exchange_order_id} — "
-            "cancel it before placing again"
+        execution.cancel_live_order(
+            live_provider().pair(order.symbol), str(order.exchange_order_id)
         )
+        order.exchange_order_id = None
+        order.exchange_status = None
 
     ref_price = order.price if order.price > 0 else (
         get_current_prices([order.symbol]).get(order.symbol) or 0.0
@@ -513,7 +515,7 @@ def reconcile_live_orders(db: Session) -> list[int]:
         # A fully/terminally settled order with any fill is done — mark it executed.
         if status in _TERMINAL_EXCHANGE_STATUS and cum_filled > 0:
             order.status = EXECUTED
-            order.decided_at = order.decided_at or datetime.utcnow()
+            order.decided_at = order.decided_at or utcnow()
     db.commit()
     return booked
 
@@ -644,7 +646,7 @@ def sync_resting_orders(db: Session) -> dict:
         .all()
     )
     timeout = settings.order_fill_timeout_sec
-    now = datetime.utcnow()
+    now = utcnow()
     for order in linked:
         # Only rows this model owns: an order the operator rejected, or a rung that waited
         # past the timeout. APPROVED/EXECUTED rows belong to the synchronous path — a
@@ -760,7 +762,7 @@ def _update_position(
             pos.total_cost = max(0.0, pos.total_cost - cost_basis)
             if pos.quantity == 0:
                 pos.avg_entry_price = 0.0
-    pos.updated_at = datetime.utcnow()
+    pos.updated_at = utcnow()
     db.flush()
     return realized
 

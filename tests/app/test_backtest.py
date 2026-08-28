@@ -168,6 +168,39 @@ def test_b3_new_keys_present():
     assert "flat_rate" in res
 
 
+# ----- MAE tests: drawdown discrimination -----
+
+def test_mae_tracks_dip_before_tp():
+    """mae_pct captures the deepest dip below avg even when the same bar reaches TP."""
+    # max_waves=1 → avg stays 100. Bar 1 dips to 90 (−10% vs avg) but high 104 ≥ TP(103).
+    c = [candle(0, 100.0), candle(1, 100.0, high=104.0, low=90.0, open_=100.0)]
+    r = simulate_kss(c, 0, distance_pct=2, max_waves=1, tp_pct=3, deadline_days=30, sl_pct=0)
+    assert r.tp_hit is True
+    assert r.mae_pct == -10.0
+
+
+def test_avg_mae_discriminates_shallow_vs_deep():
+    """A shallow-dip coin scores a higher (closer to 0) MAE than a deep-dip one — the metric
+    that DISCRIMINATES when win-rate saturates at ~100%."""
+    shallow = [candle(0, 100.0), candle(1, 100.0, high=104.0, low=99.0)]   # dips −1%, then TP
+    deep = [candle(0, 100.0), candle(1, 100.0, high=104.0, low=90.0)]      # dips −10%, then TP
+    rs = simulate_kss(shallow, 0, 2, 1, 3, 30, sl_pct=0)
+    rd = simulate_kss(deep, 0, 2, 1, 3, 30, sl_pct=0)
+    assert rs.tp_hit and rd.tp_hit
+    assert rs.mae_pct > rd.mae_pct                # −1% ranks above −10%
+
+
+def test_estimate_win_rate_reports_mae_keys():
+    candles = []
+    price = 100.0
+    for d in range(40):
+        candles.append(candle(d, price, high=price, low=price * 0.98))  # each bar dips ~2%
+        price *= 1.01
+    res = estimate_win_rate(candles, distance_pct=2, max_waves=5, tp_pct=3, deadline_days=30)
+    assert "avg_mae" in res and "worst_mae" in res
+    assert res["avg_mae"] <= 0.0 and res["worst_mae"] <= res["avg_mae"]
+
+
 # ----- B4 tests: gap-below fill price -----
 
 def test_b4_fill_price_helper_gap_below():

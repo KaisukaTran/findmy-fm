@@ -295,11 +295,32 @@ def test_executed_orders_are_left_alone(db, monkeypatch):
 # --- no double placement through the synchronous path -----------------------
 
 
-def test_live_execute_refuses_an_order_already_resting(db, monkeypatch):
-    _live(monkeypatch, _Venue())
-    order = _queued(db)
+def test_live_execute_cancels_the_resting_order_first(db, monkeypatch):
+    """The position-guard forces a crash exit through here, so a resting order must come OFF
+    the book and then be placed — never two live orders for one row."""
+    venue = _live(monkeypatch, _Venue(place_result={
+        "raw_id": "X2", "status": "closed", "price": 10.0, "quantity": 1.0, "fee": 0.01,
+    }))
+    order = _queued(db, side="SELL", source_ref="pyramid:1:tp")
     orders.sync_resting_orders(db)
     db.refresh(order)
+    resting_id = order.exchange_order_id
 
-    with pytest.raises(ValueError, match="already rests"):
+    fill = orders._live_execute(db, order)
+
+    assert venue.cancelled == [resting_id]  # the resting order was pulled first
+    assert len(venue.placed) == 2           # then re-placed for the immediate fill
+    assert fill.quantity == 1.0
+
+
+def test_live_execute_aborts_when_the_cancel_fails(db, monkeypatch):
+    """A cancel we cannot confirm means placing again could double the exposure."""
+    venue = _live(monkeypatch, _Venue())
+    order = _queued(db, side="SELL", source_ref="pyramid:1:tp")
+    orders.sync_resting_orders(db)
+    venue._cancel_error = RuntimeError("venue down")
+    db.refresh(order)
+
+    with pytest.raises(RuntimeError, match="venue down"):
         orders._live_execute(db, order)
+    assert len(venue.placed) == 1  # nothing new was placed

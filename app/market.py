@@ -29,14 +29,51 @@ _price_cache: dict[str, float] = {}
 _price_cache_ts: float = 0.0
 _exchange_info_cache: dict[str, dict] = {}
 
+# Live-instance-only WS price feed (app.data.ws_feed.BinancePriceFeed). None on paper — every
+# branch below that checks it is dead code there, so paper behavior is byte-for-byte unchanged.
+_ws_feed = None
 
-def get_current_prices(symbols: list[str]) -> dict[str, float]:
-    """Return {symbol: usd_price} for the given base symbols, using a TTL cache."""
+
+def register_ws_feed(feed) -> None:
+    """Register the live WS price feed (called once from ws_feed.start())."""
+    global _ws_feed
+    _ws_feed = feed
+
+
+def unregister_ws_feed() -> None:
+    """Clear the registered WS feed (called from ws_feed.stop())."""
+    global _ws_feed
+    _ws_feed = None
+
+
+def note_ws_prices(prices: dict[str, float]) -> None:
+    """Warm the existing TTL cache from a live WS ticker push (the WS feed's on_prices callback).
+
+    Updates the same ``_price_cache``/``_price_cache_ts`` that REST fetches use, so a
+    force=False caller already benefits without any other code path changes."""
+    global _price_cache_ts
+    if not prices:
+        return
+    _price_cache.update(prices)
+    _price_cache_ts = time.time()
+
+
+def get_current_prices(symbols: list[str], force: bool = False) -> dict[str, float]:
+    """Return {symbol: usd_price} for the given base symbols, using a TTL cache.
+
+    ``force=True`` bypasses the TTL cache (forces a fresh fetch) — used by the fast position-guard so
+    it never acts on a stale ticker when checking a trailing stop."""
     global _price_cache_ts
     if not symbols:
         return {}
 
-    fresh = (time.time() - _price_cache_ts) < settings.price_cache_ttl
+    if force and _ws_feed is not None and _ws_feed.is_fresh(settings.ws_stale_sec):
+        # A connected, fresh live WS feed already keeps the cache warmer than any REST poll
+        # could — the forced tick is unnecessary, so fall through to the normal cache path.
+        # _ws_feed is always None on paper, so this branch is dead there (no behavior change).
+        force = False
+
+    fresh = (not force) and (time.time() - _price_cache_ts) < settings.price_cache_ttl
     cached = {s: _price_cache[s] for s in symbols if fresh and s in _price_cache}
     missing = [s for s in symbols if s not in cached]
     if not missing:

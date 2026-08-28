@@ -15,10 +15,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import socket
+import threading
 
 from sqlalchemy.orm import Session
 
 from app import audit, orders, scanner
+from app.clock import utcnow
 from app.config import settings
 from app.db import SessionLocal
 from app.kss import service
@@ -26,6 +28,10 @@ from app.kss import service
 logger = logging.getLogger(__name__)
 
 _task: asyncio.Task | None = None
+_guard_task: asyncio.Task | None = None
+# Serialize the 30-min cycle and the fast position-guard so only one DB writer runs at a time
+# (prevents a guard exit racing manage_open_sessions on the same session → no double-sell).
+_work_lock = threading.Lock()
 _last_cycle_at: str | None = None
 _last_summary: dict = {}
 
@@ -81,7 +87,7 @@ def _run_periodic(db: Session) -> tuple[int, bool]:
     ml_trained = False
     try:
         from app import hyperopt, ml, runtime
-        now = datetime.utcnow()
+        now = utcnow()
 
         def _due(key: str, hours: float) -> bool:
             last = runtime.get(db, key)
@@ -108,7 +114,7 @@ def _run_periodic(db: Session) -> tuple[int, bool]:
 def run_cycle(db: Session) -> dict:
     """One scheduler cycle. Returns a small summary (counts), not data dumps."""
     global _last_cycle_at, _last_summary
-    from datetime import datetime, timedelta
+    from datetime import timedelta
 
     from app import circuit, guardian, notify
     from app.models import PENDING, PendingOrder
@@ -138,7 +144,7 @@ def run_cycle(db: Session) -> dict:
     veto_expired = 0
     ttl = settings.guardian_veto_ttl_min
     if ttl > 0:
-        cutoff = datetime.utcnow() - timedelta(minutes=ttl)
+        cutoff = utcnow() - timedelta(minutes=ttl)
         stale = (
             db.query(PendingOrder)
             .filter(
@@ -179,7 +185,7 @@ def run_cycle(db: Session) -> dict:
                 if order is not None:
                     order.auto_veto = True
                     order.auto_veto_reason = reason
-                    order.auto_veto_at = datetime.utcnow()
+                    order.auto_veto_at = utcnow()
                     audit.log(db, "guardian", "veto", entity=f"order:{oid}", reason=reason)
                     notify.event("risk", f"⛔ Guardian vetoed order {oid} ({order.symbol}): {reason}")
                     guardian_vetoes += 1
@@ -224,7 +230,7 @@ def run_cycle(db: Session) -> dict:
         "hyperopt_runs": hyperopt_runs,
         "ml_trained": ml_trained,
     }
-    _last_cycle_at = datetime.utcnow().isoformat()
+    _last_cycle_at = utcnow().isoformat()
     _last_summary = {k: (len(v) if isinstance(v, list) else v) for k, v in summary.items()}
     return summary
 
@@ -232,7 +238,26 @@ def run_cycle(db: Session) -> dict:
 def _cycle_once() -> None:
     db = SessionLocal()
     try:
-        run_cycle(db)
+        # Warm the OHLCV candle cache OUTSIDE _work_lock first: the fetch is network-heavy
+        # (~minutes on a cold cache after a restart) but read-only w.r.t. session rows, so
+        # doing it off-lock keeps the 90s position-guard responsive. run_cycle's own
+        # _prefetch_candles then hits the warm cache, so the lock is held only for the fast
+        # write phase. Best-effort — on failure run_cycle fetches under the lock as before.
+        try:
+            scanner.prefetch_universe_candles(db)
+        except Exception:
+            logger.exception("candle prefetch failed (non-fatal; scan will fetch under lock)")
+        with _work_lock:  # never run concurrently with the fast guard
+            run_cycle(db)
+    finally:
+        db.close()
+
+
+def _guard_once() -> None:
+    db = SessionLocal()
+    try:
+        with _work_lock:  # serialize with the 30-min cycle
+            service.run_position_guard(db)
     finally:
         db.close()
 
@@ -247,6 +272,19 @@ async def _loop() -> None:
         except Exception:  # a bad cycle must not kill the loop
             logger.exception("scheduler cycle failed")
         await asyncio.sleep(max(settings.scan_interval_min, 1) * 60)
+
+
+async def _guard_loop() -> None:
+    """Fast, lightweight exit guard — decoupled from the 30-min cycle so a trailing stop is checked
+    every ``kss_exit_check_sec`` (not every 30 min). No-op unless dynamic trailing is enabled."""
+    logger.info("position-guard started (every %ss)", settings.kss_exit_check_sec)
+    while True:
+        try:
+            if settings.kss_dynamic_tp_enabled:
+                await asyncio.to_thread(_guard_once)
+        except Exception:  # a bad guard tick must not kill the loop
+            logger.exception("position-guard tick failed")
+        await asyncio.sleep(max(settings.kss_exit_check_sec, 5))
 
 
 def start() -> bool:
@@ -267,18 +305,24 @@ def start() -> bool:
         return False
     settings.scheduler_enabled = True
     _task = asyncio.create_task(_loop())
+    global _guard_task
+    if not (_guard_task and not _guard_task.done()):
+        _guard_task = asyncio.create_task(_guard_loop())
     return True
 
 
 def stop() -> bool:
     """Stop the background loop. Returns True if a running task was cancelled."""
-    global _task
+    global _task, _guard_task
     settings.scheduler_enabled = False
     cancelled = False
     if _task and not _task.done():
         _task.cancel()
         cancelled = True
     _task = None
+    if _guard_task and not _guard_task.done():
+        _guard_task.cancel()
+    _guard_task = None
     _release_singleton_lock()  # free the lock so the same process can restart cleanly
     return cancelled
 

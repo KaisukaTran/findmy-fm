@@ -54,6 +54,25 @@ def test_managed_symbol_not_swept(db, monkeypatch):
     assert service.manage_orphan_positions(db) == []  # active session owns it
 
 
+def test_orphan_with_pending_sell_not_double_sold(db, monkeypatch):
+    """Regression: a position whose exit (SELL) is already queued must NOT be swept again.
+
+    A KSS session that hits TP queues its SELL and goes inactive in the SAME cycle, but the SELL
+    has not filled yet — the leftover qty would be mistaken for an orphan and sold a SECOND time
+    (the observed live phantom ``orphan:tp`` fills: duplicate row + double-counted fee, and
+    pre-guard double-realized P&L). The in-flight SELL must mark the symbol as managed."""
+    monkeypatch.setattr(settings, "scan_tp_pct", 3.0)
+    monkeypatch.setattr(settings, "binance_max_fee_pct", 0.1)
+    _pos(db, "DEXE", 6.0, 14.51)  # session TP'd → no ACTIVE session → looks like an orphan
+    db.add(PendingOrder(symbol="DEXE", side="SELL", quantity=6.0, order_type="MARKET",
+                        status=PENDING, source="kss", source_ref="pyramid:15:tp",
+                        strategy_name="Pyramid_DEXE"))
+    db.commit()
+    monkeypatch.setattr(market, "get_current_prices", lambda s: {"DEXE": 18.0})  # +24% → would TP
+    assert service.manage_orphan_positions(db) == []   # not swept — exit already in flight
+    assert _sells(db, "DEXE", "tp") == 0               # no phantom orphan:tp queued
+
+
 def test_positions_view_value_pct(db, monkeypatch):
     monkeypatch.setattr(settings, "account_equity", 10000.0)
     monkeypatch.setattr(portfolio, "get_current_prices", lambda s: {"BTC": 100.0})

@@ -1,7 +1,7 @@
 {% if o %}
 <h3 class="ladder-title">{{ o.symbol }} <span class="badge {{ o.status }}">{{ o.status }}</span>
   <span class="muted fs-12">· sóng {{ o.filled_waves_count }}/{{ o.max_waves }} · uP&L
-    <span class="{{ 'pos' if o.unrealized_pnl >= 0 else 'neg' }}">${{ o.unrealized_pnl | money }}</span></span>
+    <span class="{{ 'pos' if o.unrealized_pnl >= 0 else 'neg' }}">${{ o.unrealized_pnl | money_kmb }}</span></span>
 </h3>
 {{ ladder_svg | safe }}
 <table class="tbl mt-8">

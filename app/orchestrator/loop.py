@@ -13,6 +13,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
+from app.clock import utcnow
 from app.config import settings
 from app.db import SessionLocal
 
@@ -42,6 +43,13 @@ def tick(db: Session) -> dict:
         ledger.rollup_now(db)
         return {"skipped": "disabled", "watch": watch_summary}
 
+    # 2b) O-LEARN/L2: reflect on recent outcomes into a few distilled lessons. Its own 6h
+    # runtime-timestamp throttle keeps this rare; never raises, so a bad distill can't sink
+    # the tick. Placed after the cost-cap/enabled gates so it never runs while capped.
+    from app.orchestrator import distill
+
+    distill.distill_lessons(db)
+
     # 3) Cost-aware decision throttle (O-5): stretch the budget by spacing paid calls.
     #    Position management above already ran every tick — only the decision is throttled.
     from datetime import datetime
@@ -50,7 +58,7 @@ def tick(db: Session) -> dict:
     last = runtime.get(db, "opus_last_decision_at")
     if last:
         try:
-            elapsed_min = (datetime.utcnow() - datetime.fromisoformat(last)).total_seconds() / 60.0
+            elapsed_min = (utcnow() - datetime.fromisoformat(last)).total_seconds() / 60.0
         except ValueError:
             elapsed_min = 1e9
         if elapsed_min < service.decision_gap_min(db):
@@ -71,7 +79,7 @@ def tick(db: Session) -> dict:
         merged = consensus.combine(intents, g["intents"] if g.get("ok") else [])
         audit.log(db, "consensus", "merge", **merged["stats"])
         intents = merged["intents"]
-    runtime.set(db, "opus_last_decision_at", datetime.utcnow().isoformat())
+    runtime.set(db, "opus_last_decision_at", utcnow().isoformat())
     applied = policy.apply_intents(db, intents)
     ledger.rollup_now(db)
     return {

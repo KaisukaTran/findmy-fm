@@ -144,6 +144,19 @@ class Settings(BaseSettings):
         default="kraken",
         description="ccxt exchange id for backtest/scan history (public, no key — e.g. kraken/coinbase).",
     )
+    live_ws_prices: bool = Field(
+        default=True,
+        description="Live instance only: stream real-time prices from the Binance public "
+        "WebSocket (!miniTicker@arr) to keep the price cache warm so trailing-stop/crash-detect "
+        "react sub-second instead of every kss_exit_check_sec. Gated by live_trading — paper "
+        "never starts it. REST stays the fallback if the socket drops.",
+    )
+    ws_stale_sec: int = Field(
+        default=10,
+        description="Live WS price feed: if no ticker message has arrived within this many "
+        "seconds the socket is treated as down and get_current_prices(force=True) falls back "
+        "to a REST fetch.",
+    )
 
     # --- Scanner / multi-agent decision layer ---
     watchlist: list[str] = Field(
@@ -160,6 +173,20 @@ class Settings(BaseSettings):
     backtest_trial_spacing_days: float = Field(default=7.0, description="Min days between backtest entry points — decorrelates overlapping trials so the win-rate isn't inflated by one regime (0 = every bar).")
     min_trials: int = Field(default=15, description="Min completed backtest trials for a trustworthy win-rate; below this a pair is skipped (a 100%% from a handful of trials is noise). Raised 8→15 to cut thin-sample false positives.")
     block_downtrend_adx: float = Field(default=25.0, description="Hard entry gate: veto a 'trade' candidate when the higher-timeframe trend AND Supertrend are BOTH down with ADX ≥ this (a confirmed downtrend — avoid catching a falling knife). 0 = off. Deterministic mirror of Grok's most common veto, so it works even when Grok is off.")
+    entry_momentum_gate: bool = Field(default=True, description="Tighter entry-timing gate than block_downtrend_adx: veto a 'trade' candidate whose SHORT-TERM momentum is falling (Supertrend down AND MACD histogram < 0) so a DCA ladder is not opened into a coin actively dropping (it would just sit red until a bounce). Catches mild/short-term drops the downtrend gate (which needs HTF+ST+ADX all confirming) lets through. False = off.")
+    rel_strength_enabled: bool = Field(default=False, description="Entry gate (relative strength vs BTC): only open a coin whose recent return keeps pace with BTC — skip if its N-bar return < BTC's N-bar return − margin. Blocks 'alts bleeding vs BTC' (the pattern behind our open-book losses) WITHOUT a blanket BTC-down block: a strong alt while BTC falls still passes (it outperforms). N = rel_strength_lookback_bars, margin = rel_strength_margin_pct. False = off.")
+    rel_strength_lookback_bars: int = Field(default=7, description="Lookback (daily bars) for the relative-strength-vs-BTC entry gate.")
+    rel_strength_margin_pct: float = Field(default=2.0, description="Allowed underperformance vs BTC before the relative-strength gate blocks a coin (2 = may lag BTC by up to 2%%; 0 = must match BTC).")
+    regime_ramp_enabled: bool = Field(default=False, description="Breadth-aware SOFT throttle: scale max_new_sessions_per_scan down when the market is broadly weak (few coins rising), so exposure ramps slower in a risk-off regime. Never a hard stop (≥1 open) and NEVER blocks on BTC direction alone — it only reduces the COUNT of new opens. False = off.")
+    mae_quartile_gate_enabled: bool = Field(default=False, description="Relative drawdown gate: among the candidates that pass every other gate in a scan, drop the worst quartile by backtested worst_mae (deepest single dip below avg). RELATIVE (per-scan), so it never nukes the universe the way an absolute worst_mae cutoff does (−15%% would reject ~81%%). Needs ≥4 candidates. False = off.")
+
+    strategy_router_enabled: bool = Field(default=False, description="Master switch for the regime router (docs/pyramid-up-plan.md): when on, the scanner classifies each candidate 'pyramid_up' (scale into strength) vs 'dca_down' (buy-the-dip, the existing path) from its TA signals before opening. False = every candidate stays 'dca_down' — zero behaviour change.")
+    pyramid_up_min_rel_strength: float = Field(default=0.0, description="Pyramid-UP regime gate: min relative-strength-vs-BTC return (%%) a candidate must exceed to route to 'pyramid_up' instead of 'dca_down'. Higher = only the clearest BTC-outperformers get the scale-into-strength mode.")
+    pyramid_up_min_adx: float = Field(default=20.0, description="Pyramid-UP regime gate: min ADX (trend strength) a candidate must have to route to 'pyramid_up'. Below this the uptrend is too weak/noisy to ride; falls back to 'dca_down'.")
+    pyramid_up_step_pct: float = Field(default=2.0, description="Pyramid-UP ladder: %% above entry between each add-on trigger (add n triggers at entry×(1+this%%)^n). Smaller = adds trigger sooner/closer together; larger = waits for a stronger confirmed move before scaling in.")
+    pyramid_up_size_ratio: float = Field(default=0.7, description="Pyramid-UP ladder: each add-on quantity = this ratio × the previous wave's quantity (anti-martingale — strictly decreasing). Clamped to (0, 1) exclusive; e.g. 0.7 = each add is 70%% the size of the one before.")
+    pyramid_up_max_adds: int = Field(default=2, description="Pyramid-UP ladder: max number of add-on waves above the base entry (capped at 3 regardless of this value — pyramid_up.MAX_ADDS_CAP). 0 = base wave only, no scaling in.")
+    pyramid_up_lock_pct: float = Field(default=1.0, description="Pyramid-UP risk management: after each add fills, the stop moves to break-even-plus = avg×(1+this%%) (floored at the fee break-even) — every add is a free-roll, net risk never exceeds the risk taken on the base wave.")
 
     min_win_rate: float = Field(default=60.0, description="Min backtested win-rate %% (Wilson lower bound) to qualify. Paired with min_expectancy_pct as the primary trade rule: a pair trades when E ≥ min_expectancy_pct AND win-rate ≥ this.")
     min_confidence: float = Field(default=45.0, description="Min agent consensus %% to qualify a pair. S4: default lowered from 70 to 45 because the consensus is now a pure market-context score from {{trend,dip,volatility,liquidity,ml}} (backtest weight=0); the hard gates (E, win_lb) own the backtest evidence.")
@@ -183,6 +210,7 @@ class Settings(BaseSettings):
     # --- Loss-minimizing / cost-aware gates (capital preservation) ---
     min_expectancy_pct: float = Field(default=3.0, description="PRIMARY gate: min mean net expected PnL %% per backtested trade (after stop-loss + round-trip cost). Paired with min_win_rate as the trade rule: trade when E ≥ this AND win-rate ≥ min_win_rate.")
     max_loss_rate: float = Field(default=20.0, description="Max backtested loss-rate %% to qualify.")
+    max_avg_mae_pct: float = Field(default=0.0, description="Drawdown gate: skip a candidate whose backtested mean max-adverse-excursion (avg_mae — the typical deepest unrealized dip below the running avg before exit) is DEEPER than this %% (e.g. 12 = reject coins that historically plunge >12%% before recovering). 0 = off (still used for ranking: shallower drawdown ranks higher). Discriminates coins the saturated ~100%% win-rate cannot.")
     min_net_edge: float = Field(default=0.5, description="Min TP%% above round-trip cost to trade (micro-trade guard).")
     walk_forward_split: float = Field(default=0.5, description="Fraction of history used in-sample; metric is out-of-sample.")
     max_concurrent_sessions: int = Field(default=10, description="Cap on simultaneously active sessions.")
@@ -226,6 +254,18 @@ class Settings(BaseSettings):
     )
     sl_pct: float = Field(default=8.0, description="KSS session stop-loss %% below avg price (0 = disabled).")
     trailing_pct: float = Field(default=3.0, description="KSS trailing-stop %% below peak once in profit (0 = disabled).")
+
+    # --- Dynamic trailing TP/SL (docs/kss-dynamic-tp-plan.md) — service-layer, OFF by default ---
+    kss_dynamic_tp_enabled: bool = Field(default=False, description="Master toggle for the dynamic trailing channel: once a session clears avg*(1+distance%%) it cancels its DCA ladder and rides a volatility-aware trailing SL with a floating TP, instead of the fixed tp_pct. OFF = today's behaviour unchanged.")
+    kss_tp_gap_pct: float = Field(default=5.0, description="Spike-grab TP ceiling: this %% above the ratcheted SL. A high value effectively disables the spike-grab so the trailing SL is the sole exit (pure chandelier).")
+    kss_exit_fee_mult: float = Field(default=3.0, description="Fee-safe floor multiplier: both the dynamic TP and SL are floored at avg*(1 + this x round_trip_cost%%), so NO automatic trailing exit ever books a loss — not even a fee loss. >=1; 3 = comfortably above round-trip cost.")
+    kss_trail_atr_mult: float = Field(default=1.0, description="Dynamic trailing-stop distance = this x the coin's daily ATR%% (volatility-aware: rides the coin's normal range, exits only on a genuine reversal).")
+    kss_trail_min_pct: float = Field(default=3.0, description="Floor for the trailing distance — the SL never trails closer than this %% below the peak (so a calm coin still gets room and noise never stops it out). Also the fallback when ATR is unavailable.")
+    kss_trail_arm_pct: float = Field(default=5.0, description="Ride & Trail: a profitable session RIDES (no fixed-TP cap, protected only by the hard SL — full room to run) until peak ≥ avg*(1+this%%), at which point the trailing stop ARMS. Higher = run further before locking, but bigger giveback risk (a reversal before arming falls to the hard SL).")
+    kss_trail_lock_pct: float = Field(default=2.0, description="Ride & Trail: once armed, the trailing SL never locks LESS than this %% profit (floor = max(fee_floor, avg*(1+this%%))) — so a wide ATR trail can't pin the stop back at break-even. Should be < kss_trail_arm_pct (the gap is the room given at arming).")
+    kss_exit_check_sec: int = Field(default=90, description="Interval (seconds) of the lightweight position-guard loop that checks OPEN-session exits using cached tickers, decoupled from the 30-min full scan. Lower = smaller gap window, more ticker calls. Should be > price_cache_ttl is NOT required — the guard forces a fresh price.")
+    kss_crash_drop_pct: float = Field(default=12.0, description="Crash-detect: if a guard check sees price drop more than this %% since the last observation AND price is at/below the SL, exit at market immediately (caps further bleed on a gap). 0 = off.")
+    kss_live_stop_orders: bool = Field(default=False, description="LIVE only: maintain a resting STOP-MARKET on the exchange at the current SL for server-side (ms) gap protection. Inert on paper / when live automation is off.")
     max_sessions_per_symbol: int = Field(
         default=1,
         description="Cap concurrent ACTIVE KSS sessions per symbol. 1 (K-1) keeps one owner "
@@ -308,6 +348,12 @@ class Settings(BaseSettings):
     opus_ride_hard_sl_pct: float = Field(default=10.0, description="Hard stop-loss for a 'ride' position so a reversing winner can't become an unbounded loss.")
     opus_max_trade_notional: float = Field(default=200.0, description="Per-trade notional cap for OPUS discretionary orders.")
     opus_shadow: bool = Field(default=True, description="Shadow mode: Opus intents are logged but NOT executed. Flip off to let the sandbox route orders.")
+    # --- God-mode scaffolding (Phase O-FIX; wiring deferred to O-COPY/O-LEARN/O-LIVE) ---
+    opus_copy_mode: bool = Field(default=False, description="Bias OPUS toward symbols the rule-based engine endorsed this scan.")
+    opus_solo_open: bool = Field(default=False, description="Allow OPUS to open without Grok's vote when conviction clears the floor (wiring deferred to a later phase).")
+    opus_solo_min_consensus: float = Field(default=70.0, description="Deterministic-consensus floor required for a solo open.")
+    opus_lessons_max: int = Field(default=8, description="Max distilled lessons injected into the system prompt.")
+    opus_history_n: int = Field(default=20, description="Closed positions shown in the self-history block.")
 
     # --- Grok co-pilot (xAI) for consensus decisions with OPUS (off by default) ---
     # When enabled WITH a key, OPUS (Claude) and Grok (xAI) each decide on the SAME snapshot;

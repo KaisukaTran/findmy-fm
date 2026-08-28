@@ -25,6 +25,9 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("kss_sessions", "sl_pct", "FLOAT NOT NULL DEFAULT 0.0"),
     ("kss_sessions", "trailing_pct", "FLOAT NOT NULL DEFAULT 0.0"),
     ("kss_sessions", "peak_price", "FLOAT NOT NULL DEFAULT 0.0"),
+    ("kss_sessions", "trail_active", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("kss_sessions", "trail_sl_price", "FLOAT NOT NULL DEFAULT 0.0"),
+    ("kss_sessions", "trail_dist_pct", "FLOAT NOT NULL DEFAULT 0.0"),
     ("pending_orders", "auto_veto", "BOOLEAN NOT NULL DEFAULT 0"),
     ("pending_orders", "auto_veto_reason", "TEXT"),
     ("pending_orders", "auto_veto_at", "DATETIME"),
@@ -35,6 +38,9 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("candidates", "win_rate_lb", "FLOAT NOT NULL DEFAULT 0.0"),
     ("candidates", "expectancy", "FLOAT NOT NULL DEFAULT 0.0"),
     ("candidates", "trials", "INTEGER NOT NULL DEFAULT 0"),
+    ("candidates", "avg_mae", "FLOAT NOT NULL DEFAULT 0.0"),
+    ("candidates", "worst_mae", "FLOAT NOT NULL DEFAULT 0.0"),
+    ("kss_sessions", "strategy_mode", "TEXT DEFAULT 'dca_down'"),
 ]
 
 

@@ -1,16 +1,29 @@
+{# Click-to-sort: 1st click on a column = ascending (nhỏ→lớn), click again = descending.
+   Sorting is server-side so it survives the 15s poll + pagination (a client-side sort
+   would be wiped on the next swap). qs carries the active sort onto every hx-get here. #}
+{% set qs = ('&sort=' ~ sort ~ '&dir=' ~ dir) if sort else '' %}
+{% set sortcols = [
+     ('symbol', 'Symbol', 'Mã coin.'),
+     ('quantity', 'Qty', 'Khối lượng đang nắm giữ.'),
+     ('avg_entry_price', 'Avg', 'Giá vốn trung bình (đã gồm phí mua).'),
+     ('current_price', 'Price', 'Giá thị trường hiện tại.'),
+     ('market_value', 'Giá trị', 'Giá trị thị trường = KL × giá hiện tại, và % so với TỔNG vốn (equity).'),
+     ('unrealized_pnl', 'uP&L', 'Lãi/lỗ tạm tính = (giá hiện tại − avg) × KL, và % so với giá vốn.'),
+] %}
 <div id="positions-pane" class="scroll"
-     hx-get="/partials/positions?page={{ page }}"
+     hx-get="/partials/positions?page={{ page }}{{ qs | safe }}"
      hx-trigger="every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body"
      hx-target="this" hx-swap="outerHTML">
 {% if rows %}
 <table class="tbl">
   <thead><tr>
-    <th title="Mã coin.">Symbol</th>
-    <th title="Khối lượng đang nắm giữ.">Qty</th>
-    <th title="Giá vốn trung bình (đã gồm phí mua).">Avg</th>
-    <th title="Giá thị trường hiện tại.">Price</th>
-    <th title="Giá trị thị trường = KL × giá hiện tại, và %% so với TỔNG vốn (equity).">Giá trị</th>
-    <th title="Lãi/lỗ tạm tính = (giá hiện tại − avg) × KL, và %% so với giá vốn.">uP&L</th>
+    {% for key, label, title in sortcols %}
+    <th title="{{ title }} Bấm để sắp xếp {{ 'nhỏ→lớn' if not (sort == key and dir == 'asc') else 'lớn→nhỏ' }}.">
+      <a class="th-sort" role="button" tabindex="0"
+         hx-get="/partials/positions?page=1&sort={{ key }}&dir={{ 'desc' if (sort == key and dir == 'asc') else 'asc' }}"
+         hx-target="#positions-pane" hx-swap="outerHTML">{{ label }}{% if sort == key %} <span class="sort-ico">{{ '▲' if dir == 'asc' else '▼' }}</span>{% endif %}</a>
+    </th>
+    {% endfor %}
     <th title="Ai đang quản lý coin này: OPUS (Opus tự điều phối) hoặc KSS (full-auto theo chiến lược). Có thể cả hai.">Src</th>
     <th title="Mở biểu đồ giá: mua, hiện tại, sóng kế, TP, SL.">Giá</th>
     <th title="Bán toàn bộ vị thế ngay (can thiệp thủ công, dừng cả session KSS của coin).">Đóng</th>
@@ -22,9 +35,9 @@
       <td>{{ r.quantity | qty }}</td>
       <td>{{ r.avg_entry_price | money }}</td>
       <td>{{ r.current_price | money }}</td>
-      <td>${{ r.market_value | money }} <span class="muted fs-11">{{ "%.1f"|format(r.market_value_pct) }}%</span></td>
+      <td>${{ r.market_value | money_kmb }} <span class="muted fs-11">{{ "%.1f"|format(r.market_value_pct) }}%</span></td>
       <td class="{{ 'pos' if r.unrealized_pnl >= 0 else 'neg' }}">
-        ${{ r.unrealized_pnl | money }} ({{ "%.1f"|format(r.unrealized_pnl_pct) }}%)
+        ${{ r.unrealized_pnl | money_kmb }} ({{ "%.1f"|format(r.unrealized_pnl_pct) }}%)
       </td>
       <td>
         {% for s in r.sources %}<span class="badge {{ 'ml-on' if s == 'OPUS' else 'active' }}">{{ s }}</span> {% endfor %}
@@ -39,11 +52,11 @@
 {% else %}<p class="muted">No open positions.</p>{% endif %}
 <div class="page-nav">
   <button class="sm ghost" {{ 'disabled' if not has_prev }}
-          hx-get="/partials/positions?page={{ page - 1 }}"
+          hx-get="/partials/positions?page={{ page - 1 }}{{ qs | safe }}"
           hx-target="#positions-pane" hx-swap="outerHTML">&#8249; Trước</button>
   <span class="muted">Trang {{ page }}</span>
   <button class="sm ghost" {{ 'disabled' if not has_next }}
-          hx-get="/partials/positions?page={{ page + 1 }}"
+          hx-get="/partials/positions?page={{ page + 1 }}{{ qs | safe }}"
           hx-target="#positions-pane" hx-swap="outerHTML">Sau &#8250;</button>
 </div>
 </div>

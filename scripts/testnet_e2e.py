@@ -59,6 +59,9 @@ if Path(args.db).name in _PROTECTED_DB:
 
 # Settings are read at import time, so the environment must be shaped BEFORE app.config loads.
 Path(args.db).parent.mkdir(parents=True, exist_ok=True)
+# Start from an empty book every run. A previous run that died mid-way leaves its rung
+# queued, and the next run would rest that one too and only clean up its own.
+Path(args.db).unlink(missing_ok=True)
 os.environ["DATABASE_URL"] = f"sqlite:///{args.db}"
 os.environ["MAKER_ORDERS"] = "true"  # the resting model is what this harness exercises
 os.environ["AUTO_TRADE"] = "true"    # sync_resting_orders places only when auto-trade is on
@@ -139,18 +142,25 @@ def _poll(db, order) -> bool:
     return False
 
 
-def _cleanup(db, order) -> None:
+def _cleanup(db) -> None:
+    """Cancel every order this run left on the book — not just the one we tracked."""
     print("\n6. Cleanup")
-    db.refresh(order)
-    if not order.exchange_order_id:
+    resting = (
+        db.query(models.PendingOrder)
+        .filter(models.PendingOrder.exchange_order_id.isnot(None))
+        .all()
+    )
+    if not resting:
         _say(OK, "nothing left resting")
         return
-    try:
-        execution.cancel_live_order(live_provider().pair(order.symbol), order.exchange_order_id)
-        _say(OK, f"cancelled {order.exchange_order_id}")
-    except Exception as exc:  # never leave a live order behind silently
-        _say(BAD, f"CANCEL FAILED for {order.exchange_order_id}: {type(exc).__name__} {exc} — "
-                  "cancel it by hand on testnet.binance.vision")
+    for order in resting:
+        try:
+            execution.cancel_live_order(live_provider().pair(order.symbol),
+                                        order.exchange_order_id)
+            _say(OK, f"cancelled {order.exchange_order_id}")
+        except Exception as exc:  # never leave a live order behind silently
+            _say(BAD, f"CANCEL FAILED for {order.exchange_order_id}: {type(exc).__name__} {exc} "
+                      "— cancel it by hand on testnet.binance.vision")
 
 
 def main() -> int:
@@ -173,8 +183,7 @@ def main() -> int:
         print(f"\n {BAD} {type(exc).__name__}: {exc}")
         return 1
     finally:
-        if order is not None:
-            _cleanup(db, order)
+        _cleanup(db)
         db.close()
 
     print("\nDONE — the live resting path ran end to end against testnet.")

@@ -79,6 +79,22 @@
       <option value="1" {% if k.autotune_enabled %}selected{% endif %}>Bật</option>
       <option value="0" {% if not k.autotune_enabled %}selected{% endif %}>Tắt</option>
     </select></label>
+  <label title="GIAI ĐOẠN 2: mỗi coin có TP và bước DCA RIÊNG, suy từ ATR% ngày của chính nó, thay vì một cặp số chung cho cả rổ. Đo trên watchlist của ta: ATR chạy từ 3.9%/ngày (BTC) tới 8.6%/ngày (XRP) — với mức đó, TP cố định 3.24% chỉ bằng ~0.45 ATR (trả lại phần lớn biên độ một ngày bình thường), còn bước DCA 2% bằng ~0.28 ATR (đủ gần để nhiễu thường ngày quét sạch thang). Hệ số ở 2 ô dưới, luôn bị kẹp và không bao giờ dưới sàn phí. Chỉ áp cho session MỚI. MẶC ĐỊNH TẮT vì nó đổi hành vi chiến lược.">Mức vào/ra theo biến động <span class="varname">autotune_levels_enabled</span>
+    <select name="autotune_levels_enabled" class="select-inline">
+      <option value="1" {% if k.autotune_levels_enabled %}selected{% endif %}>Bật</option>
+      <option value="0" {% if not k.autotune_levels_enabled %}selected{% endif %}>Tắt</option>
+    </select></label>
+  <label title="TP = hệ số này × ATR%/ngày của coin. 0.8 nghĩa là coin biến động 7%/ngày sẽ nhắm TP ~5.6% (khoảng một ngày). Cao hơn = giữ lâu, ăn dày, ít vòng quay; thấp hơn = chốt nhanh, nhiều vòng, phí ăn nhiều hơn.">Hệ số TP theo ATR <span class="varname">autotune_tp_atr_mult</span>
+    <input name="autotune_tp_atr_mult" type="number" step="0.05" min="0.05" max="5" value="{{ '%.2f'|format(k.autotune_tp_atr_mult) }}"></label>
+  <label title="Bước DCA = hệ số này × ATR%/ngày của coin. 0.5 nghĩa là coin 7%/ngày có rung cách nhau ~3.5%. Thấp quá thì nhiễu thường ngày quét hết thang; cao quá thì thang không bao giờ khớp.">Hệ số bước DCA theo ATR <span class="varname">autotune_dca_atr_mult</span>
+    <input name="autotune_dca_atr_mult" type="number" step="0.05" min="0.05" max="5" value="{{ '%.2f'|format(k.autotune_dca_atr_mult) }}"></label>
+  <label title="GIAI ĐOẠN 3: app HỌC mức TP từ các session ĐÃ ĐÓNG. Giai đoạn 2 suy TP từ biến động — đó mới là dự đoán; bước này đối chiếu với thực tế: nhiều session hết hạn mà chưa chạm = TP đặt quá xa (kéo gần lại); chạm TP gần như ngay lập tức = bán quá sớm vào một nhịp vừa mới bắt đầu (đẩy xa ra). Mỗi lần chỉ dịch MỘT bước nhỏ, chỉ chạy khi đủ số session để thành quy luật chứ không phải nhiễu, luôn trong biên cứng, và ghi Nhật ký kèm số liệu. KHÔNG bao giờ học các cổng RỦI RO. Cần bật giai đoạn 2. Mặc định TẮT.">Học mức TP từ kết quả <span class="varname">autotune_learn_enabled</span>
+    <select name="autotune_learn_enabled" class="select-inline">
+      <option value="1" {% if k.autotune_learn_enabled %}selected{% endif %}>Bật</option>
+      <option value="0" {% if not k.autotune_learn_enabled %}selected{% endif %}>Tắt</option>
+    </select></label>
+  <label title="Bao lâu thì giai đoạn 3 xem lại kết quả một lần (giờ). Chậm là cố ý: học lại sau mỗi kết quả là chạy theo nhiễu, và một mức TP nhảy loạn còn tệ hơn một mức hơi sai.">Chu kỳ học (giờ) <span class="varname">autotune_learn_interval_hours</span>
+    <input name="autotune_learn_interval_hours" type="number" step="0.5" min="0.5" max="168" value="{{ '%.1f'|format(k.autotune_learn_interval_hours) }}"></label>
   <h3 class="section-subhead">━ Trailing TP động (Ride &amp; Trail — chốt lời linh hoạt) ━</h3>
   <label title="BẬT trailing-TP động (docs/kss-dynamic-tp-plan.md): khi 1 session vượt avg×(1+distance%) nó HỦY thang DCA còn lại và chuyển sang SL trailing theo ATR + TP nổi (sàn phí ×3 nên không exit tự động nào lỗ). TẮT = giữ nguyên hành vi TP cố định hiện tại.">Trailing-TP động <span class="varname">kss_dynamic_tp_enabled</span>
     <select name="kss_dynamic_tp_enabled" class="select-inline">

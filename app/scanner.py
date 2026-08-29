@@ -235,6 +235,13 @@ def _effective_params(db: Session, symbol: str) -> tuple[float, float, int]:
         row = hyperopt.best_params(db, symbol)
         if row is not None:
             return row.distance_pct, row.tp_pct, row.max_waves
+    # Autotune stage 2: levels derived from THIS symbol's realised volatility. Hyperopt tunes
+    # a handful of watchlist symbols; this covers the rest, which is most of the universe.
+    from app import autotune
+
+    fitted = autotune.levels_for(db, symbol)
+    if fitted is not None:
+        return fitted["distance_pct"], fitted["tp_pct"], settings.scan_max_waves
     return settings.scan_distance_pct, settings.scan_tp_pct, settings.scan_max_waves
 
 
@@ -376,6 +383,13 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
     t_backtest_ms = 0
     t_votes_ms = 0
     _n_skipped_thin = 0
+
+    # Autotune stage 2: refit each symbol's levels from the candles this scan already fetched
+    # (no extra requests), so _effective_params below opens sessions at volatility-appropriate
+    # distances instead of one global number for BTC and a sub-cent coin alike.
+    from app import autotune
+
+    autotune.fit_levels(db, {s: c for s, (c, _hit) in _candle_map.items()})
 
     # BTC reference return for the relative-strength entry gate (computed once; None = gate off/no data)
     _btc_ret = _btc_ref_return(_candle_map, settings.rel_strength_lookback_bars)

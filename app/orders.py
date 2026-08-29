@@ -402,14 +402,16 @@ def _live_execute(db: Session, order: PendingOrder) -> Fill:
             )
 
     pair = live_provider().pair(order.symbol)
-    # An entry must fill now, so it is sent WITHOUT post-only even when maker_orders is on —
-    # a post-only BUY at the market is rejected outright (-2010) and the session would sit
-    # ACTIVE holding nothing. The spread is the price of actually being in the trade; the DCA
-    # rungs below still rest and still earn the maker side.
-    maker = None if not is_entry_wave(order) else False
+    # An entry must actually fill. A post-only BUY at the market is rejected outright (-2010),
+    # and even a plain LIMIT only rests when the market ticks up between the scan and the
+    # placement — both leave the session ACTIVE holding nothing, which is what the first soak
+    # produced. So wave 0 goes out as MARKET: the spread is the price of being in the trade.
+    # Every DCA rung below it still rests and still earns the maker side.
+    entry = is_entry_wave(order)
     result = execution.place_live_order(
-        pair, order.side, order.quantity, order.price, order.order_type,
-        maker_orders=maker,
+        pair, order.side, order.quantity, order.price,
+        "MARKET" if entry else order.order_type,
+        maker_orders=False if entry else None,
         client_order_id=execution.client_order_id(order.id),  # idempotent placement (1.10)
     )
     # Link the order to its exchange id + last-seen status FIRST, so reconcile_live_orders()

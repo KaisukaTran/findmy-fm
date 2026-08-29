@@ -270,7 +270,12 @@ def auto_fill_due_orders(db: Session) -> list[int]:
         if due:
             try:
                 approve_order(db, o.id, reviewer="auto-trader")
-            except ValueError:  # insufficient cash / no price — skip, retry next tick
+            except Exception as exc:
+                # Insufficient cash, no price, or a venue rejection (ccxt raises InvalidOrder,
+                # NOT ValueError — that gap let one -1013 order kill the whole scheduler
+                # cycle). Skip this one, keep filling the others, retry next tick.
+                logger.warning("auto-fill %s order %s skipped (%s: %s)",
+                               o.symbol, o.id, type(exc).__name__, exc)
                 continue
             approved.append(o.id)
     return approved

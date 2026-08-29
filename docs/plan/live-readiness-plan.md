@@ -268,6 +268,68 @@ after merging this branch (fast-forward from `live` @ 88c1c68):
 update. After that, the full DoD (a real KSS session with its resting TP following avg) needs
 the live instance itself running on testnet with `MAKER_ORDERS=true`.
 
+## Progress — 2026-08-29 (1.8 DONE: the fill leg and the full session DoD, on testnet)
+Both open legs are now proven against Binance Spot testnet, on a throwaway DB
+(`data/testnet_e2e.db`, `data/testnet_session_e2e.db` — paper and live books untouched).
+
+**Why the earlier runs never filled.** Testnet's book is simulated and DEEP: the price prints
+through a level without consuming what rests under it. Measured on BTC/USDT it moves ~0.033%
+per 40s, yet a rung 0.03% below the last price sat unfilled for 300s behind 1.4 BTC of
+resting depth. Waiting harder was never going to work — the rung has to be somewhere nothing
+is queued ahead of it, and the counter side has to come from us. Two flags do that
+(`scripts/testnet_e2e.py`): `--rest-at-touch` (price the rung one tick above the best bid,
+still post-only) and `--force-match` (`testnet_lib.cross_fill`: IOC SELL into our own rung,
+`selfTradePreventionMode=NONE` because the account default EXPIRE_MAKER would kill our maker
+instead of filling it, capped by `--max-cross-usd`). The match is still Binance's, against the
+real order the app placed; only the liquidity on the other side is ours.
+
+**Fill leg (order level) — YB/USDT, order 128846.** Rung 125.2 @ 0.0958 rested post-only and
+the book then showed it AS the best bid ("nothing queued ahead of it"); the counter SELL filled
+it, and `reconcile_live_orders` booked **one** Fill 125.2 @ 0.0958 + a Position (qty 125.2, avg
+0.0958), row `executed` / `exchange_status=closed`. A second reconcile pass booked nothing —
+NEW→FILLED is exactly one Fill and re-running is a no-op (the 1.4 delta-booking invariant, on a
+real venue). Testnet charges no fee, so `fee=0` in these runs.
+
+**Session DoD — `scripts/testnet_session_e2e.py`, session on YB/USDT, wave0 $11, step 0.15%,
+tp 1%.** Nine steps, all green:
+1. wave 0 rests in advance as `128832` @ 0.0959 (local row still PENDING);
+2. crossing HALF of it books a partial — session goes ACTIVE, filled 57.4, avg 0.0959;
+3. `sync_resting_tp` puts the exit on the book: 57.4 @ 0.0971 (`128835`) — above market
+   (0.0959) and above the K-2 floor (0.0960918), i.e. K-2 applied in advance;
+4. filling the remainder grows the position to 114.7 → the exit is **cancelled and re-placed**
+   `128835`→`128837` at the new size, and the old id is off the book (not two exits);
+5. wave 1 fills lower at 0.0957 → **avg 0.0959 → 0.0957667, and the resting TP follows it down:
+   0.0971 → 0.0970, `128837`→`128839`**, old exit off the book — this is the "resting TP follows
+   the average" claim, verified on the venue;
+6. stopping the session takes the exit off the book: 0 open orders left on the pair.
+An earlier run also showed partial fills accumulating across passes on one order — two Fills
+(57.3 then 57.2 = the full 114.5), no double-booking.
+
+**What it costs to prove leg 5.** Wave 1 prices a step BELOW wave 0, which on this book lands it
+under a wall of simulated depth ($3k–$7k queued ahead of it), and the price wanders back up as
+often as it comes down. Reaching it meant topping the testnet account up with ~$4.8k of YB and
+crossing the whole queue (`--max-cross-usd 5000`). That is a property of the testnet book, not
+of the strategy — on a real venue a DCA rung is reached by the market. Runs at the default $60
+cap simply report that they could not prove that leg rather than dumping into the wall.
+
+**Found while running (not fixed here):**
+- **`get_exchange_info` returns defaults on the `live` branch.** `CcxtProvider.get_exchange_info`
+  calls `ccxt.market()` without `load_markets()`, so on a cold process EVERY call raises
+  "markets not loaded", falls into the except-branch and returns `_DEFAULT_INFO` (stepSize
+  1e-5) — a KSS session therefore sizes waves on a fake step until something else warms ccxt.
+  `round_to_filters` re-rounds at placement, so live orders stay compliant, but the ladder's
+  quantities are not what they look like. **The fix already exists on the paper branch
+  (`e546b20`, reads the real LOT_SIZE and calls `load_markets` first) and simply has not been
+  promoted to `live` yet** — fold it into the next paper→live merge.
+- **Both harnesses built their schema with `Base.metadata.create_all` instead of the app's own
+  `init_db()`**, so the OPUS tables were missing and the KSS fill hook died inside its
+  try/except every time — silently, and it is the hook that chains the next wave. Fixed here;
+  both now call `init_db()`.
+
+**NEXT:** 1.10 security pass, then 1.7 (5m). The live instance itself (8001) has still never
+run a session on testnet with `MAKER_ORDERS=true` — the harness drives the same functions the
+scheduler does, but a soak on the running instance is the last step before real funds.
+
 ### Guard interaction found while merging (fixed)
 `live`'s 90s position guard (cf1077c) force-fills EVERY queued KSS exit SELL so a hard stop is
 freeze-immune. Under 1.5 the resting take-profit is one of those rows, so the guard would have

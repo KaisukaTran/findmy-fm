@@ -258,7 +258,17 @@ def prefetch_universe_candles(db: Session) -> int:
     provider = data_provider()
     universe = _universe(db, provider)
     limit = _days_to_bars(settings.backtest_lookback_days, settings.backtest_timeframe)
-    _prefetch_candles(settings.data_exchange, universe, settings.backtest_timeframe, limit)
+    warmed = _prefetch_candles(settings.data_exchange, universe, settings.backtest_timeframe, limit)
+    # Autotune stage 2 lives here rather than inside the scan: when every session slot is full
+    # the scan is skipped entirely (capital saturated), and the levels would then go stale for
+    # exactly as long as the app is busiest. This runs on the candles just warmed, off-lock,
+    # costing nothing extra.
+    try:
+        from app import autotune
+
+        autotune.fit_levels(db, {s: c for s, (c, _hit) in (warmed or {}).items()})
+    except Exception:  # never let tuning break the prefetch
+        logger.exception("autotune: fitting levels from the prefetch failed")
     return len(universe)
 
 

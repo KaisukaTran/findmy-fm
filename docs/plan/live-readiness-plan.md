@@ -326,9 +326,39 @@ cap simply report that they could not prove that leg rather than dumping into th
   try/except every time — silently, and it is the hook that chains the next wave. Fixed here;
   both now call `init_db()`.
 
-**NEXT:** 1.10 security pass, then 1.7 (5m). The live instance itself (8001) has still never
-run a session on testnet with `MAKER_ORDERS=true` — the harness drives the same functions the
-scheduler does, but a soak on the running instance is the last step before real funds.
+**NEXT:** 1.7 (5m). The live instance itself (8001) has still never run a session on testnet
+with `MAKER_ORDERS=true` — the harness drives the same functions the scheduler does, but a soak
+on the running instance is the last step before real funds.
+
+## Security pass — 2026-08-29 (one real bug, fixed)
+Done by hand over `orders.sync_resting_orders/_place_resting/_cancel_resting/reconcile_live_
+orders`, `kss.service.sync_resting_tp`, `execution`, and the harnesses.
+
+**Fixed — the harness could have deleted the live book.** `testnet_lib.prepare_env` DELETES the
+database it is handed and refused the real books by exact name, but Windows opens `data/Live.db`
+as the very same file as `data/live.db` — a name-cased `--db` walked straight past the guard.
+Now compared lowercased, with a test per casing.
+
+**Fixed — a cancel could lose a fill the venue had already made.** `orders._cancel_resting`
+dropped `exchange_order_id` as soon as the cancel succeeded, and `reconcile_live_orders` only
+looks at rows that still carry a link, so anything filled before the cancel landed was never
+booked. Worst case: a session closing on a half-filled take-profit keeps a position it no
+longer holds; a rung cancelled by `order_fill_timeout_sec` loses cash already spent. The
+booking core is now `orders._book_delta` (shared with reconcile) and `_cancel_resting` reads
+the final status and books the delta BEFORE unlinking; a failed read keeps the link so the
+next cycle books it, and `execution.order_is_gone` treats the venue's -2011 ("we no longer
+hold that order") as the fill case rather than a failed cancel. Two callers had to follow:
+the timeout branch no longer stamps REJECTED over a row the cancel just marked EXECUTED, and
+`sync_resting_tp` no longer re-prices an exit that turned out filled.
+**Verified on testnet** (`scripts/testnet_e2e.py --rest-at-touch --prove-cancel-books-fill`):
+rung 140.9 @ 0.0993 rested alone at the touch, a counter SELL filled 70.4 of it, and calling
+`_cancel_resting` directly — no reconcile first, which is exactly the race — booked
+`[(70.4, 0.0993)]` and left Position YB = 70.4 before the link was dropped.
+
+**Clean otherwise:** `_place_resting` gates BUYs only (a SELL exit is never gated), a failed
+cancel keeps the exchange link (no orphans), `sync_resting_tp` prices at `max(tp, K-2 floor)`,
+the harnesses never print secrets and are hard-gated by `require_testnet` (live + testnet), and
+every cross is bounded by `--max-cross-usd`.
 
 ### Guard interaction found while merging (fixed)
 `live`'s 90s position guard (cf1077c) force-fills EVERY queued KSS exit SELL so a hard stop is

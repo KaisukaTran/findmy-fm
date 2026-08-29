@@ -120,6 +120,14 @@ happen instead of hoping for it:
   instead of filling it — IOC, capped by `--max-cross-usd`). The match is still the venue's,
   against the real order the app placed; only the liquidity on the other side is ours.
 
+`--prove-cancel-books-fill` is a different mode of the same harness: it half-fills the rung and
+then cancels it, checking that the filled half is booked BEFORE the exchange link is dropped
+(the race that used to lose it). Use it with `--rest-at-touch` so our rung is alone at its price:
+
+```powershell
+python scripts/testnet_e2e.py --symbol YB/USDT --rest-at-touch --notional 14 --prove-cancel-books-fill
+```
+
 For the session-level proof — a real KSS session whose take-profit rests in advance and follows
 the position — run the second harness:
 

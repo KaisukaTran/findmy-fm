@@ -1084,8 +1084,15 @@ def stop_session(db: Session, session_id: int, reason: str = "manual") -> dict:
     py = _to_pyramid(row)
     py.stop(reason)
     _save_state(row, py)
+    # Under the resting model those queued rungs are REAL orders sitting on the exchange, so a
+    # stop that leaves them behind leaves live BUYs that can fill hours later into a position
+    # no session manages. Rejecting them is what makes sync_resting_orders take them off the
+    # book. (Harmless before 1.5, when a queued rung was only ever a row awaiting approval —
+    # the first soak stopped four sessions and their wave-0 orders stayed open on testnet.)
+    cancelled = _cancel_pending_waves(db, session_id)
     db.commit()
-    return {"message": f"Session {session_id} stopped", "reason": reason}
+    return {"message": f"Session {session_id} stopped", "reason": reason,
+            "waves_cancelled": cancelled}
 
 
 def manual_take_profit(db: Session, session_id: int) -> dict:

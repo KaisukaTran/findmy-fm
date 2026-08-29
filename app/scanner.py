@@ -1212,6 +1212,16 @@ def _open_session(
                     # No cash to fund even wave 0 — leave it pending; it fills when cash frees.
                     audit.log(db, "scanner", "open_underfunded", entity=f"order:{oid}",
                               symbol=symbol, session=row.id)
+                except Exception as exc:
+                    # One order that will not execute must not kill the cycle. It used to:
+                    # a venue that returned no fill price raised through run_scan and the
+                    # scheduler lost the whole pass — no scanning, no TP management, no
+                    # reconcile — until the next tick. The rung stays queued (approve_order
+                    # puts it back to PENDING) and the next cycle retries it.
+                    logger.warning("open %s: wave 0 did not execute (%s: %s)",
+                                   symbol, type(exc).__name__, exc)
+                    audit.log(db, "scanner", "open_execute_failed", entity=f"order:{oid}",
+                              symbol=symbol, session=row.id, error=str(exc)[:200])
         else:
             audit.log(db, "scanner", "auto_skip_frozen",
                       entity=f"order:{started['pending_order_id']}", symbol=symbol, session=row.id)

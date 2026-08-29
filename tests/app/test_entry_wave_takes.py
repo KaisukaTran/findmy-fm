@@ -75,6 +75,10 @@ def test_wave_0_takes_instead_of_resting(db, monkeypatch):
 
     assert fill.quantity == pytest.approx(18.0)
     assert venue.placed[0]["maker_orders"] is False, "an entry must not be post-only"
+    # A plain LIMIT does not guarantee a fill either: if the market ticks up between the scan
+    # and the placement it just rests, and the session is back to holding nothing. An entry
+    # is sent as MARKET so it is actually in the trade.
+    assert venue.placed[0]["order_type"] == "MARKET"
     db.refresh(order)
     assert order.status == EXECUTED
 

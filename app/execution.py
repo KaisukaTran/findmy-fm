@@ -344,9 +344,18 @@ def filters_from_market(market: dict) -> dict:
 
 
 def _market_filters(ex, pair: str) -> dict:
-    """Live wrapper: load a symbol's exchange filters for ``round_to_filters`` (ccxt
-    ``market`` auto-loads markets on first use)."""
-    return filters_from_market(ex.market(pair))
+    """Live wrapper: load a symbol's exchange filters for ``round_to_filters``.
+
+    ccxt's ``.market()`` does NOT auto-load — it raises "markets not loaded" until something
+    else has warmed the cache. The caller treats a failure here as "no filters" and places the
+    order unrounded, which is how a ragged quantity still reached the venue and came back
+    -1013 despite the rounding. Load them explicitly and retry once.
+    """
+    try:
+        return filters_from_market(ex.market(pair))
+    except Exception:
+        ex.load_markets()
+        return filters_from_market(ex.market(pair))
 
 
 # --- 1.6: rate-limit guard (Binance REQUEST_WEIGHT / 429 / 418) -------------------------

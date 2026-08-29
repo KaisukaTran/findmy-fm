@@ -93,15 +93,34 @@ def place_live_order(
         params["clientOrderId"] = client_order_id
     qty, px = quantity, price
 
-    # Maker (post-only LIMIT_MAKER): comply with the symbol's exchange filters before
-    # resting — round price→tickSize, qty→stepSize, enforce minQty/minNotional/PERCENT.
-    if maker_orders and ccxt_type == "limit":
+    # Comply with the symbol's exchange filters before sending — round price→tickSize,
+    # qty→stepSize, enforce minQty/minNotional/PERCENT. This covers MARKET too: an entry sized
+    # from a USD amount lands on a ragged quantity (15/48.78 = 0.3074915...) and the venue
+    # answers -1013 rather than rounding for us. It used to apply to post-only limits only,
+    # because MARKET meant "sell the whole position", where the quantity was already valid.
+    try:
+        filters = _market_filters(ex, pair)
+    except Exception:  # market metadata unavailable — place unrounded rather than block
+        filters = {}
+    if filters:
+        # With no price (a MARKET order carries none) there is nothing to value the order
+        # against, so only the quantity can be made compliant — checking a notional of zero
+        # would reject every market order.
+        checks = dict(filters)
+        if px <= 0:
+            checks.pop("minNotional", None)
+            checks.pop("percentUp", None)
+            checks.pop("percentDown", None)
         try:
-            filters = _market_filters(ex, pair)
-        except Exception:  # market metadata unavailable — place unrounded rather than block
-            filters = {}
-        if filters:
-            px, qty = round_to_filters(px, qty, filters, ref_price=px)  # ValueError → propagate
+            px, qty = round_to_filters(px, qty, checks, ref_price=px if px > 0 else None)
+        except ValueError:
+            # An exit is NEVER gated: a dust position that no longer clears minNotional must
+            # still be sellable, and the venue is the right place to refuse it. A BUY that
+            # cannot comply is new exposure, so it fails here instead of at the exchange.
+            if side.upper() == "BUY":
+                raise
+            logger.warning("live %s %s: filters reject qty %s — sending unrounded (exits are "
+                           "never blocked)", side, pair, qty)
 
     try:
         if ccxt_type == "market" or px <= 0:

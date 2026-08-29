@@ -326,9 +326,42 @@ cap simply report that they could not prove that leg rather than dumping into th
   try/except every time — silently, and it is the hook that chains the next wave. Fixed here;
   both now call `init_db()`.
 
-**NEXT:** 1.7 (5m). The live instance itself (8001) has still never run a session on testnet
-with `MAKER_ORDERS=true` — the harness drives the same functions the scheduler does, but a soak
-on the running instance is the last step before real funds.
+**NEXT:** the live instance itself (8001) has still never run a session on testnet with
+`MAKER_ORDERS=true` — the harness drives the same functions the scheduler does, but a soak on
+the running instance is the last step before real funds.
+
+## 1.7 — 5m timeframe — DONE 2026-08-29
+Three parts in the original plan; one was already true, two were real.
+
+**`scan_interval_min ≤ 5` — already supported.** `SchedulerBody.interval_min` is `ge=1, le=1440`
+and the loop sleeps `max(scan_interval_min, 1) * 60`, so a 5-minute cycle needed no change.
+
+**Kline paging — the silent one.** Binance caps klines at 1000 per request and does not error
+when asked for more; probed directly, `limit=1000/1500/5000` all return exactly 1000 candles.
+A daily year is 365 bars so this never showed, but 5m over the same year is 105,120 — the scan
+would have asked for six figures, received 1000 (≈3.5 days), and run its backtest and win-rate
+on that while every label still said 365 days. `CcxtProvider.get_ohlcv` now pages when the ask
+exceeds one response: compute a start from the bar duration, walk forward with `since`, join
+oldest-first and drop the repeated boundary bar. It stops at the end of history, on a page that
+does not advance, at a page budget, and on an unknown timeframe (no bar duration = no cursor,
+so one call is the honest answer); a mid-way failure keeps the pages already fetched.
+**Verified on the real API:** 5m/3000 → 3000 bars over 10.4 days, sorted, no duplicates, 2.5s;
+1h/2500 → 2500; 1d/365 → 365 (the daily path is byte-for-byte the old behaviour).
+
+**Intraday lookback cap.** Paging makes a year of 5m *possible*, which is the other half of the
+problem: 105k bars per symbol across the universe is minutes of requests and a lot of exchange
+weight. `intraday_max_bars` (default 3000 ≈ 10 days of 5m ≈ 3 requests/symbol) bounds the
+window on intraday timeframes only; 0 disables it, daily/weekly are untouched. It is a runtime
+knob per the project rule — in the KSS settings registry, rendered in the Strategy tab with a
+tooltip, editable via `/api/kss-settings`, restored from `runtime_config` on boot.
+**Live-verified:** the field renders at 3000, POSTing 1500 takes effect, the UI re-read shows
+1500, and it is still 1500 after a restart.
+
+**Note for whoever switches the timeframe:** `backtest_lookback_days` keeps its name and its
+meaning (calendar days), but on an intraday timeframe the cap decides the real window. At the
+default that is ~10 days of 5m — enough bars for the indicators, NOT enough history for a
+win-rate across regimes. Treat a 5m switch as a change to what the backtest can claim, not just
+a change of resolution.
 
 ## Security pass — 2026-08-29 (one real bug, fixed)
 Done by hand over `orders.sync_resting_orders/_place_resting/_cancel_resting/reconcile_live_

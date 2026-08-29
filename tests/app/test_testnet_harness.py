@@ -24,12 +24,13 @@ _spec.loader.exec_module(testnet_lib)
 class FakeExchange:
     """Just enough of ccxt to record what the harness would send."""
 
-    def __init__(self, bids: list[list[float]]):
+    def __init__(self, bids: list[list[float]], asks: list[list[float]] | None = None):
         self.bids = bids
+        self.asks = asks or []
         self.orders: list[dict] = []
 
     def fetch_order_book(self, pair, depth=50):
-        return {"bids": self.bids[:depth], "asks": []}
+        return {"bids": self.bids[:depth], "asks": self.asks[:depth]}
 
     def create_order(self, pair, order_type, side, qty, price, params=None):
         self.orders.append({"pair": pair, "type": order_type, "side": side, "quantity": qty,
@@ -101,6 +102,35 @@ def test_cross_fill_refuses_when_the_rung_is_not_on_the_book():
 
     with pytest.raises(RuntimeError, match="not on the book"):
         testnet_lib.cross_fill(ex, "YB/USDT", 0.0949)
+    assert ex.orders == []
+
+
+def test_cross_sell_side_buys_the_queue_at_or_below_our_exit():
+    # Our take-profit rests at 0.10 behind 20 units offered at the same price; reaching ours
+    # means buying both. Anything offered ABOVE it is irrelevant.
+    ex = FakeExchange([], asks=[[0.10, 20.0], [0.10, 55.7], [0.11, 900.0]])
+
+    out = testnet_lib.cross_sell_side(ex, "YB/USDT", 0.10, max_cross_usd=100.0)
+
+    assert out["quantity"] == pytest.approx(75.7)
+    sent = ex.orders[0]
+    assert (sent["side"], sent["type"], sent["price"]) == ("buy", "limit", 0.10)
+    assert sent["params"] == {"timeInForce": "IOC", "selfTradePreventionMode": "NONE"}
+
+
+def test_cross_sell_side_refuses_a_queue_deeper_than_the_cap():
+    ex = FakeExchange([], asks=[[0.10, 10_000.0]])
+
+    with pytest.raises(RuntimeError, match="cross cap"):
+        testnet_lib.cross_sell_side(ex, "YB/USDT", 0.10, max_cross_usd=60.0)
+    assert ex.orders == []
+
+
+def test_cross_sell_side_refuses_when_the_exit_is_not_on_the_book():
+    ex = FakeExchange([], asks=[[0.11, 900.0]])
+
+    with pytest.raises(RuntimeError, match="not on the book"):
+        testnet_lib.cross_sell_side(ex, "YB/USDT", 0.10)
     assert ex.orders == []
 
 

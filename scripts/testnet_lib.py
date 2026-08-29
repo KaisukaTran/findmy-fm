@@ -57,6 +57,41 @@ def bid_queue_above(ex: Any, pair: str, price: float, depth: int = 50) -> float:
     return sum(qty for lvl_price, qty in book["bids"] if lvl_price >= price - 1e-12)
 
 
+def ask_queue_below(ex: Any, pair: str, price: float, depth: int = 50) -> float:
+    """Total base quantity offered at or below *price* — the mirror of ``bid_queue_above``
+    for reaching one of OUR resting SELLs (a take-profit)."""
+    book = ex.fetch_order_book(pair, depth)
+    return sum(qty for lvl_price, qty in book["asks"] if lvl_price <= price + 1e-12)
+
+
+def cross_sell_side(
+    ex: Any, pair: str, price: float, *, qty: float | None = None,
+    max_cross_usd: float = 60.0, depth: int = 50,
+) -> dict:
+    """Buy into OUR resting SELL — the mirror of ``cross_fill``, used to fill a take-profit.
+
+    Same reasoning and same guards: IOC so nothing of the counter order is left resting,
+    ``selfTradePreventionMode=NONE`` because both sides are this account, and a refusal
+    rather than an unbounded purchase when the queue is deeper than *max_cross_usd*.
+    """
+    resting = ask_queue_below(ex, pair, price, depth)
+    if resting <= 0:
+        raise RuntimeError(f"nothing offered at or below {price:g} — the exit is not on the book")
+    qty = resting if qty is None else qty
+    notional = qty * price
+    if notional > max_cross_usd:
+        raise RuntimeError(
+            f"ask queue at/below {price:g} is {qty:g} (${notional:,.2f}) — deeper than the "
+            f"${max_cross_usd:,.2f} cross cap"
+        )
+    res = ex.create_order(
+        pair, "limit", "buy", qty, price,
+        {"timeInForce": "IOC", "selfTradePreventionMode": "NONE"},
+    )
+    return {"quantity": qty, "notional": notional, "filled": float(res.get("filled") or 0.0),
+            "id": res.get("id"), "status": res.get("status")}
+
+
 def cross_fill(
     ex: Any, pair: str, price: float, *, qty: float | None = None,
     max_cross_usd: float = 60.0, depth: int = 50,

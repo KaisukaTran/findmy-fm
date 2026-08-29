@@ -37,7 +37,16 @@ _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from testnet_lib import BAD, OK, WARN, cross_fill, prepare_env, require_testnet, say  # noqa: E402
+from testnet_lib import (  # noqa: E402
+    BAD,
+    OK,
+    WARN,
+    bid_queue_above,
+    cross_fill,
+    prepare_env,
+    require_testnet,
+    say,
+)
 
 
 def _parse() -> argparse.Namespace:
@@ -58,6 +67,10 @@ def _parse() -> argparse.Namespace:
                          "whose depth never reaches a passive rung (testnet only)")
     ap.add_argument("--max-cross-usd", type=float, default=60.0,
                     help="refuse to cross a bid queue deeper than this (default $60)")
+    ap.add_argument("--prove-cancel-books-fill", action="store_true",
+                    help="different mode: half-fill the rung and then cancel it, checking that "
+                         "the filled half is booked BEFORE the exchange link is dropped (use "
+                         "with --rest-at-touch so our rung is alone at its price)")
     ap.add_argument("--rest-at-touch", action="store_true",
                     help="price the rung one tick above the best bid instead of --distance-pct "
                          "below the last trade, so nothing rests ahead of it (use with "
@@ -147,6 +160,51 @@ def _cross(ex, order) -> None:
              f"-> id={out['id']} status={out['status']} filled={out['filled']:g}")
 
 
+def _cancel_books_the_partial(db, ex, order) -> int:
+    """Half-fill the rung, then CANCEL it — the cancel must still book what already filled.
+
+    A cancel races the venue. `orders._cancel_resting` drops the exchange link, and
+    `reconcile_live_orders` only looks at rows that still have one, so booking has to happen
+    before the link goes — otherwise the quantity the venue really filled is lost and the app
+    keeps (or misses) a position it does not hold. Returns the exit code for this mode.
+    """
+    print("\n4b. Half-fill the rung, then cancel it — the filled half must still be booked")
+    price = float(ex.fetch_order(str(order.exchange_order_id), args.symbol)["price"])
+    queue = bid_queue_above(ex, args.symbol, price)
+    if queue > order.quantity * 1.001:
+        say(BAD, f"{queue:g} bid at {price:g} but our rung is {order.quantity:g} — someone is "
+                 "queued with us, so a partial would fill THEIR order; re-run")
+        return 1
+    half = round(order.quantity / 2, 8)
+    out = cross_fill(ex, args.symbol, price, qty=half, max_cross_usd=args.max_cross_usd)
+    # What the venue actually matched, not what we asked for: the counter order is rounded to
+    # the lot step, so asking for 70.45 fills 70.4 and only that is owed a Fill.
+    matched = float(out["filled"])
+    say(OK, f"counter SELL {out['quantity']:g} @ {price:g} filled={matched:g} — the rung is now "
+            "PARTLY filled and still resting")
+
+    say(OK, "calling orders._cancel_resting directly (no reconcile first — that is the race)")
+    cancelled = orders._cancel_resting(db, order)
+    db.commit()
+    fills = db.query(models.Fill).filter(models.Fill.pending_order_id == order.id).all()
+    booked = sum(f.quantity for f in fills)
+    pos = db.query(models.Position).filter(models.Position.symbol == order.symbol).one_or_none()
+    say(OK, f"_cancel_resting -> {cancelled}; Fills booked for this order: "
+            f"{[(f.quantity, f.price) for f in fills]}")
+    ok = booked >= matched - 1e-9
+    if not ok:
+        say(BAD, f"the cancel LOST the fill: {booked:g} booked, {matched:g} was filled — the app "
+                 "would keep cash it no longer has")
+    else:
+        say(OK, f"booked {booked:g} before unlinking; Position {order.symbol} qty="
+                f"{pos.quantity if pos else 0:g}")
+    db.refresh(order)
+    if order.exchange_order_id is not None:
+        say(BAD, f"still linked to {order.exchange_order_id} after a successful cancel")
+        ok = False
+    return 0 if ok else 1
+
+
 def _poll(db, order) -> bool:
     print(f"\n5. Wait up to {args.wait_sec}s for the venue to fill it, booking via reconcile")
     deadline = time.time() + args.wait_sec
@@ -221,6 +279,8 @@ def main() -> int:
         order = _queue(db, base, price, qty)
         if not _rest(db, ex, order):
             return 1
+        if args.prove_cancel_books_fill:
+            return _cancel_books_the_partial(db, ex, order)
         if args.force_match:
             _cross(ex, order)
         _poll(db, order)

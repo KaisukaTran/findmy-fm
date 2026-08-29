@@ -74,6 +74,11 @@
     <input name="min_quote_volume" type="number" step="any" min="0" value="{{ '%.0f'|format(k.min_quote_volume) }}"></label>
   <label title="Trần số nến mỗi coin khi backtest_timeframe là khung INTRADAY (dưới 1d). backtest_lookback_days là cửa sổ tính theo NGÀY: 365 ngày = 365 nến 1d nhưng 105,120 nến 5m, trong khi sàn chỉ trả tối đa 1000 nến mỗi request — không có trần thì backtest chạy trên ~3.5 ngày dữ liệu mà nhãn vẫn ghi 1 năm. Trần giữ cửa sổ trung thực VÀ chặn chi phí phân trang (3000 nến 5m ≈ 10 ngày ≈ 3 request/coin). Không ảnh hưởng khung 1d/1w. 0 = bỏ trần (quét rất chậm, nặng weight sàn).">Trần nến khung intraday <span class="varname">intraday_max_bars</span>
     <input name="intraday_max_bars" type="number" step="1" min="0" value="{{ k.intraday_max_bars }}"></label>
+  <label title="Cho app TỰ SỬA các thiết lập vào/ra MÂU THUẪN nhau, thay vì im lặng không giao dịch gì. Hiện kiểm 2 sự thật số học: (1) min_expectancy_pct phải nằm DƯỚI trần mà scan_tp_pct có thể đạt (tp trừ chi phí khứ hồi) — gate cao hơn trần thì bỏ qua 100% coin mãi mãi, đã làm mất 12h chạy paper và cả lượt soak live; (2) scan_tp_pct phải vượt sàn phí khứ hồi, nếu không một lệnh 'thắng' vẫn lỗ. Chỉ NỚI gate bất khả thi, KHÔNG bao giờ tự siết, và mọi thay đổi đều ghi Nhật ký kèm lý do. Tắt = giữ nguyên cấu hình sai.">Tự sửa cấu hình mâu thuẫn <span class="varname">autotune_enabled</span>
+    <select name="autotune_enabled" class="select-inline">
+      <option value="1" {% if k.autotune_enabled %}selected{% endif %}>Bật</option>
+      <option value="0" {% if not k.autotune_enabled %}selected{% endif %}>Tắt</option>
+    </select></label>
   <h3 class="section-subhead">━ Trailing TP động (Ride &amp; Trail — chốt lời linh hoạt) ━</h3>
   <label title="BẬT trailing-TP động (docs/kss-dynamic-tp-plan.md): khi 1 session vượt avg×(1+distance%) nó HỦY thang DCA còn lại và chuyển sang SL trailing theo ATR + TP nổi (sàn phí ×3 nên không exit tự động nào lỗ). TẮT = giữ nguyên hành vi TP cố định hiện tại.">Trailing-TP động <span class="varname">kss_dynamic_tp_enabled</span>
     <select name="kss_dynamic_tp_enabled" class="select-inline">

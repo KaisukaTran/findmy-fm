@@ -116,8 +116,11 @@ def run_cycle(db: Session) -> dict:
     global _last_cycle_at, _last_summary
     from datetime import timedelta
 
-    from app import circuit, guardian, notify
+    from app import autotune, circuit, guardian, notify
     from app.models import PENDING, PendingOrder
+    # Before anything reads the gates: a configuration that contradicts itself trades NOTHING
+    # and says nothing about it, so put it back into a range that can actually open a session.
+    tuned = autotune.enforce_consistency(db)
     # Live-only: book fills of resting maker orders the exchange filled since last cycle,
     # BEFORE TP/scan run so sessions/positions reflect reality. No-op on paper.
     reconciled = orders.reconcile_live_orders(db)
@@ -208,6 +211,7 @@ def run_cycle(db: Session) -> dict:
               auto_approved=len(auto_approved), reconciled=len(reconciled),
               resting_placed=resting["placed"], resting_cancelled=resting["cancelled"],
               resting_tp=resting_tp["queued"] + resting_tp["replaced"], frozen=frozen,
+              autotuned=len(tuned),
               guardian_vetoes=guardian_vetoes, veto_expired=veto_expired,
               hyperopt_runs=hyperopt_runs, ml_trained=ml_trained)
     db.commit()

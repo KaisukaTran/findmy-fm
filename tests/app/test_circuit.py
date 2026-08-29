@@ -73,6 +73,12 @@ def test_evaluate_trips_on_consecutive_losses(db, monkeypatch):
 
 def test_evaluate_no_trip_below_consecutive_threshold(db, monkeypatch):
     monkeypatch.setattr(settings, "max_consecutive_losses", 4)
+    # This test is about the consecutive-loss rule alone, so silence the other two: -$100 is
+    # 1% of the default $10k equity but 10% of a $1k one, which trips the DAILY-LOSS rule
+    # instead — making the assertion depend on whichever ACCOUNT_EQUITY the worktree's .env
+    # happened to carry (it passed on paper and failed on live for exactly that reason).
+    monkeypatch.setattr(settings, "max_drawdown_pct", 100.0)
+    monkeypatch.setattr(settings, "daily_loss_hard_pct", 100.0)
 
     # Only 2 losing SELLs — threshold is 4
     for _ in range(2):

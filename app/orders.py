@@ -359,12 +359,14 @@ def _live_execute(db: Session, order: PendingOrder) -> Fill:
     # and the venue is left holding an order this row has not been linked to yet. Refuse
     # BEFORE contacting the exchange; the rung stays PENDING and rests on the next cycle.
     # Exits are never refused: a SELL that reduces risk must always be allowed through.
+    # Wave 0 is exempt: it is the entry, and it takes (see is_entry_wave).
     if (
         resting_model_active()
         and order.side == "BUY"
         and order.source == "kss"
         and order.order_type == "LIMIT"
         and not order.exchange_order_id
+        and not is_entry_wave(order)
     ):
         raise ValueError(
             f"order {order.id} belongs to the resting model — it must rest on the exchange "
@@ -400,8 +402,14 @@ def _live_execute(db: Session, order: PendingOrder) -> Fill:
             )
 
     pair = live_provider().pair(order.symbol)
+    # An entry must fill now, so it is sent WITHOUT post-only even when maker_orders is on —
+    # a post-only BUY at the market is rejected outright (-2010) and the session would sit
+    # ACTIVE holding nothing. The spread is the price of actually being in the trade; the DCA
+    # rungs below still rest and still earn the maker side.
+    maker = None if not is_entry_wave(order) else False
     result = execution.place_live_order(
         pair, order.side, order.quantity, order.price, order.order_type,
+        maker_orders=maker,
         client_order_id=execution.client_order_id(order.id),  # idempotent placement (1.10)
     )
     # Link the order to its exchange id + last-seen status FIRST, so reconcile_live_orders()
@@ -573,6 +581,18 @@ def _book_delta(db: Session, order: PendingOrder, res: dict) -> bool:
 
 
 # --- live resting-maker model (live-readiness 1.5) ----------------------
+
+
+def is_entry_wave(order: PendingOrder) -> bool:
+    """True for a KSS session's wave 0 — the ENTRY the session is built on.
+
+    Wave 0 is anchored AT the live market, so it is meant to fill now and cannot be a maker
+    order: a BUY at the market crosses the ask and the venue rejects the post-only (-2010).
+    It therefore TAKES, while waves 1..n (and the pyramid_up defensive rung) sit BELOW the
+    market waiting for a dip — those rest, and still earn the maker side.
+    """
+    ref = str(order.source_ref or "")
+    return order.source == "kss" and ref.endswith(":wave:0")
 
 
 def resting_model_active() -> bool:
@@ -758,6 +778,11 @@ def sync_resting_orders(db: Session) -> dict:
             .all()
         )
         for order in due:
+            # Wave 0 is the entry and takes (is_entry_wave) — the synchronous path owns it.
+            # Resting it as well would put two live orders behind one row, and as a post-only
+            # BUY at the market it would only be rejected anyway.
+            if is_entry_wave(order):
+                continue
             if _place_resting(db, order):
                 out["placed"] += 1
 

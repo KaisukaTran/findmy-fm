@@ -66,9 +66,9 @@ def _kss_rung(db, **kw) -> PendingOrder:
 
 def test_the_synchronous_path_refuses_a_rung_that_belongs_to_the_resting_model(db, monkeypatch):
     """It must refuse BEFORE contacting the venue — an order placed and then abandoned is
-    exactly the orphan this is about."""
+    exactly the orphan this is about. (A DCA rung: wave 0 is the entry and takes.)"""
     venue = _live(monkeypatch, _Venue())
-    order = _kss_rung(db)
+    order = _kss_rung(db, source_ref="pyramid:1:wave:2")
 
     with pytest.raises(ValueError, match="rest"):
         orders.approve_order(db, order.id, reviewer="auto-trader")

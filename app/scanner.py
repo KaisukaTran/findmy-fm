@@ -1203,16 +1203,7 @@ def _open_session(
                               symbol=symbol, session=row.id,
                               market=round(mkt, 8), entry=round(entry, 8))
                     _vetoed = True
-            if _vetoed:
-                pass
-            elif orders.resting_model_active():
-                # 1.5: wave 0 is placed by sync_resting_orders and left on the book. Approving
-                # it here would send it down the synchronous path, which cannot fill a post-only
-                # order and used to abandon it on the venue (first testnet soak: a real DOT
-                # order resting untracked, and the scheduler cycle killed by the exception).
-                audit.log(db, "scanner", "wave0_rests", entity=f"order:{oid}",
-                          symbol=symbol, session=row.id)
-            else:
+            if not _vetoed:
                 try:
                     orders.approve_order(db, oid, reviewer="auto-trader")
                     audit.log(db, "auto-trader", "auto_approve", entity=f"order:{oid}",

@@ -13,6 +13,7 @@ exchange never crashes a scan.
 from __future__ import annotations
 
 import logging
+import math
 from typing import Protocol, TypedDict
 
 import ccxt
@@ -73,6 +74,19 @@ class Candle(TypedDict):
     volume: float
 
 
+# Binance answers at most 1000 klines per request — and silently truncates instead of
+# erroring when asked for more, which is why anything longer has to be paged.
+_MAX_KLINES = 1000
+# Spare pages so a venue that returns slightly short batches (or a gap in history) still
+# reaches the requested window, while the loop stays bounded.
+_PAGE_SLACK = 3
+
+
+def _to_candle(c: list) -> Candle:
+    return Candle(ts=int(c[0]), open=float(c[1]), high=float(c[2]),
+                  low=float(c[3]), close=float(c[4]), volume=float(c[5]))
+
+
 class DataProvider(Protocol):
     """Read-only market data surface used by market.py, the scanner and backtests."""
 
@@ -122,16 +136,58 @@ class CcxtProvider:
         return out
 
     def get_ohlcv(self, symbol: str, timeframe: str = "1d", limit: int = 200) -> list[Candle]:
+        """Fetch the last *limit* candles, paging when that is more than one response holds.
+
+        Binance caps klines at 1000 per request and does NOT complain when asked for more —
+        it silently answers 1000. On a daily timeframe that never mattered (a year is 365
+        bars); on 5m the same year is 105,120, so a single call would have returned 3.5 days
+        of data while every label said a year. Above one page we therefore walk forward from
+        a computed start with ``since``, oldest page first, and join.
+
+        Failures keep whatever was already fetched — partial history beats none — and paging
+        stops on an unknown timeframe (no bar duration = no cursor to walk), on a page that
+        does not advance, and at a page budget, so it can never spin.
+        """
+        pair = self.pair(symbol)
+        tf_ms = self._timeframe_ms(timeframe)
+        if limit <= _MAX_KLINES or tf_ms <= 0:
+            try:
+                raw = self._ex.fetch_ohlcv(pair, timeframe=timeframe, limit=limit)
+            except Exception as exc:
+                logger.warning("%s OHLCV failed for %s: %s", self.exchange_id, symbol, exc)
+                return []
+            return [_to_candle(c) for c in raw]
+
+        # Start far enough back that `limit` bars fit, then page forward to now.
+        cursor = self._ex.milliseconds() - limit * tf_ms
+        pages = math.ceil(limit / _MAX_KLINES) + _PAGE_SLACK
+        rows: list[list] = []
+        for _ in range(pages):
+            try:
+                batch = self._ex.fetch_ohlcv(
+                    pair, timeframe=timeframe, since=cursor, limit=_MAX_KLINES
+                )
+            except Exception as exc:  # keep the pages we already have
+                logger.warning("%s OHLCV page failed for %s (%s bars so far): %s",
+                               self.exchange_id, symbol, len(rows), exc)
+                break
+            if not batch:
+                break
+            fresh = [c for c in batch if not rows or c[0] > rows[-1][0]]
+            if not fresh:  # the venue is not advancing — stop rather than spin
+                break
+            rows.extend(fresh)
+            if len(batch) < _MAX_KLINES or len(rows) >= limit:
+                break  # reached the end of history, or we have enough
+            cursor = int(rows[-1][0]) + tf_ms
+        return [_to_candle(c) for c in rows[-limit:]]
+
+    def _timeframe_ms(self, timeframe: str) -> int:
+        """Bar duration in ms, or 0 when the exchange cannot tell us (then: no paging)."""
         try:
-            raw = self._ex.fetch_ohlcv(self.pair(symbol), timeframe=timeframe, limit=limit)
-        except Exception as exc:
-            logger.warning("%s OHLCV failed for %s: %s", self.exchange_id, symbol, exc)
-            return []
-        return [
-            Candle(ts=int(c[0]), open=float(c[1]), high=float(c[2]),
-                   low=float(c[3]), close=float(c[4]), volume=float(c[5]))
-            for c in raw
-        ]
+            return int(self._ex.parse_timeframe(timeframe) * 1000)
+        except Exception:
+            return 0
 
     def top_symbols(self, n: int = 10) -> list[str]:
         """Top-N base symbols by quote volume for this exchange's quote asset."""

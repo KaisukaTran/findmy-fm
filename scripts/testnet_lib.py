@@ -16,7 +16,9 @@ from typing import Any
 OK, WARN, BAD = "[ok]", "[--]", "[!!]"
 
 # The paper and live books. A harness wipes its database on every run, so pointing one at
-# either of these would destroy a real book — refuse by name, not by convention.
+# either of these would destroy a real book — refuse by name, not by convention. Compared
+# case-INSENSITIVELY: Windows opens `data/Live.db` as the very same file, so a name-cased
+# argument would otherwise walk straight past this guard and delete the live book.
 PROTECTED_DB = {"findmy.db", "live.db"}
 
 
@@ -30,7 +32,7 @@ def prepare_env(db_path: str, **extra: str) -> None:
     Starts from an empty book every run: a previous run that died mid-way leaves its rung
     queued, and the next run would rest that one too and only clean up its own.
     """
-    if Path(db_path).name in PROTECTED_DB:
+    if Path(db_path).name.lower() in PROTECTED_DB:
         raise SystemExit(f"{BAD} refusing to run against {db_path} — use a throwaway database")
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     Path(db_path).unlink(missing_ok=True)

@@ -113,6 +113,17 @@ def test_prepare_env_refuses_the_paper_and_live_books(tmp_path, monkeypatch):
         assert book.exists()  # never wiped
 
 
+def test_prepare_env_refuses_a_differently_cased_real_book(tmp_path):
+    # Windows opens data/Live.db as the SAME file as data/live.db, so a case-sensitive guard
+    # would let `--db data/Live.db` through and prepare_env would delete the live book.
+    for name in ("Live.db", "LIVE.DB", "FindMy.Db"):
+        book = tmp_path / name
+        book.write_text("a real book")
+        with pytest.raises(SystemExit):
+            testnet_lib.prepare_env(str(book))
+        assert book.exists()
+
+
 def test_prepare_env_starts_from_an_empty_book_and_switches_the_model_on(tmp_path, monkeypatch):
     monkeypatch.delenv("MAKER_ORDERS", raising=False)
     monkeypatch.delenv("AUTO_TRADE", raising=False)

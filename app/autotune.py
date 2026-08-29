@@ -28,6 +28,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from app import audit, costengine, runtime
+from app.clock import utcnow
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,17 @@ DCA_MAX_PCT = 10.0
 _ATR_BARS = 14
 _MIN_BARS = 15  # ATR needs a previous close per bar, so 14 ranges want 15 candles
 _LEVELS_KEY = "autotune:levels:"
+
+# Stage 3 (learning from outcomes). Slow on purpose: a strategy that re-tunes itself on every
+# result chases noise, and a target that swings around is worse than one that is slightly wrong.
+LEARN_WINDOW = 60          # how many recent closed sessions count as evidence
+LEARN_MIN_SESSIONS = 10    # below this it is a small sample, not a pattern
+LEARN_STEP = 0.05          # one nudge per run, never more
+TP_MULT_MIN = 0.3          # a target under ~a third of daily range is mostly fees
+TP_MULT_MAX = 2.0          # beyond ~two days of range the deadline expires first
+TIMEOUT_RATE_HIGH = 0.4    # this many timeouts means the target is out of reach
+HIT_RATE_HIGH = 0.7        # winning this often AND fast means we are selling too early
+FAST_HIT_SHARE = 0.25      # "fast" = using under a quarter of the deadline
 
 # How far under the ceiling a corrected gate lands. Sitting exactly ON the ceiling would only
 # admit a coin that won every single backtest trial, which is the deadlock all over again.
@@ -147,6 +159,83 @@ def fit_levels(db: Session, candles_by_symbol: dict[str, list[dict]]) -> dict[st
         db.commit()
         logger.info("autotune: fitted levels for %d symbols (ATR-derived)", len(out))
     return out
+
+
+def _closed_outcomes(db: Session, limit: int) -> list[tuple[str, float]]:
+    """Recent finished sessions as (status, hours_held), newest first."""
+    from app import models
+
+    rows = (
+        db.query(models.KssSession)
+        .filter(models.KssSession.status.in_(
+            (models.SESSION_STOPPED, models.SESSION_COMPLETED, models.SESSION_TP_TRIGGERED)))
+        .order_by(models.KssSession.id.desc())
+        .limit(limit)
+        .all()
+    )
+    out = []
+    for row in rows:
+        started = row.started_at or row.created_at
+        end = row.last_fill_at or utcnow()
+        hours = max((end - started).total_seconds() / 3600.0, 0.0) if started else 0.0
+        deadline_h = max(row.deadline_days, 0) * 24.0 or 1.0
+        out.append((row.status, hours / deadline_h))  # share of the deadline actually used
+    return out
+
+
+def learn_from_outcomes(db: Session) -> dict | None:
+    """Nudge the take-profit multiple toward what the market has actually been paying.
+
+    Stage 2 derives the target from volatility, which is a prediction. This checks it against
+    closed sessions: a run of timeouts says the target sits too far out, while targets hit
+    almost immediately say the opposite — the position was sold back into a move that had
+    barely started.
+
+    One small step per run, a minimum sample before it moves at all, hard clamps, and the
+    evidence written to the audit log. It touches only how ambitious the target is; the risk
+    gates are never learned.
+    """
+    if not (settings.autotune_enabled and settings.autotune_levels_enabled
+            and settings.autotune_learn_enabled):
+        return None
+
+    from app import models
+
+    outcomes = _closed_outcomes(db, LEARN_WINDOW)
+    if len(outcomes) < LEARN_MIN_SESSIONS:
+        return None  # not evidence yet, just noise
+
+    hits = [share for status, share in outcomes if status == models.SESSION_TP_TRIGGERED]
+    timed_out = [s for s, _ in outcomes if s == models.SESSION_STOPPED]
+    hit_rate = len(hits) / len(outcomes)
+    timeout_rate = len(timed_out) / len(outcomes)
+    current = settings.autotune_tp_atr_mult
+
+    if timeout_rate >= TIMEOUT_RATE_HIGH:
+        target = max(current - LEARN_STEP, TP_MULT_MIN)
+        reason = (f"{len(timed_out)}/{len(outcomes)} sessions timed out without reaching the "
+                  f"target — it is too far out for how these coins actually move")
+    elif hit_rate >= HIT_RATE_HIGH and hits and (sum(hits) / len(hits)) <= FAST_HIT_SHARE:
+        target = min(current + LEARN_STEP, TP_MULT_MAX)
+        reason = (f"{len(hits)}/{len(outcomes)} sessions hit the target using only "
+                  f"{sum(hits) / len(hits) * 100:.0f}% of their deadline — selling back into a "
+                  "move that had barely started")
+    else:
+        return None
+
+    if abs(target - current) < 1e-9:
+        return None  # already at the clamp
+
+    settings.autotune_tp_atr_mult = round(target, 4)
+    runtime.set(db, "kss:autotune_tp_atr_mult", settings.autotune_tp_atr_mult)
+    logger.warning("autotune: tp_atr_mult %.3f -> %.3f (%s)", current, target, reason)
+    audit.log(db, "autotune", "autotune_learn", entity="autotune_tp_atr_mult",
+              before=round(current, 4), after=settings.autotune_tp_atr_mult,
+              sessions=len(outcomes), hit_rate=round(hit_rate, 3),
+              timeout_rate=round(timeout_rate, 3), reason=reason)
+    db.commit()
+    return {"setting": "autotune_tp_atr_mult", "before": current,
+            "after": settings.autotune_tp_atr_mult, "reason": reason}
 
 
 def levels_for(db: Session, symbol: str) -> dict | None:

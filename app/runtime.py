@@ -113,6 +113,8 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "intraday_max_bars": int,  # 1.7: candle cap when backtest_timeframe is intraday
     "autotune_enabled": _to_bool,  # self-correct contradictory entry/exit gates
     "autotune_levels_enabled": _to_bool,  # stage 2: per-coin levels from ATR
+    "autotune_learn_enabled": _to_bool,  # stage 3: learn the TP multiple from outcomes
+    "autotune_learn_interval_hours": float,
     "autotune_tp_atr_mult": float,   # stage 2: TP as a multiple of daily ATR%
     "autotune_dca_atr_mult": float,  # stage 2: DCA step as a multiple of daily ATR%
     "kss_first_wave_usd": float,

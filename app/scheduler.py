@@ -106,6 +106,13 @@ def _run_periodic(db: Session) -> tuple[int, bool]:
         if settings.ml_enabled and _due("ml_last_at", settings.ml_retrain_hours):
             ml_trained = ml.train(db) is not None
             runtime.set(db, "ml_last_at", now.isoformat())
+        # Stage 3: check the volatility-derived target against what closed sessions actually
+        # did. Time-gated like the rest — learning on every cycle would chase noise.
+        if _due("autotune_learn_last_at", settings.autotune_learn_interval_hours):
+            from app import autotune
+
+            autotune.learn_from_outcomes(db)
+            runtime.set(db, "autotune_learn_last_at", now.isoformat())
     except Exception:  # periodic tuning must never kill the cycle
         logger.exception("phase-c periodic tasks failed")
     return hyperopt_runs, ml_trained

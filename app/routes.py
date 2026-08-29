@@ -427,6 +427,8 @@ class KssSettingsBody(BaseModel):
     intraday_max_bars: int | None = Field(None, ge=0, le=200_000)  # 0 = no cap (1.7)
     autotune_enabled: bool | None = None  # self-correct contradictory gates
     autotune_levels_enabled: bool | None = None  # stage 2: per-coin ATR levels
+    autotune_learn_enabled: bool | None = None  # stage 3: learn from outcomes
+    autotune_learn_interval_hours: float | None = Field(None, gt=0, le=168)
     autotune_tp_atr_mult: float | None = Field(None, gt=0, le=5)
     autotune_dca_atr_mult: float | None = Field(None, gt=0, le=5)
     kss_first_wave_usd: float | None = Field(None, ge=0)

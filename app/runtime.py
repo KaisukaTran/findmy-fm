@@ -110,6 +110,7 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "grok_search_max_results": int,  # cap Live Search results per scan call
     "scan_max_symbols": int,
     "min_quote_volume": float,
+    "intraday_max_bars": int,  # 1.7: candle cap when backtest_timeframe is intraday
     "kss_first_wave_usd": float,
     # Live-readiness knobs (1.9) — LIVE only, inert on paper. maker/testnet are bool (use
     # _to_bool, not bool, so a restored "0" stays False); timeout is seconds (0 = wait forever).

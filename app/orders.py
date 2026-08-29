@@ -294,7 +294,19 @@ def approve_order(db: Session, order_id: int, reviewer: str | None = None) -> Fi
     order.decided_at = utcnow()
     db.flush()
 
-    fill = _execute(db, order)
+    try:
+        fill = _execute(db, order)
+    except Exception:
+        # An order that could not execute must go back to the QUEUE, not sit at APPROVED:
+        # sync_resting_orders only ever places PENDING rows, so a rung stranded at APPROVED
+        # would never reach the exchange and its session would wait forever. Any exchange
+        # link _live_execute already stamped is kept — it is how a placed-but-unfilled order
+        # stays tracked.
+        order.status = PENDING
+        order.reviewer = None
+        order.decided_at = None
+        db.commit()
+        raise
     order.status = EXECUTED
     db.commit()
     db.refresh(fill)
@@ -341,6 +353,24 @@ def _live_execute(db: Session, order: PendingOrder) -> Fill:
     from app import execution
     from app.data.providers import live_provider
 
+    # 1.5: under the resting model an ENTRY rung is placed by sync_resting_orders and left on
+    # the book, so the synchronous path must not touch it. Sending it here places a post-only
+    # order that cannot fill on placement, which then fails the "no fill price" check below —
+    # and the venue is left holding an order this row has not been linked to yet. Refuse
+    # BEFORE contacting the exchange; the rung stays PENDING and rests on the next cycle.
+    # Exits are never refused: a SELL that reduces risk must always be allowed through.
+    if (
+        resting_model_active()
+        and order.side == "BUY"
+        and order.source == "kss"
+        and order.order_type == "LIMIT"
+        and not order.exchange_order_id
+    ):
+        raise ValueError(
+            f"order {order.id} belongs to the resting model — it must rest on the exchange "
+            "via sync_resting_orders, not execute synchronously"
+        )
+
     # 1.5: this row already rests on the exchange. Reaching here means someone wants it
     # filled NOW (an operator approval, or the position-guard forcing a crash exit), so take
     # the resting order off the book first — a row must never have two live orders. A cancel
@@ -374,18 +404,23 @@ def _live_execute(db: Session, order: PendingOrder) -> Fill:
         pair, order.side, order.quantity, order.price, order.order_type,
         client_order_id=execution.client_order_id(order.id),  # idempotent placement (1.10)
     )
-    eff = float(result.get("price") or 0.0)
-    if eff <= 0:
-        raise ValueError("live order returned no fill price")
-    qty = float(result.get("quantity") or order.quantity)
-    fee = float(result.get("fee") or 0.0)
-
-    # Link the order to its exchange id + last-seen status so reconcile_live_orders()
-    # (1.4) can pick up any further fills (e.g. a partial that completes later). A
-    # terminal status ('closed') means there is nothing left to reconcile.
+    # Link the order to its exchange id + last-seen status FIRST, so reconcile_live_orders()
+    # (1.4) can pick up any further fills (e.g. a partial that completes later) — and, above
+    # all, so an order that reached the venue is never left untracked. This used to happen
+    # after the "no fill price" check below, which meant a maker order that rested instead of
+    # filling was abandoned on the exchange: nothing to reconcile it, nothing to cancel it.
+    # Committed before raising for the same reason — a rollback would erase the link to an
+    # order that is really out there.
     if result.get("raw_id") is not None:
         order.exchange_order_id = str(result.get("raw_id"))
     order.exchange_status = str(result.get("status") or "") or None
+
+    eff = float(result.get("price") or 0.0)
+    if eff <= 0:
+        db.commit()
+        raise ValueError("live order returned no fill price")
+    qty = float(result.get("quantity") or order.quantity)
+    fee = float(result.get("fee") or 0.0)
 
     realized = _update_position(db, order.symbol, order.side, qty, eff, fee)
     fill = Fill(

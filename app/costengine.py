@@ -35,6 +35,21 @@ def net_edge_pct(tp_pct: float) -> float:
     return tp_pct - round_trip_cost_pct()
 
 
+def expectancy_ceiling_pct(tp_pct: float) -> float:
+    """Highest expectancy any backtest can report at `tp_pct`: a coin that wins every single
+    trial nets exactly the TP minus the round-trip cost. Identical to `net_edge_pct` by
+    construction — named separately because it is the hard ceiling the expectancy GATE must
+    stay under to remain satisfiable."""
+    return net_edge_pct(tp_pct)
+
+
+def expectancy_gate_unsatisfiable(min_expectancy_pct: float, tp_pct: float) -> bool:
+    """True when `min_expectancy_pct` sits above the ceiling `tp_pct` can ever produce — no
+    candidate can pass, so the scanner would skip 100% of the universe forever, silently.
+    Equal to the ceiling is still satisfiable (only by a perfect-win-rate coin)."""
+    return min_expectancy_pct > expectancy_ceiling_pct(tp_pct)
+
+
 def covers_costs(tp_pct: float, min_net_edge: float | None = None) -> bool:
     """True if the TP target beats round-trip cost by at least the required margin."""
     margin = settings.min_net_edge if min_net_edge is None else min_net_edge

@@ -105,3 +105,31 @@ def test_one_rejected_order_does_not_stop_the_others(db, monkeypatch):
 
     assert bad.id in calls and good.id in calls, "the loop must continue past the failure"
     assert approved == [good.id]
+
+
+def test_filters_are_loaded_even_on_a_cold_ccxt_client(monkeypatch):
+    """ccxt's .market() raises "markets not loaded" until something has loaded them, and the
+    caller then placed UNROUNDED — which is how a -1013 reached the venue despite the rounding
+    above. Third instance of this same trap in the codebase (get_exchange_info, the testnet
+    harness, here), so it is handled at the source now."""
+    calls = {"loaded": 0}
+
+    class _Cold:
+        def load_markets(self):
+            calls["loaded"] += 1
+
+        def market(self, pair):
+            if not calls["loaded"]:
+                raise Exception("binance markets not loaded")
+            return {"limits": {"amount": {"min": 0.001}, "cost": {"min": 5.0}},
+                    "precision": {"price": 2, "amount": 3},
+                    "info": {"filters": [
+                        {"filterType": "LOT_SIZE", "stepSize": "0.00100000", "minQty": "0.00100000"},
+                        {"filterType": "PRICE_FILTER", "tickSize": "0.01000000"},
+                        {"filterType": "NOTIONAL", "minNotional": "5.00000000"},
+                    ]}}
+
+    out = execution._market_filters(_Cold(), "LTC/USDT")
+
+    assert calls["loaded"] == 1
+    assert out.get("stepSize") == pytest.approx(0.001)

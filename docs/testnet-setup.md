@@ -99,14 +99,47 @@ Once the preflight is green, run the whole live path end to end in one command:
 ```powershell
 python scripts/testnet_e2e.py                                  # rung 0.2% below market, wait 90s
 python scripts/testnet_e2e.py --distance-pct 0.05 --wait-sec 180
+python scripts/testnet_e2e.py --symbol YB/USDT --rest-at-touch --force-match   # the fill leg
 ```
 
 It queues a KSS rung, lets `sync_resting_orders` place it as a resting `LIMIT_MAKER`, polls
 `reconcile_live_orders` until the venue fills it (or the window ends), and cancels whatever is
 left. The exchange side is real; only the database is disposable (`data/testnet_e2e.db`), so
-neither the paper nor the live book is touched. A run that ends "no fill inside the window" is
-not a failure — the price simply never dipped to the rung; placement, status and cancel are
-still proven.
+neither the paper nor the live book is touched.
+
+**Waiting does not exercise the fill leg.** Testnet's book is simulated and deep: runs at 0.2%
+and then 0.03% below the last price waited 90s and 300s, and the venue never reached the rung —
+the price prints through a level without consuming what rests under it. Two flags make the fill
+happen instead of hoping for it:
+
+- `--rest-at-touch` prices the rung one tick above the best bid (still post-only) so nothing is
+  queued ahead of it. Needs a pair whose spread is wider than one tick — `YB/USDT` is one;
+  `BTC/USDT` on testnet is usually one tick wide with thousands of units at the touch.
+- `--force-match` then sells into it from this same testnet account
+  (`selfTradePreventionMode=NONE` — the account default `EXPIRE_MAKER` would kill our own rung
+  instead of filling it — IOC, capped by `--max-cross-usd`). The match is still the venue's,
+  against the real order the app placed; only the liquidity on the other side is ours.
+
+`--prove-cancel-books-fill` is a different mode of the same harness: it half-fills the rung and
+then cancels it, checking that the filled half is booked BEFORE the exchange link is dropped
+(the race that used to lose it). Use it with `--rest-at-touch` so our rung is alone at its price:
+
+```powershell
+python scripts/testnet_e2e.py --symbol YB/USDT --rest-at-touch --notional 14 --prove-cancel-books-fill
+```
+
+For the session-level proof — a real KSS session whose take-profit rests in advance and follows
+the position — run the second harness:
+
+```powershell
+python scripts/testnet_session_e2e.py --first-wave-usd 11 --cross-timeout-sec 420
+```
+
+It starts a session at the touch, fills wave 0 (partially first, when minNotional allows),
+watches `sync_resting_tp` put the exit on the book above market and at/above the K-2 floor,
+checks that the exit is cancelled and re-placed as the position grows and the average moves,
+and finally that stopping the session takes it off the book. Every step re-checks the venue
+first, so a rung the market reaches on its own is filled by the market, not by us.
 
 ## 4. Start the live instance
 

@@ -134,9 +134,19 @@ def _days_to_bars(days: int, timeframe: str) -> int:
 
     Falls back to 1 bar/day for unknown timeframes, which is safe (returns *days*
     unchanged) and avoids silently under-fetching on new timeframe strings.
+
+    On an INTRADAY timeframe the same calendar window explodes — 365 days is 365 daily bars
+    but 105,120 five-minute ones — so ``settings.intraday_max_bars`` caps it (0 = no cap).
+    The venue answers at most 1000 candles per request, so without the cap every symbol would
+    page for minutes; before the paging existed it silently returned 3.5 days of data while
+    every label still said a year.
     """
     bars_per_day = _BARS_PER_DAY.get(timeframe, 1.0)
-    return max(_MIN_CANDLES, round(days * bars_per_day))
+    bars = max(_MIN_CANDLES, round(days * bars_per_day))
+    cap = settings.intraday_max_bars
+    if cap > 0 and bars_per_day > 1.0:  # intraday only — a daily window is already small
+        bars = min(bars, cap)
+    return bars
 
 
 _UNIVERSE_TTL_HOURS = 24  # B7: how long the cached exchange symbol list stays fresh

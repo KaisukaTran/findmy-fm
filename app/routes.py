@@ -423,6 +423,7 @@ class KssSettingsBody(BaseModel):
     scan_max_symbols: int | None = Field(None, ge=1, le=500)
     max_new_sessions_per_scan: int | None = Field(None, ge=0, le=100)  # cap NEW opens/scan (0=off)
     min_quote_volume: float | None = Field(None, ge=0)
+    intraday_max_bars: int | None = Field(None, ge=0, le=200_000)  # 0 = no cap (1.7)
     kss_first_wave_usd: float | None = Field(None, ge=0)
     entry_momentum_gate: bool | None = None  # veto open when ST down & MACDh<0
     max_avg_mae_pct: float | None = Field(None, ge=0, le=100)  # absolute avg_mae drawdown gate (0=off)

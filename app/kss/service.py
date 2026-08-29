@@ -1635,6 +1635,11 @@ def sync_resting_tp(db: Session) -> dict:
             # with it. Cancel first — the venue refusing means we leave it and retry.
             if existing.exchange_order_id and not orders._cancel_resting(db, existing):
                 continue
+            # Taking it off the book may have booked a fill that beat the cancel, which marks
+            # the row EXECUTED. Re-pricing an executed exit would resurrect a filled order —
+            # leave it, and the next pass queues a fresh TP for whatever is still held.
+            if existing.status != models.PENDING:
+                continue
             existing.price = price
             existing.quantity = qty
             audit.log(db, "kss", "tp_replaced", entity=f"kss:{row.id}", symbol=row.symbol,

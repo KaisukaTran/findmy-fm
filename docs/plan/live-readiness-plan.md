@@ -253,3 +253,151 @@ between the two live models, and turning it off is the way back.**
   preflight. Both were written and unit-verified offline — **the testnet round trip itself
   (1.8) still has to be run on a machine that can reach `testnet.binance.vision`.**
 - **NEXT = 1.8** run the e2e on testnet, then re-run the 1.10 security pass, then 1.7 (5m).
+
+## Progress — 2026-08-25 (1.5 verified on Binance testnet, fill leg still open)
+First real run of `scripts/testnet_e2e.py` against Binance Spot testnet, on the live worktree
+after merging this branch (fast-forward from `live` @ 88c1c68):
+- rung built from testnet's own book: 0.00019 BTC @ 77564.6 ($14.74, 0.2% below last);
+- **`sync_resting_orders` placed it in advance as exchange order 9431257, `status=open`, the
+  local row still PENDING** — the 1.5 model working on a real venue: post-only accepted (no
+  -2010), the exchange link stamped, nothing pretending to be a fill;
+- cancelled cleanly on exit, nothing left on the book.
+**Not yet proven:** the fill leg. The price never dipped 0.2% inside the 90s window, so
+`reconcile_live_orders` had nothing to book. Re-run with a tighter rung (e.g.
+`--distance-pct 0.03 --wait-sec 300`) to see NEW→FILLED become exactly one Fill + Position
+update. After that, the full DoD (a real KSS session with its resting TP following avg) needs
+the live instance itself running on testnet with `MAKER_ORDERS=true`.
+
+## Progress — 2026-08-29 (1.8 DONE: the fill leg and the full session DoD, on testnet)
+Both open legs are now proven against Binance Spot testnet, on a throwaway DB
+(`data/testnet_e2e.db`, `data/testnet_session_e2e.db` — paper and live books untouched).
+
+**Why the earlier runs never filled.** Testnet's book is simulated and DEEP: the price prints
+through a level without consuming what rests under it. Measured on BTC/USDT it moves ~0.033%
+per 40s, yet a rung 0.03% below the last price sat unfilled for 300s behind 1.4 BTC of
+resting depth. Waiting harder was never going to work — the rung has to be somewhere nothing
+is queued ahead of it, and the counter side has to come from us. Two flags do that
+(`scripts/testnet_e2e.py`): `--rest-at-touch` (price the rung one tick above the best bid,
+still post-only) and `--force-match` (`testnet_lib.cross_fill`: IOC SELL into our own rung,
+`selfTradePreventionMode=NONE` because the account default EXPIRE_MAKER would kill our maker
+instead of filling it, capped by `--max-cross-usd`). The match is still Binance's, against the
+real order the app placed; only the liquidity on the other side is ours.
+
+**Fill leg (order level) — YB/USDT, order 128846.** Rung 125.2 @ 0.0958 rested post-only and
+the book then showed it AS the best bid ("nothing queued ahead of it"); the counter SELL filled
+it, and `reconcile_live_orders` booked **one** Fill 125.2 @ 0.0958 + a Position (qty 125.2, avg
+0.0958), row `executed` / `exchange_status=closed`. A second reconcile pass booked nothing —
+NEW→FILLED is exactly one Fill and re-running is a no-op (the 1.4 delta-booking invariant, on a
+real venue). Testnet charges no fee, so `fee=0` in these runs.
+
+**Session DoD — `scripts/testnet_session_e2e.py`, session on YB/USDT, wave0 $11, step 0.15%,
+tp 1%.** Nine steps, all green:
+1. wave 0 rests in advance as `128832` @ 0.0959 (local row still PENDING);
+2. crossing HALF of it books a partial — session goes ACTIVE, filled 57.4, avg 0.0959;
+3. `sync_resting_tp` puts the exit on the book: 57.4 @ 0.0971 (`128835`) — above market
+   (0.0959) and above the K-2 floor (0.0960918), i.e. K-2 applied in advance;
+4. filling the remainder grows the position to 114.7 → the exit is **cancelled and re-placed**
+   `128835`→`128837` at the new size, and the old id is off the book (not two exits);
+5. wave 1 fills lower at 0.0957 → **avg 0.0959 → 0.0957667, and the resting TP follows it down:
+   0.0971 → 0.0970, `128837`→`128839`**, old exit off the book — this is the "resting TP follows
+   the average" claim, verified on the venue;
+6. stopping the session takes the exit off the book: 0 open orders left on the pair.
+An earlier run also showed partial fills accumulating across passes on one order — two Fills
+(57.3 then 57.2 = the full 114.5), no double-booking.
+
+**What it costs to prove leg 5.** Wave 1 prices a step BELOW wave 0, which on this book lands it
+under a wall of simulated depth ($3k–$7k queued ahead of it), and the price wanders back up as
+often as it comes down. Reaching it meant topping the testnet account up with ~$4.8k of YB and
+crossing the whole queue (`--max-cross-usd 5000`). That is a property of the testnet book, not
+of the strategy — on a real venue a DCA rung is reached by the market. Runs at the default $60
+cap simply report that they could not prove that leg rather than dumping into the wall.
+
+**Found while running (not fixed here):**
+- **`get_exchange_info` returns defaults on the `live` branch.** `CcxtProvider.get_exchange_info`
+  calls `ccxt.market()` without `load_markets()`, so on a cold process EVERY call raises
+  "markets not loaded", falls into the except-branch and returns `_DEFAULT_INFO` (stepSize
+  1e-5) — a KSS session therefore sizes waves on a fake step until something else warms ccxt.
+  `round_to_filters` re-rounds at placement, so live orders stay compliant, but the ladder's
+  quantities are not what they look like. **The fix already exists on the paper branch
+  (`e546b20`, reads the real LOT_SIZE and calls `load_markets` first) and simply has not been
+  promoted to `live` yet** — fold it into the next paper→live merge.
+- **Both harnesses built their schema with `Base.metadata.create_all` instead of the app's own
+  `init_db()`**, so the OPUS tables were missing and the KSS fill hook died inside its
+  try/except every time — silently, and it is the hook that chains the next wave. Fixed here;
+  both now call `init_db()`.
+
+**NEXT:** the live instance itself (8001) has still never run a session on testnet with
+`MAKER_ORDERS=true` — the harness drives the same functions the scheduler does, but a soak on
+the running instance is the last step before real funds.
+
+## 1.7 — 5m timeframe — DONE 2026-08-29
+Three parts in the original plan; one was already true, two were real.
+
+**`scan_interval_min ≤ 5` — already supported.** `SchedulerBody.interval_min` is `ge=1, le=1440`
+and the loop sleeps `max(scan_interval_min, 1) * 60`, so a 5-minute cycle needed no change.
+
+**Kline paging — the silent one.** Binance caps klines at 1000 per request and does not error
+when asked for more; probed directly, `limit=1000/1500/5000` all return exactly 1000 candles.
+A daily year is 365 bars so this never showed, but 5m over the same year is 105,120 — the scan
+would have asked for six figures, received 1000 (≈3.5 days), and run its backtest and win-rate
+on that while every label still said 365 days. `CcxtProvider.get_ohlcv` now pages when the ask
+exceeds one response: compute a start from the bar duration, walk forward with `since`, join
+oldest-first and drop the repeated boundary bar. It stops at the end of history, on a page that
+does not advance, at a page budget, and on an unknown timeframe (no bar duration = no cursor,
+so one call is the honest answer); a mid-way failure keeps the pages already fetched.
+**Verified on the real API:** 5m/3000 → 3000 bars over 10.4 days, sorted, no duplicates, 2.5s;
+1h/2500 → 2500; 1d/365 → 365 (the daily path is byte-for-byte the old behaviour).
+
+**Intraday lookback cap.** Paging makes a year of 5m *possible*, which is the other half of the
+problem: 105k bars per symbol across the universe is minutes of requests and a lot of exchange
+weight. `intraday_max_bars` (default 3000 ≈ 10 days of 5m ≈ 3 requests/symbol) bounds the
+window on intraday timeframes only; 0 disables it, daily/weekly are untouched. It is a runtime
+knob per the project rule — in the KSS settings registry, rendered in the Strategy tab with a
+tooltip, editable via `/api/kss-settings`, restored from `runtime_config` on boot.
+**Live-verified:** the field renders at 3000, POSTing 1500 takes effect, the UI re-read shows
+1500, and it is still 1500 after a restart.
+
+**Note for whoever switches the timeframe:** `backtest_lookback_days` keeps its name and its
+meaning (calendar days), but on an intraday timeframe the cap decides the real window. At the
+default that is ~10 days of 5m — enough bars for the indicators, NOT enough history for a
+win-rate across regimes. Treat a 5m switch as a change to what the backtest can claim, not just
+a change of resolution.
+
+## Security pass — 2026-08-29 (one real bug, fixed)
+Done by hand over `orders.sync_resting_orders/_place_resting/_cancel_resting/reconcile_live_
+orders`, `kss.service.sync_resting_tp`, `execution`, and the harnesses.
+
+**Fixed — the harness could have deleted the live book.** `testnet_lib.prepare_env` DELETES the
+database it is handed and refused the real books by exact name, but Windows opens `data/Live.db`
+as the very same file as `data/live.db` — a name-cased `--db` walked straight past the guard.
+Now compared lowercased, with a test per casing.
+
+**Fixed — a cancel could lose a fill the venue had already made.** `orders._cancel_resting`
+dropped `exchange_order_id` as soon as the cancel succeeded, and `reconcile_live_orders` only
+looks at rows that still carry a link, so anything filled before the cancel landed was never
+booked. Worst case: a session closing on a half-filled take-profit keeps a position it no
+longer holds; a rung cancelled by `order_fill_timeout_sec` loses cash already spent. The
+booking core is now `orders._book_delta` (shared with reconcile) and `_cancel_resting` reads
+the final status and books the delta BEFORE unlinking; a failed read keeps the link so the
+next cycle books it, and `execution.order_is_gone` treats the venue's -2011 ("we no longer
+hold that order") as the fill case rather than a failed cancel. Two callers had to follow:
+the timeout branch no longer stamps REJECTED over a row the cancel just marked EXECUTED, and
+`sync_resting_tp` no longer re-prices an exit that turned out filled.
+**Verified on testnet** (`scripts/testnet_e2e.py --rest-at-touch --prove-cancel-books-fill`):
+rung 140.9 @ 0.0993 rested alone at the touch, a counter SELL filled 70.4 of it, and calling
+`_cancel_resting` directly — no reconcile first, which is exactly the race — booked
+`[(70.4, 0.0993)]` and left Position YB = 70.4 before the link was dropped.
+
+**Clean otherwise:** `_place_resting` gates BUYs only (a SELL exit is never gated), a failed
+cancel keeps the exchange link (no orphans), `sync_resting_tp` prices at `max(tp, K-2 floor)`,
+the harnesses never print secrets and are hard-gated by `require_testnet` (live + testnet), and
+every cross is bounded by `--max-cross-usd`.
+
+### Guard interaction found while merging (fixed)
+`live`'s 90s position guard (cf1077c) force-fills EVERY queued KSS exit SELL so a hard stop is
+freeze-immune. Under 1.5 the resting take-profit is one of those rows, so the guard would have
+pulled it off the book and re-placed it every tick — and because `_live_execute` raises "no fill
+price" on a resting order *before* stamping the new exchange id, each pass could leave an
+untracked live order behind. The guard now skips `:tp` rows while the resting model is on
+(MARKET risk exits still fill immediately, freeze-immune) and pulls a closed session's resting
+orders off the book at once instead of waiting for the 30-min cycle.

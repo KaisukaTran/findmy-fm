@@ -467,56 +467,73 @@ def reconcile_live_orders(db: Session) -> list[int]:
             logger.exception("reconcile: fetch_order failed for %s (order %s)", order.symbol, order.id)
             continue
 
-        status = str(res.get("status") or "").lower()
-        cum_filled = float(res.get("filled") or 0.0)
-        avg = float(res.get("average") or 0.0)
-        cum_fee = float(res.get("fee") or 0.0)
-
-        booked_qty, booked_fee = _booked_qty_fee(db, order.id)
-        delta = cum_filled - booked_qty
-        if delta > 1e-9 and avg > 0:
-            delta_fee = max(cum_fee - booked_fee, 0.0)
-            realized = _update_position(db, order.symbol, order.side, delta, avg, delta_fee)
-            fill = Fill(
-                pending_order_id=order.id,
-                symbol=order.symbol,
-                side=order.side,
-                quantity=delta,
-                price=avg,
-                fee=delta_fee,
-                slippage=0.0,
-                realized_pnl=realized,
-                source_ref=order.source_ref,
-                strategy_name=order.strategy_name,
-            )
-            db.add(fill)
-            db.flush()
+        if _book_delta(db, order, res):
             booked.append(order.id)
-            logger.info(
-                "LIVE reconciled fill order %s: %s %s %s @ %s (status=%s)",
-                order.id, order.side, delta, order.symbol, avg, status,
-            )
-            # Advance the KSS ladder on the booked quantity (same hook approve_order fires).
-            if order.source == "kss" and order.source_ref:
-                try:
-                    from app.kss.service import handle_fill_event
-
-                    handle_fill_event(db, order.source_ref, delta, avg)
-                except Exception as exc:  # a strategy hook must never corrupt the fill
-                    logger.exception("KSS fill hook failed for %s: %s", order.source_ref, exc)
-            try:
-                from app import notify
-
-                notify.fill_alert(fill)
-            except Exception:
-                logger.debug("fill_alert failed for fill %s", fill.id)
-
-        order.exchange_status = status or order.exchange_status
-        # A fully/terminally settled order with any fill is done — mark it executed.
-        if status in _TERMINAL_EXCHANGE_STATUS and cum_filled > 0:
-            order.status = EXECUTED
-            order.decided_at = order.decided_at or utcnow()
     db.commit()
+    return booked
+
+
+def _book_delta(db: Session, order: PendingOrder, res: dict) -> bool:
+    """Book the *delta* between the venue's cumulative fill and what we already recorded.
+
+    The idempotent core of reconciliation: a NEW→FILLED transition creates exactly one Fill +
+    Position update, re-running is a no-op (delta 0), and partial fills accumulate across
+    calls. Also stamps the row's exchange status, and marks it EXECUTED once the venue is
+    terminal with something filled. Returns True when a Fill was created.
+
+    Shared with ``_cancel_resting``: a cancel has to book what the venue already filled
+    BEFORE the exchange link is dropped, because reconcile never looks at an unlinked row.
+    """
+    status = str(res.get("status") or "").lower()
+    cum_filled = float(res.get("filled") or 0.0)
+    avg = float(res.get("average") or 0.0)
+    cum_fee = float(res.get("fee") or 0.0)
+
+    booked = False
+    booked_qty, booked_fee = _booked_qty_fee(db, order.id)
+    delta = cum_filled - booked_qty
+    if delta > 1e-9 and avg > 0:
+        delta_fee = max(cum_fee - booked_fee, 0.0)
+        realized = _update_position(db, order.symbol, order.side, delta, avg, delta_fee)
+        fill = Fill(
+            pending_order_id=order.id,
+            symbol=order.symbol,
+            side=order.side,
+            quantity=delta,
+            price=avg,
+            fee=delta_fee,
+            slippage=0.0,
+            realized_pnl=realized,
+            source_ref=order.source_ref,
+            strategy_name=order.strategy_name,
+        )
+        db.add(fill)
+        db.flush()
+        booked = True
+        logger.info(
+            "LIVE reconciled fill order %s: %s %s %s @ %s (status=%s)",
+            order.id, order.side, delta, order.symbol, avg, status,
+        )
+        # Advance the KSS ladder on the booked quantity (same hook approve_order fires).
+        if order.source == "kss" and order.source_ref:
+            try:
+                from app.kss.service import handle_fill_event
+
+                handle_fill_event(db, order.source_ref, delta, avg)
+            except Exception as exc:  # a strategy hook must never corrupt the fill
+                logger.exception("KSS fill hook failed for %s: %s", order.source_ref, exc)
+        try:
+            from app import notify
+
+            notify.fill_alert(fill)
+        except Exception:
+            logger.debug("fill_alert failed for fill %s", fill.id)
+
+    order.exchange_status = status or order.exchange_status
+    # A fully/terminally settled order with any fill is done — mark it executed.
+    if status in _TERMINAL_EXCHANGE_STATUS and cum_filled > 0:
+        order.status = EXECUTED
+        order.decided_at = order.decided_at or utcnow()
     return booked
 
 
@@ -537,23 +554,44 @@ def resting_model_active() -> bool:
 
 
 def _cancel_resting(db: Session, order: PendingOrder) -> bool:
-    """Cancel *order*'s resting exchange order and unlink the row.
+    """Take *order* off the book, booking anything it filled first, then unlink the row.
 
     False when the venue refused: the link is then KEPT so the next cycle retries. Dropping
     ``exchange_order_id`` after a failed cancel would orphan a live order nothing tracks.
+
+    A cancel races the venue. Whatever filled before it landed is real, and ``reconcile_live_
+    orders`` only looks at rows that still carry a link — so the final status is read and the
+    delta booked BEFORE unlinking, or that fill would be lost for good (worst case: a session
+    closing on a half-filled take-profit keeps a position it no longer holds). If that read
+    fails, the link is kept and the next cycle books it.
     """
     from app import execution
     from app.data.providers import live_provider
 
+    pair = live_provider().pair(order.symbol)
+    order_id = str(order.exchange_order_id)
     try:
-        execution.cancel_live_order(
-            live_provider().pair(order.symbol), str(order.exchange_order_id)
+        execution.cancel_live_order(pair, order_id)
+    except Exception as exc:
+        # "The venue does not hold this order" is not a failure — it is the fill case.
+        if not execution.order_is_gone(exc):
+            logger.exception(
+                "resting: cancel failed for order %s (exch %s)", order.id, order_id
+            )
+            return False
+        logger.info(
+            "resting: venue no longer holds order %s (exch %s) — reading its final status",
+            order.id, order_id,
         )
-    except Exception:  # transient venue error — retry next cycle
+
+    try:
+        _book_delta(db, order, execution.fetch_live_order(pair, order_id))
+    except Exception:  # cannot see what filled — keep the link and retry next cycle
         logger.exception(
-            "resting: cancel failed for order %s (exch %s)", order.id, order.exchange_order_id
+            "resting: final status read failed for order %s (exch %s)", order.id, order_id
         )
         return False
+
     order.exchange_order_id = None
     order.exchange_status = None
     return True
@@ -657,6 +695,11 @@ def sync_resting_orders(db: Session) -> dict:
         elif order.status == PENDING and timeout > 0 and order.created_at is not None:
             if (now - order.created_at).total_seconds() > timeout and _cancel_resting(db, order):
                 out["cancelled"] += 1
+                # The cancel may have booked a fill that was already sitting at the venue,
+                # which marks the row EXECUTED — a rung that FILLED must never be recorded
+                # as a timed-out rejection.
+                if order.status != PENDING:
+                    continue
                 order.status = REJECTED
                 order.reviewer = "resting-timeout"
                 order.decided_at = now

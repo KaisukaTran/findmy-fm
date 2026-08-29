@@ -160,6 +160,16 @@ def cancel_live_order(pair: str, order_id: str) -> None:
     logger.info("LIVE cancelled resting order %s on %s", order_id, pair)
 
 
+def order_is_gone(exc: Exception) -> bool:
+    """True when the venue refused a cancel because it no longer holds that order.
+
+    Binance answers -2011 / ``OrderNotFound`` for an order that already filled or was already
+    cancelled. That is not a failed cancel — it is precisely the case where a fill may still
+    be waiting to be booked, so the caller must read the final status instead of retrying.
+    """
+    return isinstance(exc, ccxt.OrderNotFound) or "-2011" in str(exc)
+
+
 def fetch_live_order(pair: str, order_id: str) -> dict:
     """Fetch the live status of a resting order and return a normalised dict
     ``{status, filled, average, fee, raw_id}``.

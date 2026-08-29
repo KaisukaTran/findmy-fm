@@ -11,9 +11,11 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from ccxt.base.errors import OrderNotFound
+
 from app import execution, orders, runtime
 from app.config import settings
-from app.models import EXECUTED, PENDING, REJECTED, PendingOrder
+from app.models import EXECUTED, PENDING, REJECTED, Fill, PendingOrder, Position
 
 
 class _StubProvider:
@@ -24,7 +26,8 @@ class _StubProvider:
 class _Venue:
     """Records placements/cancels and replays canned results."""
 
-    def __init__(self, place_result=None, place_error=None, cancel_error=None):
+    def __init__(self, place_result=None, place_error=None, cancel_error=None,
+                 fetch_result=None, fetch_error=None):
         self.placed: list[dict] = []
         self.cancelled: list[str] = []
         self._result = place_result or {
@@ -32,6 +35,17 @@ class _Venue:
         }
         self._place_error = place_error
         self._cancel_error = cancel_error
+        # What a final status read reports. Default: an order that came off the book without
+        # filling — nothing to book, which is what most of these tests assume.
+        self._fetch_result = fetch_result or {
+            "status": "canceled", "filled": 0.0, "average": 0.0, "fee": 0.0, "raw_id": "X1",
+        }
+        self._fetch_error = fetch_error
+
+    def fetch(self, pair, order_id):
+        if self._fetch_error:
+            raise self._fetch_error
+        return dict(self._fetch_result)
 
     def place(self, pair, side, quantity, price, order_type,
               maker_orders=None, client_order_id=None):
@@ -55,6 +69,7 @@ def _live(monkeypatch, venue: _Venue, *, maker=True, live=True, auto_trade=True)
     monkeypatch.setattr("app.data.providers.live_provider", lambda: _StubProvider())
     monkeypatch.setattr(execution, "place_live_order", venue.place)
     monkeypatch.setattr(execution, "cancel_live_order", venue.cancel)
+    monkeypatch.setattr(execution, "fetch_live_order", venue.fetch)
     settings.maker_orders = maker
     settings.auto_trade = auto_trade
     return venue
@@ -279,6 +294,96 @@ def test_failed_cancel_keeps_the_link(db, monkeypatch):
     assert orders.sync_resting_orders(db)["cancelled"] == 0
     db.refresh(order)
     assert order.exchange_order_id == "X1"
+
+
+# --- a cancel must never lose a fill the venue already made -----------------
+#
+# reconcile_live_orders only looks at rows that still carry an exchange link, so dropping the
+# link on an order the venue had already (partly) filled loses that fill for good: the app
+# keeps a position it no longer holds, or misses one it paid for.
+
+
+def _filled(qty, avg, status="canceled", fee=0.0):
+    return {"status": status, "filled": qty, "average": avg, "fee": fee, "raw_id": "X1"}
+
+
+def test_cancel_books_a_partial_fill_before_unlinking(db, monkeypatch):
+    venue = _live(monkeypatch, _Venue(fetch_result=_filled(0.4, 10.0)))
+    order = _queued(db)
+    orders.sync_resting_orders(db)
+    order.status = REJECTED
+    db.commit()
+
+    assert orders.sync_resting_orders(db)["cancelled"] == 1
+
+    fills = db.query(Fill).filter(Fill.pending_order_id == order.id).all()
+    assert [(f.quantity, f.price) for f in fills] == [(0.4, 10.0)]
+    pos = db.query(Position).filter(Position.symbol == "SOL").one()
+    assert pos.quantity == pytest.approx(0.4)
+    db.refresh(order)
+    assert order.exchange_order_id is None  # only unlinked AFTER the fill was booked
+
+
+def test_cancel_of_an_order_the_venue_already_filled_still_books_it(db, monkeypatch):
+    """-2011 means the venue no longer holds it — which is exactly when a fill is waiting."""
+    venue = _live(monkeypatch, _Venue(
+        cancel_error=OrderNotFound('binance {"code":-2011,"msg":"Unknown order sent."}'),
+        fetch_result=_filled(1.0, 10.0, status="closed"),
+    ))
+    order = _queued(db)
+    orders.sync_resting_orders(db)
+    order.status = REJECTED
+    db.commit()
+
+    assert orders.sync_resting_orders(db)["cancelled"] == 1
+    fills = db.query(Fill).filter(Fill.pending_order_id == order.id).all()
+    assert [(f.quantity, f.price) for f in fills] == [(1.0, 10.0)]
+    db.refresh(order)
+    assert order.exchange_order_id is None
+    assert venue.cancelled == []  # the venue refused the cancel; we booked anyway
+
+
+def test_a_transient_cancel_error_books_nothing_and_keeps_the_link(db, monkeypatch):
+    _live(monkeypatch, _Venue(cancel_error=RuntimeError("venue down"),
+                              fetch_result=_filled(0.4, 10.0)))
+    order = _queued(db)
+    orders.sync_resting_orders(db)
+    order.status = REJECTED
+    db.commit()
+
+    assert orders.sync_resting_orders(db)["cancelled"] == 0
+    assert db.query(Fill).filter(Fill.pending_order_id == order.id).count() == 0
+    db.refresh(order)
+    assert order.exchange_order_id == "X1"  # still tracked, still on the book
+
+
+def test_a_failed_final_read_keeps_the_link_so_the_fill_is_not_lost(db, monkeypatch):
+    """The cancel landed but we cannot see what filled — keep the link and retry, rather
+    than unlinking on a guess."""
+    _live(monkeypatch, _Venue(fetch_error=RuntimeError("venue down")))
+    order = _queued(db)
+    orders.sync_resting_orders(db)
+    order.status = REJECTED
+    db.commit()
+
+    assert orders.sync_resting_orders(db)["cancelled"] == 0
+    db.refresh(order)
+    assert order.exchange_order_id == "X1"
+
+
+def test_a_cancelled_order_that_filled_is_not_stamped_rejected_by_the_timeout(db, monkeypatch):
+    """A rung that turned out FILLED must not be recorded as a timed-out rejection."""
+    _live(monkeypatch, _Venue(fetch_result=_filled(1.0, 10.0, status="closed")))
+    settings.order_fill_timeout_sec = 60
+    order = _queued(db)
+    orders.sync_resting_orders(db)
+    order.created_at = datetime.utcnow() - timedelta(hours=2)
+    db.commit()
+
+    orders.sync_resting_orders(db)
+
+    db.refresh(order)
+    assert order.status == EXECUTED and order.reviewer != "resting-timeout"
 
 
 def test_executed_orders_are_left_alone(db, monkeypatch):

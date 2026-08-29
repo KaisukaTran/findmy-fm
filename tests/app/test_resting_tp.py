@@ -20,6 +20,11 @@ class _StubProvider:
 def _live(monkeypatch, *, maker=True, live=True):
     monkeypatch.setattr(execution, "live_enabled", lambda: live)
     monkeypatch.setattr("app.data.providers.live_provider", lambda: _StubProvider())
+    # Taking an order off the book reads its final status before unlinking (a cancel races
+    # the venue), so this has to be stubbed or the test would hit the real exchange.
+    monkeypatch.setattr(execution, "fetch_live_order", lambda pair, oid: {
+        "status": "canceled", "filled": 0.0, "average": 0.0, "fee": 0.0, "raw_id": oid,
+    })
     settings.maker_orders = maker
     settings.auto_trade = True
 

@@ -7,6 +7,12 @@ One command drives the app's OWN live path against Binance Spot testnet:
     -> poll orders.reconcile_live_orders -> book the Fill + Position if the venue filled it
     -> cancel whatever is still resting before exiting.
 
+``--force-match`` supplies the counter side so the venue really fills the rung. Waiting does
+not: the testnet book is simulated and deep, and two runs (90s, then 300s at 0.03% below the
+last price) never had it reach a passive rung. Rest the rung where it IS the best bid — a
+pair with a wide spread and a thin top — and cross it: ``--symbol YB/USDT --distance-pct 0.1
+--force-match``. See ``testnet_lib.cross_fill``.
+
 Nothing is simulated: the order really rests on testnet and the app's own functions place,
 read and book it. Only the database is disposable — the harness runs on a THROWAWAY SQLite
 file (``data/testnet_e2e.db``), so the paper and live books are never touched.
@@ -17,25 +23,21 @@ AUTO_TRADE are forced on because the resting model is exactly what is under test
 
     python scripts/testnet_e2e.py
     python scripts/testnet_e2e.py --symbol ETH/USDT --distance-pct 0.05 --wait-sec 180
+    python scripts/testnet_e2e.py --symbol YB/USDT --distance-pct 0.1 --force-match
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import time
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-OK, WARN, BAD = "[ok]", "[--]", "[!!]"
-_PROTECTED_DB = {"findmy.db", "live.db"}
-
-
-def _say(mark: str, msg: str) -> None:
-    print(f" {mark} {msg}")
+from testnet_lib import BAD, OK, WARN, cross_fill, prepare_env, require_testnet, say  # noqa: E402
 
 
 def _parse() -> argparse.Namespace:
@@ -50,49 +52,60 @@ def _parse() -> argparse.Namespace:
                     help="how long to wait for the venue to fill it (default 90)")
     ap.add_argument("--db", default="data/testnet_e2e.db",
                     help="throwaway SQLite file for this run (never the paper or live book)")
+    ap.add_argument("--force-match", action="store_true",
+                    help="cross the rung with a counter SELL from this same testnet account so "
+                         "the venue fills it - the only way to exercise the fill leg on a book "
+                         "whose depth never reaches a passive rung (testnet only)")
+    ap.add_argument("--max-cross-usd", type=float, default=60.0,
+                    help="refuse to cross a bid queue deeper than this (default $60)")
+    ap.add_argument("--rest-at-touch", action="store_true",
+                    help="price the rung one tick above the best bid instead of --distance-pct "
+                         "below the last trade, so nothing rests ahead of it (use with "
+                         "--force-match on a pair whose spread is wider than one tick)")
     return ap.parse_args()
 
 
 args = _parse()
-if Path(args.db).name in _PROTECTED_DB:
-    raise SystemExit(f"{BAD} refusing to run against {args.db} — use a throwaway database")
-
 # Settings are read at import time, so the environment must be shaped BEFORE app.config loads.
-Path(args.db).parent.mkdir(parents=True, exist_ok=True)
-# Start from an empty book every run. A previous run that died mid-way leaves its rung
-# queued, and the next run would rest that one too and only clean up its own.
-Path(args.db).unlink(missing_ok=True)
-os.environ["DATABASE_URL"] = f"sqlite:///{args.db}"
-os.environ["MAKER_ORDERS"] = "true"  # the resting model is what this harness exercises
-os.environ["AUTO_TRADE"] = "true"    # sync_resting_orders places only when auto-trade is on
+prepare_env(args.db)
 
 from app import execution, models, orders  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.data.providers import live_provider  # noqa: E402
-from app.db import Base, SessionLocal, engine  # noqa: E402
+from app.db import SessionLocal, init_db  # noqa: E402
 
 
 def _posture() -> None:
     print("\n1. Posture")
-    if not execution.live_enabled():
-        raise SystemExit(f" {BAD} live is off (needs LIVE_TRADING=true + keys) — nothing to test")
-    if not settings.live_use_testnet:
-        raise SystemExit(f" {BAD} LIVE_USE_TESTNET=false — refusing to trade with real keys")
-    _say(OK, f"live on {settings.live_exchange} TESTNET, maker={settings.maker_orders}, "
+    require_testnet(execution, settings)
+    say(OK, f"live on {settings.live_exchange} TESTNET, maker={settings.maker_orders}, "
              f"cap ${settings.live_max_order_notional:.2f}/BUY")
-    _say(OK, f"throwaway database {args.db} (paper and live books untouched)")
+    say(OK, f"throwaway database {args.db} (paper and live books untouched)")
 
 
 def _rung(ex, pair: str) -> tuple[float, float, float]:
-    """Return (last, price, qty) for a compliant rung below the TESTNET book."""
+    """Return (last, price, qty) for a compliant rung below the TESTNET book.
+
+    ``--rest-at-touch`` prices it one tick above the best bid instead of a % below the last
+    trade: still post-only (it stays under the ask), but with nothing queued ahead of it, so
+    a counter SELL reaches OUR order rather than 100k units of simulated depth.
+    """
     print("\n2. Build the rung from testnet's own book")
     last = float(ex.fetch_ticker(pair)["last"])
-    raw_price = last * (1.0 - args.distance_pct / 100.0)
     filters = execution.filters_from_market(ex.market(pair))
+    if args.rest_at_touch:
+        book = ex.fetch_order_book(pair, 5)
+        best_bid, best_ask = book["bids"][0][0], book["asks"][0][0]
+        raw_price = best_bid + filters["tickSize"]
+        if raw_price >= best_ask:  # one-tick spread: nothing to step into, join the queue
+            raw_price = best_bid
+        where = f"one tick above best bid {best_bid:g} (ask {best_ask:g})"
+    else:
+        raw_price = last * (1.0 - args.distance_pct / 100.0)
+        where = f"{args.distance_pct:g}% below last"
     price, qty = execution.round_to_filters(raw_price, args.notional / raw_price, filters,
                                             ref_price=last)
-    _say(OK, f"{pair} last={last:g} -> rung {qty:g} @ {price:g} "
-             f"(${price * qty:.2f}, {args.distance_pct:g}% below)")
+    say(OK, f"{pair} last={last:g} -> rung {qty:g} @ {price:g} (${price * qty:.2f}, {where})")
     return last, price, qty
 
 
@@ -103,21 +116,35 @@ def _queue(db, base: str, price: float, qty: float):
         source="kss", source_ref="pyramid:0:wave:0", strategy_name="testnet-e2e",
         note="live-readiness 1.8 end-to-end",
     )
-    _say(OK, f"pending order {order.id} queued" + (f" (risk: {risk_note})" if risk_note else ""))
+    say(OK, f"pending order {order.id} queued" + (f" (risk: {risk_note})" if risk_note else ""))
     return order
 
 
-def _rest(db, order) -> bool:
+def _rest(db, ex, order) -> bool:
     print("\n4. Place it on the exchange in advance (the 1.5 resting model)")
     counts = orders.sync_resting_orders(db)
     db.refresh(order)
     if not order.exchange_order_id:
-        _say(BAD, f"not placed ({counts}) — a post-only reject means the book already reached "
+        say(BAD, f"not placed ({counts}) — a post-only reject means the book already reached "
                   "the rung; raise --distance-pct and retry")
         return False
-    _say(OK, f"resting as exchange order {order.exchange_order_id} "
+    say(OK, f"resting as exchange order {order.exchange_order_id} "
              f"(status={order.exchange_status}, local status still {order.status})")
+    book = ex.fetch_order_book(args.symbol, 5)
+    best_bid = book["bids"][0] if book["bids"] else (0.0, 0.0)
+    say(OK, f"book now: best bid {best_bid[0]:g} x {best_bid[1]:g}"
+             + (" (that IS our rung — nothing queued ahead of it)"
+                if abs(best_bid[0] - order.price) < 1e-12 else
+                f", our rung sits at {order.price:g}"))
     return True
+
+
+def _cross(ex, order) -> None:
+    """Supply the counter side so the venue fills the rung (--force-match)."""
+    print("\n4b. Cross the rung from this same testnet account (test-only liquidity)")
+    out = cross_fill(ex, args.symbol, order.price, max_cross_usd=args.max_cross_usd)
+    say(OK, f"counter SELL {out['quantity']:g} @ {order.price:g} (${out['notional']:.2f}) "
+             f"-> id={out['id']} status={out['status']} filled={out['filled']:g}")
 
 
 def _poll(db, order) -> bool:
@@ -130,36 +157,51 @@ def _poll(db, order) -> bool:
             pos = db.query(models.Position).filter(
                 models.Position.symbol == order.symbol).one_or_none()
             for f in fills:
-                _say(OK, f"Fill booked: {f.quantity:g} @ {f.price:g} (fee {f.fee:g})")
-            _say(OK, f"Position {order.symbol}: qty={pos.quantity:g} avg={pos.avg_entry_price:g}"
+                say(OK, f"Fill booked: {f.quantity:g} @ {f.price:g} (fee {f.fee:g})")
+            say(OK, f"Position {order.symbol}: qty={pos.quantity:g} avg={pos.avg_entry_price:g}"
                  if pos else f"{BAD} no Position row — reconcile booked a fill without one")
             db.refresh(order)
-            _say(OK, f"order status={order.status} exchange_status={order.exchange_status}")
+            say(OK, f"order status={order.status} exchange_status={order.exchange_status}")
+            _idempotent(db, order, len(fills))
             return True
         time.sleep(5)
-    _say(WARN, "no fill inside the window — expected when the price never dipped to the rung. "
+    say(WARN, "no fill inside the window — expected when the price never dipped to the rung. "
                "The placement, status and cancel paths are still proven above.")
     return False
+
+
+def _idempotent(db, order, fills_after_booking: int) -> None:
+    """A second reconcile pass must book nothing: one venue transition = exactly one Fill."""
+    print("\n5b. Re-run reconcile — booking a real fill has to be idempotent")
+    again = orders.reconcile_live_orders(db)
+    total = db.query(models.Fill).filter(models.Fill.pending_order_id == order.id).count()
+    if again or total != fills_after_booking:
+        say(BAD, f"NOT idempotent: second pass booked {again}, fills {fills_after_booking}"
+                  f"->{total} — the same venue fill was recorded twice")
+        return
+    say(OK, f"second pass booked nothing, still {total} Fill(s) for order {order.id}")
 
 
 def _cleanup(db) -> None:
     """Cancel every order this run left on the book — not just the one we tracked."""
     print("\n6. Cleanup")
-    resting = (
-        db.query(models.PendingOrder)
-        .filter(models.PendingOrder.exchange_order_id.isnot(None))
-        .all()
-    )
+    resting = [
+        o for o in db.query(models.PendingOrder)
+        .filter(models.PendingOrder.exchange_order_id.isnot(None)).all()
+        # A filled order is off the book already; cancelling it earns -2011, which would read
+        # as "a live order was left behind" when nothing was.
+        if str(o.exchange_status or "").lower() not in orders._TERMINAL_EXCHANGE_STATUS
+    ]
     if not resting:
-        _say(OK, "nothing left resting")
+        say(OK, "nothing left resting")
         return
     for order in resting:
         try:
             execution.cancel_live_order(live_provider().pair(order.symbol),
                                         order.exchange_order_id)
-            _say(OK, f"cancelled {order.exchange_order_id}")
+            say(OK, f"cancelled {order.exchange_order_id}")
         except Exception as exc:  # never leave a live order behind silently
-            _say(BAD, f"CANCEL FAILED for {order.exchange_order_id}: {type(exc).__name__} {exc} "
+            say(BAD, f"CANCEL FAILED for {order.exchange_order_id}: {type(exc).__name__} {exc} "
                       "— cancel it by hand on testnet.binance.vision")
 
 
@@ -168,16 +210,19 @@ def main() -> int:
           f"distance={args.distance_pct:g}% | wait={args.wait_sec}s")
     _posture()
 
-    Base.metadata.create_all(bind=engine)
+    init_db()  # the app's own bootstrap: every table, incl. the ones the KSS hook reads
     db = SessionLocal()
     base = args.symbol.partition("/")[0]
     order = None
     try:
         ex = execution._client()
+        ex.load_markets()  # ccxt's .market() raises until something has loaded them
         _, price, qty = _rung(ex, args.symbol)
         order = _queue(db, base, price, qty)
-        if not _rest(db, order):
+        if not _rest(db, ex, order):
             return 1
+        if args.force_match:
+            _cross(ex, order)
         _poll(db, order)
     except Exception as exc:
         print(f"\n {BAD} {type(exc).__name__}: {exc}")

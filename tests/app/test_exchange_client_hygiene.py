@@ -19,9 +19,8 @@ Three faults the Binance audit found in how we talk to the venue:
 
 from __future__ import annotations
 
-import pytest
-
 import ccxt
+import pytest
 
 from app import execution
 from app.config import settings

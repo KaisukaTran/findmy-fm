@@ -63,16 +63,23 @@ def _base_url() -> str:
 # Instance identity (paper vs live) — for labelling alerts + command routing
 # ---------------------------------------------------------------------------
 
-_INSTANCES = ("paper", "live")
-_LABELS = {"live": "[LIVE]", "paper": "[PAPER]"}
+_INSTANCES = ("paper", "testnet", "live")
+_LABELS = {"live": "[LIVE]", "testnet": "[TESTNET]", "paper": "[PAPER]"}
 
 
 def instance_name() -> str:
-    """'live' or 'paper' for THIS instance, derived from settings.live_trading.
+    """'live', 'testnet' or 'paper' for THIS instance.
 
-    Both instances may share one bot; this tag tells paper and live apart in every
-    outbound message and is the target keyword for routed commands ('/pause live')."""
-    return "live" if settings.live_trading else "paper"
+    THREE states, not two: paper simulates fills locally, TESTNET places real orders on the
+    exchange with play money, and LIVE risks real funds. The label used to read live_trading
+    alone, so testnet was tagged [LIVE] — a month of testnet would look exactly like real
+    money in the chat, and on the day the money became real nothing about the messages would
+    change. Telling those apart is the whole point of the tag.
+
+    Instances may share one bot; the name also routes commands ('/pause live')."""
+    if not settings.live_trading:
+        return "paper"
+    return "testnet" if settings.live_use_testnet else "live"
 
 
 def _label(name: str) -> str:

@@ -33,7 +33,10 @@ def test_instance_name_paper_by_default(monkeypatch):
 
 
 def test_instance_name_live_when_live_trading(monkeypatch):
+    # REAL money only. live_trading with the testnet flag on is 'testnet', which the chat has
+    # to show differently — see test_notify_testnet_label.py.
     monkeypatch.setattr(settings, "live_trading", True)
+    monkeypatch.setattr(settings, "live_use_testnet", False)
     assert notify.instance_name() == "live"
     assert notify._label("live") == "[LIVE]"
 

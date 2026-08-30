@@ -1895,28 +1895,18 @@ def manage_orphan_positions(db: Session) -> list[str]:
         return []
     opus_syms = {p.symbol for p in db.query(OpusPosition).filter(
         OpusPosition.state.in_((OPUS_WATCH, OPUS_RIDE)))}
-    # A symbol with an exit (SELL) already queued/approved is NOT an orphan: its position is about
-    # to be sold by that in-flight order. The classic case is a KSS TP — the session queues its
-    # SELL and goes inactive in the SAME cycle, but the SELL has not filled yet, so the leftover
-    # qty would be mistaken for an orphan and sold a SECOND time (phantom fill + double-counted
-    # fee, and pre-guard double-realized P&L). Defer; a genuine leftover remainder is swept on a
-    # later cycle once no SELL is in flight.
-    pending_sell_syms = {
-        sym for (sym,) in db.query(PendingOrder.symbol).filter(
-            PendingOrder.status.in_((PENDING, APPROVED)), PendingOrder.side == "SELL"
-        )
-    }
-
     # A session manages only the quantity IT filled, so "covered" is a QUANTITY question, not a
     # symbol one. Whatever a symbol holds ABOVE what its ACTIVE sessions account for has no
     # take-profit, no stop and no ladder — precisely what this function exists to catch. Live
     # case (2026-08-30): positions.ARB = 344 while the only ACTIVE ARB session held 172, because
-    # a rung filled into a session that was already STOPPED. ARB was in kss_syms, so all 344
-    # counted as covered and the extra 172 was managed by nothing at all.
+    # a rung filled into a session that was already STOPPED. All 344 read as covered and the
+    # extra 172 was managed by nothing at all.
     held: dict[str, float] = {}
     untrusted: set[str] = set()
+    active_ids: set[int] = set()
     for s in db.query(KssSession).filter(KssSession.status == SESSION_ACTIVE).all():
         qty = s.total_filled_qty or 0.0
+        active_ids.add(s.id)
         # An ACTIVE session reporting zero filled quantity is an accounting we cannot subtract
         # against — treat its whole symbol as managed, exactly as before. Selling a live
         # session's position because a counter had not caught up would be far worse than
@@ -1924,9 +1914,28 @@ def manage_orphan_positions(db: Session) -> list[str]:
         if qty <= 0:
             untrusted.add(s.symbol)
         held[s.symbol] = held.get(s.symbol, 0.0) + qty
+
+    # An in-flight SELL also covers quantity — but only the quantity NOBODY ELSE is counting.
+    # An ACTIVE session's own resting take-profit sells the very units already counted in
+    # `held`, so adding it would double-count them: under the 1.5 resting model every ACTIVE
+    # session always has a TP on the book, which made a symbol-level defer here permanent and
+    # this whole check a no-op. What DOES add coverage is a SELL no active session owns: the
+    # classic KSS TP whose session went inactive in the same cycle (leftover qty would
+    # otherwise be sold a SECOND time — phantom fill, double fee, double-realized P&L), and an
+    # `orphan:` exit this function queued on an earlier cycle.
+    for o in db.query(PendingOrder).filter(
+            PendingOrder.status.in_((PENDING, APPROVED)), PendingOrder.side == "SELL").all():
+        ref = str(o.source_ref or "")
+        if ref.startswith("pyramid:"):
+            try:
+                if int(ref.split(":")[1]) in active_ids:
+                    continue  # this exit belongs to a session already counted in `held`
+            except (IndexError, ValueError):
+                pass
+        held[o.symbol] = held.get(o.symbol, 0.0) + (o.quantity or 0.0)
     # OPUS tracks its own quantity separately and a queued SELL is already taking the position
     # out; leave both entirely alone rather than guess at their share.
-    deferred = opus_syms | pending_sell_syms | untrusted
+    deferred = opus_syms | untrusted
 
     orphans: list[tuple[Position, float]] = []
     for p in positions:

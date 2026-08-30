@@ -1884,6 +1884,7 @@ def manage_orphan_positions(db: Session) -> list[str]:
 
     Sells at market when unrealized ≥ scan_tp_pct (and clears cost+fee, K-2) or ≤ −sl_pct.
     """
+    from app import costengine
     from app.config import settings
     from app.market import get_current_prices
     from app.models import APPROVED, PENDING, PendingOrder, Position
@@ -1892,7 +1893,6 @@ def manage_orphan_positions(db: Session) -> list[str]:
     positions = db.query(Position).filter(Position.quantity > 0).all()
     if not positions:
         return []
-    kss_syms = {s.symbol for s in db.query(KssSession).filter(KssSession.status == SESSION_ACTIVE)}
     opus_syms = {p.symbol for p in db.query(OpusPosition).filter(
         OpusPosition.state.in_((OPUS_WATCH, OPUS_RIDE)))}
     # A symbol with an exit (SELL) already queued/approved is NOT an orphan: its position is about
@@ -1906,14 +1906,42 @@ def manage_orphan_positions(db: Session) -> list[str]:
             PendingOrder.status.in_((PENDING, APPROVED)), PendingOrder.side == "SELL"
         )
     }
-    managed = kss_syms | opus_syms | pending_sell_syms
 
-    orphans = [p for p in positions if p.symbol not in managed and p.avg_entry_price > 0]
+    # A session manages only the quantity IT filled, so "covered" is a QUANTITY question, not a
+    # symbol one. Whatever a symbol holds ABOVE what its ACTIVE sessions account for has no
+    # take-profit, no stop and no ladder — precisely what this function exists to catch. Live
+    # case (2026-08-30): positions.ARB = 344 while the only ACTIVE ARB session held 172, because
+    # a rung filled into a session that was already STOPPED. ARB was in kss_syms, so all 344
+    # counted as covered and the extra 172 was managed by nothing at all.
+    held: dict[str, float] = {}
+    untrusted: set[str] = set()
+    for s in db.query(KssSession).filter(KssSession.status == SESSION_ACTIVE).all():
+        qty = s.total_filled_qty or 0.0
+        # An ACTIVE session reporting zero filled quantity is an accounting we cannot subtract
+        # against — treat its whole symbol as managed, exactly as before. Selling a live
+        # session's position because a counter had not caught up would be far worse than
+        # leaving a remainder unmanaged for another cycle.
+        if qty <= 0:
+            untrusted.add(s.symbol)
+        held[s.symbol] = held.get(s.symbol, 0.0) + qty
+    # OPUS tracks its own quantity separately and a queued SELL is already taking the position
+    # out; leave both entirely alone rather than guess at their share.
+    deferred = opus_syms | pending_sell_syms | untrusted
+
+    orphans: list[tuple[Position, float]] = []
+    for p in positions:
+        if p.avg_entry_price <= 0 or p.symbol in deferred:
+            continue
+        excess = p.quantity - held.get(p.symbol, 0.0)
+        # Fees and rounding leave slivers; chasing those churns fees for a quantity the venue
+        # would refuse anyway.
+        if excess > 0 and costengine.notional_ok(excess * p.avg_entry_price):
+            orphans.append((p, excess))
     if not orphans:
         return []
-    prices = get_current_prices([p.symbol for p in orphans])
+    prices = get_current_prices([p.symbol for p, _ in orphans])
     swept: list[str] = []
-    for p in orphans:
+    for p, excess in orphans:
         px = prices.get(p.symbol)
         if not px:
             continue
@@ -1925,7 +1953,7 @@ def manage_orphan_positions(db: Session) -> list[str]:
             tag = "sl"
         if not tag:
             continue
-        orders.queue_order(db, symbol=p.symbol, side="SELL", quantity=p.quantity, price=0.0,
+        orders.queue_order(db, symbol=p.symbol, side="SELL", quantity=excess, price=0.0,
                            order_type="MARKET", source="kss", source_ref=f"orphan:{tag}",
                            strategy_name="Orphan", note=f"orphan {tag} @ {upnl_pct:.1f}%")
         audit.log(db, "scheduler", f"orphan_{tag}", entity=p.symbol, symbol=p.symbol,

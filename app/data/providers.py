@@ -1,10 +1,10 @@
 """
 Pluggable market-data providers built on ccxt (public endpoints only — no API key).
 
-A provider abstracts an exchange so the rest of the app can swap Binance (live
-prices) for Kraken / Coinbase (real historical data for backtests and tests)
-without code changes. Different exchanges use different quote assets, so each
-provider knows its own quote (Binance→USDT, Kraken/Coinbase→USD).
+A provider wraps a single ccxt exchange behind one interface. Binance is the only
+supported venue (live prices AND historical/scan data) — no other venue should be
+configured. Each provider still knows its own quote asset (Binance→USDT) so the
+abstraction degrades safely if a non-Binance ccxt id is ever passed in.
 
 All network failures degrade gracefully (empty list / safe defaults) so a flaky
 exchange never crashes a scan.
@@ -20,13 +20,14 @@ import ccxt
 
 logger = logging.getLogger(__name__)
 
-# ccxt id -> quote asset used for that exchange's USD-ish spot pairs
+# ccxt id -> quote asset used for that exchange's USD-ish spot pairs.
+# Binance is the only venue this app configures at runtime; the rest stay only
+# because tests exercise the abstraction (offline, no network) against them.
 _QUOTES = {
     "binance": "USDT",
     "binanceus": "USDT",
     "kucoin": "USDT",
     "okx": "USDT",
-    "kraken": "USD",
     "coinbase": "USD",
     "coinbasepro": "USD",
     "bitstamp": "USD",

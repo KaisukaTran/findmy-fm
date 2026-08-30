@@ -61,7 +61,7 @@ Then edit that `.env`:
 ```dotenv
 LIVE_TRADING=true                 # master switch (the live instance runs with it on)
 LIVE_USE_TESTNET=true             # routes orders to testnet.binance.vision
-LIVE_EXCHANGE=binance             # the default is kraken — testnet here is Binance-specific
+LIVE_EXCHANGE=binance             # already the default; explicit here since testnet is Binance-specific
 LIVE_API_KEY=<testnet key>
 LIVE_API_SECRET=<testnet secret>
 LIVE_MAX_ORDER_NOTIONAL=25        # per-BUY cap; keep it small even on testnet

@@ -26,7 +26,7 @@ class _FakeEx:
 
 
 def _provider():
-    p = CcxtProvider("kraken")  # ccxt.kraken() constructs offline; no network until a fetch
+    p = CcxtProvider("coinbase")  # ccxt.coinbase() constructs offline; no network until a fetch
     p._ex = _FakeEx()
     return p
 

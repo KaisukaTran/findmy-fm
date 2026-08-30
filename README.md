@@ -138,7 +138,7 @@ reference** — copy it to `.env` and override only what you need. Highlights:
 | `REQUIRE_AUTH` | `false` | Enforce the `X-API-Key` header on write endpoints. |
 | `API_KEY` | `dev-key` | Shared key for mutation endpoints when auth is on. |
 | `DATABASE_URL` | `sqlite:///./data/findmy.db` | Single SQLite database. |
-| `LIVE_EXCHANGE` / `DATA_EXCHANGE` | `kraken` | Public `ccxt` ids for prices / backtest history. |
+| `LIVE_EXCHANGE` / `DATA_EXCHANGE` | `binance` | Public `ccxt` ids for prices / backtest history — Binance is the only supported venue. |
 | `MIN_WIN_RATE` / `MIN_CONFIDENCE` | `80` / `70` | Scanner gates a pair must clear to trade. |
 | `AUTO_TRADE` | `false` | Full-auto: auto-approve qualifying KSS orders. |
 | `SCHEDULER_ENABLED` | `false` | Run the background scan/manage loop. |

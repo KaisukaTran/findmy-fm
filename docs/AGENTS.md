@@ -12,9 +12,9 @@ risk-checked). Every AI action is **audit-logged**.
 ## Data (real prices, no API key)
 
 `app/data/providers.py` wraps ccxt public endpoints. `settings.live_exchange`
-(default `binance`) serves live prices; `settings.data_exchange` (default
-`kraken`) serves historical OHLCV + top-symbols for scans/backtests — no key, no
-new dependency. Quote asset is per-exchange (Binance→USDT, Kraken/Coinbase→USD).
+and `settings.data_exchange` both default to `binance` — the only supported
+venue — serving live prices and historical OHLCV + top-symbols for
+scans/backtests respectively, no key, no new dependency. Binance's quote is USDT.
 
 ## Pipeline (`app/scanner.py::run_scan`)
 
@@ -57,7 +57,7 @@ approval flow) and logs `deadline_close`. Called at the start of every scan.
 ```bash
 export SCAN_TOP_N=0        # watchlist only (faster)
 uvicorn app.main:app --port 8000
-curl -X POST localhost:8000/api/scan        # evaluates BTC/ETH/SOL on Kraken
+curl -X POST localhost:8000/api/scan        # evaluates BTC/ETH/SOL on Binance
 curl localhost:8000/api/candidates
 ```
 

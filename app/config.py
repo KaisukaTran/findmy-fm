@@ -141,10 +141,10 @@ class Settings(BaseSettings):
         description="Display timezone offset from UTC (Vietnam = +7). Storage stays UTC; this "
         "only shifts timestamps shown in the dashboard/charts.",
     )
-    live_exchange: str = Field(default="kraken", description="ccxt exchange id for live prices (public, no key — e.g. binance/kraken/gateio/okx/bybit). NOTE: binance.com is reachable from this machine (re-verified 2026-06-13); override via .env LIVE_EXCHANGE.")
+    live_exchange: str = Field(default="binance", description="ccxt exchange id for live prices (public, no key). Binance is the only supported venue — NOTE: binance.com is reachable from this machine (re-verified 2026-06-13); override via .env LIVE_EXCHANGE.")
     data_exchange: str = Field(
-        default="kraken",
-        description="ccxt exchange id for backtest/scan history (public, no key — e.g. kraken/coinbase).",
+        default="binance",
+        description="ccxt exchange id for backtest/scan history (public, no key). Binance is the only supported venue.",
     )
     live_ws_prices: bool = Field(
         default=True,

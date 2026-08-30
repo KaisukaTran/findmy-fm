@@ -15,7 +15,7 @@ class _FakeEx:
         self._order = order
         self.calls = []
 
-    def create_order(self, pair, otype, side, qty, price=None):
+    def create_order(self, pair, otype, side, qty, price=None, params=None):
         self.calls.append((pair, otype, side, qty, price))
         return self._order
 
@@ -170,10 +170,11 @@ class _MakerFakeEx:
 
 
 def test_order_placement_maps_kind_and_params():
-    assert execution.order_placement("MARKET", True) == ("market", {})
-    assert execution.order_placement("market", True) == ("market", {})   # case-insensitive
-    assert execution.order_placement("LIMIT", True) == ("limit", {"postOnly": True})
-    assert execution.order_placement("LIMIT", False) == ("limit", {})
+    stp = {"selfTradePreventionMode": execution.SELF_TRADE_PREVENTION["SELL"]}
+    assert execution.order_placement("MARKET", True) == ("market", stp)
+    assert execution.order_placement("market", True) == ("market", stp)   # case-insensitive
+    assert execution.order_placement("LIMIT", True) == ("limit", {**stp, "postOnly": True})
+    assert execution.order_placement("LIMIT", False) == ("limit", stp)
 
 
 def test_is_post_only_reject():
@@ -209,7 +210,7 @@ def test_maker_order_is_postonly_and_filter_rounded(monkeypatch):
 
     _, otype, _, qty, price, params = fake.calls[0]
     assert otype == "limit"
-    assert params == {"postOnly": True}
+    assert params["postOnly"] is True
     assert price == 142.34   # rounded to tickSize
     assert qty == 0.037      # floored to stepSize
     assert res["status"] == "open" and res["quantity"] == 0.0   # resting, not a phantom fill
@@ -233,7 +234,7 @@ def test_risk_exit_stays_taker_market_even_with_maker_on(monkeypatch):
     res = execution.place_live_order("SOL/USDT", "SELL", 3.0, 0.0, "MARKET", maker_orders=True)
     _, otype, _, _, _, params = fake.calls[0]
     assert otype == "market"
-    assert params is None        # no postOnly on a risk-exit market order
+    assert "postOnly" not in (params or {})   # no postOnly on a risk-exit market order
     assert res["quantity"] == 3.0
 
 
@@ -266,7 +267,7 @@ def test_place_live_order_sends_client_order_id(monkeypatch):
     execution.place_live_order("SOL/USDT", "BUY", 5.0, 0.0, "MARKET", client_order_id="fm-7")
     _, otype, _, _, _, params = fake.calls[0]
     assert otype == "market"
-    assert params == {"clientOrderId": "fm-7"}
+    assert params["clientOrderId"] == "fm-7"
 
 
 class _DupFakeEx(_MakerFakeEx):

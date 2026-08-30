@@ -13,7 +13,9 @@ and never falls back to paper on error — a live failure must surface, not be h
 
 from __future__ import annotations
 
+import collections
 import logging
+import re
 import time
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 
@@ -61,11 +63,18 @@ _rate_limited_until: float = 0.0
 
 
 def reset_client_cache() -> None:
-    """Drop the cached clients and any rate-limit hold (tests, and a credentials change)."""
-    global _rate_limited_until
+    """Drop the cached clients and every hold — rate-limit, order-count budget, weight budget,
+    and the cached venue limits (tests, and a credentials change)."""
+    global _rate_limited_until, _weight_hold_until, _weight_limit_per_min
+    global _venue_limits_cache, _venue_limits_fetched_at
     _CLIENTS.clear()
     _last_clock_refresh.clear()
     _rate_limited_until = 0.0
+    _weight_hold_until = 0.0
+    _weight_limit_per_min = WEIGHT_LIMIT_PER_MIN
+    _venue_limits_cache = None
+    _venue_limits_fetched_at = 0.0
+    reset_order_budget()
 
 
 def rate_limited_until() -> float:
@@ -104,6 +113,15 @@ def note_rate_error(exc: Exception, retry_after: float | None = None) -> str:
     elif action == "retry":
         pause = float(wait or 1.0)
         logger.warning("LIVE rate limited (429) — pausing exchange calls for %.0fs", pause)
+    elif action == "orders_exceeded":
+        # -1015: the ACCOUNT is over its ORDERS budget. Same hold mechanism as a 429/418 —
+        # which already exempts a SELL via assert_not_rate_limited(urgent=True) — sized to the
+        # window the venue actually named instead of a flat 1s retry.
+        pause = float(wait or ORDERS_EXCEEDED_DEFAULT_WAIT)
+        logger.warning(
+            "LIVE order-count budget exceeded (-1015) — pausing NEW exposure for %.0fs "
+            "(exits are never held back)", pause,
+        )
     else:
         return action
     _rate_limited_until = max(_rate_limited_until, time.monotonic() + pause)
@@ -186,7 +204,7 @@ def place_live_order(
     side_l = side.lower()
     if maker_orders is None:
         maker_orders = settings.maker_orders
-    ccxt_type, base_params = order_placement(order_type, maker_orders)
+    ccxt_type, base_params = order_placement(order_type, maker_orders, side=side)
     params = dict(base_params)
     if client_order_id:
         params["clientOrderId"] = client_order_id
@@ -221,7 +239,10 @@ def place_live_order(
             logger.warning("live %s %s: filters reject qty %s — sending unrounded (exits are "
                            "never blocked)", side, pair, qty)
 
-    assert_not_rate_limited(urgent=side_l == "sell")
+    urgent = side_l == "sell"
+    assert_not_rate_limited(urgent=urgent)
+    assert_order_budget_available(urgent=urgent)
+    assert_weight_budget_available(urgent=urgent)
     try:
         if ccxt_type == "market" or px <= 0:
             order = ex.create_order(pair, "market", side_l, qty, None, params) if params \
@@ -230,6 +251,12 @@ def place_live_order(
             order = ex.create_order(pair, "limit", side_l, qty, px, params)
         else:
             order = ex.create_order(pair, "limit", side_l, qty, px)
+        # A request that actually reached the venue spends its ORDERS/REQUEST_WEIGHT budget
+        # regardless of what happens to it next — record it here, inside the try, so a
+        # duplicate-recovery (which skips this whole block, see except below) never re-counts
+        # a placement that was already recorded on the lost original attempt.
+        record_order_placed()
+        _note_weight_usage(ex)
     except Exception as exc:
         # 'Duplicate order' (also code -2010): this exact clientOrderId was already accepted
         # on a prior, lost attempt — recover it rather than place a second order.
@@ -254,6 +281,12 @@ def place_live_order(
     if str(status).lower() == "closed" and filled <= 0:
         # Fully-filled (e.g. a marketable order) but the venue omitted `filled` → trust amount.
         filled = float(order.get("amount") or qty)
+    if str(status).lower() == "closed" and filled > 0:
+        # A synchronous fill (every taker/MARKET order — every risk exit, and the wave-0
+        # entry) frees its own ORDERS-budget slot immediately. A resting maker order stays
+        # outstanding until app.orders._book_delta credits it back on the async fill it
+        # discovers later (reconciliation) — see the order-count budget note near the bottom.
+        record_order_filled()
     avg = float(order.get("average") or 0.0)
     if avg <= 0 and filled > 0:  # fall back to a price ONLY when something actually filled
         avg = float(order.get("price") or px or 0.0)
@@ -377,6 +410,7 @@ def fetch_live_order(pair: str, order_id: str) -> dict:
     except Exception as exc:
         note_rate_error(exc)
         raise
+    _note_weight_usage(ex)
     status = order.get("status")
     filled = float(order.get("filled") or 0.0)
     avg = float(order.get("average") or 0.0)
@@ -433,20 +467,42 @@ def round_to_filters(price: float, qty: float, filters: dict, ref_price: float |
 
 # --- 1.3: maker placement (post-only entries/TP; risk exits stay taker) -----------------
 
+# Binance forbids self-trading as market manipulation, and this strategy meets itself
+# routinely: an ACTIVE session rests DCA rung BUYs below the market AND a take-profit SELL
+# above it, so a taker order of ours can cross a resting order of ours. Production Binance
+# rejects `NONE` outright (testnet allows it — that is how the 1.8 harness crosses its own
+# rung, see scripts/testnet_lib.py, testnet-gated), so the match itself cannot be opted out
+# of. What IS ours to choose is which side dies, and the venue reads that from the TAKER's
+# mode; inheriting the account default would leave it to a setting we do not control.
+#
+# So the mode is per-side, and both halves protect the same thing:
+#   SELL taker (a stop sweeping down through our rungs) → EXPIRE_MAKER: the rung gives way.
+#   BUY  taker (wave-0 entry, pyramid_up add) → EXPIRE_TAKER: the BUY gives way, because the
+#     maker it would otherwise kill is our own resting take-profit — and we would not even
+#     notice, since that row keeps `exchange_status='open'` until the slow reconcile pass.
+# A cancelled entry is retried next cycle. A cancelled exit is the one unforgivable bug.
+SELF_TRADE_PREVENTION = {"SELL": "EXPIRE_MAKER", "BUY": "EXPIRE_TAKER"}
 
-def order_placement(order_type: str, maker_orders: bool) -> tuple[str, dict]:
+
+def order_placement(order_type: str, maker_orders: bool, side: str = "SELL") -> tuple[str, dict]:
     """Map an order to its ccxt ``(type, params)``.
 
-    MARKET → ``("market", {})`` — risk exits (SL/trailing/close/OPUS) always take, never
+    MARKET → ``("market", …)`` — risk exits (SL/trailing/close/OPUS) always take, never
     slowed (see the drawdown-exit invariant). LIMIT → a post-only ``("limit", {postOnly})``
     when ``maker_orders`` is on (Binance routes post-only limits as ``LIMIT_MAKER``), else a
-    plain ``("limit", {})``. Pure.
+    plain limit. Carries the side's ``SELF_TRADE_PREVENTION`` mode, but only on Binance — the
+    param is Binance-only and an unknown one would be rejected on every order, exits included.
+    ``side`` defaults to the exit-safe mode. Pure.
     """
+    params: dict = {}
+    if settings.live_exchange == "binance":
+        params["selfTradePreventionMode"] = SELF_TRADE_PREVENTION.get(
+            side.upper(), SELF_TRADE_PREVENTION["SELL"])
     if order_type.upper() == "MARKET":
-        return "market", {}
+        return "market", params
     if maker_orders:
-        return "limit", {"postOnly": True}
-    return "limit", {}
+        return "limit", {**params, "postOnly": True}
+    return "limit", params
 
 
 def is_post_only_reject(exc: Exception) -> bool:
@@ -572,8 +628,10 @@ def weight_backoff_seconds(
 
 def classify_rate_error(exc: Exception, retry_after: float | None = None) -> tuple[str, float | None]:
     """Map an exchange error to an action: ``('retry', seconds)`` for HTTP 429 (rate limited —
-    honour Retry-After), ``('halt', None)`` for HTTP 418 (IP banned — stop live + alert), or
-    ``('raise', None)`` for anything else (the caller re-raises). Pure; no sleeping/IO here."""
+    honour Retry-After), ``('halt', None)`` for HTTP 418 (IP banned — stop live + alert),
+    ``('orders_exceeded', seconds)`` for Binance ``-1015`` (the ACCOUNT is over its ORDERS
+    budget — narrower than a generic 429), or ``('raise', None)`` for anything else (the
+    caller re-raises). Pure; no sleeping/IO here."""
     # Match on the HTTP STATUS, never on a substring of the message. ccxt puts the request URL
     # in the exception text, and a Binance signed URL carries orderId, a 13-digit timestamp and
     # a 64-hex signature — so about 3% of ordinary network errors contain "418" somewhere and
@@ -581,6 +639,17 @@ def classify_rate_error(exc: Exception, retry_after: float | None = None) -> tup
     status = getattr(exc, "http_status_code", None) or getattr(exc, "code", None)
     if status == 418:
         return "halt", None
+    text = str(exc)
+    if _is_orders_budget_exceeded(text):
+        # -1015 arrives as an ordinary HTTP 429 — ccxt raises the very same DDoSProtection it
+        # uses for an IP-level throttle (see handle_errors in ccxt's binance.py: it branches on
+        # HTTP status before ever looking at the body's own error code) — but it means something
+        # narrower: the ACCOUNT is over its ORDERS budget (100/10s or 200000/day; queried
+        # 2026-08-30: developers.binance.com/docs/binance-spot-api-docs/faqs/order_count_decrement),
+        # not the IP over REQUEST_WEIGHT. Caught here, before the generic 429/DDoSProtection
+        # branches below, so it is never swallowed as an anonymous 1s retry — a pause too short
+        # for the window that actually caused it.
+        return "orders_exceeded", _orders_exceeded_wait(text, retry_after)
     if status == 429:
         return "retry", (retry_after if retry_after is not None else 1.0)
     if isinstance(exc, getattr(ccxt, "DDoSProtection", ())):
@@ -591,3 +660,280 @@ def classify_rate_error(exc: Exception, retry_after: float | None = None) -> tup
             return "halt", None
         return "retry", (retry_after if retry_after is not None else 1.0)
     return "raise", None
+
+
+ORDERS_EXCEEDED_DEFAULT_WAIT = 10.0  # the smallest real ORDERS window (10s), when unparseable
+_WINDOW_UNIT_SECONDS = {"second": 1.0, "minute": 60.0, "hour": 3600.0, "day": 86400.0}
+
+
+def _is_orders_budget_exceeded(text: str) -> bool:
+    """True for Binance ``-1015`` "Too many new orders" (queried 2026-08-30:
+    developers.binance.com/docs/binance-spot-api-docs/faqs/order_count_decrement) — an
+    ACCOUNT-level ORDERS-budget breach, not the IP-level REQUEST_WEIGHT throttle a bare 429
+    usually means. Matches the raw JSON code (ccxt embeds the response body verbatim) and the
+    human message, so either shape is recognised."""
+    return '"code":-1015' in text.replace(" ", "") or "too many new orders" in text.lower()
+
+
+def _orders_exceeded_wait(text: str, retry_after: float | None) -> float:
+    """Pause for an ORDERS-budget breach. Binance's own message names the window that was
+    breached ("... per 10 seconds."/"... per 1 DAY.") — honour that instead of a generic 1s
+    retry, since a breach of the DAY bucket is not cleared by a one-second nap. Falls back to
+    Retry-After, then a conservative default sized to the smallest real ORDERS window."""
+    if retry_after is not None:
+        return max(float(retry_after), 0.0) or ORDERS_EXCEEDED_DEFAULT_WAIT
+    match = re.search(r"(\d+)\s*(second|minute|hour|day)s?", text, re.IGNORECASE)
+    if match:
+        return float(match.group(1)) * _WINDOW_UNIT_SECONDS.get(match.group(2).lower(), 1.0)
+    return ORDERS_EXCEEDED_DEFAULT_WAIT
+
+
+# --- order-count budget (Binance ORDERS: an unfilled-order COUNT, not a raw per-window tally) -
+#
+# Binance's own FAQ (queried 2026-08-30: developers.binance.com/docs/binance-spot-api-docs/
+# faqs/order_count_decrement) says the 100/10s and 200000/1d ORDERS limits track an UNFILLED
+# order count, shared account-wide across every IP, API key and API (rotating keys does not
+# evade it): a successful placement adds 1; a FILL credits some of it back (more for an
+# efficient maker fill — Binance rewards resting liquidity); a CANCEL or an EXPIRY credits back
+# NOTHING. Exceeding it is HTTP 429 with body code -1015 (see classify_rate_error above).
+#
+# That makes the 1.5 resting model's cancel+replace cycle (`_cancel_resting`/
+# `sync_resting_orders` in app/orders.py) the pattern most likely to exhaust it here — every
+# re-rest spends a fresh unit with no refund for the one it replaced — and it means our own
+# EXPIRE_MAKER self-trade-prevention mode (an expiry, not a fill, when our own stop sweeps our
+# own resting rung) is small extra pressure in the same direction.
+#
+# The tracker below is a deliberately CONSERVATIVE approximation: every placement is
+# timestamped and prunes itself out of a window (10s / 1 day) the same way REQUEST_WEIGHT
+# would, so the placement side alone can only OVER-count real usage — the safe failure
+# direction for an account-ban-avoidance system, since over-counting merely throttles us early
+# while under-counting sends the order that earns the -1015.
+# `record_order_filled()` credits back 1 unit per confirmed fill (never more: we do not know
+# Binance's real maker-fill multiplier, and assuming a bigger number than reality is the unsafe
+# direction). Wired in `place_live_order` for a synchronous taker fill (every risk exit, and
+# the wave-0 market entry) and in `app.orders._book_delta` for an async maker fill discovered by
+# reconciliation. A cancel never calls it — see the note above.
+# The credit is the one place this can drift the UNSAFE way, so it is capped at one per ORDER:
+# a maker order in a thin book books several partial deltas, and `_book_delta` credits only the
+# first of them. (`reset_client_cache` also clears the deque outright — a test-only path.)
+
+ORDER_LIMIT_10S_FALLBACK = 100
+ORDER_LIMIT_DAY_FALLBACK = 200_000
+ORDER_BUDGET_SOFT_PCT = 80.0  # slow new exposure BEFORE the venue answers -1015, not after
+
+
+def _default_order_limits() -> dict[str, tuple[float, int]]:
+    """The real Binance ORDERS limits, queried from exchangeInfo on 2026-08-30 — the FALLBACK
+    used until `refresh_venue_limits` succeeds, and whenever it can't reach the venue."""
+    return {
+        "10s": (10.0, ORDER_LIMIT_10S_FALLBACK),
+        "86400s": (86400.0, ORDER_LIMIT_DAY_FALLBACK),
+    }
+
+
+_order_limits: dict[str, tuple[float, int]] = _default_order_limits()
+_order_events: collections.deque = collections.deque()
+
+
+def reset_order_budget() -> None:
+    """Clear tracked order-count events and restore the fallback limits (tests, and a
+    credentials change — a tracked count from a different client is meaningless)."""
+    global _order_limits
+    _order_events.clear()
+    _order_limits = _default_order_limits()
+
+
+def set_order_limits(limits: dict[str, tuple[float, int]]) -> None:
+    """Replace the tracked ``{label: (window_seconds, cap)}`` pairs. Labels are opaque — only
+    the values are read. Used by `refresh_venue_limits` and directly by tests."""
+    global _order_limits
+    _order_limits = dict(limits)
+
+
+def order_limits() -> dict[str, tuple[float, int]]:
+    """The ``(window_seconds, cap)`` pairs currently enforced."""
+    return dict(_order_limits)
+
+
+def _prune_order_events() -> None:
+    if not _order_events:
+        return
+    longest = max((w for w, _ in _order_limits.values()), default=0.0)
+    cutoff = time.monotonic() - longest
+    while _order_events and _order_events[0] < cutoff:
+        _order_events.popleft()
+
+
+def record_order_placed(now: float | None = None) -> None:
+    """Record one accepted new-order placement (+1 to the outstanding count).
+
+    Call ONLY after the exchange actually accepted the order — a rejected post-only
+    (would-cross) or a recovered duplicate must not double-count (see `place_live_order`),
+    and neither does a cancel (see the module note above).
+    """
+    _order_events.append(now if now is not None else time.monotonic())
+    _prune_order_events()
+
+
+def record_order_filled(credit: int = 1) -> int:
+    """Credit back up to ``credit`` outstanding placements on a confirmed fill.
+
+    A cancel or an expiry must NEVER call this — Binance refunds neither (see the module note
+    above). Returns how many were actually credited (may be fewer than ``credit`` if the
+    tracked count is already lower, e.g. right after a restart)."""
+    _prune_order_events()
+    n = 0
+    while n < credit and _order_events:
+        _order_events.pop()  # any entry — the budget cares about the COUNT, not which one
+        n += 1
+    return n
+
+
+def outstanding_order_count() -> int:
+    """The current tracked outstanding-order count (for logs/dashboard visibility — the
+    cancel+replace pattern above is the one expected to run this up)."""
+    _prune_order_events()
+    return len(_order_events)
+
+
+def order_count_in_window(seconds: float) -> int:
+    """How many tracked events are still within the last ``seconds``."""
+    _prune_order_events()
+    cutoff = time.monotonic() - seconds
+    return sum(1 for t in _order_events if t >= cutoff)
+
+
+def assert_order_budget_available(urgent: bool = False) -> None:
+    """Refuse NEW EXPOSURE once any tracked ORDERS window is at/over its soft threshold.
+
+    ``urgent`` exempts an exit exactly like ``assert_not_rate_limited`` — the ONE unforgivable
+    bug in this project is a gated exit, and the order-count budget must not become that bug:
+    a stop-loss is one order, and refusing to send it to protect a count budget trades a real
+    position for an imaginary saving.
+    """
+    if urgent:
+        return
+    for label, (window_sec, cap) in _order_limits.items():
+        if cap <= 0:
+            continue
+        used = order_count_in_window(window_sec)
+        soft_cap = cap * (ORDER_BUDGET_SOFT_PCT / 100.0)
+        if used >= soft_cap:
+            raise RateLimited(
+                f"order-count budget near cap ({label}): {used}/{cap} outstanding — "
+                "pausing new exposure"
+            )
+
+
+# --- weight-based backoff (wires the previously-dead used_weight_from_headers/ ---------------
+# --- weight_backoff_seconds into a real caller) -----------------------------------------------
+
+_weight_limit_per_min: int = WEIGHT_LIMIT_PER_MIN
+_weight_hold_until: float = 0.0
+
+
+def current_weight_limit() -> int:
+    """The REQUEST_WEIGHT/1m cap currently in effect — venue-sourced once `refresh_venue_limits`
+    has succeeded, else the fallback constant."""
+    return _weight_limit_per_min
+
+
+def weight_hold_until() -> float:
+    """Monotonic deadline before which NEW EXPOSURE should pause for REQUEST_WEIGHT (0 = clear)."""
+    return _weight_hold_until
+
+
+def assert_weight_budget_available(urgent: bool = False) -> None:
+    """Pause NEW EXPOSURE while the last-seen REQUEST_WEIGHT usage is near the cap.
+
+    ``urgent`` exempts an exit — same contract as the other two guards. Populated by
+    `_note_weight_usage`, which reads ``ex.last_response_headers`` (confirmed present on the
+    installed ccxt 4.0.5: ``Exchange.enableLastResponseHeaders`` defaults True and every REST
+    call in ``Exchange.fetch()`` assigns it from the real response headers).
+    """
+    if urgent:
+        return
+    remaining = _weight_hold_until - time.monotonic()
+    if remaining > 0:
+        raise RateLimited(f"REQUEST_WEIGHT budget near cap — pausing new exposure for {remaining:.0f}s")
+
+
+def _note_weight_usage(ex) -> None:
+    """After an exchange call, read the USED-WEIGHT header ccxt cached on the client and
+    schedule a pause for NEW EXPOSURE if usage is approaching the REQUEST_WEIGHT budget.
+    Best-effort: a missing/malformed header just means no pause is scheduled — never raises."""
+    global _weight_hold_until
+    try:
+        used = used_weight_from_headers(getattr(ex, "last_response_headers", None))
+    except Exception:
+        return
+    if used is None:
+        return
+    pause = weight_backoff_seconds(used, limit=current_weight_limit())
+    if pause > 0:
+        _weight_hold_until = max(_weight_hold_until, time.monotonic() + pause)
+
+
+# --- venue-sourced limits (exchangeInfo['rateLimits'], cached; fallback constants above) ------
+
+_RATE_LIMIT_INTERVAL_SECONDS = {"SECOND": 1.0, "MINUTE": 60.0, "HOUR": 3600.0, "DAY": 86400.0}
+_VENUE_LIMITS_TTL_SEC = 6 * 3600.0  # limits rarely change; a few refreshes/day is plenty
+_venue_limits_cache: dict[str, tuple[float, int]] | None = None
+_venue_limits_fetched_at: float = 0.0
+
+
+def parse_venue_rate_limits(raw: list[dict]) -> tuple[dict[str, tuple[float, int]], int | None]:
+    """Pure parse of Binance ``exchangeInfo()['rateLimits']`` into (order-count limits,
+    REQUEST_WEIGHT/1m). Unknown/malformed entries are skipped, never raised — a partial or
+    reordered response must not crash the caller, it just keeps fewer limits."""
+    orders: dict[str, tuple[float, int]] = {}
+    weight_per_min: int | None = None
+    for entry in raw or []:
+        try:
+            kind = str(entry.get("rateLimitType") or "").upper()
+            interval = str(entry.get("interval") or "").upper()
+            num = float(entry.get("intervalNum") or 1)
+            limit = int(entry.get("limit") or 0)
+        except (TypeError, ValueError, AttributeError):
+            continue
+        unit = _RATE_LIMIT_INTERVAL_SECONDS.get(interval)
+        if unit is None or limit <= 0:
+            continue
+        window_sec = unit * num
+        if kind == "ORDERS":
+            orders[f"{window_sec:.0f}s"] = (window_sec, limit)
+        elif kind == "REQUEST_WEIGHT" and interval == "MINUTE" and num == 1:
+            weight_per_min = limit
+    return orders, weight_per_min
+
+
+def refresh_venue_limits(force: bool = False) -> dict[str, tuple[float, int]]:
+    """Pull the REAL ORDERS/REQUEST_WEIGHT limits from Binance ``exchangeInfo`` and cache them.
+
+    Falls back to the hardcoded constants (queried from the real venue 2026-08-30) when the
+    call fails, live trading is not configured, or the app is offline — a cold/offline app
+    must still enforce SOME budget rather than none. Cached for ``_VENUE_LIMITS_TTL_SEC``; call
+    sites must NOT call this per order.
+    """
+    global _venue_limits_cache, _venue_limits_fetched_at, _weight_limit_per_min
+    now = time.monotonic()
+    if not force and _venue_limits_cache is not None \
+            and now - _venue_limits_fetched_at < _VENUE_LIMITS_TTL_SEC:
+        return dict(_venue_limits_cache)
+    try:
+        ex = _client()
+        info = ex.publicGetExchangeInfo()
+        parsed_orders, parsed_weight = parse_venue_rate_limits(info.get("rateLimits") or [])
+    except Exception:
+        logger.debug("venue rateLimits refresh failed — keeping the fallback", exc_info=True)
+        parsed_orders, parsed_weight = {}, None
+    if parsed_orders:
+        _venue_limits_cache = parsed_orders
+        set_order_limits(parsed_orders)
+    elif _venue_limits_cache is None:
+        _venue_limits_cache = _default_order_limits()
+        set_order_limits(_venue_limits_cache)
+    if parsed_weight:
+        _weight_limit_per_min = parsed_weight
+    _venue_limits_fetched_at = now
+    return dict(_venue_limits_cache or {})

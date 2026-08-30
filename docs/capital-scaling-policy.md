@@ -1,177 +1,172 @@
 # Luật điều chỉnh quy mô theo vốn — bản thi hành
 
-> **Đây là luật, không phải ghi chép.** Bản văn xuôi này giải thích *vì sao*; phần thi hành nằm ở
-> `app/capital.py`, và test ở `tests/app/test_capital_scaling.py` là hợp đồng. Khi hai bên mâu
-> thuẫn, **code thắng** — sửa tài liệu, đừng sửa số liệu cho khớp văn bản.
+> **Đây là luật, không phải ghi chép.** Văn xuôi giải thích *vì sao*; phần thi hành ở
+> `app/capital.py`, test ở `tests/app/test_capital_scaling.py` là hợp đồng. Khi mâu thuẫn,
+> **code thắng** — sửa tài liệu, đừng sửa số cho khớp văn bản.
 >
-> Mục đích: Kai nạp thêm vốn hằng tháng và cần quy mô tự đi theo một cách tất định, đủ rõ để một
-> lệnh gọi Claude API hoặc xAI API sau này áp dụng được mà không phải suy luận lại.
->
-> Nền tảng: [`capital-scaling-2026-08-23.md`](capital-scaling-2026-08-23.md) (khảo sát 18 nguồn,
-> mô phỏng phản-thực trên 72/82 lệnh thật). Bản này bổ sung ràng buộc mà bản đó thiếu — **ngày dừng
-> lỗ đồng loạt** — và biến kết luận thành số học chạy được.
+> Nền tảng: [`capital-scaling-2026-08-23.md`](capital-scaling-2026-08-23.md). **Lưu ý: file đó
+> nằm trên nhánh `kss-capital-auto-sizing`, không có trên nhánh này** — nếu bạn không mở được
+> nó, đó là lý do.
 
 ---
 
-## 0. Điều tuyệt đối không được làm
+## ⚠ 0. Hai điều phải đọc trước khi dùng luật này
+
+### 0.1 — Vốn KHÔNG đọc từ sàn. Nạp tiền vào Binance thì luật không thấy.
+
+`risk.account_equity` → `portfolio.equity` → **`settings.account_equity`, một hằng số trong
+`.env`** (`ACCOUNT_EQUITY=2000`). `fetch_balance` **không tồn tại ở bất kỳ đâu trong `app/`** trên
+nhánh này. Commit sửa việc này (`e825dc1`) nằm trên `kss-capital-auto-sizing`, chưa promote.
+
+**Hệ quả:** nạp $500 vào sàn thì `equity` vẫn là 2000 và luật vẫn trả về đúng con số cũ, mãi mãi.
+**Cho tới khi việc này được sửa, mỗi lần nạp vốn phải TỰ TAY sửa `ACCOUNT_EQUITY` trong
+`D:\FINDMY-live\.env` rồi restart.** Không có bước đó thì mọi thứ dưới đây là số học suông.
+
+### 0.2 — Ở cấu hình hiện tại, thêm vốn KHÔNG mở thêm được gì cả.
+
+| vốn | session | vốn triển khai | % vốn | ràng buộc |
+|---:|---:|---:|---:|---|
+| $2.000 | 3 | $700,92 | 35,05% | chuỗi thua liên tiếp |
+| $5.000 | 3 | $700,92 | 14,02% | chuỗi thua liên tiếp |
+| $20.000 | 3 | $700,92 | 3,50% | chuỗi thua liên tiếp |
+| $50.000 | 3 | $700,92 | **1,40%** | chuỗi thua liên tiếp |
+
+**Vốn triển khai đứng yên ở ~$701 dù có bao nhiêu tiền.** Hai cái phanh khoá cứng nó:
+
+- `max_consecutive_losses = 4` → N tối đa **3**. Vốn không lay chuyển được con số này.
+- `max_session_deploy_usd = 240` → sóng 0 tối đa **$41,09** dù vốn bao nhiêu.
+- → Trần triển khai tuyệt đối: **3 × $240 = $720.**
+
+Muốn quy mô đi theo vốn thì **phải chủ động nới một trong ba núm**, mỗi núm có cái giá riêng
+(§4). Đây là câu trả lời thật cho "nạp vốn hằng tháng thì chỉnh thế nào".
+
+---
+
+## 1. Điều tuyệt đối không được làm
 
 **Luật này chỉ chỉnh KÍCH CỠ. Không bao giờ chỉnh HÌNH DẠNG.**
 
 | Được suy từ vốn | Không bao giờ suy từ vốn |
 |---|---|
-| số session đồng thời (`max_concurrent_sessions`) | take-profit (`scan_tp_pct`) |
+| số session (`max_concurrent_sessions`) | take-profit (`scan_tp_pct`) |
 | cỡ sóng đầu (`kss_first_wave_usd`) | stop-loss (`sl_pct`) |
-| trần thanh khoản theo ADV | khoảng rung DCA (`scan_distance_pct`) |
-| | số sóng (`scan_max_waves`) |
-| | mọi ngưỡng lọc (`min_expectancy_pct`, `min_win_rate`, …) |
+| trần thanh khoản theo ADV | khoảng rung (`scan_distance_pct`), số sóng (`scan_max_waves`) |
+| | mọi ngưỡng lọc, `deadline_days` |
 
-Lý do không phải sở thích. Kích cỡ là số học kiểm toán được, không khớp dữ liệu. Hình dạng khớp
-theo lịch sử là overfitting: với ~5 năm dữ liệu, thử quá ~45 cấu hình gần như chắc chắn tạo ra
-Sharpe 1 trong mẫu và 0 ngoài mẫu. Cả 5 bot production được khảo sát (Freqtrade, 3Commas,
-Hummingbot, OctoBot, Jesse) đều suy kích cỡ từ số dư và **cố định hình dạng**.
+Kích cỡ là số học kiểm toán được. Hình dạng khớp theo lịch sử là overfitting: với ~5 năm dữ liệu,
+thử quá ~45 cấu hình gần như chắc chắn tạo Sharpe 1 trong mẫu và 0 ngoài mẫu. Cả 5 bot production
+được khảo sát đều suy kích cỡ từ số dư và **cố định hình dạng**.
 
-`tests/app/test_capital_scaling.py` có một test quét mã nguồn `app/capital.py` và **fail nếu**
-module này nhắc tới bất kỳ tham số hình dạng nào. Ràng buộc được thi hành, không phải lời hứa.
+Test kiểm điều này trên **bề mặt API công khai** (tên hàm + tên tham số), không phải bằng cách
+quét chuỗi trong mã nguồn — bản đầu dùng cách quét chuỗi và bị phá được ba kiểu: thiếu `sl_pct`
+và `max_waves` trong danh sách cấm, chuỗi bị tách đôi, và chuyển logic sang file khác.
 
----
-
-## 1. Ràng buộc quyết định: ngày dừng lỗ đồng loạt
-
-Không phải ngân sách triển khai. Crypto dừng lỗ **cùng lúc**: đo trên chính universe của bot,
-ngày **2026-06-05 có 13/16 mã dừng lỗ trong cùng một ngày**. Nên tình huống phải sống sót không
-phải "một vị thế hỏng" mà là "mọi vị thế đang mở hỏng cùng lúc".
-
-```
-ladder_usd  = first_wave_usd × ladder_ratio
-worst_day   = sessions × ladder_usd × stop_fraction
-ĐIỀU KIỆN:    worst_day ≤ safety_margin × daily_loss_limit × equity
-```
-
-| ký hiệu | nghĩa | nguồn |
-|---|---|---|
-| `equity` | vốn thật, đọc từ số dư sàn | `risk.account_equity(db)` |
-| `first_wave_usd` | USD của sóng 0 | `settings.kss_first_wave_usd` |
-| `ladder_ratio` | tổng ladder ÷ sóng 0 | `kss.projected_ladder_cost ÷ projected_first_wave_cost` (toán KSS đã khoá) |
-| `stop_fraction` | `(sl_pct + phí khứ hồi)/100` | `settings.sl_pct`, `costengine.round_trip_cost_pct()` |
-| `daily_loss_limit` | `daily_loss_hard_pct/100` — mức app tự đóng băng | `settings.daily_loss_hard_pct` |
-| `safety_margin` | phần hạn mức được phép tiêu, mặc định **0.8** | `capital.DEFAULT_SAFETY_MARGIN` |
-
-Biên 0,8 giữ lại một phần năm hạn mức cho trượt giá vượt qua mức dừng lỗ và cho nến nhảy gap.
-`audit_current` **cố ý** báo con số thô so với hạn mức thô, vì cầu dao không biết gì về biên này.
-
-Ràng buộc thứ hai (ngân sách) hầu như không bao giờ chạm tới, nhưng vẫn kiểm:
-
-```
-sessions × ladder_usd ≤ (1 − backup_fraction) × equity
-```
-
-Đo ngày 2026-08-30 với cấu hình live: trần rủi ro cho 4,13 session còn trần ngân sách cho 6,43 —
-**trần rủi ro luôn chạm trước**, và nó chính là con số 4 đang chạy.
-
-> ### ⚠ Một `ladder_ratio` đồng nhất KHÔNG tồn tại trong hệ đang chạy
->
-> `autotune_levels_enabled` cấp cho mỗi mã một khoảng rung riêng, và các session mở ở thời điểm
-> khác nhau được tính theo cỡ sóng 0 khác nhau. Đo thật ngày 2026-08-30 với 6 session: năm
-> ladder cũ quanh $140 (mở khi sóng 0 còn ~$15) và một ladder WLD $223,86 (mở ở $40, rung
-> 5,15%). Tổng **$931,89 → ngày xấu nhất 3,86%**, trong khi giả định đồng nhất 5,841× ở cỡ $40
-> hiện tại cho ra **5,81%** — tức **báo động giả**.
->
-> **Hệ số đồng nhất dùng để CẤP CỠ cho session chưa tồn tại. Để KIỂM TRA session đang mở, phải
-> đọc ladder thật:** `capital.audit_book(equity, ladder_usds=[...])`. Hai câu hỏi khác nhau,
-> đừng dùng lẫn. Hệ quả thực tế: một sổ đang an toàn có thể **trôi dần** tới mức vượt hạn mức khi
-> các session cũ đóng và được thay bằng session cỡ mới — phải kiểm lại theo sổ, không kiểm một
-> lần rồi thôi.
+**Thêm một điều cấm mà bản đầu bỏ sót:** `sl_pct` của mọi session trong sổ đều là `0.0`, tức nó
+được giải ra từ **giá trị toàn cục lúc chạy**. Đổi `settings.sl_pct` khi đang có session mở sẽ
+**dịch mức dừng lỗ của toàn bộ sổ ngay lập tức**, và `stop_fraction` trong mọi phép tính dưới đây
+sai theo. Không đổi `sl_pct` khi còn session mở.
 
 ---
 
-## 2. Luật nạp vốn hằng tháng
+## 2. Ba cái phanh, theo đúng thứ tự bắn
 
-Giữ nguyên `first_wave_usd`, giải theo `sessions`. Do vế phải tuyến tính theo `equity`, luật rút
-gọn thành **một con số duy nhất**:
+Bản đầu của luật này hiệu chỉnh quanh cái phanh **thứ hai**. Cross-check bắt được.
+
+**Phanh 1 — chuỗi thua liên tiếp.** `circuit.evaluate` đóng băng khi
+`consecutive_losses >= max_consecutive_losses` (mặc định **4**). N session cùng dừng lỗ **chính
+là** một chuỗi dài N, nên phanh này bắn ở N=4 bất kể mất bao nhiêu tiền.
 
 ```
-equity_per_extra_session = ladder_usd × stop_fraction ÷ (safety_margin × daily_loss_limit)
+sessions ≤ max_consecutive_losses − 1        # để một ngày đồng loạt không tự đóng băng app
 ```
 
-Với cấu hình live 2026-08-30 (`first_wave_usd=40`, `ladder_ratio=5.841`, `stop_fraction=0.083`,
-`daily_loss_limit=0.05`, `safety_margin=0.8`):
+**Phanh 2 — hạn mức lỗ ngày.** `daily_loss_hard_pct` (mặc định 5%).
 
-> ### Cứ thêm **$484,80** vốn thì được thêm **một** session. Không đổi gì khác.
+```
+ladder_usd = min(first_wave × ladder_ratio, max_session_deploy_usd)
+worst_day  = sessions × ladder_usd × stop_fraction
+ĐIỀU KIỆN:   worst_day ≤ safety_margin × daily_loss_limit × equity
+```
 
-| vốn | session | sóng 0 | vốn cam kết | ngày xấu nhất | ràng buộc |
-|---:|---:|---:|---:|---:|---|
-| $1.000 | 2 | $40 | $467 | 3,88% | ngày dừng lỗ đồng loạt |
-| $1.500 | 3 | $40 | $701 | 3,88% | ngày dừng lỗ đồng loạt |
-| **$2.000** | **4** | **$40** | **$935** | **3,88%** | ngày dừng lỗ đồng loạt |
-| $2.500 | 5 | $40 | $1.168 | 3,88% | ngày dừng lỗ đồng loạt |
-| $3.000 | 6 | $40 | $1.402 | 3,88% | ngày dừng lỗ đồng loạt |
-| $5.000 | 10 | $40 | $2.336 | 3,88% | ngày dừng lỗ đồng loạt |
-| $10.000 | 20 | $40 | $4.673 | 3,88% | ngày dừng lỗ đồng loạt |
-| $50.000 | 100 | $40 | $23.364 | 3,88% | **universe (100 mã)** |
+Cẩn thận: cầu dao đo **lỗ thô đã thực hiện** chia cho **vốn mark-to-market hiện tại** — cả hai đều
+làm nó thấy con số **lớn hơn** mô hình này tính. Xem nó là ước lượng dưới.
 
-**Tính chất quan trọng nhất của bảng này: cột "ngày xấu nhất" là hằng số 3,88% ở mọi mức vốn.**
-Quy mô lớn lên, rủi ro tính theo phần trăm đứng yên. Đó là điều làm luật này an toàn khi nạp thêm
-tiền — và cũng là thứ để kiểm tra nếu ai đó sửa luật: nếu cột đó bắt đầu trôi, luật đã hỏng.
+**Phanh 3 — sụt vốn tổng** `max_drawdown_pct = 15%`, tính cả lỗ chưa thực hiện. Chưa mô hình hoá.
 
-Ở khoảng **$50.000** ràng buộc đổi sang **số mã trong universe** (1 session/mã). Từ đó trở đi câu
-trả lời là **sóng to hơn**, không phải nhiều session hơn.
+### Kịch bản "dừng lỗ đồng loạt" là GIẢ ĐỊNH ÁP LỰC, không phải phép đo sổ này
+
+Bản đầu ghi "13/16 mã dừng lỗ cùng ngày 2026-06-05, đo trên universe của ta" — **cách diễn đạt đó
+sai**. Con số đó đến từ một **backtest walk-forward** trên 16 mã dữ liệu lịch sử: bằng chứng thật
+rằng các lệnh dừng lỗ **có xu hướng cụm lại**, nhưng không phải bằng chứng sổ của ta từng như vậy.
+
+Đo trên sổ thật (`findmy.db`, 40 ngày): ngày xấu nhất có **5 lệnh thoát lỗ**, lỗ thô **0,86%**, và
+ngày đó vẫn **đóng dương +$4,75**. Tổng số lệnh thoát lỗ trong cả 40 ngày: 16.
+
+Giả định "mọi ladder đầy khi dừng lỗ" cũng thận trọng quá mức về đô-la: fill trung bình đo được
+là ~33% phần đặt chỗ, sổ live hiện tại mới 12,3%. Nhưng nó **thiếu** ba thứ: một ô trống được lấp
+lại ngay trong ngày (N session là *một thế hệ*, không phải một ngày), các lệnh thoát lỗ **không
+phải** dừng lỗ (hết hạn, trailing đỏ) cũng vào cùng bộ đếm, và trượt giá vượt mức dừng lỗ chỉ được
+dung sai 1,25×.
 
 ---
 
-## 3. Cần giữ nguyên số session? Đổi cỡ sóng thay vì đổi số lượng
+## 3. Ba núm để nới, và cái giá của từng núm
 
-Cùng một phương trình, giải theo `first_wave_usd`:
+| núm | hiện tại | nới ra được gì | cái giá |
+|---|---:|---|---|
+| `max_consecutive_losses` | 4 | mỗi +1 → thêm 1 session | chấp nhận chuỗi thua dài hơn trước khi app tự dừng |
+| `max_session_deploy_usd` | 240 | ladder to hơn → sóng 0 to hơn | mỗi session ôm nhiều vốn hơn; phanh 2 tới sớm hơn |
+| `equity_backup_pct` | 25% | thêm ngân sách | prior doc đo **đỉnh triển khai thực 97,4% vốn** — quỹ dự phòng này **trên thực tế không tồn tại**, nên nới nó gần như vô nghĩa |
 
-```
-first_wave_usd = safety_margin × daily_loss_limit × equity ÷ (sessions × ladder_ratio × stop_fraction)
-```
+Công thức cho từng chiều nằm ở `capital.recommend_sessions` (giải theo N) và
+`capital.recommend_first_wave` (giải theo cỡ sóng, đã kẹp cả `min_notional` lẫn deploy cap).
 
-| vốn | muốn 6 session | sóng 0 cần đặt | ngày xấu nhất |
-|---:|---:|---:|---:|
-| $2.000 | 6 | **$27,50** | 4,00% ✅ |
-| $3.000 | 6 | $41,25 | 4,00% ✅ |
-| $5.000 | 6 | $68,76 | 4,00% ✅ |
-
-So sánh: 6 session ở **sóng $40** trên vốn $2.000 cho ngày xấu nhất **5,81%**, tức **vượt** hạn mức
-5% và tự kích cầu dao. Cùng 6 session ở **sóng $27,50** cho **4,00%**, nằm trong hạn mức. Cùng mức
-phân tán, khác nhau ở chỗ có sập cầu dao hay không.
-
-`recommend_sessions` và `recommend_first_wave` giải cùng một phương trình theo hai chiều và **phải
-cho kết quả nhất quán** — có test khoá điều đó.
+Bản đầu của tài liệu này khuyên sóng 0 = $41,25 ở vốn $3.000 và $68,76 ở $5.000 — **cả hai đều
+vượt trần deploy $240 và sẽ bị app cắt cụt ladder**, tức session không bình quân giá được và chết
+ở mức dừng lỗ trên giá vốn xấu hơn. Đã sửa: hàm giờ kẹp theo trần và trả 0 nếu không có cỡ nào
+thoả mãn.
 
 ---
 
-## 4. Sàn và trần
+## 4. Kiểm sổ đang mở: dùng `audit_book`, không dùng hệ số đồng nhất
 
-| chặn | giá trị | hệ quả |
-|---|---|---|
-| sóng 0 phải ≥ `min_notional` | $10 (`scan_min_notional`), sàn Binance $5 | Dưới ngưỡng, wave 0 bị `-1013 NOTIONAL` và session giữ chỗ mà không bao giờ khớp. Trả về 0 session. |
-| vốn quá nhỏ | < ~$485 → 0 session | Dưới ~$870 thì "tính theo %" không còn là tính theo %: min-notional chi phối. Nên chạy chế độ cỡ cố định tối thiểu. |
-| universe | 1 session/mã | Ở 100 mã, trần là 100 session (~$48.500 vốn). |
-| thanh khoản | 0,5% ADV mỗi mã | Universe hiện có thanh khoản trung vị $2,81 triệu/24h → lợi nhuận **giảm một nửa ở $81k–$101k**. Trần năng lực thực của chiến lược ~$100k, giỏi lắm ~$250k. **Chưa thi hành trong code** — phải thêm trước khi vượt $10k. |
+Một `ladder_ratio` đồng nhất **không tồn tại**: `autotune_levels_enabled` cho mỗi mã một khoảng
+rung riêng (live: 0,5% tới 10%), và session mở ở thời điểm khác nhau tính theo cỡ sóng khác nhau.
+
+Đo thật 2026-08-30 với 6 session: năm ladder cũ ~$140 + một ladder WLD $223,86 = **$931,89 → ngày
+xấu nhất 3,86%**. Giả định đồng nhất ở cỡ $40 cho ra **5,81%** — **báo động giả**.
+
+```python
+capital.audit_book(equity, ladder_usds=[...], stop_fraction=..., daily_loss_limit=...,
+                   max_consecutive_losses=...)
+```
+
+Truyền vào `min(isolated_fund, max_session_deploy_usd)` cho từng session. **`isolated_fund` không
+phải chi phí ladder** — code gọi nó là "planning cap": DCA+ thủ công **thu nhỏ** nó về
+`đã tiêu + một rung`, nhận orphan **thổi phồng** nó thêm `scan_fund` (mặc định 1000), merge thì
+cộng dồn hai ladder. Session nào đã đi qua ba đường đó thì con số không đáng tin.
+
+`audit_book` trả về `freezes_on_loss_streak` — vì một sổ **có thể nằm trong hạn mức tiền mà vẫn
+đóng băng app**. Đó chính là sổ hiện tại: 6 session = 3,86% (trong hạn mức) nhưng 6 lệnh thua liên
+tiếp ≥ 4 (đóng băng).
 
 ---
 
-## 5. Quy trình áp dụng (dành cho người, Claude API hoặc xAI API)
+## 5. Quy trình áp dụng (người, Claude API, hoặc xAI API)
 
-Thực hiện **đúng thứ tự này**, không bỏ bước:
-
-1. Đọc `equity` từ **số dư sàn thật** (`risk.account_equity`), không dùng hằng số trong `.env`.
-2. Đọc `ladder_ratio` từ toán KSS đã khoá cho `distance_pct`/`max_waves` **đang chạy** — không
-   hardcode 5.841, nó đổi theo hình dạng.
-3. Gọi `capital.recommend_sessions(...)`. Ghi lại cả `sessions` **và** `binding`.
-4. Gọi `capital.audit_current(...)` với cấu hình **đang chạy**. Nếu `within_limit is False`,
-   nêu rõ mức vượt — đừng lặng lẽ làm tròn.
-5. **Không tự áp dụng.** Trả về khuyến nghị kèm ràng buộc đã chạm, để người quyết. Module này
-   không ghi vào settings, và không được phép ghi.
-6. Nếu `binding` là:
-   - `correlated_stop_day` → cần thêm vốn, hoặc giảm cỡ sóng.
-   - `deployable_budget` → giảm `equity_backup_pct` **chỉ khi** người chủ động quyết.
-   - `universe_size` → nới universe, hoặc chuyển sang tăng cỡ sóng.
-   - `first_wave_below_min_notional` → sóng 0 quá nhỏ để giao dịch; tăng nó trước mọi thứ khác.
-
-**Cấm tuyệt đối với mọi tác nhân tự động:** không đổi `tp_pct`, `sl_pct`, `distance_pct`,
-`max_waves` hay bất kỳ ngưỡng lọc nào dựa trên luật này. Đó là hình dạng, không phải kích cỡ.
+1. **Đọc `equity`.** Trên nhánh này nó là hằng số `.env` — xem §0.1. Nếu vừa nạp tiền mà chưa sửa
+   `.env`, **dừng lại**, mọi kết quả sau đó sai.
+2. Đọc `ladder_ratio` từ toán KSS đã khoá cho `distance_pct`/`max_waves` **đang chạy**. Không
+   hardcode 5.841 — live trải từ 5,23 tới 5,96 tuỳ mã.
+3. Gọi `capital.recommend_sessions(...)` với **đủ mọi ràng buộc** (hàm sẽ báo lỗi nếu thiếu, cố ý:
+   một ràng buộc bị bỏ quên sẽ trả về con số **lớn hơn** và không an toàn).
+4. Gọi `capital.audit_book(...)` với ladder **thật** của sổ. Kiểm **cả hai** cờ: `within_limit`
+   *và* `freezes_on_loss_streak`.
+5. **Không tự áp dụng.** Trả khuyến nghị kèm `binding`, để người quyết. Module này không import
+   bất cứ thứ gì từ `app/` — có test khoá — nên nó **không thể** tự ghi settings.
+6. Trước khi áp dụng bất cứ thay đổi nào: kiểm `runtime.is_frozen(db)` (nới hạn mức khi đang đóng
+   băng chỉ dồn thêm phơi nhiễm cho lúc mở lại), và nhớ `kss_first_wave_usd` **chỉ áp cho session
+   MỚI** — sổ sẽ thành hỗn hợp nhiều cỡ, đúng tình huống làm phép kiểm đồng nhất sai ở §4.
 
 ---
 
@@ -179,7 +174,11 @@ Thực hiện **đúng thứ tự này**, không bỏ bước:
 
 | ngày | thay đổi | lý do |
 |---|---|---|
-| 2026-08-30 | Lập luật. Ràng buộc quyết định = ngày dừng lỗ đồng loạt (13/16 mã cùng ngày, 2026-06-05), không phải ngân sách. `equity_per_extra_session = $484,80` ở cấu hình live. | Kai nạp vốn hằng tháng, cần quy mô đi theo tất định và máy đọc được. |
-| 2026-08-30 | Universe mở từ 20 → **100** mã (`scan_max_symbols=100`, `min_quote_volume=$1M`). | Trần universe lùi từ ~$9.700 lên ~$48.500 vốn. |
-| 2026-08-30 | `max_concurrent_sessions` đặt **6** trên vốn $2.002 theo yêu cầu thử nghiệm của Kai. | Thí nghiệm có chủ ý trên testnet, đã cảnh báo trước. Lưới an toàn đã diễn tập: khi đóng băng, lệnh mua bị chặn, lệnh bán vẫn qua. |
-| 2026-08-30 | **Tự đính chính:** cảnh báo "6 session = 5,81%, vượt hạn mức" là **sai với sổ thật**. Đo theo ladder thật: **3,86%, nằm trong hạn mức**. | Công thức giả định mọi session ở cỡ sóng $40 hiện tại; năm session cũ mở khi sóng 0 còn ~$15 nên ladder chỉ ~$140. Thêm `capital.audit_book()` để kiểm theo sổ thật. **Rủi ro sẽ trôi lên ~5,81% khi sổ quay vòng hết sang cỡ mới** — phải kiểm lại định kỳ, không kiểm một lần. |
+| 2026-08-30 | Lập luật. | Kai nạp vốn hằng tháng, cần quy mô đi theo tất định và máy đọc được. |
+| 2026-08-30 | Universe 20 → **100** mã. | Nới nguồn cung tín hiệu, vốn là thứ prior doc đo là trần thật của lợi nhuận. |
+| 2026-08-30 | `max_concurrent_sessions` = **6** theo yêu cầu thử nghiệm của Kai. | Thí nghiệm có chủ ý trên testnet. Lưới an toàn đã diễn tập: khi đóng băng, lệnh mua bị chặn, lệnh bán vẫn qua. |
+| 2026-08-30 | **Tự đính chính 1:** "6 session = 5,81%, vượt hạn mức" **sai**. Sổ thật: **3,86%**. | Công thức giả định mọi session ở cỡ $40; năm session cũ mở khi sóng 0 còn ~$15. Thêm `audit_book()`. |
+| 2026-08-30 | **Tự đính chính 2 (cross-check):** luật hiệu chỉnh quanh **sai cái phanh**. `max_consecutive_losses = 4` bắn TRƯỚC hạn mức 5%. N tối đa là **3**, không phải 4. | 6 session hiện tại: một ngày dừng lỗ đồng loạt **chắc chắn đóng băng app**, dù chỉ mất 3,86%. |
+| 2026-08-30 | **Tự đính chính 3:** "thêm $484,80 được thêm 1 session" **sai trong thực tế**. | Đúng dưới phanh 2, nhưng phanh 1 và trần deploy khoá vốn triển khai ở **~$701 bất kể vốn bao nhiêu**. Xem §0.2. |
+| 2026-08-30 | **Tự đính chính 4:** bỏ khẳng định "rủi ro phẳng 3,88% ở mọi mức vốn" và cái bẫy "nếu cột đó trôi là luật hỏng". | Bất biến thật là **chặn trên 4,00%**, chỉ chạm đúng 3,88% khi vốn rơi đúng bội số của bước. Ở $2.002,21 (chính điểm hiệu chỉnh) là 3,874%; ở $20.000 là 3,975%. Cái bẫy đó sẽ báo hỏng mỗi tháng dù luật vẫn đúng. |
+| 2026-08-30 | **Tự đính chính 5:** nguồn "13/16 mã cùng ngày" là **backtest**, không phải sổ của ta. Sổ thật: ngày xấu nhất 5 lệnh, net **dương**. | Xem §2. |

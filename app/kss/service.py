@@ -624,9 +624,25 @@ def handle_fill_event(
     if row is None:
         return None
 
-    # TP sell completed the session.
+    # TP sell. Under the resting model an ACTIVE session has its exit AND its unfilled DCA
+    # rungs on the book at once, so two things matter here that did not under the legacy model.
     if parts[2] == "tp":
+        # A PARTIAL fill does not end anything. A resting maker exit in a thin book fills in
+        # pieces routinely, and completing on the first piece abandoned the rest of the
+        # position with no managed exit at all.
+        remaining = row.total_filled_qty - filled_qty
+        if remaining > 1e-9:
+            row.total_filled_qty = remaining
+            row.total_cost = max(row.total_cost - filled_qty * row.avg_price, 0.0)
+            db.commit()
+            return {"action": "partial_tp",
+                    "message": f"Session {session_id}: TP filled {filled_qty:g}, {remaining:g} still held"}
         row.status = SESSION_COMPLETED
+        # Take the rest of the ladder OFF the exchange. This was the only terminal path that
+        # did not, so a completed session left live BUY rungs resting: they lock quote balance,
+        # and if the market later dips to one it buys into a position with no session, no
+        # ladder and no take-profit — the orphan pattern behind much of our realised loss.
+        _cancel_pending_waves(db, session_id)
         db.commit()
         return {"action": "completed", "message": f"Session {session_id} completed (TP filled)"}
 

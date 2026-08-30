@@ -87,6 +87,63 @@ def _to_candle(c: list) -> Candle:
                   low=float(c[3]), close=float(c[4]), volume=float(c[5]))
 
 
+def _step_size_from_market(precision_mode: object, market: dict) -> float:
+    """Derive the true lot-size (quantity) step for a ccxt market.
+
+    ``market['precision']['amount']`` means different things depending on the exchange's
+    ``precisionMode`` — for Binance (``DECIMAL_PLACES``) it is a *count of decimals*
+    (e.g. ``3`` for BNB → step ``0.001``), not a step itself. Using it directly as a step
+    made a $15 wave on any coin above ~$17 collapse toward ``minQty`` (37/361 universe
+    symbols) — see docs/capital-scaling-2026-08-23.md §2.2.
+
+    Preference order:
+      1. The exchange's own ``LOT_SIZE`` filter (``market['info']['filters']``) — the
+         ground-truth quantity increment, verified correct for every Binance symbol.
+      2. ``precision.amount`` interpreted per ``precisionMode``:
+         - ``DECIMAL_PLACES`` → ``10 ** -precision`` (precision is a decimal count).
+         - ``TICK_SIZE``      → the value already IS the step.
+         - anything else (``SIGNIFICANT_DIGITS`` or unknown/missing mode) → no reliable
+           formula; fall through.
+      3. ``limits.amount.min`` (the exchange's minimum tradeable quantity — a safe step
+         floor when nothing more precise is available).
+      4. The module default (``0.00001``).
+    """
+    info = market.get("info") or {}
+    for f in info.get("filters", []) or []:
+        if f.get("filterType") == "LOT_SIZE":
+            step = f.get("stepSize")
+            if step:
+                try:
+                    return float(step)
+                except (TypeError, ValueError):
+                    break  # malformed filter — fall through to precision/limits
+
+    precision = (market.get("precision") or {}).get("amount")
+    if precision is not None:
+        if precision_mode == ccxt.DECIMAL_PLACES:
+            try:
+                return 10 ** -float(precision)
+            except (TypeError, ValueError, OverflowError):
+                pass
+        elif precision_mode == ccxt.TICK_SIZE:
+            try:
+                step = float(precision)
+                if step > 0:
+                    return step
+            except (TypeError, ValueError):
+                pass
+        # SIGNIFICANT_DIGITS or an unknown/missing mode: precision.amount is not a step
+        # and not a decimal count we can convert safely — deliberately do not guess.
+
+    min_qty = (market.get("limits") or {}).get("amount", {}).get("min")
+    if min_qty:
+        try:
+            return float(min_qty)
+        except (TypeError, ValueError):
+            pass
+    return 0.00001
+
+
 class DataProvider(Protocol):
     """Read-only market data surface used by market.py, the scanner and backtests."""
 
@@ -233,15 +290,30 @@ class CcxtProvider:
 
     def get_exchange_info(self, symbol: str) -> dict:
         try:
+            # ccxt's .market() raises "markets not loaded" until something has called
+            # load_markets(). Without this, EVERY call on a cold process fell into the
+            # except-branch below and returned _DEFAULT_INFO — i.e. the real LOT_SIZE was
+            # never read at all until some other ccxt call happened to warm the cache, and
+            # a coin whose true step is 0.1 (KLAY, RVN) got a 1e-05 step and an order the
+            # exchange would reject on live. load_markets() is idempotent and ccxt-cached.
+            # getattr: test doubles stand in for the ccxt client and don't carry `.markets`;
+            # a real ccxt exchange always does, so the load still happens where it matters.
+            if not getattr(self._ex, "markets", None) and hasattr(self._ex, "load_markets"):
+                self._ex.load_markets()
             market = self._ex.market(self.pair(symbol))
             limits = market.get("limits", {})
             amount = limits.get("amount", {})
             cost = limits.get("cost", {})
+            # minQty/minNotional already read the exchange's LOT_SIZE.minQty and
+            # NOTIONAL.minNotional correctly — ccxt's normalised `limits.amount.min` /
+            # `limits.cost.min` mirror those filters exactly (verified against live
+            # Binance for BNB/WBTC/ZEC/BCH/PAXG/BTC/KLAY/RVN). Only stepSize was wrong.
+            precision_mode = getattr(self._ex, "precisionMode", None)
             return {
                 "symbol": symbol,
                 "minQty": amount.get("min") or 0.00001,
                 "maxQty": amount.get("max") or 10000.0,
-                "stepSize": market.get("precision", {}).get("amount") or 0.00001,
+                "stepSize": _step_size_from_market(precision_mode, market) or 0.00001,
                 "minNotional": cost.get("min") or 10.0,
             }
         except Exception as exc:

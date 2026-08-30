@@ -155,8 +155,8 @@ def place_live_order(
     avg = float(order.get("average") or 0.0)
     if avg <= 0 and filled > 0:  # fall back to a price ONLY when something actually filled
         avg = float(order.get("price") or px or 0.0)
-    fee_obj = order.get("fee") or {}
-    fee = float(fee_obj.get("cost") or 0.0) if isinstance(fee_obj, dict) else 0.0
+    quote = pair.partition("/")[2]
+    fee = fee_cost(order, quote)
     logger.info(
         "LIVE order placed: %s %s/%s %s @ %s status=%s (exch id %s)",
         side, filled, qty, pair, avg, status, order.get("id"),
@@ -177,6 +177,73 @@ def cancel_live_order(pair: str, order_id: str) -> None:
     ex = _client()
     ex.cancel_order(order_id, pair)
     logger.info("LIVE cancelled resting order %s on %s", order_id, pair)
+
+
+def _fee_entries(order: dict) -> list[dict]:
+    """Every fee record ccxt exposes for an order: the top-level one, the `fees` list, and the
+    per-trade fees of a fill that crossed several price levels."""
+    out: list[dict] = []
+    top = order.get("fee")
+    if isinstance(top, dict):
+        out.append(top)
+    for f in order.get("fees") or []:
+        if isinstance(f, dict):
+            out.append(f)
+    for t in order.get("trades") or []:
+        f = (t or {}).get("fee")
+        if isinstance(f, dict):
+            out.append(f)
+    return out
+
+
+def fee_cost(order: dict, quote: str) -> float:
+    """Commission actually charged in the QUOTE currency (0.0 when there is none).
+
+    Binance spot returns no top-level `fee` on the order endpoints — the real commissions come
+    back in `fees` / `trades`. ccxt still builds `order['fee'] = {'cost': None}`, and because
+    that dict is not None it does not promote the per-trade commissions into it. Reading only
+    `order['fee']['cost']` therefore recorded 0.0 on EVERY live fill, which quietly understates
+    cost basis, overstates realised P&L, and erodes the K-2 floor.
+
+    A commission taken in the BASE asset (the spot-BUY default) is deliberately NOT counted
+    here — it is not a quote amount, and adding 0.0003 BTC to a USD cost is meaningless. See
+    `fee_base_qty` for that side of it.
+    """
+    total = 0.0
+    for f in _fee_entries(order):
+        cost = f.get("cost")
+        if cost in (None, ""):
+            continue
+        currency = (f.get("currency") or quote or "").upper()
+        if currency and currency != (quote or "").upper():
+            continue
+        try:
+            total += float(cost)
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def fee_base_qty(order: dict, base: str) -> float:
+    """Commission charged in the BASE asset (0.0 when there is none).
+
+    On a spot BUY without BNB fee payment, Binance deducts the commission from the asset you
+    bought: the wallet receives LESS than `filled` reports. Selling the full booked quantity
+    later is then rejected with -2010 'insufficient balance', which is why this has to be
+    visible rather than folded into a quote figure.
+    """
+    if not base:
+        return 0.0
+    total = 0.0
+    for f in _fee_entries(order):
+        cost = f.get("cost")
+        if cost in (None, "") or (f.get("currency") or "").upper() != base.upper():
+            continue
+        try:
+            total += float(cost)
+        except (TypeError, ValueError):
+            continue
+    return total
 
 
 def order_is_gone(exc: Exception) -> bool:
@@ -205,8 +272,7 @@ def fetch_live_order(pair: str, order_id: str) -> dict:
     avg = float(order.get("average") or 0.0)
     if avg <= 0 and filled > 0:  # some venues report price, not average, on a fill
         avg = float(order.get("price") or 0.0)
-    fee_obj = order.get("fee") or {}
-    fee = float(fee_obj.get("cost") or 0.0) if isinstance(fee_obj, dict) else 0.0
+    fee = fee_cost(order, pair.partition("/")[2])
     return {"status": status, "filled": filled, "average": avg, "fee": fee, "raw_id": order.get("id")}
 
 

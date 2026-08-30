@@ -171,6 +171,39 @@ def recommend_first_wave(
     return min(by_risk, by_budget)
 
 
+def audit_book(
+    equity: float,
+    *,
+    ladder_usds: list[float],
+    stop_fraction: float,
+    daily_loss_limit: float,
+    **_ignored,
+) -> Audit:
+    """What the sessions ACTUALLY OPEN cost on a correlated stop day.
+
+    Use this to audit, and ``audit_current`` only to model a hypothetical. A single
+    ``ladder_ratio`` does not exist in the running system: ``autotune_levels_enabled`` gives
+    each symbol its own DCA spacing, and sessions opened at different times were sized against
+    different wave-0 settings. Measured live 2026-08-30 with six sessions open — five legacy
+    ladders near $140 and one WLD ladder of $223.86 — the real total was $931.89 and a
+    correlated day 3.86%, while assuming a uniform ratio at today's $40 wave said 5.81% and
+    would have raised a false alarm.
+
+    The uniform ratio is the right tool for sizing a session that does not exist yet, and the
+    wrong one for auditing the ones that do.
+    """
+    committed = sum(ladder_usds)
+    worst = committed * stop_fraction / equity * 100.0 if equity > 0 else 0.0
+    limit_pct = daily_loss_limit * 100.0
+    return Audit(
+        worst_day_pct=round(worst, 4),
+        limit_pct=limit_pct,
+        within_limit=worst <= limit_pct,
+        breaches_by_pct=round(max(0.0, worst - limit_pct), 4),
+        committed_usd=round(committed, 2),
+    )
+
+
 def audit_current(
     equity: float,
     *,

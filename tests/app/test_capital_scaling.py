@@ -147,3 +147,46 @@ def test_nothing_here_touches_the_shape_of_the_strategy():
     src = inspect.getsource(capital)
     for forbidden in ("tp_pct", "take_profit", "distance_pct", "min_expectancy", "win_rate"):
         assert forbidden not in src, f"sizing must not decide strategy shape ({forbidden})"
+
+
+# --- the real book, not a uniform assumption ---------------------------------
+
+
+def test_the_audit_can_read_the_ladders_actually_open():
+    """A single `ladder_ratio` does not exist in the running system.
+
+    `autotune_levels_enabled` gives every symbol its OWN DCA spacing, and sessions opened at
+    different times were sized against different wave-0 settings — so their ladders differ.
+    Measured live 2026-08-30 with 6 sessions open: five legacy ladders near $140 (opened when
+    wave 0 was ~$15) and one WLD ladder of $223.86 (opened at $40, spacing 5.15%). Total
+    $931.89, a correlated day of **3.86%** — while assuming a uniform 5.841x ratio at today's
+    $40 wave predicted 5.81% and would have raised a false alarm.
+
+    The uniform ratio is right for sizing a session that does not exist yet. It is wrong for
+    auditing the ones that do, and those are two different questions.
+    """
+    ladders = [144.09, 139.82, 144.07, 142.19, 137.84, 223.86]
+
+    got = capital.audit_book(2002.30, ladder_usds=ladders, stop_fraction=0.083,
+                             daily_loss_limit=0.05)
+
+    assert got.committed_usd == pytest.approx(931.87, abs=0.05)
+    assert got.worst_day_pct == pytest.approx(3.86, abs=0.02)
+    assert got.within_limit is True
+
+
+def test_the_audit_of_the_real_book_can_still_fail():
+    """Same six sessions, all re-sized to today's $40 wave as the book turns over."""
+    ladders = [233.65] * 6
+
+    got = capital.audit_book(2002.30, ladder_usds=ladders, stop_fraction=0.083,
+                             daily_loss_limit=0.05)
+
+    assert got.within_limit is False
+    assert got.worst_day_pct == pytest.approx(5.81, abs=0.05)
+
+
+def test_an_empty_book_is_not_a_breach():
+    got = capital.audit_book(2000.0, ladder_usds=[], stop_fraction=0.083, daily_loss_limit=0.05)
+
+    assert got.committed_usd == 0.0 and got.within_limit is True

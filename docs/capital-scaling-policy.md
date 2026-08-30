@@ -68,6 +68,20 @@ sessions × ladder_usd ≤ (1 − backup_fraction) × equity
 Đo ngày 2026-08-30 với cấu hình live: trần rủi ro cho 4,13 session còn trần ngân sách cho 6,43 —
 **trần rủi ro luôn chạm trước**, và nó chính là con số 4 đang chạy.
 
+> ### ⚠ Một `ladder_ratio` đồng nhất KHÔNG tồn tại trong hệ đang chạy
+>
+> `autotune_levels_enabled` cấp cho mỗi mã một khoảng rung riêng, và các session mở ở thời điểm
+> khác nhau được tính theo cỡ sóng 0 khác nhau. Đo thật ngày 2026-08-30 với 6 session: năm
+> ladder cũ quanh $140 (mở khi sóng 0 còn ~$15) và một ladder WLD $223,86 (mở ở $40, rung
+> 5,15%). Tổng **$931,89 → ngày xấu nhất 3,86%**, trong khi giả định đồng nhất 5,841× ở cỡ $40
+> hiện tại cho ra **5,81%** — tức **báo động giả**.
+>
+> **Hệ số đồng nhất dùng để CẤP CỠ cho session chưa tồn tại. Để KIỂM TRA session đang mở, phải
+> đọc ladder thật:** `capital.audit_book(equity, ladder_usds=[...])`. Hai câu hỏi khác nhau,
+> đừng dùng lẫn. Hệ quả thực tế: một sổ đang an toàn có thể **trôi dần** tới mức vượt hạn mức khi
+> các session cũ đóng và được thay bằng session cỡ mới — phải kiểm lại theo sổ, không kiểm một
+> lần rồi thôi.
+
 ---
 
 ## 2. Luật nạp vốn hằng tháng
@@ -167,4 +181,5 @@ Thực hiện **đúng thứ tự này**, không bỏ bước:
 |---|---|---|
 | 2026-08-30 | Lập luật. Ràng buộc quyết định = ngày dừng lỗ đồng loạt (13/16 mã cùng ngày, 2026-06-05), không phải ngân sách. `equity_per_extra_session = $484,80` ở cấu hình live. | Kai nạp vốn hằng tháng, cần quy mô đi theo tất định và máy đọc được. |
 | 2026-08-30 | Universe mở từ 20 → **100** mã (`scan_max_symbols=100`, `min_quote_volume=$1M`). | Trần universe lùi từ ~$9.700 lên ~$48.500 vốn. |
-| 2026-08-30 | `max_concurrent_sessions` đặt **6** trên vốn $2.002 theo yêu cầu thử nghiệm của Kai — **vượt luật này** (5,81% so với hạn mức 5%). | Thí nghiệm có chủ ý trên testnet, đã cảnh báo trước. Lưới an toàn đã diễn tập: khi đóng băng, lệnh mua bị chặn, lệnh bán vẫn qua. Muốn giữ 6 session trong hạn mức thì đặt sóng 0 = **$27,50**. |
+| 2026-08-30 | `max_concurrent_sessions` đặt **6** trên vốn $2.002 theo yêu cầu thử nghiệm của Kai. | Thí nghiệm có chủ ý trên testnet, đã cảnh báo trước. Lưới an toàn đã diễn tập: khi đóng băng, lệnh mua bị chặn, lệnh bán vẫn qua. |
+| 2026-08-30 | **Tự đính chính:** cảnh báo "6 session = 5,81%, vượt hạn mức" là **sai với sổ thật**. Đo theo ladder thật: **3,86%, nằm trong hạn mức**. | Công thức giả định mọi session ở cỡ sóng $40 hiện tại; năm session cũ mở khi sóng 0 còn ~$15 nên ladder chỉ ~$140. Thêm `capital.audit_book()` để kiểm theo sổ thật. **Rủi ro sẽ trôi lên ~5,81% khi sổ quay vòng hết sang cỡ mới** — phải kiểm lại định kỳ, không kiểm một lần. |

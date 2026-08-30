@@ -288,9 +288,14 @@ def approve_order(db: Session, order_id: int, reviewer: str | None = None) -> Fi
     Human reviewer 'dashboard' is never blocked.
     """
     from app.circuit import AUTO_REVIEWERS  # lazy — circuit imports portfolio which is fine
-    if reviewer in AUTO_REVIEWERS and runtime.is_frozen(db):
-        raise ValueError(f"automation frozen — {reviewer} blocked")
     order = _get_pending(db, order_id)
+    # The freeze stops NEW RISK, never an exit. This check had no side condition, so a frozen
+    # breaker blocked automated take-profits, stop-losses and trailing exits too — turning the
+    # control that is supposed to protect capital into one that holds a losing position open.
+    # Every other gate in this file is already side-aware; this is the chokepoint they all
+    # pass through, so it has to be as well.
+    if order.side == "BUY" and reviewer in AUTO_REVIEWERS and runtime.is_frozen(db):
+        raise ValueError(f"automation frozen — {reviewer} blocked")
     # HARD cash floor: partial-fill a BUY down to available cash (or reject) BEFORE any state
     # change, so cash can never go negative and a reject leaves the order untouched (PENDING).
     _apply_cash_cap(db, order)

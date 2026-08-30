@@ -24,6 +24,7 @@ from app.models import (
     SESSION_COMPLETED,
     SESSION_PENDING,
     SESSION_STOPPED,
+    SESSION_TP_TRIGGERED,
     WAVE_ARMED,
     WAVE_CANCELLED,
     WAVE_FILLED,
@@ -251,6 +252,35 @@ def projected_ladder_cost(
         gap_y_min=0.0,
     )
     return probe.estimate_total_cost()
+
+
+def projected_first_wave_cost(
+    symbol: str,
+    entry_price: float,
+    distance_pct: float,
+    max_waves: int,
+) -> float:
+    """USD wave 0 alone would consume — the FIRST order the venue will actually see.
+
+    The exchange enforces minNotional per ORDER, not per ladder, and KSS splits the fund
+    1:2:3:… so wave 0 is only about a tenth of a four-wave ladder. Sizing gates against the
+    ladder therefore lets through sessions whose very first order the venue rejects (-1013),
+    and such a session holds a concurrency slot forever without ever trading.
+
+    Same frozen probe as ``projected_ladder_cost`` so the two can never drift apart.
+    """
+    probe = PyramidSession(
+        symbol=symbol,
+        entry_price=entry_price,
+        distance_pct=distance_pct,
+        max_waves=max_waves,
+        isolated_fund=1.0,  # dummy (>0 to pass validation); wave sizing ignores it
+        tp_pct=1.0,
+        timeout_x_min=1.0,
+        gap_y_min=0.0,
+    )
+    wave0 = probe.generate_wave(0)
+    return wave0.quantity * wave0.target_price
 
 
 def create_session(db: Session, **params: Any) -> KssSession:
@@ -638,11 +668,12 @@ def handle_fill_event(
             return {"action": "partial_tp",
                     "message": f"Session {session_id}: TP filled {filled_qty:g}, {remaining:g} still held"}
         row.status = SESSION_COMPLETED
-        # Take the rest of the ladder OFF the exchange. This was the only terminal path that
-        # did not, so a completed session left live BUY rungs resting: they lock quote balance,
-        # and if the market later dips to one it buys into a position with no session, no
-        # ladder and no take-profit — the orphan pattern behind much of our realised loss.
-        _cancel_pending_waves(db, session_id)
+        # Take the rest of the ladder OFF the exchange, or a completed session leaves live BUY
+        # rungs resting: they lock quote balance, and if the market later dips to one it buys
+        # into a position with no session, no ladder and no take-profit — the orphan pattern
+        # behind much of our realised loss. (The risk-exit branch below needs this too; an
+        # earlier version of this comment claimed otherwise and was wrong.)
+        _cancel_pending_waves(db, session_id, "take-profit filled (ladder cancelled)")
         db.commit()
         return {"action": "completed", "message": f"Session {session_id} completed (TP filled)"}
 
@@ -650,6 +681,11 @@ def handle_fill_event(
     # trailing exit — previously missing here, so a dynamic trail set NO re-entry cooldown.)
     if parts[2] in {"sl", "trailing", "trail_sl", "deadline"}:
         row.status = SESSION_STOPPED
+        # Take the ladder off the exchange, same as the TP branch above. This is the more
+        # dangerous of the two: a stop fires in a FALLING market, so the resting BUY rungs
+        # just below the price are the ones about to be hit — we would sell to cap the loss
+        # and have the venue buy us straight back in, unmanaged, into the fall.
+        _cancel_pending_waves(db, session_id, f"{parts[2]} exit filled (ladder cancelled)")
         # Record a re-entry cooldown after a risk exit (not a calendar deadline),
         # so the scanner doesn't immediately re-open the same falling symbol.
         if parts[2] in {"sl", "trailing", "trail_sl"}:
@@ -1105,7 +1141,7 @@ def stop_session(db: Session, session_id: int, reason: str = "manual") -> dict:
     # no session manages. Rejecting them is what makes sync_resting_orders take them off the
     # book. (Harmless before 1.5, when a queued rung was only ever a row awaiting approval —
     # the first soak stopped four sessions and their wave-0 orders stayed open on testnet.)
-    cancelled = _cancel_pending_waves(db, session_id)
+    cancelled = _cancel_pending_waves(db, session_id, "session stopped (ladder cancelled)")
     db.commit()
     return {"message": f"Session {session_id} stopped", "reason": reason,
             "waves_cancelled": cancelled}
@@ -1153,14 +1189,19 @@ def _tp_clears_cost(db: Session, symbol: str, price: float) -> bool:
     return price >= pos.avg_entry_price * (1 + floor)
 
 
-def _cancel_pending_waves(db: Session, session_id: int) -> int:
+def _cancel_pending_waves(
+    db: Session, session_id: int, reason: str = "dynamic-tp activated (ladder cancelled)",
+) -> int:
     """Cancel the session's still-pending DCA wave orders (+ their KssWave rows) when it flips to
     trailing mode — you cannot average down and trail up at once; rungs below the new SL are dead.
     Also cancels ARMED waves (pyramid_up's conditional up-adds + the defensive rung) — they are
     standing conditional triggers, not orders, but a session that arms trailing (commits to riding
     up) or closes must drop them too, or a stale defensive/add trigger could fire into a session
     that no longer wants it. dca_down sessions never have WAVE_ARMED rows, so this is a no-op for
-    them. No commit (the caller commits)."""
+    them. No commit (the caller commits).
+
+    ``reason`` is written to each row's ``reject_reason`` — the operator's only record of why a
+    rung died, so a caller that is not the dynamic-TP flip must say what it really was."""
     from app.models import PENDING, REJECTED, WAVE_PENDING, PendingOrder
 
     n = 0
@@ -1169,7 +1210,7 @@ def _cancel_pending_waves(db: Session, session_id: int) -> int:
                       PendingOrder.source_ref.like(f"pyramid:{session_id}:wave:%"))
               .all()):
         o.status = REJECTED
-        o.reject_reason = "dynamic-tp activated (ladder cancelled)"
+        o.reject_reason = reason
         o.decided_at = utcnow()
         n += 1
     for w in (db.query(KssWave)
@@ -1892,6 +1933,63 @@ def manage_orphan_positions(db: Session) -> list[str]:
         swept.append(p.symbol)
     db.commit()
     return swept
+
+
+def sweep_orphan_waves(db: Session) -> int:
+    """Retire DCA rungs still pending for a session that has already ended. Returns the count.
+
+    Fixing the terminal paths only stops NEW orphans; it cannot reach one that is already
+    resting on the exchange. Two were found live on the 2026-08-30 soak — sessions 6 and 7 were
+    COMPLETED while Binance still showed their rungs open, $59.63 of exposure that would have
+    bought in with no session to manage it. This runs every cycle so the book heals itself
+    instead of needing a human to notice.
+
+    Only BUY wave rows are touched. A pending SELL is an exit still closing a position and an
+    exit is never cancelled — every `…:wave:%` row happens to be a BUY today, so selecting on
+    the side costs nothing and makes that structural rather than conventional.
+
+    "Still going" is the positive test — ACTIVE, PENDING or TP_TRIGGERED — and everything else
+    is an orphan, INCLUDING a session whose row no longer exists. `delete_session` hard-deletes
+    any non-ACTIVE session and `KssWave` cascades, but a PendingOrder is joined only by the
+    `source_ref` string and survives; an operator tidying stopped sessions in the UI is the most
+    likely way an orphan is born. Testing for STOPPED/COMPLETED instead would miss exactly that.
+    PENDING is a session whose wave 0 is still being queued, and TP_TRIGGERED is transient —
+    ``_handle_tp_triggered`` returns the session to ACTIVE whenever K-2 defers the sell — so
+    sweeping either would strip a living session of its ladder.
+
+    Marking the row REJECTED retires it only because ``orders.sync_resting_orders`` then takes
+    it off the venue, so we retire nothing that pass could not reach: not while the resting
+    model is off (it returns immediately), and not a row already carrying a terminal exchange
+    status, whose fill may be booked only by the dead-link reaper's PENDING-only loop.
+    """
+    from app.models import PENDING, REJECTED, PendingOrder
+
+    going = {s.id for s in db.query(KssSession).filter(
+        KssSession.status.in_((SESSION_ACTIVE, SESSION_PENDING, SESSION_TP_TRIGGERED))).all()}
+    resting = orders.resting_model_active()
+    n = 0
+    for o in (db.query(PendingOrder)
+              .filter(PendingOrder.status == PENDING,
+                      PendingOrder.side == "BUY",
+                      PendingOrder.source_ref.like("pyramid:%:wave:%"))
+              .all()):
+        try:
+            session_id = int(str(o.source_ref).split(":")[1])
+        except (IndexError, ValueError):
+            continue
+        if session_id in going:
+            continue
+        if o.exchange_order_id and (
+                not resting or o.exchange_status in orders._TERMINAL_EXCHANGE_STATUS):
+            continue  # nothing downstream would cancel or book it — keep our handle on it
+        o.status = REJECTED
+        o.reject_reason = "session ended (orphan rung swept)"
+        o.decided_at = utcnow()
+        n += 1
+    if n:
+        db.commit()
+        logger.info("swept %d orphan DCA rung(s) left by ended sessions", n)
+    return n
 
 
 def sweep_deadlines(db: Session, now: datetime | None = None) -> list[int]:

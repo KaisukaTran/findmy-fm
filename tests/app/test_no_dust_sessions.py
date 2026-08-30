@@ -23,31 +23,70 @@ def _live(monkeypatch):
     monkeypatch.setattr(execution, "live_enabled", lambda: True)
 
 
-def test_a_ladder_under_the_min_notional_does_not_open(monkeypatch):
+def test_an_order_under_the_min_notional_does_not_open(monkeypatch):
     monkeypatch.setattr(settings, "scan_min_notional", 10.0)
 
-    assert scanner._ladder_too_small(0.188) is True
-    assert scanner._ladder_too_small(0.0) is True
+    assert scanner._first_wave_too_small(0.188) is True
+    assert scanner._first_wave_too_small(0.0) is True
 
 
-def test_a_real_ladder_opens(monkeypatch):
+def test_a_real_first_wave_opens(monkeypatch):
     monkeypatch.setattr(settings, "scan_min_notional", 10.0)
 
-    assert scanner._ladder_too_small(142.19) is False
-    assert scanner._ladder_too_small(10.0) is False
+    assert scanner._first_wave_too_small(40.0) is False
+    assert scanner._first_wave_too_small(10.0) is False
 
 
 def test_the_check_is_off_when_the_floor_is_zero(monkeypatch):
     """0 = the operator has deliberately removed the floor."""
     monkeypatch.setattr(settings, "scan_min_notional", 0.0)
 
-    assert scanner._ladder_too_small(0.188) is False
+    assert scanner._first_wave_too_small(0.188) is False
 
 
 def test_paper_is_untouched(monkeypatch):
-    """Paper fills whatever it is given — a tiny ladder there is a tiny simulated trade, not a
+    """Paper fills whatever it is given — a tiny order there is a tiny simulated trade, not a
     slot that can never fill."""
     monkeypatch.setattr(execution, "live_enabled", lambda: False)
     monkeypatch.setattr(settings, "scan_min_notional", 10.0)
 
-    assert scanner._ladder_too_small(0.188) is False
+    assert scanner._first_wave_too_small(0.188) is False
+
+
+# --- the venue's rule is per ORDER, so the floor must measure wave 0 -----------
+
+
+def test_the_floor_is_measured_against_wave_0_not_the_whole_ladder(monkeypatch):
+    """The guard measured the LADDER while the exchange measures each ORDER.
+
+    KSS splits the fund 1:2:3:… across waves, so wave 0 is roughly a TENTH of the ladder. A
+    ladder just over the floor therefore sends a wave 0 far under it, the venue answers -1013
+    NOTIONAL every cycle, and the session sits ACTIVE holding a concurrency slot it can never
+    use — exactly how 8.5 hours of the first soak were lost behind one $0.19 LTC session
+    (audit `open_execute_failed`, 2026-08-29 18:50:51).
+
+    Reachable on the DEFAULT config: with `kss_first_wave_usd = 0` the legacy path sizes wave 0
+    as `pip_multiplier × minQty`. Measured against the live venue on 2026-08-30, BTC/USDT gives
+    wave 0 = $1.56 on a $15.03 ladder and BNB/USDT $1.39 on $13.33 — both sail past a $10
+    LADDER floor while sitting under Binance's $5 minNotional.
+    """
+    monkeypatch.setattr(settings, "scan_min_notional", 10.0)
+
+    assert scanner._first_wave_too_small(1.56) is True, "BTC on a $15.03 ladder"
+    assert scanner._first_wave_too_small(1.39) is True, "BNB on a $13.33 ladder"
+
+
+def test_the_first_wave_cost_is_the_wave_0_slice_of_the_ladder(monkeypatch):
+    """`projected_first_wave_cost` must come from the SAME frozen pyramid math as
+    `projected_ladder_cost`, not a re-derived divisor — wave 0's share depends on both the wave
+    count and the distance decay."""
+    from app.kss import service as kss
+
+    monkeypatch.setattr(settings, "kss_first_wave_usd", 40.0)
+
+    first = kss.projected_first_wave_cost("SOL", 100.0, 2.0, 4)
+    ladder = kss.projected_ladder_cost("SOL", 100.0, 2.0, 4)
+
+    assert first == pytest.approx(40.0, rel=1e-6), "the configured wave-0 USD"
+    assert first < ladder
+    assert ladder == pytest.approx(first * 9.606, rel=1e-3), "1:2:3:4 rungs decayed by 2%"

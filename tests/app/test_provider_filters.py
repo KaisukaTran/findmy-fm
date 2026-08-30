@@ -46,7 +46,7 @@ def test_decimal_places_falls_back_to_ten_pow_minus_precision_without_filter():
 
 
 def test_tick_size_mode_uses_precision_value_as_is():
-    """TICK_SIZE mode: precision.amount already IS the step (e.g. Kraken/OKX-style)."""
+    """TICK_SIZE mode: precision.amount already IS the step (e.g. OKX-style)."""
     market = _market(0.0001)
     step = _step_size_from_market(ccxt.TICK_SIZE, market)
     assert step == pytest.approx(0.0001)

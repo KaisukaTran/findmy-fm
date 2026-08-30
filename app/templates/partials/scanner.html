@@ -9,7 +9,7 @@
 {% if rows %}
 <table class="tbl">
   <thead><tr>
-    <th title="Mã coin (base symbol), ghép với quote của sàn dữ liệu (vd kraken → USD).">Sym</th>
+    <th title="Mã coin (base symbol), ghép với quote của sàn dữ liệu (vd binance → USDT).">Sym</th>
     <th title="Mức đồng thuận của các agent = tổng hợp có trọng số các phiếu (quant + backtest + ML). Càng cao = nhiều agent cùng đồng ý vào lệnh.">Consensus</th>
     <th title="Tỉ lệ thắng backtest SL-aware (đã mô phỏng stop-loss + phí), out-of-sample. Trong ngoặc là cận dưới Wilson 95% — con số đáng tin khi ít mẫu. Xanh nếu cận dưới ≥ ngưỡng.">Win% (lb)</th>
     <th title="KỲ VỌNG = lợi nhuận net trung bình mỗi lệnh trong backtest (sau stop-loss + phí). Đây là cổng CHÍNH: chỉ trade khi E dương đủ ngưỡng. Win% cao mà E âm = kèo xấu.">Kỳ vọng</th>

@@ -356,7 +356,7 @@ def test_second_scan_zero_ohlcv_calls(db, scan_env, monkeypatch):  # noqa: ARG00
     candles_data = _uptrend()
 
     class _SpyProvider:
-        exchange_id = "kraken"
+        exchange_id = "coinbase"
         quote = "USD"
 
         def pair(self, symbol: str) -> str:
@@ -434,7 +434,7 @@ def _make_spy_provider(candles_data):
     state = {"calls": 0}
 
     class _SpyProvider:
-        exchange_id = "kraken"
+        exchange_id = "coinbase"
         quote = "USD"
 
         def pair(self, symbol: str) -> str:

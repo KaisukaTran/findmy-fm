@@ -109,10 +109,10 @@ def test_kucoin_and_okx_also_use_usdt():
 
 
 def test_usd_exchanges_correctly_use_usd():
-    """Kraken/Coinbase legitimately use USD — confirm they are NOT accidentally changed to USDT."""
+    """Coinbase/Bitstamp legitimately use USD — confirm they are NOT accidentally changed to USDT."""
     usd_exchanges = {k: v for k, v in _QUOTES.items() if "binance" not in k and "kucoin" not in k and "okx" not in k}
     for exchange, quote in usd_exchanges.items():
         assert quote == "USD", (
             f"Non-Binance exchange {exchange!r} unexpectedly has quote={quote!r}; "
-            "Kraken/Coinbase/Bitstamp use real USD and should stay USD."
+            "Coinbase/Bitstamp use real USD and should stay USD."
         )

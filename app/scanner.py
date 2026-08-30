@@ -129,20 +129,26 @@ _BARS_PER_DAY: dict[str, float] = {
 }
 
 
-def _ladder_too_small(ladder_usd: float) -> bool:
-    """True when a session's whole planned ladder is worth less than the scanner's floor.
+def _first_wave_too_small(first_wave_usd: float) -> bool:
+    """True when WAVE 0 is worth less than the scanner's floor.
 
     Such a session can never place a valid order — wave 0 lands on the symbol's minimum
     quantity and the venue rejects it — but it still holds a concurrency slot, and once every
     slot is held the scanner stops scanning. 0 = the operator removed the floor.
 
+    Measured against wave 0, NOT the whole ladder: minNotional is enforced per ORDER, and KSS
+    splits the fund 1:2:3:… so wave 0 is only about a tenth of a four-wave ladder. Gating on
+    the ladder total let through precisely the sessions the venue then refused — on the default
+    `kss_first_wave_usd = 0`, BTC and BNB both clear a $10 ladder floor with a wave 0 under
+    Binance's $5 minNotional.
+
     LIVE only: minNotional is the exchange's rule, and paper fills whatever it is given. On
-    paper a tiny ladder is merely a tiny simulated trade, not a slot that can never fill.
+    paper a tiny order is merely a tiny simulated trade, not a slot that can never fill.
     """
     from app import execution
 
     floor = settings.scan_min_notional
-    return floor > 0 and ladder_usd < floor and execution.live_enabled()
+    return floor > 0 and first_wave_usd < floor and execution.live_enabled()
 
 
 def _days_to_bars(days: int, timeframe: str) -> int:
@@ -919,18 +925,21 @@ def _review_and_open(
             c["need"] if entry == c["entry"]
             else service.projected_ladder_cost(symbol, entry, c["distance_pct"], c["max_waves"])
         )
-        # A ladder worth less than the exchange will even accept can never trade: wave 0 comes
-        # out at the symbol's minimum quantity, the venue rejects it (-1013) every cycle, and
-        # the session sits ACTIVE holding nothing while occupying one of the concurrency slots.
-        # With every slot taken the scanner stops scanning at all — 8.5 hours of the first soak
-        # went that way behind a single $0.19 LTC session.
-        if _ladder_too_small(need):
+        # A first order the exchange will not accept can never trade: wave 0 comes out at the
+        # symbol's minimum quantity, the venue rejects it (-1013) every cycle, and the session
+        # sits ACTIVE holding nothing while occupying one of the concurrency slots. With every
+        # slot taken the scanner stops scanning at all — 8.5 hours of the first soak went that
+        # way behind a single $0.19 LTC session. Measured on WAVE 0, because that is what the
+        # venue measures; the ladder can be ten times larger and still send a rejected order.
+        first_wave = service.projected_first_wave_cost(
+            symbol, entry, c["distance_pct"], c["max_waves"])
+        if _first_wave_too_small(first_wave):
             cand.reason = (cand.reason or "") + (
-                f" | skipped: ladder is only ${need:.2f}, under the ${settings.scan_min_notional:.2f} "
-                "floor — it could not place a valid order")
+                f" | skipped: wave 0 is only ${first_wave:.2f} (ladder ${need:.2f}), under the "
+                f"${settings.scan_min_notional:.2f} floor — the venue would reject it")
             audit.log(db, "scanner", "open_dust_ladder", entity=symbol,
-                      symbol=symbol, ladder_usd=round(need, 4),
-                      floor=settings.scan_min_notional)
+                      symbol=symbol, first_wave_usd=round(first_wave, 4),
+                      ladder_usd=round(need, 4), floor=settings.scan_min_notional)
             continue
         ok, why = _can_open(db, need)
         if ok:

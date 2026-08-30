@@ -580,6 +580,8 @@ def _book_delta(db: Session, order: PendingOrder, res: dict) -> bool:
     Shared with ``_cancel_resting``: a cancel has to book what the venue already filled
     BEFORE the exchange link is dropped, because reconcile never looks at an unlinked row.
     """
+    from app import execution
+
     status = str(res.get("status") or "").lower()
     cum_filled = float(res.get("filled") or 0.0)
     avg = float(res.get("average") or 0.0)
@@ -608,6 +610,14 @@ def _book_delta(db: Session, order: PendingOrder, res: dict) -> bool:
         db.add(fill)
         db.flush()
         booked = True
+        # A resting maker order was still OUTSTANDING against the ORDERS budget (a cancel never
+        # credits it, only a fill does — see the note in app/execution.py). This is where the
+        # async fill this module discovers is first known, so it is where the credit belongs —
+        # but ONE placement may only ever return ONE unit. A maker order in a thin book fills in
+        # several deltas, and crediting each of them would make the tracker believe we have more
+        # budget than we do, which is the one direction that ends in a -1015.
+        if booked_qty <= 1e-9:
+            execution.record_order_filled()
         logger.info(
             "LIVE reconciled fill order %s: %s %s %s @ %s (status=%s)",
             order.id, order.side, delta, order.symbol, avg, status,

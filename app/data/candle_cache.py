@@ -92,7 +92,7 @@ def get_candles(
     Parameters
     ----------
     exchange_id:
-        ccxt exchange id string (e.g. ``"kraken"``).
+        ccxt exchange id string (e.g. ``"binance"``).
     symbol:
         Base asset symbol (e.g. ``"BTC"``).
     timeframe:

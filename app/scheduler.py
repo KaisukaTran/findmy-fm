@@ -131,6 +131,9 @@ def run_cycle(db: Session) -> dict:
     # Live-only: book fills of resting maker orders the exchange filled since last cycle,
     # BEFORE TP/scan run so sessions/positions reflect reality. No-op on paper.
     reconciled = orders.reconcile_live_orders(db)
+    # Straight after reconciliation, while session statuses are fresh: retire rungs still
+    # pending for a session that has ended, so the venue never holds an unmanaged BUY.
+    service.sweep_orphan_waves(db)
     closed = service.sweep_deadlines(db)
     tp = service.manage_open_sessions(db)
     service.manage_orphan_positions(db)  # TP/SL leftover positions no session/OPUS covers

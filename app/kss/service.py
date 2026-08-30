@@ -1486,6 +1486,31 @@ def _pyramid_up_hard_sl(db: Session, row: KssSession, price: float) -> bool:
     return True
 
 
+def _exit_in_flight(db: Session, session_id: int) -> bool:
+    """True when this session already has an exit SELL waiting in the queue.
+
+    `check_stop` queues the sell but leaves the session ACTIVE — correctly, since it still
+    holds the position until that sell fills. Without this check every following cycle
+    re-evaluated the same still-ACTIVE, still-fully-filled session and queued ANOTHER
+    full-size stop. Duplicates are clamped on quantity when they execute, but the fee is
+    charged on the pre-clamp size, and a stale stop approved after a take-profit already
+    finished the session rewrites its history from COMPLETED back to STOPPED.
+    """
+    from app.models import PENDING, PendingOrder
+
+    rows = (
+        db.query(PendingOrder.source_ref)
+        .filter(
+            PendingOrder.status == PENDING,
+            PendingOrder.side == "SELL",
+            PendingOrder.source_ref.like(f"pyramid:{session_id}:%"),
+        )
+        .all()
+    )
+    # The resting take-profit is maintained continuously and is not "an exit in flight".
+    return any(str(r[0] or "").rsplit(":", 1)[-1] != "tp" for r in rows)
+
+
 def manage_open_sessions(db: Session) -> list[int]:
     """
     Check every ACTIVE session against the live price and queue a TP sell when the
@@ -1510,6 +1535,8 @@ def manage_open_sessions(db: Session) -> list[int]:
         price = prices.get(row.symbol)
         if not price:
             continue
+        if _exit_in_flight(db, row.id):
+            continue  # its stop/TP sell is already queued — re-queueing would duplicate it
         if row.strategy_mode == "pyramid_up":
             # Defensive-DCA trigger FIRST (reversal-flip): if price has fallen to the defensive
             # rung, fill it now — the session flips to dca_down in _handle_pyramid_up_fill and the

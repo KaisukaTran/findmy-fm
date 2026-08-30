@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import time as _time
-from datetime import datetime, time, timedelta
+from datetime import datetime, time
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -205,3 +205,94 @@ def check_all_risks(
     if v := check_daily_loss(db):
         violations.append(v)
     return len(violations) == 0, violations
+
+
+# --- account reconciliation: what the venue holds vs what we think we hold ---------------
+
+
+def _exchange_balances() -> dict[str, float]:
+    """Every non-zero asset balance on the live account, `{asset: total}` (free + used).
+
+    Split out so tests can inject it without a network call, and so the one place that talks
+    to the venue is obvious.
+    """
+    from app import execution
+
+    bal = execution._client().fetch_balance()
+    return {k: float(v.get("total") or 0.0) for k, v in bal.items()
+            if isinstance(v, dict) and float(v.get("total") or 0.0) > 0}
+
+
+def _mark_prices(symbols: list[str]) -> dict[str, float]:
+    from app.market import get_current_prices
+
+    return get_current_prices(symbols) if symbols else {}
+
+
+def account_reconciliation(db: Session, min_value_usd: float = 1.0) -> dict:
+    """Compare the exchange's actual holdings against the app's ``Position`` rows.
+
+    The app only knows what it booked. Anything the venue holds that no Position names is
+    invisible to every guard — no take-profit, no stop, not counted in exposure. That is how an
+    orphan hides, and this session found one live (172 ARB booked into an already-stopped
+    session) only because a human looked. On real money this is the check that catches an
+    untracked position, a fill the app lost, or a manual trade.
+
+    Reports only. Selling an "untracked" asset automatically would be the worst possible
+    reflex: the app not knowing about something is not evidence it should be sold.
+
+    Deliberately NOT a capital anchor. Measured on Binance TESTNET 2026-08-31, the faucet
+    pre-seeds ~$427k across hundreds of tokens — anchoring capital to that would size orders
+    against money that is not the operator's capital.
+    """
+    from app.config import settings
+    from app.models import Position
+
+    out: dict = {"ok": False, "error": None, "quote_balance": 0.0,
+                 "untracked": [], "mismatched": [], "min_value_usd": min_value_usd}
+    if not settings.live_trading:
+        out["error"] = "paper instance has no exchange account"
+        return out
+    try:
+        balances = _exchange_balances()
+    except Exception as exc:  # an empty result would read as "all clear" — say so instead
+        out["error"] = str(exc)
+        logger.warning("account reconciliation could not read balances: %s", exc)
+        return out
+
+    quote = "USDT"
+    try:
+        from app.data import providers
+
+        quote = providers.live_provider().quote
+    except Exception:  # fall back to the venue default rather than fail the whole check
+        pass
+    out["quote_balance"] = balances.pop(quote, 0.0)
+
+    tracked = {p.symbol: float(p.quantity or 0.0)
+               for p in db.query(Position).filter(Position.quantity > 0).all()}
+    prices = _mark_prices(sorted(set(balances) | set(tracked)))
+
+    for asset, qty in sorted(balances.items()):
+        px = float(prices.get(asset) or 0.0)
+        value = qty * px
+        if asset in tracked:
+            diff = qty - tracked[asset]
+            if abs(diff) * px >= min_value_usd:
+                out["mismatched"].append({
+                    "symbol": asset, "exchange_qty": qty, "app_qty": tracked[asset],
+                    "difference": diff, "value_usd": round(abs(diff) * px, 2)})
+        elif value >= min_value_usd:
+            out["untracked"].append({"symbol": asset, "quantity": qty,
+                                     "value_usd": round(value, 2)})
+    # The dangerous direction too: the app believes it holds something the venue does not, so
+    # an exit would fail at the venue exactly when it is needed.
+    for asset, qty in sorted(tracked.items()):
+        if asset not in balances:
+            px = float(prices.get(asset) or 0.0)
+            if qty * px >= min_value_usd:
+                out["mismatched"].append({
+                    "symbol": asset, "exchange_qty": 0.0, "app_qty": qty,
+                    "difference": -qty, "value_usd": round(qty * px, 2)})
+    out["ok"] = True
+    return out

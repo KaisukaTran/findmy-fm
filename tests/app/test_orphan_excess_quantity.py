@@ -179,3 +179,40 @@ def test_a_session_reporting_zero_filled_protects_its_whole_symbol(db):
     kss.manage_orphan_positions(db)
 
     assert _queued_sells(db) == []
+
+
+def test_the_sessions_own_resting_take_profit_does_not_count_as_extra_cover(db):
+    """The exact live ARB shape, and the reason a symbol-level defer was wrong.
+
+    Under the 1.5 resting model every ACTIVE session ALWAYS has a take-profit on the book. If
+    that SELL marked the whole symbol as covered, the excess check could never fire for any
+    live symbol — the defer would be permanent and this function a no-op. And its quantity may
+    not be ADDED to the session's either: it sells the very units already counted, so adding it
+    would cover 172 + 172 = 344 and hide the orphan again.
+    """
+    s = _session(db, qty=172.0)
+    _position(db, qty=344.0)
+    db.add(PendingOrder(symbol="ARB", side="SELL", order_type="LIMIT", quantity=172.0,
+                        price=0.0999, source="kss", source_ref=f"pyramid:{s.id}:tp",
+                        status=PENDING))
+    db.commit()
+
+    kss.manage_orphan_positions(db)
+
+    orphan_sells = [o for o in _queued_sells(db) if str(o.source_ref).startswith("orphan")]
+    assert len(orphan_sells) == 1
+    assert orphan_sells[0].quantity == pytest.approx(172.0), "the half nobody holds"
+
+
+def test_an_exit_this_function_already_queued_is_not_queued_twice(db):
+    """The orphan exit from an earlier cycle DOES count as cover — otherwise every cycle would
+    stack another market sell on the same units."""
+    _session(db, qty=172.0)
+    _position(db, qty=344.0)
+    db.add(PendingOrder(symbol="ARB", side="SELL", order_type="MARKET", quantity=172.0,
+                        price=0.0, source="kss", source_ref="orphan:tp", status=PENDING))
+    db.commit()
+
+    kss.manage_orphan_positions(db)
+
+    assert len(_queued_sells(db)) == 1, "the one already queued, and no second"

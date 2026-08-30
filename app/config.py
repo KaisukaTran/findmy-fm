@@ -107,6 +107,14 @@ class Settings(BaseSettings):
         "instance (e.g. paper vs live) a DISTINCT port so both schedulers run; same port across two "
         "processes = only one scheduler (the cross-process lock behind the concurrency-cap fix).",
     )
+    credential_alert_cooldown_min: float = Field(
+        default=15.0, ge=0,
+        description="Min minutes between repeated Telegram alerts for a persisting LIVE "
+        "credential failure (dead/revoked/IP-restricted API key — every signed call fails the "
+        "same way, so without a throttle each one would fire its own message). The alert still "
+        "repeats once the cooldown elapses as long as the condition persists — it never goes "
+        "silent after the first message. 0 = alert on every occurrence.",
+    )
 
     # --- Execution capital guard ---
     cash_floor_usd: float = Field(

@@ -16,6 +16,7 @@ import asyncio
 import logging
 import socket
 import threading
+import time
 
 from sqlalchemy.orm import Session
 
@@ -79,6 +80,87 @@ def status() -> dict:
     }
 
 
+# --- public-IP change detection (live-readiness gap-closer) ---------------------------------
+#
+# Binance can restrict an API key to a whitelisted IP; once a whitelist is set, the key stops
+# working the instant this machine's public IP changes (e.g. a dynamic ISP lease renewing) —
+# exactly the same total-silence failure mode as a dead key (see app.execution's credential
+# alerting), just triggered by the network instead of the exchange. This is a CHEAP periodic
+# check, not a live-only exchange call: it never touches ccxt/the exchange at all.
+
+RUNTIME_KEY_LAST_PUBLIC_IP = "last_public_ip"
+_IP_LOOKUP_URL = "https://api.ipify.org"
+_IP_CHECK_INTERVAL_SEC = 300.0  # a few minutes; cheap, but must not run every cycle
+_last_ip_check_at: float = 0.0
+
+
+def reset_ip_check_throttle() -> None:
+    """Clear the internal IP-check throttle (tests, and a credentials change)."""
+    global _last_ip_check_at
+    _last_ip_check_at = 0.0
+
+
+def fetch_public_ip(timeout: float = 5.0) -> str | None:
+    """This machine's current public IP, or None on ANY failure — never raises. A failed lookup
+    must never be misread as "the IP changed"; the caller treats None as skip-not-alert."""
+    try:
+        import requests
+
+        resp = requests.get(_IP_LOOKUP_URL, timeout=timeout)
+        resp.raise_for_status()
+        ip = resp.text.strip()
+        return ip or None
+    except Exception:
+        return None
+
+
+def check_ip_change(db: Session, *, lookup=None) -> str | None:
+    """Detect a change in the machine's public IP since the last check; alert once when it does.
+
+    Live-only (paper must stay inert — a paper instance has no real key to lose): a no-op when
+    `settings.live_trading` is off. Internally throttled to at most once per
+    `_IP_CHECK_INTERVAL_SEC` regardless of how often the caller invokes this — the scheduler
+    cycle is already minutes apart, but this is a defensive floor in case that ever changes, or
+    this is ever called from somewhere more frequent (e.g. the fast position guard). The last
+    seen value is persisted via `app.runtime` (survives a restart, so a restart never re-alerts
+    on an IP that changed while the process was down but hasn't changed again since).
+
+    NEVER raises: a lookup failure (no network) just skips — it is explicitly NOT read as a
+    change, and no alert fires. The first observation (nothing stored yet) only establishes the
+    baseline; it is not itself a "change". Returns the new IP when a change was detected and
+    alerted, else None.
+    """
+    global _last_ip_check_at
+    if not settings.live_trading:
+        return None
+    now = time.monotonic()
+    if now - _last_ip_check_at < _IP_CHECK_INTERVAL_SEC:
+        return None
+    _last_ip_check_at = now
+    try:
+        from app import runtime
+
+        ip = (lookup or fetch_public_ip)()
+        if not ip:
+            return None  # lookup failed — skip, never alert on that
+        last = runtime.get(db, RUNTIME_KEY_LAST_PUBLIC_IP)
+        runtime.set(db, RUNTIME_KEY_LAST_PUBLIC_IP, ip)
+        if last and last != ip:
+            from app import notify
+
+            notify.event(
+                "risk",
+                f"🌐 Public IP changed: {last} → {ip}. If the LIVE exchange API key has an IP "
+                "whitelist, every signed call will now fail until it's updated (placements, "
+                "cancels, and the reconciliation that books fills all go silent).",
+            )
+            return ip
+        return None
+    except Exception:  # a diagnostic check must never break the cycle
+        logger.debug("check_ip_change failed", exc_info=True)
+        return None
+
+
 def _run_periodic(db: Session) -> tuple[int, bool]:
     """Phase C: time-gated per-pair hyperopt + ML retrain. Never raises."""
     from datetime import datetime
@@ -128,6 +210,10 @@ def run_cycle(db: Session) -> dict:
     # Before anything reads the gates: a configuration that contradicts itself trades NOTHING
     # and says nothing about it, so put it back into a range that can actually open a session.
     tuned = autotune.enforce_consistency(db)
+    # Cheap, live-only, self-throttled diagnostic: alert on a public-IP change (the likely
+    # cause once a whitelist is set), BEFORE anything below touches the exchange this cycle.
+    # Never raises (see check_ip_change); inert on paper.
+    check_ip_change(db)
     # Live-only: book fills of resting maker orders the exchange filled since last cycle,
     # BEFORE TP/scan run so sessions/positions reflect reality. No-op on paper.
     reconciled = orders.reconcile_live_orders(db)

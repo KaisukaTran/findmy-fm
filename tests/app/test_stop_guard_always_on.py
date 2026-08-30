@@ -105,3 +105,35 @@ def test_the_guard_can_still_be_switched_off_deliberately(monkeypatch):
     monkeypatch.setattr(settings, "kss_exit_check_sec", 0)
 
     assert scheduler.guard_should_run() is False
+
+
+def test_the_fast_guard_does_not_queue_a_second_stop(db, monkeypatch):
+    """The 30-min cycle queues the stop; the 90s guard then runs 20x before it fills. Without
+    the in-flight check each tick queued another full-size stop — and turning the guard on by
+    default (the other half of this commit) made that far more frequent."""
+    row = _session(db)
+    monkeypatch.setattr("app.market.get_current_prices", lambda syms: {"SOL": 80.0})
+    kss.manage_open_sessions(db)
+    assert len(_stops(db, row.id)) == 1
+
+    kss._guard_hard_sl(db, row, 80.0)
+    kss._guard_hard_sl(db, row, 79.0)
+    db.commit()
+
+    assert len(_stops(db, row.id)) == 1, "the guard must not duplicate a stop already waiting"
+
+
+def test_the_deadline_sweep_does_not_queue_over_a_waiting_stop(db, monkeypatch):
+    from datetime import timedelta
+
+    from app.clock import utcnow
+
+    row = _session(db)
+    monkeypatch.setattr("app.market.get_current_prices", lambda syms: {"SOL": 80.0})
+    kss.manage_open_sessions(db)
+    row.deadline_at = utcnow() - timedelta(days=1)
+    db.commit()
+
+    kss.sweep_deadlines(db)
+
+    assert len(_stops(db, row.id)) == 1, "a deadline sell must not stack on a waiting stop"

@@ -389,15 +389,39 @@ def _live_execute(db: Session, order: PendingOrder) -> Fill:
     # that fails aborts the placement: placing anyway would double the exposure.
     if order.exchange_order_id:
         # Book whatever it filled BEFORE unlinking. A cancel races the venue, and
-        # reconcile_live_orders only looks at linked rows — dropping the link first loses
-        # that fill for good (probe: the venue had filled 4.0, the re-place then bought the
-        # full 10.0 again). _cancel_resting already does exactly this, so reuse it; a refusal
-        # aborts the placement, because placing anyway would double the exposure.
+        # reconcile_live_orders only looks at linked rows — dropping the link first loses that
+        # fill for good. _cancel_resting already does exactly this, so reuse it; a refusal
+        # aborts, because placing anyway would double the exposure.
+        booked_before, _ = _booked_qty_fee(db, order.id)
         if not _cancel_resting(db, order):
             raise ValueError(
                 f"order {order.id}: could not take the resting order off the book — "
                 "refusing to place a second one"
             )
+        # ...and True does NOT mean "nothing was taken off the book". The venue answering
+        # -2011 IS the fill case: _cancel_resting books it and returns True. Placing the full
+        # size after that buys the rung twice. Only the part the venue did not fill may go out.
+        booked_after, _ = _booked_qty_fee(db, order.id)
+        just_filled = booked_after - booked_before
+        if just_filled > 1e-9:
+            remaining = order.quantity - just_filled
+            fill = (
+                db.query(Fill)
+                .filter(Fill.pending_order_id == order.id)
+                .order_by(Fill.id.desc())
+                .first()
+            )
+            if remaining <= 1e-9 or (order.price > 0 and remaining * order.price
+                                     < settings.scan_min_notional):
+                logger.info(
+                    "order %s: the venue had already filled %s of %s — placing nothing more",
+                    order.id, just_filled, order.quantity,
+                )
+                db.commit()
+                return fill
+            logger.info("order %s: venue filled %s of %s during the cancel — placing the "
+                        "remaining %s", order.id, just_filled, order.quantity, remaining)
+            order.quantity = remaining
 
     ref_price = order.price if order.price > 0 else (
         get_current_prices([order.symbol]).get(order.symbol) or 0.0
@@ -450,6 +474,9 @@ def _live_execute(db: Session, order: PendingOrder) -> Fill:
     realized = _update_position(db, order.symbol, order.side, qty, eff, fee)
     fill = Fill(
         pending_order_id=order.id,
+        # Tag it, or this path keeps minting NULL-keyed fills and a row that reaches a THIRD
+        # exchange order re-acquires the netting bug the tagging exists to prevent.
+        exchange_order_id=order.exchange_order_id,
         symbol=order.symbol,
         side=order.side,
         quantity=qty,
@@ -768,11 +795,30 @@ def sync_resting_orders(db: Session) -> dict:
         db.query(PendingOrder)
         .filter(
             PendingOrder.status == PENDING,
+            PendingOrder.source == "kss",          # only rows this model placed
+            PendingOrder.order_type == "LIMIT",    # a MARKET risk exit is never "resting"
             PendingOrder.exchange_order_id.isnot(None),
             PendingOrder.exchange_status.in_(_TERMINAL_EXCHANGE_STATUS),
         )
         .all()
     ):
+        # ASK THE VENUE FIRST. A terminal status is not proof the fill was booked: _live_execute
+        # stamps the raw placement status and books nothing when the venue reports no usable
+        # price, which leaves PENDING + link + terminal with a REAL fill unrecorded. Releasing
+        # that link would discard the fill AND strip the "already resting" guard, so the rung
+        # gets bought a second time. Booking first makes both impossible; a fully filled row
+        # becomes EXECUTED and drops out of this loop on its own.
+        from app import execution
+        from app.data.providers import live_provider
+
+        try:
+            _book_delta(db, order, execution.fetch_live_order(
+                live_provider().pair(order.symbol), str(order.exchange_order_id)))
+        except Exception:  # cannot confirm — keep the link and retry next cycle
+            logger.exception("resting: could not confirm dead link on order %s", order.id)
+            continue
+        if order.status != PENDING:
+            continue  # it had filled after all; _book_delta marked it EXECUTED
         logger.info("resting: releasing dead exchange link on order %s (%s)",
                     order.id, order.exchange_status)
         audit.log(db, "orders", "resting_link_released", entity=f"order:{order.id}",
@@ -780,6 +826,7 @@ def sync_resting_orders(db: Session) -> dict:
                   exchange_status=order.exchange_status)
         order.exchange_order_id = None
         order.exchange_status = None
+    db.commit()  # settle the releases before the loops below query these rows
 
     linked = (
         db.query(PendingOrder)

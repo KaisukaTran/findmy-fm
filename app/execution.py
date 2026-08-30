@@ -64,6 +64,7 @@ def reset_client_cache() -> None:
     """Drop the cached clients and any rate-limit hold (tests, and a credentials change)."""
     global _rate_limited_until
     _CLIENTS.clear()
+    _last_clock_refresh.clear()
     _rate_limited_until = 0.0
 
 
@@ -72,8 +73,17 @@ def rate_limited_until() -> float:
     return _rate_limited_until
 
 
-def assert_not_rate_limited() -> None:
-    """Raise if the venue told us to back off and the pause has not expired."""
+def assert_not_rate_limited(urgent: bool = False) -> None:
+    """Raise if the venue told us to back off and the pause has not expired.
+
+    ``urgent`` exempts anything that REDUCES risk — a SELL exit, a cancel. Exits are never
+    gated in this system, and a throttle must not be the exception: a stop-loss costs one
+    weight unit, and holding it back to protect a rate budget trades a real position for an
+    imaginary saving. The hold exists to stop NEW exposure, which is what actually escalates
+    a ban.
+    """
+    if urgent:
+        return
     remaining = _rate_limited_until - time.monotonic()
     if remaining > 0:
         raise RateLimited(f"exchange rate limit / ban active — {remaining:.0f}s remaining")
@@ -100,6 +110,28 @@ def note_rate_error(exc: Exception, retry_after: float | None = None) -> str:
     return action
 
 
+# How often a long-lived client re-measures the venue's clock and reloads market metadata.
+# ccxt applies `adjustForTimeDifference` only during an actual market (re)load, and
+# `load_markets()` returns early once markets are cached — so a client that lives for days
+# measured the offset ONCE. That silently re-opens the -1021 hole the option was added to
+# close, on exactly the drifting host it was meant to protect. Filters go stale the same way.
+_CLOCK_REFRESH_SEC = 900.0
+_last_clock_refresh: dict[int, float] = {}
+
+
+def _refresh_clock(ex) -> None:
+    """Re-measure the venue clock (and refresh market metadata) periodically. Best effort."""
+    now = time.monotonic()
+    last = _last_clock_refresh.get(id(ex), 0.0)
+    if now - last < _CLOCK_REFRESH_SEC:
+        return
+    _last_clock_refresh[id(ex)] = now
+    try:
+        ex.load_markets(True)  # reload=True: re-runs the time-difference measurement too
+    except Exception:  # a stale offset is better than a broken call path
+        logger.debug("clock/markets refresh failed", exc_info=True)
+
+
 def _client():
     key, secret = _secret(settings.live_api_key), _secret(settings.live_api_secret)
     if not (key and secret):
@@ -107,6 +139,7 @@ def _client():
     sandbox = bool(settings.live_use_testnet)
     cached = _CLIENTS.get((settings.live_exchange, sandbox))
     if cached is not None:
+        _refresh_clock(cached)
         return cached
     ex = getattr(ccxt, settings.live_exchange)({
         "apiKey": key, "secret": secret, "enableRateLimit": True,
@@ -188,7 +221,7 @@ def place_live_order(
             logger.warning("live %s %s: filters reject qty %s — sending unrounded (exits are "
                            "never blocked)", side, pair, qty)
 
-    assert_not_rate_limited()
+    assert_not_rate_limited(urgent=side_l == "sell")
     try:
         if ccxt_type == "market" or px <= 0:
             order = ex.create_order(pair, "market", side_l, qty, None, params) if params \
@@ -541,9 +574,20 @@ def classify_rate_error(exc: Exception, retry_after: float | None = None) -> tup
     """Map an exchange error to an action: ``('retry', seconds)`` for HTTP 429 (rate limited —
     honour Retry-After), ``('halt', None)`` for HTTP 418 (IP banned — stop live + alert), or
     ``('raise', None)`` for anything else (the caller re-raises). Pure; no sleeping/IO here."""
-    text = str(exc)
-    if "418" in text:
+    # Match on the HTTP STATUS, never on a substring of the message. ccxt puts the request URL
+    # in the exception text, and a Binance signed URL carries orderId, a 13-digit timestamp and
+    # a 64-hex signature — so about 3% of ordinary network errors contain "418" somewhere and
+    # were being read as an IP ban, which then blocked trading for five minutes.
+    status = getattr(exc, "http_status_code", None) or getattr(exc, "code", None)
+    if status == 418:
         return "halt", None
-    if "429" in text or isinstance(exc, getattr(ccxt, "DDoSProtection", ())):
+    if status == 429:
+        return "retry", (retry_after if retry_after is not None else 1.0)
+    if isinstance(exc, getattr(ccxt, "DDoSProtection", ())):
+        # ccxt maps both 418 and 429 here; without a status, read the leading status token the
+        # venue puts at the START of the message rather than anything further in.
+        head = str(exc)[:64]
+        if "418" in head:
+            return "halt", None
         return "retry", (retry_after if retry_after is not None else 1.0)
     return "raise", None

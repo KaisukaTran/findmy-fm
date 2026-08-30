@@ -115,10 +115,26 @@ def test_weight_backoff_thresholds():
 
 
 def test_classify_rate_error():
-    assert execution.classify_rate_error(Exception("binance 429 too many")) == ("retry", 1.0)
-    assert execution.classify_rate_error(Exception("HTTP 429"), retry_after=3.0) == ("retry", 3.0)
-    assert execution.classify_rate_error(Exception("418 IP banned")) == ("halt", None)
+    """Keyed on the HTTP STATUS, not a substring of the message: a Binance signed URL carries
+    an orderId and a 13-digit timestamp, so ~3% of ordinary network errors contain "418"
+    somewhere and were being read as an IP ban."""
+    import ccxt
+
+    def _err(cls, msg, status=None):
+        exc = cls(msg)
+        if status is not None:
+            exc.http_status_code = status
+        return exc
+
+    assert execution.classify_rate_error(_err(ccxt.DDoSProtection, "429 too many", 429)) == ("retry", 1.0)
+    assert execution.classify_rate_error(
+        _err(ccxt.DDoSProtection, "HTTP 429", 429), retry_after=3.0) == ("retry", 3.0)
+    assert execution.classify_rate_error(_err(ccxt.DDoSProtection, "418 IP banned", 418)) == ("halt", None)
     assert execution.classify_rate_error(Exception("some other error")) == ("raise", None)
+    # A plain timeout whose URL happens to contain 418 is NOT a ban.
+    assert execution.classify_rate_error(
+        ccxt.RequestTimeout("binance GET .../order?orderId=4180192837 read timeout")
+    ) == ("raise", None)
 
 
 # --- 1.3: maker placement (post-only entries; risk exits stay taker) ----------

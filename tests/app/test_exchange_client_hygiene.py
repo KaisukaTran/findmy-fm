@@ -21,8 +21,17 @@ from __future__ import annotations
 
 import pytest
 
+import ccxt
+
 from app import execution
 from app.config import settings
+
+
+def _venue_error(msg: str, status: int) -> Exception:
+    """A real ccxt rate error carries the HTTP status; the classifier keys on that."""
+    exc = ccxt.DDoSProtection(msg)
+    exc.http_status_code = status
+    return exc
 
 
 @pytest.fixture(autouse=True)
@@ -89,12 +98,12 @@ def test_switching_between_testnet_and_real_gives_different_clients(monkeypatch)
 
 
 def test_a_429_is_recognised_as_rate_limited():
-    action, wait = execution.classify_rate_error(Exception("binance 429 Too Many Requests"))
+    action, wait = execution.classify_rate_error(_venue_error("429 Too Many Requests", 429))
     assert action == "retry" and wait
 
 
 def test_a_418_is_recognised_as_a_ban():
-    action, _ = execution.classify_rate_error(Exception("binance 418 I'm a teapot"))
+    action, _ = execution.classify_rate_error(_venue_error("418 I'm a teapot", 418))
     assert action == "halt"
 
 
@@ -106,22 +115,22 @@ def test_an_ordinary_error_is_neither():
 def test_a_ban_halts_placement_instead_of_retrying(monkeypatch):
     """A 418 means we are already banned; the next request must not be sent at all."""
     _patch_ccxt(monkeypatch)
-    execution.note_rate_error(Exception("binance 418 banned"), retry_after=120)
+    execution.note_rate_error(_venue_error("418 banned", 418), retry_after=120)
 
     assert execution.rate_limited_until() > 0
     with pytest.raises(execution.RateLimited):
-        execution.assert_not_rate_limited()
+        execution.assert_not_rate_limited(urgent=False)
 
 
 def test_a_ban_pauses_far_longer_than_a_rate_limit(monkeypatch):
     """429 is "slow down"; 418 is "you are banned". They must not cost the same wait — and a
     Retry-After of 0 still gets a floor, because retrying instantly is what earns the ban."""
     _patch_ccxt(monkeypatch)
-    execution.note_rate_error(Exception("binance 429"), retry_after=0)
+    execution.note_rate_error(_venue_error("429", 429), retry_after=0)
     short = execution.rate_limited_until()
 
     execution.reset_client_cache()
-    execution.note_rate_error(Exception("binance 418 banned"))
+    execution.note_rate_error(_venue_error("418 banned", 418))
     long = execution.rate_limited_until()
 
     assert short > 0, "even a zero Retry-After keeps a minimum pause"
@@ -132,4 +141,4 @@ def test_an_ordinary_error_does_not_halt_anything(monkeypatch):
     _patch_ccxt(monkeypatch)
     execution.note_rate_error(Exception("some venue hiccup"), retry_after=None)
 
-    execution.assert_not_rate_limited()
+    execution.assert_not_rate_limited(urgent=False)

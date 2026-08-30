@@ -1446,6 +1446,12 @@ def _guard_hard_sl(db: Session, row: KssSession, price: float) -> bool:
     floor = row.avg_price * (1 - sl_pct / 100.0)
     if price > floor:
         return False
+    # The 30-min cycle may already have queued this session's stop, and the guard runs every
+    # 90s — without this it queues another full-size stop on every tick while the first waits.
+    # Duplicates are clamped on quantity when they fill, but the FEE is charged on the
+    # pre-clamp size, and a stale one approved later rewrites a finished session's status.
+    if _exit_in_flight(db, row.id):
+        return False
     _queue(db, {
         "symbol": row.symbol, "side": "SELL", "quantity": row.total_filled_qty,
         "price": 0.0, "order_type": "MARKET", "source_ref": f"pyramid:{row.id}:sl",
@@ -1472,6 +1478,12 @@ def _pyramid_up_hard_sl(db: Session, row: KssSession, price: float) -> bool:
         return False
     floor = row.avg_price * (1 - sl_pct / 100.0)
     if price > floor:
+        return False
+    # The 30-min cycle may already have queued this session's stop, and the guard runs every
+    # 90s — without this it queues another full-size stop on every tick while the first waits.
+    # Duplicates are clamped on quantity when they fill, but the FEE is charged on the
+    # pre-clamp size, and a stale one approved later rewrites a finished session's status.
+    if _exit_in_flight(db, row.id):
         return False
     _queue(db, {
         "symbol": row.symbol, "side": "SELL", "quantity": row.total_filled_qty,
@@ -1902,6 +1914,8 @@ def sweep_deadlines(db: Session, now: datetime | None = None) -> list[int]:
     )
     closed: list[int] = []
     for row in overdue:
+        if _exit_in_flight(db, row.id):
+            continue  # its stop/trailing sell is already queued — a deadline sell would duplicate it
         py = _to_pyramid(row)
         py.stop("deadline")
         _save_state(row, py)

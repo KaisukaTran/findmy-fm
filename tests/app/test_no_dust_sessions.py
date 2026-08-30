@@ -90,3 +90,36 @@ def test_the_first_wave_cost_is_the_wave_0_slice_of_the_ladder(monkeypatch):
     assert first == pytest.approx(40.0, rel=1e-6), "the configured wave-0 USD"
     assert first < ladder
     assert ladder == pytest.approx(first * 9.606, rel=1e-3), "1:2:3:4 rungs decayed by 2%"
+
+
+# --- a symbol whose OWN take-profit can never clear the gate must say so ------
+
+
+def test_a_symbol_whose_own_ceiling_is_under_the_gate_is_reported(monkeypatch):
+    """The unsatisfiable-gate alarm compares `min_expectancy_pct` against the ceiling of the
+    GLOBAL `scan_tp_pct`, but every symbol is backtested at its OWN autotuned take-profit.
+
+    Expectancy tops out at `tp - round_trip_cost`, so a symbol whose autotuned tp is low has a
+    lower personal ceiling — and if that sits under the gate it can NEVER pass, no matter what
+    the market does. Measured on the live book 2026-08-30: TRX's autotuned tp is 1.24, ceiling
+    1.24 - 0.30 = 0.94, against a 2.16 gate. It was excluded from every scan, forever, in
+    complete silence, while the global alarm stayed quiet because the global ceiling (2.70) is
+    comfortably above the gate. That is precisely the "skips 100% of the universe silently"
+    failure the alarm exists to catch.
+    """
+    from app import costengine, scanner
+
+    monkeypatch.setattr(settings, "min_expectancy_pct", 2.16)
+
+    assert scanner._tp_cannot_clear_gate(1.2413) is True, "TRX: ceiling 0.94 under a 2.16 gate"
+    assert scanner._tp_cannot_clear_gate(3.1195) is False, "BTC: ceiling 2.82 clears it"
+    # and it must agree with the arithmetic it is derived from
+    assert costengine.expectancy_ceiling_pct(1.2413) < settings.min_expectancy_pct
+
+
+def test_the_per_symbol_check_is_off_when_the_gate_is(monkeypatch):
+    from app import scanner
+
+    monkeypatch.setattr(settings, "min_expectancy_pct", 0.0)
+
+    assert scanner._tp_cannot_clear_gate(1.2413) is False

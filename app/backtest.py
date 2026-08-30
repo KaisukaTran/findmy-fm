@@ -111,11 +111,20 @@ def simulate_kss(
 
     # Start at the bar AFTER the entry. We buy at `start`'s CLOSE, so that bar's high and low
     # are already in the past — counting them was look-ahead, and it paid the take-profit out
-    # of a move we could never have caught. It biased the whole parameter search toward
+    # of a move we could never have caught. It biased every parameter search toward
     # take-profits too small to actually reach: the smaller the target, the likelier the entry
     # candle's own wick had already cleared it. Measured on SOL (365d daily, 2026-08-30) it
-    # reported a 100% win rate in a market that fell 48%, and shortened average time-to-TP by
-    # 4.2x at tp=1.5% — and time-to-TP is what turnover, hence projected daily return, divides by.
+    # reported a 100% win rate in a market that had fallen 48%.
+    #
+    # Calibrated against 1h candles over the same window (where skipping the entry bar costs an
+    # hour, not a day): true avg_days_to_tp at tp=1.5% is 1.47. The old code said 0.48 — 3.0x
+    # too fast. This says 1.57, ~7% slow, because `days` is measured from the bar's OPEN
+    # timestamp while the buy lands at its close, so it is a strict upper bound quantised to a
+    # whole bar. Erring long is the safe direction; shrink it by moving `backtest_timeframe`
+    # off `1d` rather than by re-counting the entry bar.
+    #
+    # `days_to_tp` itself feeds only the deadline sanity-check in agents/aggregator.py and the
+    # scanner display — the fix's real payoff is honest expectancy, win-rate and stop-rate.
     for j in range(start + 1, len(candles)):
         bar = candles[j]
         days = (bar["ts"] - entry_ts) / _MS_PER_DAY

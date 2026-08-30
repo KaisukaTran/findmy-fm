@@ -289,13 +289,18 @@ def performance_view(db: Session, period: str = "all") -> dict:
     curve.append(final_equity)
     times.append(now_iso)
 
-    # max drawdown (%) over the curve
+    # Two different numbers, and the difference matters. `max_dd` is the WORST dip the curve
+    # ever took — a historical statistic that can only grow. `current_dd` is how far below the
+    # running peak the account sits RIGHT NOW, and it falls back towards 0 as it recovers.
+    # The circuit breaker needs the second: gating on the first means one bad day freezes
+    # trading forever, because the reason to stay frozen can never clear.
     peak = curve[0]
     max_dd = 0.0
     for v in curve:
         peak = max(peak, v)
         if peak > 0:
             max_dd = max(max_dd, (peak - v) / peak * 100)
+    current_dd = (peak - curve[-1]) / peak * 100 if peak > 0 and curve else 0.0
 
     closed = wins + losses
     gross_loss = -loss_sum  # positive magnitude
@@ -312,6 +317,7 @@ def performance_view(db: Session, period: str = "all") -> dict:
         "win_rate": round(wins / closed * 100, 2) if closed else 0.0,
         "loss_rate": round(losses / closed * 100, 2) if closed else 0.0,
         "max_drawdown_pct": round(max_dd, 2),
+        "current_drawdown_pct": round(max(current_dd, 0.0), 2),
         # Per-closed-trade economics (USDT).
         "expectancy": round((win_sum + loss_sum) / closed, 2) if closed else 0.0,
         "avg_win": round(win_sum / wins, 2) if wins else 0.0,

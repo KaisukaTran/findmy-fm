@@ -45,7 +45,10 @@ def metrics(db: Session) -> dict:
     eq = max(portfolio.equity(db), 1e-9)
     dl = risk.daily_loss(db)
     return {
-        "drawdown_pct": perf["max_drawdown_pct"],
+        # CURRENT drawdown, not the all-time worst. The breaker keeps the freeze while a
+        # "current-state" reason is true, and a historical maximum is never false again — so
+        # gating on it froze the account permanently after one dip, manual reset included.
+        "drawdown_pct": perf.get("current_drawdown_pct", perf["max_drawdown_pct"]),
         "daily_loss_pct": dl / eq * 100,
         "consecutive_losses": _consecutive_losses(db),
     }

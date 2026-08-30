@@ -291,3 +291,187 @@ def test_a_later_bar_still_pays_the_take_profit():
     r = simulate_kss(candles, 0, distance_pct=2, max_waves=5, tp_pct=3, deadline_days=30)
 
     assert r.tp_hit is True and r.days_to_tp == 1.0
+
+
+# ----- pessimistic_intrabar: the other honest bound on one bar's high/low order -------------
+#
+# WHY: on one bar the true chronological order of the high and the low is unknowable. The
+# default (pessimistic_intrabar=False) assumes low-then-high: deeper waves fill at the bar's
+# LOW first (lowering the running average), and the SAME bar's HIGH is then tested against
+# that already-lowered average — an optimistic assumption, since it lets one candle "DCA
+# down, then recover" for free. pessimistic_intrabar=True assumes the opposite: the HIGH
+# happened first, so take-profit must clear the harder PRE-fill average with no such benefit;
+# only afterwards do the fills happen and the stop-loss get tested against the resulting
+# (lower) post-fill average. Neither bound is "more correct" — a trustworthy evaluation must
+# report both (see app/evaluate.py) rather than silently picking one.
+
+def test_pessimistic_default_is_false_and_matches_omitting_the_kwarg():
+    """pessimistic_intrabar defaults to False; passing it explicitly changes nothing."""
+    candles = [candle(0, 100.0), candle(1, 95.0, high=99.0, low=90.0, open_=97.0)]
+    implicit = simulate_kss(candles, 0, distance_pct=2, max_waves=5, tp_pct=3, deadline_days=30)
+    explicit = simulate_kss(candles, 0, distance_pct=2, max_waves=5, tp_pct=3, deadline_days=30,
+                            pessimistic_intrabar=False)
+    assert implicit == explicit
+
+
+def test_pessimistic_flip_turns_a_stop_loss_into_a_take_profit():
+    """The clearest possible divergence: on ONE bar whose high clears even the harder
+    pre-fill take-profit AND whose low would (after DCA) clear the stop-loss, the two bounds
+    disagree about which happened first — and therefore about win vs. loss entirely.
+
+    Bar 1: open=97 (gap-fills wave 1 below its 98 target), low=90 (fills every deeper wave,
+    dragging the average down to ~94.65), high=104.
+      - Optimistic (default): stop-loss is checked FIRST, against the POST-fill average
+        (94.65 × 0.97 ≈ 91.81) — bar low 90 ≤ 91.81 → STOPPED. The take-profit check is never
+        reached.
+      - Pessimistic: take-profit is checked FIRST, against the PRE-fill average (100 × 1.03 =
+        103) — bar high 104 ≥ 103 → TP HIT, before any fill or stop-loss check ever runs.
+    """
+    candles = [candle(0, 100.0), candle(1, 95.0, high=104.0, low=90.0, open_=97.0)]
+
+    optimistic = simulate_kss(candles, 0, distance_pct=2, max_waves=5, tp_pct=3,
+                              deadline_days=30, sl_pct=3, cost_pct=0)
+    pessimistic = simulate_kss(candles, 0, distance_pct=2, max_waves=5, tp_pct=3,
+                               deadline_days=30, sl_pct=3, cost_pct=0,
+                               pessimistic_intrabar=True)
+
+    assert optimistic.stopped is True and optimistic.tp_hit is False
+    assert optimistic.pnl_pct == -3
+    assert optimistic.waves_filled == 5  # the SL check happens AFTER the fill loop
+
+    assert pessimistic.tp_hit is True and pessimistic.stopped is False
+    assert pessimistic.pnl_pct == 3
+    assert pessimistic.waves_filled == 1  # TP fired before this bar's fill loop ever ran
+
+
+def test_pessimistic_flip_can_turn_a_win_into_a_ran_out_of_data_non_win():
+    """A milder divergence than the SL/TP flip above: TP that only clears the LOWER post-fill
+    average (not the higher pre-fill one) fires under the optimistic bound but not under the
+    pessimistic one (which — on this 2-candle fixture — then simply runs out of data)."""
+    candles = [candle(0, 100.0), candle(1, 95.0, high=99.0, low=90.0, open_=97.0)]
+
+    optimistic = simulate_kss(candles, 0, distance_pct=2, max_waves=5, tp_pct=3,
+                              deadline_days=30, sl_pct=0)
+    pessimistic = simulate_kss(candles, 0, distance_pct=2, max_waves=5, tp_pct=3,
+                               deadline_days=30, sl_pct=0, pessimistic_intrabar=True)
+
+    assert optimistic.tp_hit is True
+    assert pessimistic.tp_hit is False
+
+
+# ----- capital_days / exit_capital: capital actually held, not capital reserved -------------
+#
+# WHY: a session RESERVES a full ladder but only DEPLOYS what filled. Wave 0's dollar cost
+# counts from the ENTRY bar; each deeper rung's dollar cost counts from the bar it filled
+# onward — never from entry, and never at all if it never filled. Bar length is derived from
+# consecutive `ts` values (never an assumed timeframe), so this works identically on daily or
+# 5-minute candles.
+
+def test_capital_days_single_wave_scales_with_wave0_notional():
+    """max_waves=1: capital never changes after entry, so capital_days is exactly
+    wave0_notional_usd × (number of bar-widths from entry through the exit bar's own width),
+    and both capital_days and exit_capital scale linearly with wave0_notional_usd."""
+    candles = [candle(0, 100.0), candle(1, 100.0, high=100.0, low=100.0),
+               candle(2, 104.0, high=104.0, low=100.0)]
+
+    r = simulate_kss(candles, 0, distance_pct=2, max_waves=1, tp_pct=3, deadline_days=30,
+                     sl_pct=0, cost_pct=0)
+    assert r.tp_hit is True and r.days_to_tp == 2.0
+    # 3 bar-widths of 1 day each (entry→bar1, bar1→bar2, bar2's own width via fallback),
+    # each holding the full $100 wave-0 notional: 100*3 = 300.
+    assert r.exit_capital == 100.0
+    assert r.capital_days == 300.0
+
+    r2 = simulate_kss(candles, 0, distance_pct=2, max_waves=1, tp_pct=3, deadline_days=30,
+                      sl_pct=0, cost_pct=0, wave0_notional_usd=250.0)
+    assert r2.exit_capital == 250.0
+    assert r2.capital_days == 750.0
+
+
+def test_capital_days_deeper_rung_counts_only_from_the_bar_it_filled():
+    """max_waves=2: wave 1 fills on bar 1, TP hits on bar 2. If wave 1's capital were (wrongly)
+    counted from ENTRY instead of from the bar it filled, capital_days would be 888.0 (both
+    waves' cost × 2 bar-widths); the correct value credits wave 0 alone for the entry→bar1
+    gap and both waves for bar1→bar2 and bar2's own width: 100×1 + 296×1 + 296×1 = 692.0."""
+    candles = [candle(0, 100.0),
+               candle(1, 98.0, high=99.0, low=97.0, open_=98.0),
+               candle(2, 103.0, high=103.0, low=100.0)]
+
+    r = simulate_kss(candles, 0, distance_pct=2, max_waves=2, tp_pct=3, deadline_days=30,
+                     sl_pct=0, cost_pct=0)
+    assert r.tp_hit is True
+    assert r.waves_filled == 2
+    assert r.exit_capital == 296.0  # wave0 $100 + wave1 (2 × $1 unit_qty × $98 fill) = $296
+    assert r.capital_days == 692.0
+    assert r.capital_days != 888.0, "wave 1 must count from bar 1, not from entry"
+
+
+def test_capital_days_present_on_every_exit_path():
+    """capital_days/exit_capital are populated on SL, deadline, and ran-out-of-data exits too
+    — not just the take-profit path exercised by the tests above."""
+    sl = simulate_kss(
+        [candle(0, 100.0), candle(1, 82.0, high=99.0, low=80.0, open_=99.0)],
+        0, distance_pct=2, max_waves=5, tp_pct=3, deadline_days=30, sl_pct=13, cost_pct=0.3,
+    )
+    assert sl.stopped is True
+    assert sl.capital_days > 0.0 and sl.exit_capital > 0.0
+
+    deadline_candles = [candle(0, 100.0)] + [
+        candle(d, 102.0, high=102.0, low=99.0) for d in range(1, 35)
+    ]
+    deadline = simulate_kss(deadline_candles, 0, distance_pct=2, max_waves=5, tp_pct=3,
+                            deadline_days=30)
+    assert deadline.hit_deadline is True
+    assert deadline.capital_days > 0.0 and deadline.exit_capital > 0.0
+
+    ran_out = simulate_kss(
+        [candle(0, 100.0), candle(1, 99.0, high=99.5, low=98.5)],
+        0, distance_pct=2, max_waves=5, tp_pct=3, deadline_days=30,
+    )
+    assert ran_out.tp_hit is False and ran_out.hit_deadline is False and ran_out.stopped is False
+    assert ran_out.capital_days > 0.0 and ran_out.exit_capital > 0.0
+
+
+# ----- estimate_win_rate: capital_days/pnl_usd/waves_filled_sum aggregation ------------------
+
+def test_estimate_win_rate_aggregates_capital_and_dollar_pnl():
+    """estimate_win_rate sums SimResult.capital_days and (pnl_pct/100 × exit_capital) across
+    every counted trial — the inputs app/evaluate.py needs for profit-per-dollar-day."""
+    candles = []
+    price = 100.0
+    for d in range(40):
+        candles.append(candle(d, price, high=price, low=price * 0.999))
+        price *= 1.01
+    res = estimate_win_rate(candles, distance_pct=2, max_waves=1, tp_pct=3, deadline_days=30,
+                            cost_pct=0.3)
+    assert res["trials"] > 0
+    assert res["capital_days"] > 0.0
+    assert res["waves_filled_sum"] == res["trials"]  # max_waves=1 → exactly 1 wave/trial
+    # All-win fixture, max_waves=1 (wave0-only, so exit_capital == wave0_notional_usd == $100
+    # for every trial): pnl_usd must equal expectancy%/100 × $100 × trials, within rounding.
+    expected_pnl_usd = res["expectancy"] / 100.0 * 100.0 * res["trials"]
+    assert abs(res["pnl_usd"] - expected_pnl_usd) < 0.01
+    assert res["pnl_usd"] > 0.0
+
+
+def test_estimate_win_rate_forwards_pessimistic_and_wave0_kwargs():
+    """estimate_win_rate must actually pass pessimistic_intrabar/wave0_notional_usd through
+    to simulate_kss, not silently drop them."""
+    candles = [candle(0, 100.0), candle(1, 95.0, high=104.0, low=90.0, open_=97.0),
+               candle(2, 104.0, high=104.0, low=100.0)]
+    optimistic = estimate_win_rate(candles, distance_pct=2, max_waves=5, tp_pct=3,
+                                   deadline_days=30, sl_pct=3, cost_pct=0)
+    pessimistic = estimate_win_rate(candles, distance_pct=2, max_waves=5, tp_pct=3,
+                                    deadline_days=30, sl_pct=3, cost_pct=0,
+                                    pessimistic_intrabar=True)
+    # Same fixture as test_pessimistic_flip_turns_a_stop_loss_into_a_take_profit: the single
+    # trial starting at index 0 is a stop under the optimistic bound, a win under pessimistic.
+    assert optimistic["stops"] >= 1
+    assert pessimistic["wins"] >= 1
+
+    default_wave0 = estimate_win_rate(candles, distance_pct=2, max_waves=1, tp_pct=3,
+                                      deadline_days=30)
+    scaled_wave0 = estimate_win_rate(candles, distance_pct=2, max_waves=1, tp_pct=3,
+                                     deadline_days=30, wave0_notional_usd=1000.0)
+    if default_wave0["capital_days"] > 0:
+        assert scaled_wave0["capital_days"] == default_wave0["capital_days"] * 10

@@ -9,9 +9,18 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -37,6 +46,7 @@ from app import (
     scheduler,
     timefmt,
 )
+from app.clock import utcnow
 from app.config import settings
 from app.db import get_db
 from app.kss import service as kss_service
@@ -96,7 +106,27 @@ class RejectBody(BaseModel):
 
 @api_router.get("/health")
 def health():
-    return {"status": "ok"}
+    """Liveness + truthfulness check. A bare {"status": "ok"} used to be returned even when a
+    dead API key had silenced every signed call — the app looked alive while nothing traded and
+    the owner was never told. Fields ADDED (existing "status"/"ok" kept for anything already
+    depending on it): whether the scheduler loop is actually running, how long ago its last
+    cycle completed (None if it has never run), and whether the last signed exchange call
+    succeeded (credentials_ok — see app.execution.credentials_ok)."""
+    st = scheduler.status()
+    last_cycle_at = st["last_cycle_at"]
+    last_cycle_seconds_ago = None
+    if last_cycle_at:
+        try:
+            last_cycle_seconds_ago = (utcnow() - datetime.fromisoformat(last_cycle_at)).total_seconds()
+        except ValueError:
+            last_cycle_seconds_ago = None
+    return {
+        "status": "ok",
+        "scheduler_running": st["scheduler_running"],
+        "last_cycle_at": last_cycle_at,
+        "last_cycle_seconds_ago": last_cycle_seconds_ago,
+        "credentials_ok": execution.credentials_ok(),
+    }
 
 
 @api_router.get("/api/summary")

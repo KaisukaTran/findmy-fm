@@ -129,6 +129,22 @@ _BARS_PER_DAY: dict[str, float] = {
 }
 
 
+def _tp_cannot_clear_gate(tp_pct: float) -> bool:
+    """True when a symbol's OWN take-profit puts the expectancy gate out of reach forever.
+
+    Expectancy tops out at ``tp − round_trip_cost``, so the ceiling is per-symbol once autotune
+    gives each one its own take-profit. The scan-level alarm only compares the gate against the
+    ceiling of the GLOBAL ``scan_tp_pct`` and is blind to this: on the live book (2026-08-30)
+    TRX's autotuned tp of 1.24 gave it a ceiling of 0.94 against a 2.16 gate, so it was dropped
+    from every scan forever while the global alarm stayed quiet, because the global ceiling
+    (2.70) clears the gate comfortably. Same silent-100%-skip failure, one level down.
+
+    0 = the operator removed the gate.
+    """
+    return (settings.min_expectancy_pct > 0
+            and costengine.expectancy_ceiling_pct(tp_pct) < settings.min_expectancy_pct)
+
+
 def _first_wave_too_small(first_wave_usd: float) -> bool:
     """True when WAVE 0 is worth less than the scanner's floor.
 
@@ -433,6 +449,20 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
             continue
 
         distance_pct, tp_pct, max_waves = _effective_params(db, symbol)
+
+        # A take-profit whose ceiling sits under the gate can never pass, whatever the market
+        # does — so backtesting it is wasted work, and letting it fall out unremarked is the
+        # silent-skip failure the scan-level alarm exists to catch but cannot see per-symbol.
+        if _tp_cannot_clear_gate(tp_pct):
+            audit.log(db, "scanner", "tp_below_gate", entity=symbol, symbol=symbol,
+                      tp_pct=round(tp_pct, 4),
+                      ceiling_pct=round(costengine.expectancy_ceiling_pct(tp_pct), 4),
+                      min_expectancy_pct=settings.min_expectancy_pct)
+            logger.warning(
+                "scan: %s can never pass — its tp %.2f%% caps expectancy at %.2f%%, under the "
+                "%.2f%% gate", symbol, tp_pct,
+                costengine.expectancy_ceiling_pct(tp_pct), settings.min_expectancy_pct)
+            continue
 
         # Walk-forward: out-of-sample tail, with the live exits (stop-loss + fees) modelled
         # and overlapping entries decorrelated so the win-rate is realistic, not ~100%.

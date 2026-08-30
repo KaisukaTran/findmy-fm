@@ -64,9 +64,11 @@ _rate_limited_until: float = 0.0
 
 def reset_client_cache() -> None:
     """Drop the cached clients and every hold — rate-limit, order-count budget, weight budget,
-    and the cached venue limits (tests, and a credentials change)."""
+    the cached venue limits, and the credential-failure/alert state (tests, and a credentials
+    change)."""
     global _rate_limited_until, _weight_hold_until, _weight_limit_per_min
     global _venue_limits_cache, _venue_limits_fetched_at
+    global _credentials_ok, _credential_alert_last
     _CLIENTS.clear()
     _last_clock_refresh.clear()
     _rate_limited_until = 0.0
@@ -74,6 +76,8 @@ def reset_client_cache() -> None:
     _weight_limit_per_min = WEIGHT_LIMIT_PER_MIN
     _venue_limits_cache = None
     _venue_limits_fetched_at = 0.0
+    _credentials_ok = True
+    _credential_alert_last = 0.0
     reset_order_budget()
 
 
@@ -126,6 +130,108 @@ def note_rate_error(exc: Exception, retry_after: float | None = None) -> str:
         return action
     _rate_limited_until = max(_rate_limited_until, time.monotonic() + pause)
     return action
+
+
+# --- credential-failure detection + alerting -------------------------------------------------
+#
+# A dead API key (Binance deletes an un-whitelisted key after 90 days; a whitelist that no
+# longer matches this machine's public IP breaks it the moment the IP changes — see
+# `app.scheduler.check_ip_change`) makes EVERY signed call fail the same way: placements,
+# cancels, and the reconciliation that books fills. Before this, the app had zero handling of
+# that failure mode — no code anywhere recognised -2015/-2014/-1022/-2008 or
+# AuthenticationError/PermissionDenied — so the failure was TOTALLY SILENT: /health still said
+# "ok", no fills happened, and the owner was never told, because notify.py was only ever called
+# on a fill.
+
+_CREDENTIAL_ERROR_CODES = {-2015, -2014, -1022, -2008}
+
+
+def classify_credential_error(exc: Exception) -> bool:
+    """True when *exc* is a Binance authentication/permission failure — a dead, revoked, or
+    IP-restricted API key.
+
+    Matches the ccxt exception TYPE (`AuthenticationError`, whose subclass `PermissionDenied`
+    is caught by the same isinstance check) and the numeric body CODE Binance actually returns,
+    never a substring of the message — a signed URL embeds an orderId, a 13-digit timestamp and
+    a 64-hex signature, and `classify_rate_error` above already had one bug from grepping that
+    text for "418" (misread ~3% of ordinary network errors as an IP ban). The code is parsed out
+    of the JSON shape ccxt embeds verbatim (`"code":-2015`), not grepped for as free text, so a
+    coincidental digit run in the signed URL can't trigger it.
+
+    -2015 "Invalid API-key, IP, or permissions for action" (dead key / wrong IP / missing
+    permission — the most likely live cause), -2014 "API-key format invalid", -1022 bad
+    signature (wrong secret, or clock skew corrupting it), -2008 "Invalid Api-Key ID". The
+    installed ccxt (binance.py) already maps all four to AuthenticationError/PermissionDenied;
+    the code check is a defense-in-depth fallback in case a bare ExchangeError ever carries the
+    code without ccxt's mapping catching it.
+    """
+    if isinstance(exc, ccxt.AuthenticationError):  # PermissionDenied subclasses this
+        return True
+    match = re.search(r'"code"\s*:\s*(-?\d+)', str(exc))
+    if not match:
+        return False
+    try:
+        code = int(match.group(1))
+    except ValueError:
+        return False
+    return code in _CREDENTIAL_ERROR_CODES
+
+
+_credentials_ok: bool = True
+_credential_alert_last: float = 0.0
+
+
+def credentials_ok() -> bool:
+    """True unless the most recent signed exchange call failed with a credential error.
+
+    Reflects CURRENT state, not history: any later successful signed call clears it (see
+    `_mark_credentials_ok`, called by `place_live_order`/`cancel_live_order`/`fetch_live_order`
+    right after a call that actually succeeded) — so `/health` self-heals the moment a rotated
+    key or a restored IP whitelist starts working again, instead of latching a stale failure.
+    """
+    return _credentials_ok
+
+
+def _mark_credentials_ok() -> None:
+    global _credentials_ok
+    _credentials_ok = True
+
+
+def note_credential_error(exc: Exception) -> bool:
+    """Alert (throttled) when *exc* is a credential failure. Returns True iff it was one.
+
+    This ONLY alerts — unlike `note_rate_error` it never gates anything. An exit must never be
+    slowed by a credential problem: a SELL that fails on a dead key still needs to reach the
+    venue exactly as fast as it otherwise would (or be retried next cycle); this function's only
+    job is to make sure a human finds out, since nothing else in the app did before. At most one
+    Telegram alert per `settings.credential_alert_cooldown_min` — a dead key fails on EVERY
+    subsequent call, and without a throttle each one would fire its own message — but it fires
+    again once the cooldown elapses as long as the condition still persists, so it never goes
+    quiet forever the way a fire-once notice would.
+    """
+    global _credentials_ok, _credential_alert_last
+    if not classify_credential_error(exc):
+        return False
+    _credentials_ok = False
+    now = time.monotonic()
+    cooldown = max(settings.credential_alert_cooldown_min, 0.0) * 60.0
+    if cooldown > 0 and now - _credential_alert_last < cooldown:
+        return True
+    _credential_alert_last = now
+    logger.error("LIVE credential failure — %s: %s", type(exc).__name__, exc)
+    try:
+        from app import notify  # local import: avoid a module-load-time cycle with app.notify
+
+        notify.event(
+            "risk",
+            f"🔑 LIVE credential failure ({type(exc).__name__}): {exc}\n"
+            "Every signed call (placements, cancels, fill reconciliation) is failing on this "
+            "key — exits are NOT gated by this but will not confirm either. Check the API "
+            "key/secret and its IP whitelist now.",
+        )
+    except Exception:  # a broken notifier must never mask the underlying exchange error
+        logger.debug("note_credential_error: alert send failed", exc_info=True)
+    return True
 
 
 # How often a long-lived client re-measures the venue's clock and reloads market metadata.
@@ -257,6 +363,7 @@ def place_live_order(
         # a placement that was already recorded on the lost original attempt.
         record_order_placed()
         _note_weight_usage(ex)
+        _mark_credentials_ok()  # this signed call worked — the key is not the problem right now
     except Exception as exc:
         # 'Duplicate order' (also code -2010): this exact clientOrderId was already accepted
         # on a prior, lost attempt — recover it rather than place a second order.
@@ -267,8 +374,11 @@ def place_live_order(
             logger.info("LIVE post-only rejected (would cross): %s %s %s @ %s", side, qty, pair, px)
             return {"price": 0.0, "quantity": 0.0, "fee": 0.0, "raw_id": None, "status": "rejected"}
         else:
-            # A 429/418 must pause the next call rather than be retried on the next cycle.
+            # A 429/418 must pause the next call rather than be retried on the next cycle. A
+            # credential failure (dead/revoked/IP-restricted key) is never a hold — it's an
+            # ALERT only, never a gate (see note_credential_error).
             note_rate_error(exc)
+            note_credential_error(exc)
             raise
 
     # 1.1 — report the TRUTH, never invent a fill. A resting maker order comes back
@@ -314,7 +424,9 @@ def cancel_live_order(pair: str, order_id: str) -> None:
         ex.cancel_order(order_id, pair)
     except Exception as exc:
         note_rate_error(exc)  # a 429/418 here must pause the next call, not be retried blindly
+        note_credential_error(exc)  # alert only — never gates the cancel/its retry
         raise
+    _mark_credentials_ok()
     logger.info("LIVE cancelled resting order %s on %s", order_id, pair)
 
 
@@ -409,7 +521,9 @@ def fetch_live_order(pair: str, order_id: str) -> dict:
         order = ex.fetch_order(order_id, pair)
     except Exception as exc:
         note_rate_error(exc)
+        note_credential_error(exc)  # alert only — the reconciliation pass must still be retried
         raise
+    _mark_credentials_ok()
     _note_weight_usage(ex)
     status = order.get("status")
     filled = float(order.get("filled") or 0.0)

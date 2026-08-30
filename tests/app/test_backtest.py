@@ -238,3 +238,56 @@ def test_b4_gap_below_fills_at_open_not_target():
     # Gap-fill lowers avg so TP fires at a lower market price → more likely TP on bar 2.
     assert r_gap_tp.tp_hit is True, "gap-fill avg is lower → TP at 99 should fire"
     assert r_nogap_tp.tp_hit is False, "no-gap avg is higher → TP at 99 should not fire"
+
+
+# --- the entry bar's own range already happened -----------------------------
+
+
+def test_the_entry_bars_own_high_cannot_pay_the_take_profit():
+    """We enter at bar `start`'s CLOSE, so that bar's high and low are already in the past.
+
+    Counting them was look-ahead: the smaller the take-profit, the more likely the entry
+    candle's own wick had already cleared it, so a trial "won" on a move we could never have
+    caught. Measured on real data (SOL, 365d daily, 2026-08-30) it inflated the take-profit
+    win rate to 100% and shortened the average time-to-TP 4.2x at tp=1.5% — and time-to-TP is
+    what turnover, and therefore projected daily return, is computed from. It biased every
+    parameter search toward take-profits that are too small to actually reach.
+    """
+    # The bar we enter on ran up to 110 before closing at 100. That +10% is gone.
+    candles = [candle(0, 100.0, high=110.0, low=99.0),
+               candle(1, 100.5, high=100.5, low=100.0)]
+
+    r = simulate_kss(candles, 0, distance_pct=2, max_waves=5, tp_pct=3, deadline_days=30)
+
+    assert r.tp_hit is False, "that high happened before we bought"
+
+
+def test_the_entry_bars_own_low_cannot_trigger_the_stop():
+    """The mirror: a wick below the stop, before we were in the trade, is not our loss."""
+    candles = [candle(0, 100.0, high=101.0, low=80.0),
+               candle(1, 100.5, high=100.5, low=100.0)]
+
+    r = simulate_kss(candles, 0, distance_pct=2, max_waves=5, tp_pct=3, deadline_days=30,
+                     sl_pct=8, cost_pct=0)
+
+    assert r.stopped is False, "that low happened before we bought"
+
+
+def test_the_entry_bars_own_low_cannot_fill_a_deeper_rung():
+    """Same reasoning for the ladder: a rung can only fill on a bar that trades after entry."""
+    candles = [candle(0, 100.0, high=100.0, low=90.0),
+               candle(1, 100.0, high=100.0, low=100.0)]
+
+    r = simulate_kss(candles, 0, distance_pct=2, max_waves=5, tp_pct=3, deadline_days=30)
+
+    assert r.waves_filled == 1, "only wave 0 is filled at entry"
+
+
+def test_a_later_bar_still_pays_the_take_profit():
+    """Guard the fix does not simply stop detecting wins."""
+    candles = [candle(0, 100.0, high=100.0, low=100.0),
+               candle(1, 100.0, high=104.0, low=100.0)]
+
+    r = simulate_kss(candles, 0, distance_pct=2, max_waves=5, tp_pct=3, deadline_days=30)
+
+    assert r.tp_hit is True and r.days_to_tp == 1.0

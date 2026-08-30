@@ -286,13 +286,28 @@ async def _loop() -> None:
         await asyncio.sleep(max(settings.scan_interval_min, 1) * 60)
 
 
+def guard_should_run() -> bool:
+    """Whether the fast exit guard runs at all.
+
+    It used to be gated on ``kss_dynamic_tp_enabled``, which defaults to False — so on a
+    default install the hard stop-loss, the crash-detect and the freeze-immune exit filler
+    never ran, and the only exit check was the 30-minute cycle. That sampling gap is what once
+    turned a -15% floor into a -17.3% realised loss, and `run_position_guard`'s own docstring
+    calls the hard SL "always-on safety, independent of the dynamic-TP toggle". The dynamic-TP
+    parts inside the guard still self-gate on their own flag; the protection does not.
+
+    ``kss_exit_check_sec = 0`` is the deliberate off switch.
+    """
+    return settings.kss_exit_check_sec > 0
+
+
 async def _guard_loop() -> None:
-    """Fast, lightweight exit guard — decoupled from the 30-min cycle so a trailing stop is checked
-    every ``kss_exit_check_sec`` (not every 30 min). No-op unless dynamic trailing is enabled."""
+    """Fast, lightweight exit guard — decoupled from the 30-min cycle so the hard stop-loss and
+    a trailing stop are checked every ``kss_exit_check_sec`` rather than every 30 minutes."""
     logger.info("position-guard started (every %ss)", settings.kss_exit_check_sec)
     while True:
         try:
-            if settings.kss_dynamic_tp_enabled:
+            if guard_should_run():
                 await asyncio.to_thread(_guard_once)
         except Exception:  # a bad guard tick must not kill the loop
             logger.exception("position-guard tick failed")

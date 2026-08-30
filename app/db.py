@@ -33,6 +33,7 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("pending_orders", "auto_veto_at", "DATETIME"),
     ("pending_orders", "exchange_order_id", "VARCHAR(64)"),
     ("pending_orders", "exchange_status", "VARCHAR(16)"),
+    ("fills", "exchange_order_id", "VARCHAR(64)"),
     ("kss_waves", "exchange_order_id", "VARCHAR(64)"),
     ("kss_waves", "exchange_status", "VARCHAR(16)"),
     ("candidates", "win_rate_lb", "FLOAT NOT NULL DEFAULT 0.0"),

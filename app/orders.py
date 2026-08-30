@@ -388,11 +388,16 @@ def _live_execute(db: Session, order: PendingOrder) -> Fill:
     # the resting order off the book first — a row must never have two live orders. A cancel
     # that fails aborts the placement: placing anyway would double the exposure.
     if order.exchange_order_id:
-        execution.cancel_live_order(
-            live_provider().pair(order.symbol), str(order.exchange_order_id)
-        )
-        order.exchange_order_id = None
-        order.exchange_status = None
+        # Book whatever it filled BEFORE unlinking. A cancel races the venue, and
+        # reconcile_live_orders only looks at linked rows — dropping the link first loses
+        # that fill for good (probe: the venue had filled 4.0, the re-place then bought the
+        # full 10.0 again). _cancel_resting already does exactly this, so reuse it; a refusal
+        # aborts the placement, because placing anyway would double the exposure.
+        if not _cancel_resting(db, order):
+            raise ValueError(
+                f"order {order.id}: could not take the resting order off the book — "
+                "refusing to place a second one"
+            )
 
     ref_price = order.price if order.price > 0 else (
         get_current_prices([order.symbol]).get(order.symbol) or 0.0
@@ -469,15 +474,24 @@ def _live_execute(db: Session, order: PendingOrder) -> Fill:
 _TERMINAL_EXCHANGE_STATUS = {"closed", "filled", "canceled", "cancelled", "expired", "rejected"}
 
 
-def _booked_qty_fee(db: Session, pending_order_id: int) -> tuple[float, float]:
-    """Sum (quantity, fee) of Fills already recorded for a pending order — the
-    idempotency key for live reconciliation, so a fill already booked is never
-    double-counted no matter how many times reconcile runs."""
-    rows = (
-        db.query(Fill.quantity, Fill.fee)
-        .filter(Fill.pending_order_id == pending_order_id)
-        .all()
-    )
+def _booked_qty_fee(db: Session, pending_order_id: int,
+                    exchange_order_id: str | None = None) -> tuple[float, float]:
+    """Sum (quantity, fee) of Fills already recorded — the idempotency key for live
+    reconciliation, so a fill already booked is never double-counted however often
+    reconcile runs.
+
+    Scoped to ONE exchange order when given. The venue reports a cumulative `filled` per
+    order, so comparing it against every fill the pending_order ever had is only equivalent
+    while the row has had a single exchange order. After a cancel-and-re-place the old
+    order's fills would be netted off the new one's total and real fills silently skipped.
+    Rows booked before this column existed have it NULL and are counted for every order,
+    which preserves the old behaviour for that history instead of double-booking it."""
+    q = db.query(Fill.quantity, Fill.fee).filter(Fill.pending_order_id == pending_order_id)
+    if exchange_order_id is not None:
+        q = q.filter(
+            (Fill.exchange_order_id == str(exchange_order_id)) | (Fill.exchange_order_id.is_(None))
+        )
+    rows = q.all()
     return (sum(r[0] for r in rows), sum(r[1] for r in rows))
 
 
@@ -545,7 +559,8 @@ def _book_delta(db: Session, order: PendingOrder, res: dict) -> bool:
     cum_fee = float(res.get("fee") or 0.0)
 
     booked = False
-    booked_qty, booked_fee = _booked_qty_fee(db, order.id)
+    venue_order_id = str(res.get("raw_id") or order.exchange_order_id or "") or None
+    booked_qty, booked_fee = _booked_qty_fee(db, order.id, venue_order_id)
     delta = cum_filled - booked_qty
     if delta > 1e-9 and avg > 0:
         delta_fee = max(cum_fee - booked_fee, 0.0)
@@ -561,6 +576,7 @@ def _book_delta(db: Session, order: PendingOrder, res: dict) -> bool:
             realized_pnl=realized,
             source_ref=order.source_ref,
             strategy_name=order.strategy_name,
+            exchange_order_id=venue_order_id,
         )
         db.add(fill)
         db.flush()
@@ -740,6 +756,30 @@ def sync_resting_orders(db: Session) -> dict:
     out = {"placed": 0, "cancelled": 0}
     if not resting_model_active():
         return out
+
+    # Release a DEAD link first. An order cancelled outside the app — an operator in the
+    # exchange UI, an exchange-side expiry, a cancel-all — leaves the row PENDING with a
+    # terminal exchange_status, and every query below (and reconcile, and auto-fill) then
+    # excludes it: never re-placed, never cancelled, never reconciled. The session's ladder
+    # just silently died while its deploy headroom stayed reserved. Anything it did fill has
+    # already been booked by reconcile (which is what set the terminal status), so dropping
+    # the link here loses nothing and lets the rung be placed again.
+    for order in (
+        db.query(PendingOrder)
+        .filter(
+            PendingOrder.status == PENDING,
+            PendingOrder.exchange_order_id.isnot(None),
+            PendingOrder.exchange_status.in_(_TERMINAL_EXCHANGE_STATUS),
+        )
+        .all()
+    ):
+        logger.info("resting: releasing dead exchange link on order %s (%s)",
+                    order.id, order.exchange_status)
+        audit.log(db, "orders", "resting_link_released", entity=f"order:{order.id}",
+                  symbol=order.symbol, exchange_order_id=order.exchange_order_id,
+                  exchange_status=order.exchange_status)
+        order.exchange_order_id = None
+        order.exchange_status = None
 
     linked = (
         db.query(PendingOrder)

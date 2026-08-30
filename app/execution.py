@@ -14,6 +14,7 @@ and never falls back to paper on error — a live failure must surface, not be h
 from __future__ import annotations
 
 import logging
+import time
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 
 import ccxt
@@ -47,17 +48,82 @@ def validate_at_boot() -> str | None:
     return f"LIVE_TRADING active on '{settings.live_exchange}' (cap ${settings.live_max_order_notional:.2f}/BUY)."
 
 
+class RateLimited(RuntimeError):
+    """The venue rate-limited or banned us; sending another request now makes it worse."""
+
+
+# One client per (exchange, sandbox) instead of one per call. ccxt's rate limiter is
+# per-instance — rebuilding it every call reset the throttle and paced nothing — and every
+# unified method begins with load_markets(), so a cold instance spent 3 requests (weight 20)
+# on EVERY order, cancel and fetch.
+_CLIENTS: dict[tuple[str, bool], object] = {}
+_rate_limited_until: float = 0.0
+
+
+def reset_client_cache() -> None:
+    """Drop the cached clients and any rate-limit hold (tests, and a credentials change)."""
+    global _rate_limited_until
+    _CLIENTS.clear()
+    _rate_limited_until = 0.0
+
+
+def rate_limited_until() -> float:
+    """Monotonic deadline before which no request may be sent (0 = clear)."""
+    return _rate_limited_until
+
+
+def assert_not_rate_limited() -> None:
+    """Raise if the venue told us to back off and the pause has not expired."""
+    remaining = _rate_limited_until - time.monotonic()
+    if remaining > 0:
+        raise RateLimited(f"exchange rate limit / ban active — {remaining:.0f}s remaining")
+
+
+def note_rate_error(exc: Exception, retry_after: float | None = None) -> str:
+    """Record a 429/418 so the NEXT call refuses instead of hammering.
+
+    The classifier already existed; nothing called it, so a 429 arrived as a generic
+    exception, was swallowed by a broad handler and retried on the next cycle — exactly how a
+    two-minute Binance ban escalates toward a three-day one. Returns the action taken.
+    """
+    global _rate_limited_until
+    action, wait = classify_rate_error(exc, retry_after)
+    if action == "halt":
+        pause = float(retry_after or 300.0)  # a 418 is an IP ban: stop, loudly
+        logger.error("LIVE exchange BAN (418) — pausing exchange calls for %.0fs", pause)
+    elif action == "retry":
+        pause = float(wait or 1.0)
+        logger.warning("LIVE rate limited (429) — pausing exchange calls for %.0fs", pause)
+    else:
+        return action
+    _rate_limited_until = max(_rate_limited_until, time.monotonic() + pause)
+    return action
+
+
 def _client():
     key, secret = _secret(settings.live_api_key), _secret(settings.live_api_secret)
     if not (key and secret):
         raise RuntimeError("live trading enabled but exchange API key/secret missing")
-    ex = getattr(ccxt, settings.live_exchange)(
-        {"apiKey": key, "secret": secret, "enableRateLimit": True}
-    )
+    sandbox = bool(settings.live_use_testnet)
+    cached = _CLIENTS.get((settings.live_exchange, sandbox))
+    if cached is not None:
+        return cached
+    ex = getattr(ccxt, settings.live_exchange)({
+        "apiKey": key, "secret": secret, "enableRateLimit": True,
+        "options": {
+            # Binance rejects a timestamp more than 1s ahead of ITS clock with -1021, whatever
+            # recvWindow says, and a Windows host syncs weekly. Without this every signed call
+            # fails once the clock drifts — placements, cancels, and the reconciliation that
+            # books fills — so exits stop with positions still open.
+            "adjustForTimeDifference": True,
+            "recvWindow": 10_000,
+        },
+    })
     # 1.8: validate the live path on the exchange TESTNET before real funds. ccxt's
     # set_sandbox_mode swaps to the sandbox/testnet base URLs (no-op on exchanges without one).
-    if settings.live_use_testnet and hasattr(ex, "set_sandbox_mode"):
+    if sandbox and hasattr(ex, "set_sandbox_mode"):
         ex.set_sandbox_mode(True)
+    _CLIENTS[(settings.live_exchange, sandbox)] = ex
     return ex
 
 
@@ -122,6 +188,7 @@ def place_live_order(
             logger.warning("live %s %s: filters reject qty %s — sending unrounded (exits are "
                            "never blocked)", side, pair, qty)
 
+    assert_not_rate_limited()
     try:
         if ccxt_type == "market" or px <= 0:
             order = ex.create_order(pair, "market", side_l, qty, None, params) if params \
@@ -140,6 +207,8 @@ def place_live_order(
             logger.info("LIVE post-only rejected (would cross): %s %s %s @ %s", side, qty, pair, px)
             return {"price": 0.0, "quantity": 0.0, "fee": 0.0, "raw_id": None, "status": "rejected"}
         else:
+            # A 429/418 must pause the next call rather than be retried on the next cycle.
+            note_rate_error(exc)
             raise
 
     # 1.1 — report the TRUTH, never invent a fill. A resting maker order comes back
@@ -175,7 +244,11 @@ def cancel_live_order(pair: str, order_id: str) -> None:
     would orphan a live order nothing tracks any more. Never logs the secret.
     """
     ex = _client()
-    ex.cancel_order(order_id, pair)
+    try:
+        ex.cancel_order(order_id, pair)
+    except Exception as exc:
+        note_rate_error(exc)  # a 429/418 here must pause the next call, not be retried blindly
+        raise
     logger.info("LIVE cancelled resting order %s on %s", order_id, pair)
 
 
@@ -266,7 +339,11 @@ def fetch_live_order(pair: str, order_id: str) -> dict:
     Raises on any exchange error (the caller logs + skips); never logs the secret.
     """
     ex = _client()
-    order = ex.fetch_order(order_id, pair)
+    try:
+        order = ex.fetch_order(order_id, pair)
+    except Exception as exc:
+        note_rate_error(exc)
+        raise
     status = order.get("status")
     filled = float(order.get("filled") or 0.0)
     avg = float(order.get("average") or 0.0)

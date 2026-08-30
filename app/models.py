@@ -144,6 +144,11 @@ class Fill(Base):
     slippage: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     realized_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
+    # Which exchange order produced this fill. Booking compares the venue's cumulative
+    # `filled` for ONE order against what we already recorded FOR THAT ORDER; keying the
+    # comparison on the pending_order alone breaks the moment a row is cancelled and
+    # re-placed, because the old order's fills are then netted off the new one's total.
+    exchange_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
     strategy_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     executed_at: Mapped[datetime] = mapped_column(

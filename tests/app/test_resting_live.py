@@ -426,6 +426,9 @@ def test_live_execute_aborts_when_the_cancel_fails(db, monkeypatch):
     venue._cancel_error = RuntimeError("venue down")
     db.refresh(order)
 
-    with pytest.raises(RuntimeError, match="venue down"):
+    # The cancel now goes through _cancel_resting (so a fill that beat it is booked first),
+    # which reports a refusal rather than re-raising the venue's error. What must not change:
+    # nothing new reaches the exchange.
+    with pytest.raises(ValueError, match="could not take the resting order off the book"):
         orders._live_execute(db, order)
     assert len(venue.placed) == 1  # nothing new was placed

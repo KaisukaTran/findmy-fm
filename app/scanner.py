@@ -129,6 +129,22 @@ _BARS_PER_DAY: dict[str, float] = {
 }
 
 
+def _ladder_too_small(ladder_usd: float) -> bool:
+    """True when a session's whole planned ladder is worth less than the scanner's floor.
+
+    Such a session can never place a valid order — wave 0 lands on the symbol's minimum
+    quantity and the venue rejects it — but it still holds a concurrency slot, and once every
+    slot is held the scanner stops scanning. 0 = the operator removed the floor.
+
+    LIVE only: minNotional is the exchange's rule, and paper fills whatever it is given. On
+    paper a tiny ladder is merely a tiny simulated trade, not a slot that can never fill.
+    """
+    from app import execution
+
+    floor = settings.scan_min_notional
+    return floor > 0 and ladder_usd < floor and execution.live_enabled()
+
+
 def _days_to_bars(days: int, timeframe: str) -> int:
     """Convert a lookback in calendar days to the nearest whole number of bars.
 
@@ -903,6 +919,19 @@ def _review_and_open(
             c["need"] if entry == c["entry"]
             else service.projected_ladder_cost(symbol, entry, c["distance_pct"], c["max_waves"])
         )
+        # A ladder worth less than the exchange will even accept can never trade: wave 0 comes
+        # out at the symbol's minimum quantity, the venue rejects it (-1013) every cycle, and
+        # the session sits ACTIVE holding nothing while occupying one of the concurrency slots.
+        # With every slot taken the scanner stops scanning at all — 8.5 hours of the first soak
+        # went that way behind a single $0.19 LTC session.
+        if _ladder_too_small(need):
+            cand.reason = (cand.reason or "") + (
+                f" | skipped: ladder is only ${need:.2f}, under the ${settings.scan_min_notional:.2f} "
+                "floor — it could not place a valid order")
+            audit.log(db, "scanner", "open_dust_ladder", entity=symbol,
+                      symbol=symbol, ladder_usd=round(need, 4),
+                      floor=settings.scan_min_notional)
+            continue
         ok, why = _can_open(db, need)
         if ok:
             cand.session_id = _open_session(

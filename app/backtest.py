@@ -109,7 +109,14 @@ def simulate_kss(
         den = sum(weights[i] for i in range(k))
         return num / den if den else entry
 
-    for j in range(start, len(candles)):
+    # Start at the bar AFTER the entry. We buy at `start`'s CLOSE, so that bar's high and low
+    # are already in the past — counting them was look-ahead, and it paid the take-profit out
+    # of a move we could never have caught. It biased the whole parameter search toward
+    # take-profits too small to actually reach: the smaller the target, the likelier the entry
+    # candle's own wick had already cleared it. Measured on SOL (365d daily, 2026-08-30) it
+    # reported a 100% win rate in a market that fell 48%, and shortened average time-to-TP by
+    # 4.2x at tp=1.5% — and time-to-TP is what turnover, hence projected daily return, divides by.
+    for j in range(start + 1, len(candles)):
         bar = candles[j]
         days = (bar["ts"] - entry_ts) / _MS_PER_DAY
 

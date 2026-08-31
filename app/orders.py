@@ -230,6 +230,45 @@ def auto_approve_by_policy(db: Session) -> list[int]:
     return approved
 
 
+def session_still_going(db: Session, source_ref: str | None) -> bool:
+    """False when a `pyramid:N:*` row belongs to a KSS session that has ended (or vanished).
+
+    The last line of defence against buying into a dead session. `sweep_orphan_waves` retires
+    such rungs, but it deliberately skips rows carrying a terminal `exchange_status` to avoid
+    stranding a fill only the dead-link reaper can book — and that is EXACTLY the set the
+    reaper then releases, later in the same cycle. Once the link is NULL the row is an ordinary
+    queued rung again and nothing re-checked whose session it was.
+
+    It happened live: `resting_link_released` on order 4 (ARB) at 06:16:20, then 172 ARB booked
+    to `pyramid:4:wave:0` at 06:16:23 — into a session STOPPED for 17 hours. The new
+    `EXPIRE_MAKER` self-trade mode feeds it: a stop sweeping our own rung EXPIRES the rung,
+    which is a terminal status, so the app could buy back into the fall it just sold to escape.
+
+    Non-pyramid rows always pass, and so does a row whose session cannot be found: a MISSING
+    session is `sweep_orphan_waves`'s job (it retires those), and refusing here on a row the
+    caller never had a session for would block ordinary flows. What this exists to stop is the
+    narrower, observed case — a session that EXISTS and has ENDED.
+    """
+    ref = str(source_ref or "")
+    if not ref.startswith("pyramid:"):
+        return True
+    try:
+        session_id = int(ref.split(":")[1])
+    except (IndexError, ValueError):
+        return True
+    from app.kss.service import (
+        SESSION_ACTIVE,
+        SESSION_PENDING,
+        SESSION_TP_TRIGGERED,
+        KssSession,
+    )
+
+    row = db.get(KssSession, session_id)
+    if row is None:
+        return True
+    return row.status in (SESSION_ACTIVE, SESSION_PENDING, SESSION_TP_TRIGGERED)
+
+
 def auto_fill_due_orders(db: Session) -> list[int]:
     """
     Full-auto: auto-approve pending KSS-sourced orders whose limit the market has
@@ -250,6 +289,8 @@ def auto_fill_due_orders(db: Session) -> list[int]:
         )
         .all()
     )
+    # Never act on a rung whose session has ended, however it came to be queued again.
+    pend = [o for o in pend if session_still_going(db, o.source_ref)]
     if not pend:
         return []
     prices = get_current_prices(list({o.symbol for o in pend}))
@@ -470,6 +511,12 @@ def _live_execute(db: Session, order: PendingOrder) -> Fill:
         raise ValueError("live order returned no fill price")
     qty = float(result.get("quantity") or order.quantity)
     fee = float(result.get("fee") or 0.0)
+    # Book what the wallet RECEIVED. On a spot BUY Binance's commission comes out of the coin,
+    # so the venue's `filled` overstates our holding by ~0.1% — and the exit that later asks
+    # for the booked quantity is rejected -2010, killing the take-profit and the stop-loss in
+    # silence. A SELL's commission comes out of the proceeds instead, so its quantity stands.
+    if order.side == "BUY":
+        qty = max(0.0, qty - float(result.get("fee_base") or 0.0))
 
     realized = _update_position(db, order.symbol, order.side, qty, eff, fee)
     fill = Fill(
@@ -584,6 +631,12 @@ def _book_delta(db: Session, order: PendingOrder, res: dict) -> bool:
 
     status = str(res.get("status") or "").lower()
     cum_filled = float(res.get("filled") or 0.0)
+    # Net of the base-asset commission on a BUY, for the same reason as the synchronous path:
+    # the venue's cumulative `filled` is gross, the wallet received less, and an exit sized on
+    # the gross figure is rejected -2010. Under the resting model this is where MOST fills are
+    # booked, so getting it wrong here is the common case, not the edge one.
+    if order.side == "BUY":
+        cum_filled = max(0.0, cum_filled - float(res.get("fee_base") or 0.0))
     avg = float(res.get("average") or 0.0)
     cum_fee = float(res.get("fee") or 0.0)
 
@@ -886,6 +939,9 @@ def sync_resting_orders(db: Session) -> dict:
             )
             .all()
         )
+        # Same guard as the auto-fill path: a rung freed by the dead-link reaper must not be
+        # re-rested on the venue for a session that has ended.
+        due = [o for o in due if session_still_going(db, o.source_ref)]
         for order in due:
             # Wave 0 is the entry and takes (is_entry_wave) — the synchronous path owns it.
             # Resting it as well would put two live orders behind one row, and as a post-only

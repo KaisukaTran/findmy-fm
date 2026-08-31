@@ -402,12 +402,20 @@ def place_live_order(
         avg = float(order.get("price") or px or 0.0)
     quote = pair.partition("/")[2]
     fee = fee_cost(order, quote)
+    # Binance takes a spot BUY's commission out of the ASSET BOUGHT unless BNB fee payment is
+    # enabled — verified against our own live trades 2026-08-31, every one reporting its fee as
+    # {'cost': ..., 'currency': '<BASE>'}. `filled` is the GROSS fill; the wallet receives less.
+    # Booking gross makes the book believe it owns ~0.1% more of every coin than it does, and
+    # the exit then asks the venue for more than exists → -2010, the order REJECTED, and both
+    # the take-profit and the stop-loss silently dead. Surfaced so the caller can book NET.
+    # Testnet charges no commission, which is exactly why 24 live fills never showed it.
+    fee_base = fee_base_qty(order, pair.partition("/")[0])
     logger.info(
         "LIVE order placed: %s %s/%s %s @ %s status=%s (exch id %s)",
         side, filled, qty, pair, avg, status, order.get("id"),
     )
     return {
-        "price": avg, "quantity": filled, "fee": fee,
+        "price": avg, "quantity": filled, "fee": fee, "fee_base": fee_base,
         "raw_id": order.get("id"), "status": status,
     }
 
@@ -531,7 +539,12 @@ def fetch_live_order(pair: str, order_id: str) -> dict:
     if avg <= 0 and filled > 0:  # some venues report price, not average, on a fill
         avg = float(order.get("price") or 0.0)
     fee = fee_cost(order, pair.partition("/")[2])
-    return {"status": status, "filled": filled, "average": avg, "fee": fee, "raw_id": order.get("id")}
+    # Cumulative base-asset commission, for the same reason as in `place_live_order`: under the
+    # 1.5 resting model MOST fills arrive through this path, so booking gross here is the more
+    # common way the book comes to believe it holds coin the wallet does not have.
+    fee_base = fee_base_qty(order, pair.partition("/")[0])
+    return {"status": status, "filled": filled, "average": avg, "fee": fee,
+            "fee_base": fee_base, "raw_id": order.get("id")}
 
 
 def fetch_account_balance(quote: str) -> float:

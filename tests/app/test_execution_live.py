@@ -1,6 +1,7 @@
 """Live-readiness unit tests (paper path untouched): truthful fill, filter compliance,
 rate-limit guard. All offline — no network, no real keys."""
 
+import ccxt
 import pytest
 
 from app import execution
@@ -110,8 +111,11 @@ def test_weight_backoff_thresholds():
     assert execution.weight_backoff_seconds(4000) == 0.0          # below 80% of 6000 (4800)
     assert execution.weight_backoff_seconds(4800) == 0.0          # exactly at soft threshold
     assert execution.weight_backoff_seconds(5400) > 0.0           # ramping
-    assert execution.weight_backoff_seconds(6000) == 5.0          # at limit → hard backoff
-    assert execution.weight_backoff_seconds(7000) == 5.0          # over limit
+    # P2 spec change (2026-09-01): the old 5.0s ceiling guaranteed re-hitting a REQUEST_WEIGHT
+    # budget that had already been reached — a minute-window budget needs up to a minute to
+    # roll. Raised to 30.0; see the docstring on weight_backoff_seconds for the full rationale.
+    assert execution.weight_backoff_seconds(6000) == 30.0         # at limit → hard backoff
+    assert execution.weight_backoff_seconds(7000) == 30.0         # over limit
 
 
 def test_classify_rate_error():
@@ -135,6 +139,80 @@ def test_classify_rate_error():
     assert execution.classify_rate_error(
         ccxt.RequestTimeout("binance GET .../order?orderId=4180192837 read timeout")
     ) == ("raise", None)
+
+
+# --- P2 Fix B1: retry_after_seconds / note_if_rate_error / rate_hold_active --------------
+
+
+def test_retry_after_seconds_reads_the_exchange_last_response_headers():
+    class _Ex:
+        last_response_headers = {"Retry-After": "17"}
+
+    assert execution.retry_after_seconds(Exception("429 too many"), _Ex()) == 17.0
+
+
+def test_retry_after_seconds_header_lookup_is_case_insensitive():
+    class _Ex:
+        last_response_headers = {"retry-after": "5"}
+
+    assert execution.retry_after_seconds(Exception("x"), _Ex()) == 5.0
+
+
+def test_retry_after_seconds_falls_back_to_the_exception_text():
+    exc = Exception("binance 429 too many requests, Retry-After: 42")
+
+    assert execution.retry_after_seconds(exc) == 42.0
+
+
+def test_retry_after_seconds_is_none_when_nothing_usable_is_found():
+    assert execution.retry_after_seconds(Exception("boring error")) is None
+    assert execution.retry_after_seconds(Exception("boring error"), object()) is None
+
+
+def test_note_if_rate_error_notes_and_returns_true_for_a_rate_classified_error():
+    execution.reset_client_cache()
+    try:
+        exc = ccxt.DDoSProtection("binance 429 too many")
+        exc.http_status_code = 429
+
+        assert execution.note_if_rate_error(exc) is True
+        assert execution.rate_limited_until() > 0
+    finally:
+        execution.reset_client_cache()
+
+
+def test_note_if_rate_error_is_a_noop_for_a_non_rate_error():
+    execution.reset_client_cache()
+    try:
+        assert execution.note_if_rate_error(Exception("some other error")) is False
+        assert execution.rate_limited_until() == 0
+    finally:
+        execution.reset_client_cache()
+
+
+def test_rate_hold_active_reflects_either_hold():
+    execution.reset_client_cache()
+    try:
+        assert execution.rate_hold_active() is False
+
+        exc = ccxt.DDoSProtection("binance 418 banned")
+        exc.http_status_code = 418
+        execution.note_rate_error(exc)
+
+        assert execution.rate_hold_active() is True
+    finally:
+        execution.reset_client_cache()
+
+
+def test_rate_hold_active_reflects_a_weight_hold_too():
+    execution.reset_client_cache()
+    try:
+        execution._note_weight_usage(type("Ex", (), {"last_response_headers":
+                                                       {"X-MBX-USED-WEIGHT-1M": "6000"}})())
+
+        assert execution.rate_hold_active() is True
+    finally:
+        execution.reset_client_cache()
 
 
 # --- 1.3: maker placement (post-only entries; risk exits stay taker) ----------
@@ -294,3 +372,193 @@ def test_duplicate_client_order_recovers_existing_instead_of_double_placing(monk
     assert res["raw_id"] == "EXIST1"     # recovered the prior order, not a new placement
     assert res["quantity"] == 5.0 and res["price"] == 100.0
     assert fake.fetched and fake.fetched[0][2] == {"clientOrderId": "fm-7"}
+
+
+# --- A7 (1.10): fetch_order_by_client_id — the probe used before a retry --------------
+#
+# conftest.py defaults `execution.fetch_order_by_client_id` to a stub (None) for every OTHER
+# test, so a test faking `live_enabled()` never falls through to a real network call without
+# meaning to. These tests exercise the REAL function, so they call the reference captured at
+# import time — before that per-test stub ever applies.
+
+_real_fetch_order_by_client_id = execution.fetch_order_by_client_id
+
+
+def test_fetch_order_by_client_id_returns_the_normalised_shape(monkeypatch):
+    fake = _DupFakeEx({"status": "closed", "filled": 5.0, "average": 100.0,
+                       "fee": {"cost": 0.1}, "id": "EXIST1"})
+    monkeypatch.setattr(execution, "_client", lambda: fake)
+    res = _real_fetch_order_by_client_id("SOL/USDT", "fm-7")
+    assert res == {"price": 100.0, "quantity": 5.0, "fee": 0.1, "fee_base": 0.0,
+                   "raw_id": "EXIST1", "status": "closed"}
+
+
+def test_fetch_order_by_client_id_closed_without_filled_trusts_amount(monkeypatch):
+    """Fix round A / item 1 (execution.py half): same fallback as `place_live_order` — a
+    fully-filled order whose venue response omitted `filled` must not be adopted as a phantom
+    zero-fill (price 0), which an A7 adoption would otherwise reject with 'no fill price'."""
+    fake = _DupFakeEx({"status": "closed", "amount": 5.0, "average": 100.0,
+                       "fee": {"cost": 0.1}, "id": "EXIST2"})
+    monkeypatch.setattr(execution, "_client", lambda: fake)
+    res = _real_fetch_order_by_client_id("SOL/USDT", "fm-8")
+    assert res["quantity"] == 5.0
+    assert res["price"] == 100.0
+
+
+class _NotFoundFakeEx:
+    def __init__(self, exc):
+        self._exc = exc
+
+    def fetch_order(self, oid, symbol=None, params=None):
+        raise self._exc
+
+
+def test_fetch_order_by_client_id_returns_none_when_the_venue_never_saw_it(monkeypatch):
+    fake = _NotFoundFakeEx(ccxt.OrderNotFound('binance {"code":-2013,"msg":"Order does not exist."}'))
+    monkeypatch.setattr(execution, "_client", lambda: fake)
+    assert _real_fetch_order_by_client_id("SOL/USDT", "fm-9") is None
+
+
+def test_fetch_order_by_client_id_reraises_a_non_gone_error(monkeypatch):
+    fake = _NotFoundFakeEx(Exception("Account has insufficient balance"))
+    monkeypatch.setattr(execution, "_client", lambda: fake)
+    with pytest.raises(Exception, match="insufficient balance"):
+        _real_fetch_order_by_client_id("SOL/USDT", "fm-9")
+
+
+# --- B5 (minNotional on a price-less MARKET order) + B6 (a real PERCENT_PRICE reference) --
+
+_PERCENT_MARKET = {
+    "info": {"filters": [
+        {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
+        {"filterType": "LOT_SIZE", "stepSize": "0.001", "minQty": "0.001"},
+        {"filterType": "NOTIONAL", "minNotional": "5.00"},
+        # A realistic Binance PERCENT_PRICE_BY_SIDE band (~5%), not the literal number 5.
+        {"filterType": "PERCENT_PRICE_BY_SIDE", "bidMultiplierUp": "1.05", "bidMultiplierDown": "0.95"},
+    ]},
+    "limits": {"amount": {"min": 0.001}, "cost": {"min": 5.0}},
+}
+
+
+def test_market_buy_under_minnotional_valued_at_market_price_is_rejected(monkeypatch):
+    """px<=0 (MARKET) carries no price of its own — B5 values it at the CURRENT market price
+    instead of silently popping minNotional (which used to let it sail through to the venue
+    and be rejected there instead)."""
+    from app import market
+
+    fake = _MakerFakeEx(market=_PERCENT_MARKET)
+    monkeypatch.setattr(execution, "_client", lambda: fake)
+    monkeypatch.setattr(market, "get_current_prices", lambda syms: {"SOL": 100.0})
+    # 0.03 * 100.0 = 3.0, below the 5.0 minNotional.
+    with pytest.raises(ValueError, match="minNotional"):
+        execution.place_live_order("SOL/USDT", "BUY", 0.03, 0.0, "MARKET")
+    assert fake.calls == [], "rejected before ever reaching the venue"
+
+
+def test_market_sell_under_minnotional_is_never_gated(monkeypatch):
+    """The exact same order as a SELL must never be blocked by this check — exits are never
+    gated; the venue is the right place to refuse a dust position."""
+    from app import market
+
+    fake = _MakerFakeEx(order={"status": "closed", "filled": 0.03, "amount": 0.03,
+                               "average": 100.0, "id": "s1"}, market=_PERCENT_MARKET)
+    monkeypatch.setattr(execution, "_client", lambda: fake)
+    monkeypatch.setattr(market, "get_current_prices", lambda syms: {"SOL": 100.0})
+    res = execution.place_live_order("SOL/USDT", "SELL", 0.03, 0.0, "MARKET")
+    assert res["quantity"] == 0.03
+
+
+def test_market_buy_with_no_market_price_available_is_not_blocked(monkeypatch):
+    """No cached/live price (offline, cold cache) degrades to today's behaviour: skip the
+    check rather than block a BUY on missing data."""
+    from app import market
+
+    fake = _MakerFakeEx(order={"status": "closed", "filled": 0.03, "amount": 0.03,
+                               "average": 100.0, "id": "b1"}, market=_PERCENT_MARKET)
+    monkeypatch.setattr(execution, "_client", lambda: fake)
+    monkeypatch.setattr(market, "get_current_prices", lambda syms: {})
+    res = execution.place_live_order("SOL/USDT", "BUY", 0.03, 0.0, "MARKET")
+    assert res["quantity"] == 0.03
+
+
+def test_buy_limit_priced_far_above_market_hits_the_real_percent_price_band(monkeypatch):
+    """B6: the reference used to be the order's OWN price (px if px>0 else None) — comparing a
+    number with itself can never fire. It is now the REAL current market price."""
+    from app import market
+
+    fake = _MakerFakeEx(market=_PERCENT_MARKET)
+    monkeypatch.setattr(execution, "_client", lambda: fake)
+    monkeypatch.setattr(market, "get_current_prices", lambda syms: {"SOL": 100.0})
+    with pytest.raises(ValueError, match="PERCENT_PRICE"):
+        execution.place_live_order("SOL/USDT", "BUY", 1.0, 300.0, "LIMIT")  # 3x market
+    assert fake.calls == []
+
+
+def test_sell_limit_far_from_market_is_never_gated_by_percent_price(monkeypatch):
+    """A SELL outside the band is the venue's problem — never gated by us."""
+    from app import market
+
+    fake = _MakerFakeEx(order={"status": "open", "filled": 0.0, "id": "sp1"}, market=_PERCENT_MARKET)
+    monkeypatch.setattr(execution, "_client", lambda: fake)
+    monkeypatch.setattr(market, "get_current_prices", lambda syms: {"SOL": 100.0})
+    res = execution.place_live_order("SOL/USDT", "SELL", 1.0, 300.0, "LIMIT")
+    assert res["status"] == "open"
+
+
+def test_buy_limit_with_no_market_price_is_not_blocked_by_percent_price(monkeypatch):
+    from app import market
+
+    fake = _MakerFakeEx(order={"status": "open", "filled": 0.0, "id": "bp1"}, market=_PERCENT_MARKET)
+    monkeypatch.setattr(execution, "_client", lambda: fake)
+    monkeypatch.setattr(market, "get_current_prices", lambda syms: {})
+    res = execution.place_live_order("SOL/USDT", "BUY", 1.0, 300.0, "LIMIT")
+    assert res["status"] == "open"
+
+
+# --- Fix round A / item 5(d): the B5/B6 lookup + minNotional-check reordering --------------
+
+
+def test_market_buy_skips_the_price_lookup_during_a_rate_hold(monkeypatch):
+    """The market-price lookup (for the B5/B6 checks) used to run BEFORE the rate gates below,
+    re-hammering a banned IP once per queued BUY per cycle. During a hold it must degrade
+    straight to mkt_price=None instead — the checks that need it just skip."""
+    from app import market
+
+    fake = _MakerFakeEx(order={"status": "closed", "filled": 1.0, "amount": 1.0,
+                               "average": 100.0, "id": "rh1"}, market=_PERCENT_MARKET)
+    monkeypatch.setattr(execution, "_client", lambda: fake)
+    monkeypatch.setattr(execution, "rate_hold_active", lambda: True)
+    calls: list = []
+    monkeypatch.setattr(market, "get_current_prices",
+                        lambda syms: calls.append(syms) or {"SOL": 100.0})
+
+    res = execution.place_live_order("SOL/USDT", "BUY", 1.0, 0.0, "MARKET")
+
+    assert calls == [], "must not call get_current_prices while a rate hold is active"
+    assert res["quantity"] == 1.0
+
+
+def test_market_buy_minnotional_checked_after_rounding_not_before(monkeypatch):
+    """The manual minNotional check must run on the ROUNDED (adj_qty) amount, not the raw
+    requested one. `round_to_filters` floors qty DOWN to stepSize, so a qty that clears the $5
+    floor BEFORE rounding can land under it AFTER — checking the pre-round quantity let such an
+    order sail through our own validation and reach the venue anyway."""
+    from app import market
+
+    filters = {
+        "info": {"filters": [
+            {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
+            {"filterType": "LOT_SIZE", "stepSize": "0.02", "minQty": "0.001"},
+            {"filterType": "NOTIONAL", "minNotional": "5.00"},
+        ]},
+        "limits": {"amount": {"min": 0.001}, "cost": {"min": 5.0}},
+    }
+    fake = _MakerFakeEx(order={"status": "closed", "filled": 0.04, "amount": 0.04,
+                               "average": 100.0, "id": "b2"}, market=filters)
+    monkeypatch.setattr(execution, "_client", lambda: fake)
+    monkeypatch.setattr(market, "get_current_prices", lambda syms: {"SOL": 100.0})
+    # Unrounded: 0.059 * 100 = 5.9 (clears the $5 floor). Floored to stepSize 0.02 -> 0.04,
+    # whose REAL notional (0.04 * 100 = 4.0) does NOT clear it.
+    with pytest.raises(ValueError, match="minNotional"):
+        execution.place_live_order("SOL/USDT", "BUY", 0.059, 0.0, "MARKET")
+    assert fake.calls == [], "must be rejected before ever reaching the venue"

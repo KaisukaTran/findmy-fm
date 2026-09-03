@@ -269,6 +269,54 @@ def test_guard_does_not_force_fill_the_resting_tp(db, monkeypatch):
     assert tp.status == PENDING and tp.exchange_order_id == "X1"
 
 
+def test_guard_force_fills_a_market_dynamic_tp_exit(db, monkeypatch):
+    """`pyramid:{id}:tp` is AMBIGUOUS: it is also the ref a MARKET dynamic-TP exit uses
+    (`_queue_dynamic_exit`/`check_tp`, live has `kss_dynamic_tp_enabled=True`). The skip above
+    must key on `order_type == LIMIT` (the true discriminator), not the ref shape alone — else
+    this MARKET exit is wrongly left to rot exactly like the resting LIMIT one is meant to be."""
+    _live(monkeypatch)
+    approved: list[int] = []
+    monkeypatch.setattr(orders, "approve_order",
+                        lambda db, oid, reviewer=None: approved.append(oid))
+    monkeypatch.setattr("app.market.get_current_prices",
+                        lambda syms, force=False: {"SOL": 10.5})
+    # This session is still ACTIVE, so run_position_guard's tail (resting=True) also drives
+    # sync_resting_tp + sync_resting_orders for it — stub the real placement call so nothing
+    # here ever reaches a real exchange (this test's focus is the force-fill skip only).
+    monkeypatch.setattr(execution, "place_live_order",
+                        lambda *a, **k: {"raw_id": "X-STUB", "status": "open",
+                                         "price": 0.0, "quantity": 0.0, "fee": 0.0})
+    row = _session(db, avg=10.0, qty=3.0)
+    tp, _ = orders.queue_order(
+        db, symbol="SOL", side="SELL", quantity=3.0, price=0.0, order_type="MARKET",
+        source="kss", source_ref=f"pyramid:{row.id}:tp",
+    )
+
+    service.run_position_guard(db)
+
+    assert approved == [tp.id]
+
+
+def test_sync_resting_tp_stale_sweep_ignores_a_market_tp_row(db, monkeypatch):
+    """The stale-row sweep (a session no longer ACTIVE must not keep an exit on the book) must
+    only ever touch the RESTING (LIMIT) exit — a MARKET dynamic-tp exit never rests on the
+    exchange, and rejecting it here would strand the session with no exit anywhere (the guard's
+    force-fill loop is what handles it, in the same tick)."""
+    _live(monkeypatch)
+    row = _session(db, avg=10.0, qty=3.0)
+    tp, _ = orders.queue_order(
+        db, symbol="SOL", side="SELL", quantity=3.0, price=0.0, order_type="MARKET",
+        source="kss", source_ref=f"pyramid:{row.id}:tp",
+    )
+    row.status = models.SESSION_TP_TRIGGERED  # no longer ACTIVE, as _queue_dynamic_exit leaves it
+    db.commit()
+
+    service.sync_resting_tp(db)
+
+    db.refresh(tp)
+    assert tp.status == PENDING, "a MARKET tp exit must never be rejected by the resting-tp sweep"
+
+
 def test_guard_still_fills_a_protective_exit(db, monkeypatch):
     """The never-gate-exits rule: a queued MARKET stop must still fill immediately."""
     _live(monkeypatch)

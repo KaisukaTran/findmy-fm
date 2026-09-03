@@ -80,7 +80,9 @@ def get_current_prices(symbols: list[str], force: bool = False) -> dict[str, flo
         return cached
 
     try:
-        fetched = live_provider().get_prices(missing)
+        # ``fresh=force``: a force that survived the WS-freshness downgrade above must reach
+        # the venue, not the provider's 60s ticker cache (hard-SL pricing when the WS is down).
+        fetched = live_provider().get_prices(missing, fresh=force)
     except Exception as exc:  # whole exchange unavailable
         logger.warning("%s price fetch failed: %s", settings.live_exchange, exc)
         return cached

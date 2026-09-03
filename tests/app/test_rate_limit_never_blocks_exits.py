@@ -53,6 +53,18 @@ def test_a_real_ban_is_still_detected():
     assert execution.classify_rate_error(exc)[0] == "halt"
 
 
+def test_a_small_retry_after_never_under_pauses_a_ban():
+    """Fix round A / item 5(b): `note_rate_error`'s halt branch used to pause for
+    `float(retry_after or 300.0)` — a SMALL/garbage Retry-After (5s) would under-pause a 418 IP
+    ban. Floor it at 300s regardless of what the venue sent."""
+    import time as _time
+
+    action = execution.note_rate_error(_ban(), retry_after=5.0)
+
+    assert action == "halt"
+    assert execution.rate_limited_until() - _time.monotonic() >= 299.0
+
+
 def test_a_hold_never_blocks_an_exit():
     execution.note_rate_error(_ban())
 

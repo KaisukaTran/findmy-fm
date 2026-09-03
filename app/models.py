@@ -238,6 +238,11 @@ class KssSession(Base):
     # pyramid.py) or 'pyramid_up' (anti-martingale scale-into-strength). Default keeps every
     # existing/legacy session on the unchanged DCA-down path.
     strategy_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="dca_down", server_default="dca_down")
+    # Wave-0 sizing snapshot (P1 Fix 2), taken from settings.kss_first_wave_usd at session
+    # CREATION time and frozen thereafter — pip_size prices off THIS, never a later global
+    # edit (see PyramidSession.pip_size). NULL = legacy row created before this column existed;
+    # scripts/rearm_dead_ladders.py backfills those from isolated_fund/ladder_factor.
+    first_wave_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     current_wave: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     avg_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     total_filled_qty: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)

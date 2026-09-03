@@ -32,6 +32,7 @@ import time
 from collections.abc import Callable
 
 from app.data.providers import Candle, CcxtProvider
+from app.execution import note_if_rate_error
 
 logger = logging.getLogger(__name__)
 
@@ -116,9 +117,13 @@ def get_candles(
         # pull new bars and merge rather than re-downloading the full history.
         since_ms = entry.last_ts_ms()
 
+    provider: CcxtProvider | None = None
     try:
         provider = provider_factory(exchange_id)
         if since_ms is not None:
+            # Tail fetch calls the ccxt client DIRECTLY (not provider.get_ohlcv), so it does
+            # NOT go through get_ohlcv's own rate-error handling — the `except` below is what
+            # notes a 429/418/-1015 for THIS path (Fix B).
             raw = provider._ex.fetch_ohlcv(
                 provider.pair(symbol), timeframe=timeframe, since=since_ms
             )
@@ -132,9 +137,14 @@ def get_candles(
             merged = [c for c in entry.candles if c["ts"] < since_ms] + new_candles  # type: ignore[index]
             candles = merged
         else:
-            # Full fetch (cold start or no prior entry).
+            # Full fetch (cold start or no prior entry). provider.get_ohlcv already notes a
+            # rate-classified error itself and degrades to [] rather than raising.
             candles = provider.get_ohlcv(symbol, timeframe, limit)
     except Exception as exc:
+        # Fix B: note a rate-classified error (429/418/-1015) here too — this is the ONE path
+        # that bypasses get_ohlcv's own handling (the tail fetch above calls `_ex.fetch_ohlcv`
+        # directly). `provider` may be unset if `provider_factory` itself raised.
+        note_if_rate_error(exc, getattr(provider, "_ex", None))
         logger.warning("candle_cache fetch failed (%s %s %s): %s",
                        exchange_id, symbol, timeframe, exc)
         # Degrade gracefully: return whatever was cached (possibly stale or empty).

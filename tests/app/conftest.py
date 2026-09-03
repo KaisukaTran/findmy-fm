@@ -84,6 +84,20 @@ def _settings_guard():
         setattr(settings, name, value)
 
 
+@pytest.fixture(autouse=True)
+def _no_live_probe_by_default(monkeypatch):
+    """A7: `_live_execute` now probes the venue (``execution.fetch_order_by_client_id``)
+    before placing, whenever a test fakes ``execution.live_enabled()`` True — and many tests
+    do that while only stubbing the pre-existing surface (``place_live_order`` /
+    ``fetch_live_order``), never this new function. Default it to "no such order" (``None`` —
+    the exact pre-fix behaviour: placement proceeds normally) so those tests never fall
+    through to the REAL implementation and its real ``_client()`` / network call. A test that
+    means to exercise the probe itself overrides this explicitly, after this fixture runs."""
+    from app import execution
+
+    monkeypatch.setattr(execution, "fetch_order_by_client_id", lambda *a, **kw: None)
+
+
 @pytest.fixture
 def db():
     """A DB session bound to the temporary test database."""

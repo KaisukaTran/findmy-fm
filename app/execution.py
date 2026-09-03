@@ -68,7 +68,7 @@ def reset_client_cache() -> None:
     change)."""
     global _rate_limited_until, _weight_hold_until, _weight_limit_per_min
     global _venue_limits_cache, _venue_limits_fetched_at
-    global _credentials_ok, _credential_alert_last
+    global _credentials_ok, _credential_alert_last, _rate_alert_last_end
     _CLIENTS.clear()
     _last_clock_refresh.clear()
     _rate_limited_until = 0.0
@@ -78,6 +78,7 @@ def reset_client_cache() -> None:
     _venue_limits_fetched_at = 0.0
     _credentials_ok = True
     _credential_alert_last = 0.0
+    _rate_alert_last_end = 0.0
     reset_order_budget()
 
 
@@ -102,6 +103,45 @@ def assert_not_rate_limited(urgent: bool = False) -> None:
         raise RateLimited(f"exchange rate limit / ban active — {remaining:.0f}s remaining")
 
 
+# How long an orders-budget (-1015) pause must be before it earns its own operator alert — the
+# common 10s-window breach clears itself before a human could act on it; the day-window breach
+# (the "long-window branch") does not, and deserves the same visibility as an IP ban.
+_LONG_HOLD_ALERT_THRESHOLD_SEC = 3600.0
+
+# The minimum extension (seconds) a NEW hold-until must add over the last ALERTED hold-until
+# before it counts as a distinct hold worth a second Telegram message. A repeat 418 that lands
+# a moment after the first (same 300s floor, clock barely moved) must not re-alert; a genuinely
+# LONGER later ban must.
+_RATE_ALERT_MIN_EXTENSION_SEC = 60.0
+
+_rate_alert_last_end: float = 0.0
+
+
+def _maybe_alert_rate_hold(action: str, pause: float, hold_until: float) -> None:
+    """Fire ONE Telegram "risk" alert per distinct rate/weight hold.
+
+    Before this, a 418 (3-day IP ban) produced a single log line and nothing else — scanning
+    silently stopped (`rate_hold_active` gates the sweep), Telegram stayed quiet, and the
+    heartbeat stayed green. This runs on the order path, so it must never raise into the
+    caller: any notifier failure is swallowed after a debug log.
+    """
+    global _rate_alert_last_end
+    if hold_until - _rate_alert_last_end < _RATE_ALERT_MIN_EXTENSION_SEC:
+        return
+    _rate_alert_last_end = hold_until
+    label = "IP BAN (418)" if action == "halt" else "orders-budget hold (-1015)"
+    try:
+        from app import notify  # local import: avoid a module-load-time cycle with app.notify
+
+        notify.event(
+            "risk",
+            f"⛔ Exchange {label} — pausing new exposure for {pause:.0f}s. Scanning/new "
+            "orders are gated until this clears; exits are never held back.",
+        )
+    except Exception:  # a broken notifier must never mask the underlying exchange error
+        logger.debug("note_rate_error: alert send failed", exc_info=True)
+
+
 def note_rate_error(exc: Exception, retry_after: float | None = None) -> str:
     """Record a 429/418 so the NEXT call refuses instead of hammering.
 
@@ -112,7 +152,10 @@ def note_rate_error(exc: Exception, retry_after: float | None = None) -> str:
     global _rate_limited_until
     action, wait = classify_rate_error(exc, retry_after)
     if action == "halt":
-        pause = float(retry_after or 300.0)  # a 418 is an IP ban: stop, loudly
+        # A 418 is an IP ban: stop, loudly. Floor the pause at 300s — a small/garbage
+        # Retry-After (or none) must never UNDER-pause an IP ban; 300s is the minimum whether or
+        # not the venue sent a shorter/absent hint.
+        pause = max(float(retry_after or 0.0), 300.0)
         logger.error("LIVE exchange BAN (418) — pausing exchange calls for %.0fs", pause)
     elif action == "retry":
         pause = float(wait or 1.0)
@@ -129,6 +172,8 @@ def note_rate_error(exc: Exception, retry_after: float | None = None) -> str:
     else:
         return action
     _rate_limited_until = max(_rate_limited_until, time.monotonic() + pause)
+    if action == "halt" or (action == "orders_exceeded" and pause >= _LONG_HOLD_ALERT_THRESHOLD_SEC):
+        _maybe_alert_rate_hold(action, pause, _rate_limited_until)
     return action
 
 
@@ -326,16 +371,58 @@ def place_live_order(
     except Exception:  # market metadata unavailable — place unrounded rather than block
         filters = {}
     if filters:
-        # With no price (a MARKET order carries none) there is nothing to value the order
-        # against, so only the quantity can be made compliant — checking a notional of zero
-        # would reject every market order.
         checks = dict(filters)
-        if px <= 0:
-            checks.pop("minNotional", None)
+        is_buy = side.upper() == "BUY"
+        # B6: the PERCENT_PRICE band only ever runs for a BUY that carries its own price (a
+        # LIMIT) — a MARKET order has no price to check a band against (0 would always read as
+        # "below the floor"), and a SELL is never gated by it: an exit outside the band is the
+        # venue's problem, not ours to pre-empt (never-gate-exits).
+        run_percent_check = is_buy and px > 0
+        if not run_percent_check:
             checks.pop("percentUp", None)
             checks.pop("percentDown", None)
+        # B5/B6: neither check has anything of the ORDER's own to compare against for a
+        # price-less MARKET order (px<=0) or a self-referential LIMIT (comparing px to px can
+        # never fire) — value/reference both against the CURRENT market price instead, BUY
+        # only. A lookup failure (cache empty, offline) must not block placement.
+        mkt_price: float | None = None
+        # Never re-hammer a banned IP: a signed hold means this call is about to be refused by
+        # `assert_not_rate_limited` below anyway (BUY only — a SELL runs urgent), so a public
+        # lookup here would just spend another request against the same ban, once per queued
+        # BUY per cycle. Degrade to no market price: the PERCENT_PRICE/minNotional checks below
+        # both already skip gracefully when `mkt_price` is None, and the rate/order-budget gates
+        # further down still hold the BUY regardless.
+        if is_buy and not rate_hold_active():
+            try:
+                from app.market import get_current_prices  # lazy — avoid an import cycle
+
+                base = pair.partition("/")[0]
+                mkt_price = get_current_prices([base]).get(base) or None
+            except Exception:
+                mkt_price = None
+        ref_price = mkt_price if run_percent_check else None
+        if px <= 0:
+            # A MARKET order carries no price of its own — the built-in minNotional check
+            # (adj_price * adj_qty) would always read as zero notional, so it is popped and
+            # replaced with a manual check below.
+            checks.pop("minNotional", None)
         try:
-            px, qty = round_to_filters(px, qty, checks, ref_price=px if px > 0 else None)
+            # round_to_filters FIRST: it rounds qty DOWN to stepSize, so an order sized just
+            # over the minNotional floor can land just UNDER it after rounding. Checking the
+            # un-rounded qty (as this used to) let such an order sail through our own
+            # validation only to be rejected at the exchange — check the ADJUSTED qty instead.
+            px, qty = round_to_filters(px, qty, checks, ref_price=ref_price)
+            if px <= 0 and is_buy and mkt_price:
+                # B5: `applyMinToMarket` is true on Binance — the venue enforces minNotional on
+                # a MARKET order exactly like a LIMIT one, valued at the market price. Without
+                # this a wave-0 BUY sized under the venue minimum sailed through OUR validation
+                # and was rejected at the exchange instead. BUY only — a SELL is never gated.
+                # No market price available degrades to today's behaviour: skip the check.
+                min_notional = float(filters.get("minNotional") or 0.0)
+                if min_notional > 0 and qty * mkt_price < min_notional:
+                    raise ValueError(
+                        f"notional {qty * mkt_price:.4f} below minNotional {min_notional}"
+                    )
         except ValueError:
             # An exit is NEVER gated: a dust position that no longer clears minNotional must
             # still be sellable, and the venue is the right place to refuse it. A BUY that
@@ -377,7 +464,7 @@ def place_live_order(
             # A 429/418 must pause the next call rather than be retried on the next cycle. A
             # credential failure (dead/revoked/IP-restricted key) is never a hold — it's an
             # ALERT only, never a gate (see note_credential_error).
-            note_rate_error(exc)
+            note_rate_error(exc, retry_after_seconds(exc, ex))
             note_credential_error(exc)
             raise
 
@@ -431,7 +518,8 @@ def cancel_live_order(pair: str, order_id: str) -> None:
     try:
         ex.cancel_order(order_id, pair)
     except Exception as exc:
-        note_rate_error(exc)  # a 429/418 here must pause the next call, not be retried blindly
+        # a 429/418 here must pause the next call, not be retried blindly
+        note_rate_error(exc, retry_after_seconds(exc, ex))
         note_credential_error(exc)  # alert only — never gates the cancel/its retry
         raise
     _mark_credentials_ok()
@@ -505,14 +593,28 @@ def fee_base_qty(order: dict, base: str) -> float:
     return total
 
 
+_ORDER_GONE_RE = re.compile(r'"code"\s*:\s*-201[13]\b')
+
+
 def order_is_gone(exc: Exception) -> bool:
     """True when the venue refused a cancel because it no longer holds that order.
 
-    Binance answers -2011 / ``OrderNotFound`` for an order that already filled or was already
-    cancelled. That is not a failed cancel — it is precisely the case where a fill may still
-    be waiting to be booked, so the caller must read the final status instead of retrying.
+    Binance answers -2011 / ``OrderNotFound`` for a cancel on an order that already filled or
+    was already cancelled, and -2013 ("Order does not exist") for the same case read via
+    ``fetch_order``. That is not a failed cancel/read — it is precisely the case where a fill
+    may still be waiting to be booked, so the caller must read the final status instead of
+    retrying.
+
+    Matches the ccxt exception TYPE, or the JSON-shape code (``"code":-2011``), never a bare
+    substring: a plain network error's message embeds the signed request URL, which carries
+    ``origClientOrderId=fm-2011`` for order id 2011 (imminent — ids are in the low thousands)
+    and would otherwise false-positive as a gone order, short-circuiting BEFORE
+    ``note_rate_error``/``note_credential_error`` ever see it. Same defense-in-depth shape as
+    ``classify_credential_error`` above.
     """
-    return isinstance(exc, ccxt.OrderNotFound) or "-2011" in str(exc)
+    if isinstance(exc, ccxt.OrderNotFound):
+        return True
+    return bool(_ORDER_GONE_RE.search(str(exc)))
 
 
 def fetch_live_order(pair: str, order_id: str) -> dict:
@@ -528,7 +630,7 @@ def fetch_live_order(pair: str, order_id: str) -> dict:
     try:
         order = ex.fetch_order(order_id, pair)
     except Exception as exc:
-        note_rate_error(exc)
+        note_rate_error(exc, retry_after_seconds(exc, ex))
         note_credential_error(exc)  # alert only — the reconciliation pass must still be retried
         raise
     _mark_credentials_ok()
@@ -681,6 +783,57 @@ def _fetch_by_client_id(ex, pair: str, cid: str) -> dict:
     return ex.fetch_order(cid, pair, {"clientOrderId": cid})
 
 
+def fetch_order_by_client_id(pair: str, cid: str) -> dict | None:
+    """Probe the venue for an order by its ``clientOrderId`` BEFORE placing (A7/1.10).
+
+    A retry sends the SAME deterministic ``clientOrderId`` (see ``client_order_id``). The
+    REACTIVE recovery inside ``place_live_order`` (``is_duplicate_client_order`` ->
+    ``_fetch_by_client_id``) only fires when Binance rejects a duplicate placement — which
+    requires the venue to still hold that order. A MARKET order fills immediately and is off
+    the book on the very next tick, so if a PRIOR attempt's response was lost after Binance
+    had already accepted it (timeout, process restart...), ``exchange_order_id`` was never
+    stamped, the row went back to PENDING, and by the time of the retry there is nothing left
+    to reject a duplicate against — Binance freely reuses the id. Probing PROACTIVELY, before
+    sending anything, is the only way to catch that case.
+
+    Returns the SAME normalised shape ``place_live_order`` returns (``price``/``quantity``/
+    ``fee``/``fee_base``/``raw_id``/``status``) so a caller can treat a recovered order
+    exactly like a fresh placement result — or ``None`` when the venue reports no such order
+    (nothing was ever placed; proceed with placement normally).
+
+    Raises on any other error (rate limit / credentials) after noting it, exactly like
+    ``fetch_live_order`` — the caller decides whether to fall through to placement. Never
+    logs the secret.
+    """
+    ex = _client()
+    try:
+        order = _fetch_by_client_id(ex, pair, cid)
+    except Exception as exc:
+        # "The venue does not know this clientOrderId" (Binance -2013, also -2011) means
+        # nothing was ever placed under it — not a failure, just "proceed normally".
+        if order_is_gone(exc):
+            return None
+        note_rate_error(exc, retry_after_seconds(exc, ex))
+        note_credential_error(exc)  # alert only — never gates the caller's own decision
+        raise
+    _mark_credentials_ok()
+    _note_weight_usage(ex)
+    status = order.get("status")
+    filled = float(order.get("filled") or 0.0)
+    if str(status).lower() == "closed" and filled <= 0:
+        # Same fallback as `place_live_order`: a fully-filled order whose venue response omitted
+        # `filled` must not be adopted as a phantom zero-fill (price 0 below) — trust `amount`.
+        filled = float(order.get("amount") or 0.0)
+    avg = float(order.get("average") or 0.0)
+    if avg <= 0 and filled > 0:  # some venues report price, not average, on a fill
+        avg = float(order.get("price") or 0.0)
+    quote = pair.partition("/")[2]
+    fee = fee_cost(order, quote)
+    fee_base = fee_base_qty(order, pair.partition("/")[0])
+    return {"price": avg, "quantity": filled, "fee": fee, "fee_base": fee_base,
+            "raw_id": order.get("id"), "status": status}
+
+
 def filters_from_market(market: dict) -> dict:
     """Build a ``round_to_filters`` input dict from a ccxt market structure.
 
@@ -758,14 +911,25 @@ def weight_backoff_seconds(
     base: float = 1.0,
 ) -> float:
     """Seconds to pause given current REQUEST_WEIGHT usage. 0 below ``soft_pct`` of the limit;
-    grows toward ``base`` as usage approaches the limit; a hard ``base*5`` once at/over it."""
+    grows toward ``base`` as usage approaches the limit; a hard ceiling once at/over it.
+
+    P2 spec change (2026-09-01): the ceiling was ``base*5`` (5.0s at the default ``base``),
+    which guaranteed re-hitting a REQUEST_WEIGHT/1m budget that had already been reached —
+    Binance's window is minute-scale, and 5s does not let it roll. Raised to ``min(30.0, ...)``
+    so a used-at-or-over-limit pause is sized to the window instead of to a fixed multiple of
+    ``base``. This intentionally changes the OLD ``weight_backoff_seconds(6000)==5.0`` /
+    ``(7000)==5.0`` spec encoded in tests/app/test_execution_live.py — those assertions are
+    updated to the new 30.0 ceiling as part of this same change, not weakened independently.
+    """
     if not used_weight or limit <= 0:
         return 0.0
     soft = soft_pct / 100.0 * limit
     if used_weight < soft:
         return 0.0
     if used_weight >= limit:
-        return round(base * 5, 3)
+        # was base*5 (5.0s at the default base) — see the docstring; base still scales it
+        # proportionally (a custom smaller base still backs off less), just with a higher cap.
+        return round(min(30.0, base * 30), 3)
     # linear ramp from 0 (at soft) to base (at limit)
     return round(base * (used_weight - soft) / (limit - soft), 3)
 
@@ -806,6 +970,53 @@ def classify_rate_error(exc: Exception, retry_after: float | None = None) -> tup
     return "raise", None
 
 
+def retry_after_seconds(exc: Exception, exchange: object | None = None) -> float | None:
+    """Best-effort ``Retry-After`` (seconds) for a rate-classified error, or ``None`` when
+    nothing usable is found — never raises.
+
+    ccxt caches the FAILING response's headers on the client itself: ``Exchange.fetch``
+    (see ccxt/base/exchange.py) assigns ``self.last_response_headers = headers`` from the
+    real HTTP response BEFORE calling ``response.raise_for_status()``/``handle_errors()``,
+    both of which are what actually raise the ccxt exception — so by the time this runs,
+    ``exchange.last_response_headers`` (when an exchange object is passed) already reflects
+    the response that failed, including a venue-sent ``Retry-After`` header. Falls back to
+    scanning the exception text for the same header name, in case a caller has no exchange
+    handle. This is independent of the ``http_status_code``/``code`` attributes
+    ``classify_rate_error`` reads — real ccxt does not set either of those on its
+    exceptions (verified against the installed ccxt 4.0.5's ``handle_errors``); this only
+    ever reads response headers or the message text.
+    """
+    headers = getattr(exchange, "last_response_headers", None) if exchange is not None else None
+    if headers:
+        for k, v in headers.items():
+            if str(k).lower() == "retry-after":
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    break
+    match = re.search(r"retry-after[\"']?\s*[:=]\s*(\d+(?:\.\d+)?)", str(exc), re.IGNORECASE)
+    if match:
+        try:
+            return float(match.group(1))
+        except ValueError:
+            return None
+    return None
+
+
+def note_if_rate_error(exc: Exception, exchange: object | None = None) -> bool:
+    """Convenience for a PUBLIC data-path caller (providers.py/candle_cache.py): classify
+    *exc*, and when it IS rate-classified (429/418/-1015), note it — records the hold and
+    extracts a Retry-After hint from *exchange* when given — and return True so the caller
+    stops/degrades instead of amplifying (a per-symbol fan-out, an immediate retry). Returns
+    False for anything else, leaving the caller's existing fallback behaviour untouched.
+    """
+    action, _ = classify_rate_error(exc)
+    if action == "raise":
+        return False
+    note_rate_error(exc, retry_after_seconds(exc, exchange))
+    return True
+
+
 ORDERS_EXCEEDED_DEFAULT_WAIT = 10.0  # the smallest real ORDERS window (10s), when unparseable
 _WINDOW_UNIT_SECONDS = {"second": 1.0, "minute": 60.0, "hour": 3600.0, "day": 86400.0}
 
@@ -821,14 +1032,17 @@ def _is_orders_budget_exceeded(text: str) -> bool:
 
 def _orders_exceeded_wait(text: str, retry_after: float | None) -> float:
     """Pause for an ORDERS-budget breach. Binance's own message names the window that was
-    breached ("... per 10 seconds."/"... per 1 DAY.") — honour that instead of a generic 1s
-    retry, since a breach of the DAY bucket is not cleared by a one-second nap. Falls back to
-    Retry-After, then a conservative default sized to the smallest real ORDERS window."""
-    if retry_after is not None:
-        return max(float(retry_after), 0.0) or ORDERS_EXCEEDED_DEFAULT_WAIT
+    breached ("... per 10 seconds."/"... per 1 DAY.") — honour THAT FIRST instead of a generic
+    Retry-After, since a breach of the DAY bucket is not cleared by whatever short nap a
+    Retry-After header happens to suggest (a Retry-After is a generic HTTP hint, not aware of
+    which Binance window it just blew through — a value like 5s would otherwise SHORTEN an
+    "... per 1 DAY." hold to 5 seconds). Falls back to Retry-After only when no window parses
+    from the message, then a conservative default sized to the smallest real ORDERS window."""
     match = re.search(r"(\d+)\s*(second|minute|hour|day)s?", text, re.IGNORECASE)
     if match:
         return float(match.group(1)) * _WINDOW_UNIT_SECONDS.get(match.group(2).lower(), 1.0)
+    if retry_after is not None:
+        return max(float(retry_after), 0.0) or ORDERS_EXCEEDED_DEFAULT_WAIT
     return ORDERS_EXCEEDED_DEFAULT_WAIT
 
 
@@ -985,6 +1199,23 @@ def current_weight_limit() -> int:
 def weight_hold_until() -> float:
     """Monotonic deadline before which NEW EXPOSURE should pause for REQUEST_WEIGHT (0 = clear)."""
     return _weight_hold_until
+
+
+def rate_hold_active() -> bool:
+    """True while EITHER hold (rate-limit/order-budget, or REQUEST_WEIGHT) is in effect.
+
+    A cheap read for a BULK caller — the scan's candle sweep (`app.scanner._prefetch_candles`
+    / `prefetch_universe_candles`) — that wants to skip a whole cycle's worth of fetches
+    rather than let every universe symbol individually fail into the same hold. Reads the
+    same state `assert_not_rate_limited`/`assert_weight_budget_available` consult.
+
+    Exits must NEVER consult this: `app.market.get_current_prices` (the 90s position-guard's
+    SL price feed) is not wired to this at all and keeps its normal cache/WS/REST flow
+    regardless of the hold — only the BULK scan fetches (candles, top_symbols/all_symbols)
+    honor it, and only via the scanner's own explicit check.
+    """
+    now = time.monotonic()
+    return rate_limited_until() > now or weight_hold_until() > now
 
 
 def assert_weight_budget_available(urgent: bool = False) -> None:

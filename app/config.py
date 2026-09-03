@@ -123,6 +123,20 @@ class Settings(BaseSettings):
         "repeats once the cooldown elapses as long as the condition persists — it never goes "
         "silent after the first message. 0 = alert on every occurrence.",
     )
+    heartbeat_url: str = Field(
+        default="",
+        description="Outbound dead-man's switch: a healthchecks.io-style URL pinged (best-effort "
+        "GET) at the end of every SUCCESSFULLY completed scheduler cycle, so an EXTERNAL monitor "
+        "notices when the scheduler stops running (unlike /health, which only answers when asked). "
+        "A failed cycle never pings — that silence is the alert. Empty = off.",
+    )
+    placement_alert_after: int = Field(
+        default=3, ge=1,
+        description="Consecutive placement failures of the SAME resting order before a single "
+        "risk alert fires (persistent non-auth failures like a filter error, -1013, or "
+        "insufficient balance were otherwise totally silent — only credential errors alerted). "
+        "One alert per streak; a later success clears it so the next streak can alert again.",
+    )
 
     # --- Execution capital guard ---
     cash_floor_usd: float = Field(
@@ -260,6 +274,8 @@ class Settings(BaseSettings):
 
     # --- Per-session deploy cap (capital-preservation wall, Phase 0 live-readiness) ---
     max_session_deploy_usd: float = Field(default=0.0, description="Hard ceiling on the total USD a SINGLE session may deploy (filled + still-pending waves). Any wave — auto-chain, manual DCA+, or the Telegram '➕' button — that would breach it is refused. 0 = off. The missing 'top fix': the C disaster deployed $162k unbounded. Set this for live (e.g. ~15-20% of equity).")
+
+    kss_ladder_reserve_slack_pct: float = Field(default=1.0, ge=0.0, le=10.0, description="Extra %% reserved on top of the projected ladder cost when a session's isolated_fund is set at open. The projection and the real rungs use the SAME math, but the venue's step/tick filters can change between session open and a later wave (exchange-info refresh, restart) and the re-quantized rung then costs slightly more than was reserved — ONDO#14's ladder died over $0.0078 exactly this way. 1%% ≈ pocket change per session; 0 = the old exact reserve.")
 
     # --- Grok scanner gate: a Grok (xAI) endorse/veto pass over qualified candidates ---
     grok_scanner_enabled: bool = Field(default=False, description="Have Grok review scanner candidates that passed every deterministic gate (one batched call/scan). Needs xai_api_key. Off = no cost, deterministic behaviour unchanged.")

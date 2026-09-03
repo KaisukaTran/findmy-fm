@@ -604,9 +604,11 @@ document.addEventListener("submit", async (e) => {
       max_deployed_pct: num(f.get("max_deployed_pct")),
       equity_backup_pct: num(f.get("equity_backup_pct")),
       cash_floor_usd: num(f.get("cash_floor_usd")),
+      kss_ladder_reserve_slack_pct: num(f.get("kss_ladder_reserve_slack_pct")),
       loss_streak_block_k: num(f.get("loss_streak_block_k")),
       loss_streak_window_days: num(f.get("loss_streak_window_days")),
       min_expectancy_pct: num(f.get("min_expectancy_pct")),
+      min_net_edge: num(f.get("min_net_edge")),
       min_win_rate: num(f.get("min_win_rate")),
       min_confidence: num(f.get("min_confidence")),
       min_trials: num(f.get("min_trials")),
@@ -643,6 +645,8 @@ document.addEventListener("submit", async (e) => {
       opus_solo_min_consensus: num(f.get("opus_solo_min_consensus")),
       opus_lessons_max: num(f.get("opus_lessons_max")),
       opus_history_n: num(f.get("opus_history_n")),
+      heartbeat_url: f.get("heartbeat_url"),
+      placement_alert_after: num(f.get("placement_alert_after")),
     });
     toast("Đã lưu cấu hình KSS — áp dụng cho phiên mới.", "success");
     refreshTrading(); refreshStatus();

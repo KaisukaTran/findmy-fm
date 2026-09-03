@@ -115,6 +115,75 @@ def test_tp_always_adds_120pct_of_round_trip_fee(mock_market):
     assert res is not None and res["action"] == "tp_triggered"
 
 
+def test_pip_size_prefers_session_first_wave_usd_over_global(mock_market, monkeypatch):
+    """pip_size must price off the session's OWN first_wave_usd (frozen at session creation),
+    never a later global settings.kss_first_wave_usd edit — else raising the global re-prices
+    an old session's remaining rungs against a fund it was never reserved with (ETC#5: rung
+    became $115.25 vs remaining $99.73 when the global moved 15 -> 40; at 15 it costs $43.22)."""
+    monkeypatch.setattr(settings, "kss_first_wave_usd", 15.0)
+    s = PyramidSession(symbol="ETC", entry_price=100.0, distance_pct=2.0, max_waves=5,
+                       isolated_fund=1000.0, tp_pct=3.0, timeout_x_min=30.0, gap_y_min=5.0,
+                       first_wave_usd=15.0)
+    wave0_before = s.generate_wave(0)
+    assert wave0_before.quantity == pytest.approx(15.0 / 100.0)
+
+    # A later global change must not move this session's pip_size.
+    monkeypatch.setattr(settings, "kss_first_wave_usd", 40.0)
+    wave0_after = s.generate_wave(0)
+    assert wave0_after.quantity == pytest.approx(15.0 / 100.0)  # unchanged
+
+    # NULL/unset first_wave_usd (legacy row, pre-migration) still falls back to the live global.
+    s.first_wave_usd = None
+    wave0_legacy = s.generate_wave(0)
+    assert wave0_legacy.quantity == pytest.approx(40.0 / 100.0)
+
+
+def test_session_first_wave_usd_frozen_at_creation(db, mock_market, monkeypatch):
+    """create_session snapshots the CURRENT global kss_first_wave_usd onto the row; raising the
+    global afterwards must not re-price a rung this session queues LATER (ETC#5 reproduction)."""
+    monkeypatch.setattr(settings, "kss_first_wave_usd", 15.0)
+    row = service.create_session(
+        db, symbol="ETC", entry_price=100.0, distance_pct=2.0, max_waves=4,
+        isolated_fund=1000.0, tp_pct=90.0, timeout_x_min=30.0, gap_y_min=5.0,
+    )
+    assert row.first_wave_usd == pytest.approx(15.0)
+    res = service.start_session(db, row.id)
+    orders.approve_order(db, res["pending_order_id"])  # wave 0 filled -> queues wave 1 (sized @15)
+
+    monkeypatch.setattr(settings, "kss_first_wave_usd", 40.0)  # global moves AFTER creation
+    w1 = next(p for p in orders.list_pending(db) if p.source_ref == f"pyramid:{row.id}:wave:1")
+    orders.approve_order(db, w1.id)  # wave 1 filled -> queues wave 2 (must STILL size @15, not 40)
+
+    w2 = next(p for p in orders.list_pending(db) if p.source_ref == f"pyramid:{row.id}:wave:2")
+    expected_qty = 3 * (15.0 / 100.0)
+    assert w2.quantity == pytest.approx(expected_qty)
+
+
+def test_on_fill_epsilon_tolerance_absorbs_float_dust(mock_market):
+    """P1 Fix 3 (belt): a rung whose true cost is mathematically EXACTLY the remaining fund can
+    land a few ULPs ABOVE it purely from floating-point subtraction (isolated_fund -
+    total_cost), and a strict '>' wrongly kills the ladder over literal fractions of a cent —
+    the ONDO#14 pattern (remaining 110.0752 vs rung 110.0830, a $0.0078 gap). This entry/pip
+    pair is picked (empirically) to reproduce genuine float dust, not a real shortfall — the
+    test asserts that setup fact before checking the fix."""
+    s = PyramidSession(symbol="XYZ", entry_price=478.0391188086801, distance_pct=2.0, max_waves=3,
+                       isolated_fund=1.0, tp_pct=90.0, timeout_x_min=30.0, gap_y_min=5.0,
+                       first_wave_usd=2265.493108422987)
+    wave0 = s.generate_wave(0)
+    wave1 = s.generate_wave(1)
+    wave0_cost = wave0.quantity * wave0.target_price
+    wave1_cost = wave1.quantity * wave1.target_price
+    s.isolated_fund = wave0_cost + wave1_cost  # mathematically exact for both waves
+    s.status = PyramidSessionStatus.ACTIVE
+    s.waves = [wave0]
+
+    gap = wave1_cost - (s.isolated_fund - wave0_cost)
+    assert 0 < gap < 1e-9, "test setup sanity: this must be float dust, not a real shortfall"
+
+    res = s.on_fill(0, wave0.quantity, wave0.target_price, current_market_price=1.0)
+    assert res["action"] == "next_wave", res  # must NOT be refused as insufficient fund
+
+
 def test_waveinfo_to_dict():
     from datetime import datetime
 

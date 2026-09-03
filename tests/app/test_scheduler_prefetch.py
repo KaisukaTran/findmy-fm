@@ -55,8 +55,12 @@ def test_prefetch_universe_candles_warms_matching_set(monkeypatch):
     monkeypatch.setattr(scanner, "data_provider", lambda: object())
     monkeypatch.setattr(scanner, "_universe", lambda db, provider: ["BTC", "ETH"])
     seen: dict = {}
-    monkeypatch.setattr(scanner, "_prefetch_candles",
-                        lambda ex, syms, tf, limit: seen.update(ex=ex, syms=syms, tf=tf, limit=limit))
+
+    def _fake_prefetch(ex, syms, tf, limit):
+        seen.update(ex=ex, syms=syms, tf=tf, limit=limit)
+        return {}, False
+
+    monkeypatch.setattr(scanner, "_prefetch_candles", _fake_prefetch)
     n = scanner.prefetch_universe_candles(db=None)
     assert n == 2
     assert seen["ex"] == settings.data_exchange

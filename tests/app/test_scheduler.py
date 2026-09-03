@@ -97,6 +97,102 @@ def test_run_cycle_full_auto(db, env):
     assert db.query(models.AuditLog).filter_by(action="cycle").count() == 1
 
 
+# --- C4: outbound heartbeat (dead-man's switch) --------------------------
+
+def _run_inline(target, args=()):
+    """Test double for scheduler._spawn_daemon: runs synchronously so the ping is observable
+    without racing a real background thread (and without touching the global threading.Thread
+    that the scanner's own OHLCV fetch pool also constructs from)."""
+    target(*args)
+
+
+class _SpyResponse:
+    """Context-manager stand-in for the object urlopen() returns — records read() and
+    whether it was closed via __exit__, so a test can prove the connection is released."""
+
+    def __init__(self):
+        self.read_calls = 0
+        self.closed = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.closed = True
+        return False
+
+    def read(self, n=-1):
+        self.read_calls += 1
+        return b"x"
+
+
+def test_heartbeat_pings_when_url_set(db, env, monkeypatch):
+    monkeypatch.setattr(settings, "heartbeat_url", "https://hc-ping.com/test-id")
+    calls = []
+    resp = _SpyResponse()
+
+    def _urlopen(url, timeout=5):
+        calls.append((url, timeout))
+        return resp
+
+    monkeypatch.setattr(scheduler.urllib.request, "urlopen", _urlopen)
+    monkeypatch.setattr(scheduler, "_spawn_daemon", _run_inline)
+
+    scheduler.run_cycle(db)
+
+    assert calls == [("https://hc-ping.com/test-id", 5)]
+    assert resp.read_calls == 1, "the response body must be read"
+    assert resp.closed is True, "the connection must be closed via the context manager"
+
+
+def test_heartbeat_off_when_url_empty(db, env, monkeypatch):
+    monkeypatch.setattr(settings, "heartbeat_url", "")
+    spawn_calls = []
+    monkeypatch.setattr(scheduler, "_spawn_daemon",
+                         lambda target, args=(): spawn_calls.append((target, args)))
+
+    scheduler.run_cycle(db)
+
+    assert spawn_calls == []
+
+
+def test_heartbeat_ping_failure_never_breaks_the_cycle(db, env, monkeypatch):
+    monkeypatch.setattr(settings, "heartbeat_url", "https://hc-ping.com/test-id")
+
+    def _boom(url, timeout=5):
+        raise OSError("network down")
+
+    monkeypatch.setattr(scheduler.urllib.request, "urlopen", _boom)
+    monkeypatch.setattr(scheduler, "_spawn_daemon", _run_inline)
+
+    summary = scheduler.run_cycle(db)  # must not raise
+
+    assert summary["scan_id"] is not None
+
+
+def test_heartbeat_refuses_a_non_http_scheme(db, env, monkeypatch):
+    """`file://`/etc must never be opened — only http/https are legitimate monitor URLs."""
+    monkeypatch.setattr(settings, "heartbeat_url", "file:///etc/passwd")
+    calls = []
+    monkeypatch.setattr(scheduler.urllib.request, "urlopen",
+                         lambda url, timeout=5: calls.append(url))
+    monkeypatch.setattr(scheduler, "_spawn_daemon", _run_inline)
+
+    scheduler.run_cycle(db)
+
+    assert calls == [], "urlopen must never be called for a non-http(s) scheme"
+
+
+def test_heartbeat_opens_and_closes_an_http_url(monkeypatch):
+    resp = _SpyResponse()
+    monkeypatch.setattr(scheduler.urllib.request, "urlopen", lambda url, timeout=5: resp)
+
+    scheduler._fire_heartbeat_ping("http://hc-ping.com/test-id")
+
+    assert resp.read_calls == 1
+    assert resp.closed is True
+
+
 def test_expired_veto_is_cleared_and_refilled(db, env, monkeypatch):
     """A stale Guardian veto must not deadlock a due KSS DCA wave: the TTL expires
     it, the cycle re-enables the order, and (price being due) it fills."""

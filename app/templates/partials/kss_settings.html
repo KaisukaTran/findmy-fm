@@ -30,6 +30,8 @@
     <input name="cash_floor_usd" type="number" step="any" min="0" value="{{ '%.0f'|format(k.cash_floor_usd) }}" required></label>
   <label title="TRẦN CỨNG: 1 session không bao giờ được triển khai (đã bơm + sóng đang chờ) quá số USD này. MỌI sóng — auto-DCA, DCA+ thủ công, nút ➕ Telegram — vượt trần sẽ bị TỪ CHỐI. Đây là bức tường bảo toàn vốn cho live (thảm hoạ C từng bơm $162k vô giới hạn). 0 = tắt. Live: đặt ~15-20% equity.">Trần deploy/session $ <span class="varname">max_session_deploy_usd</span>
     <input name="max_session_deploy_usd" type="number" step="any" min="0" value="{{ '%.0f'|format(k.max_session_deploy_usd) }}" required></label>
+  <label title="Phần trăm dự phòng CỘNG THÊM lên chi phí thang DCA dự tính khi mở session (đặt isolated_fund). Phép tính lúc mở và các rung thực tế dùng CÙNG công thức, nhưng bộ lọc step/tick của sàn có thể đổi giữa lúc mở session và một sóng sau (làm mới exchange-info, restart), khiến rung tính lại tốn nhỉnh hơn phần đã để dành — ví dụ ONDO#14 từng chết thang chỉ vì thiếu đúng $0.0078. 1% ≈ tiền lẻ mỗi session; 0 = để dành khớp đúng như cũ.">Dự phòng thang DCA % <span class="varname">kss_ladder_reserve_slack_pct</span>
+    <input name="kss_ladder_reserve_slack_pct" type="number" step="0.1" min="0" max="10" value="{{ '%.1f'|format(k.kss_ladder_reserve_slack_pct) }}"></label>
   <label title="Chặn mở session mới cho coin đã thua K lần ĐÓNG LỆNH liên tiếp (một lần lãi sẽ phá chuỗi). Tăng để khó bị chặn hơn.">Chặn sau K lần thua <span class="varname">loss_streak_block_k</span>
     <input name="loss_streak_block_k" type="number" step="1" min="1" max="20" value="{{ k.loss_streak_block_k }}" required></label>
   <label title="Chỉ tính các lần đóng lệnh trong N ngày gần nhất — lỗ cũ trôi ra ngoài cửa sổ thì coin tự được giao dịch lại.">Cửa sổ lỗ (ngày) <span class="varname">loss_streak_window_days</span>
@@ -55,6 +57,8 @@
   </div>
   <label title="Gate CHÍNH: kỳ vọng net trung bình mỗi lệnh backtest (đã trừ SL + phí). Coin chỉ trade khi E ≥ ngưỡng này VÀ win-rate ≥ ngưỡng dưới.">Kỳ vọng tối thiểu E % <span class="varname">min_expectancy_pct</span>
     <input name="min_expectancy_pct" type="number" step="0.1" min="-100" max="100" value="{{ '%.1f'|format(k.min_expectancy_pct) }}" required></label>
+  <label title="Gate vi-lệnh: TP phải VƯỢT chi phí khứ hồi (phí + trượt giá cả 2 chiều) ít nhất bằng % này mới được trade — chặn lệnh mà lãi gộp chưa chắc thắng nổi phí. Cùng trần với kỳ vọng tối thiểu E (TP trừ chi phí khứ hồi); đặt quá cao so với TP hiện tại khiến gate này bất khả thi cho MỌI coin — bật autotune_enabled để tự nới về mức trade được.">Biên vượt chi phí tối thiểu % <span class="varname">min_net_edge</span>
+    <input name="min_net_edge" type="number" step="0.1" min="0" max="10" value="{{ '%.2f'|format(k.min_net_edge) }}"></label>
   <label title="Win-rate tối thiểu (cận dưới Wilson) để đủ điều kiện trade. Cặp với gate kỳ vọng tạo thành quy tắc: trade khi E ≥ ngưỡng VÀ win-rate ≥ ngưỡng này.">Win-rate tối thiểu % <span class="varname">min_win_rate</span>
     <input name="min_win_rate" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.min_win_rate) }}" required></label>
   <label title="Ngưỡng đồng thuận tối thiểu của 5 agent thị trường (trend/dip/volatility/liquidity/ml). S4: backtest bị loại khỏi điểm đồng thuận — chứng cứ backtest thuộc về các gate cứng (E, win_lb). Giá trị mặc định mới: 45%.">Đồng thuận tối thiểu % <span class="varname">min_confidence</span>
@@ -181,6 +185,11 @@
     <input name="opus_lessons_max" type="number" step="1" min="0" value="{{ k.opus_lessons_max }}"></label>
   <label title="Số vị thế đã đóng gần nhất của OPUS đưa vào snapshot để nó tự soi thành tích (ride/rescue lãi hay lỗ).">Lịch sử vị thế đưa vào <span class="varname">opus_history_n</span>
     <input name="opus_history_n" type="number" step="1" min="1" value="{{ k.opus_history_n }}"></label>
+  <h3 class="section-subhead">━ Giám sát (heartbeat) ━</h3>
+  <label title="URL kiểu healthchecks.io được PING (GET, cố gắng tốt nhất) sau MỖI chu kỳ scheduler chạy THÀNH CÔNG, để một hệ giám sát BÊN NGOÀI biết khi nào scheduler ngừng chạy — khác /health, vốn chỉ trả lời khi được hỏi. Một chu kỳ LỖI sẽ KHÔNG ping — chính sự im lặng đó là cảnh báo phía giám sát. Để trống = tắt.">Heartbeat URL <span class="varname">heartbeat_url</span>
+    <input name="heartbeat_url" type="text" placeholder="https://hc-ping.com/xxxxxxxx" value="{{ k.heartbeat_url }}"></label>
+  <label title="Số lần đặt lệnh THẤT BẠI LIÊN TIẾP của CÙNG một lệnh chờ (resting order) trước khi bắn MỘT cảnh báo risk (lỗi filter, -1013, thiếu số dư... trước đây hoàn toàn im lặng — chỉ lỗi xác thực mới cảnh báo). Một cảnh báo mỗi chuỗi lỗi; hễ có lần thành công là chuỗi được xoá, lần sau lại cảnh báo được.">Ngưỡng cảnh báo đặt lệnh lỗi <span class="varname">placement_alert_after</span>
+    <input name="placement_alert_after" type="number" step="1" min="1" value="{{ k.placement_alert_after }}"></label>
   <button type="submit" class="ok">Lưu cấu hình KSS</button>
 </form>
 

@@ -42,6 +42,10 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("candidates", "avg_mae", "FLOAT NOT NULL DEFAULT 0.0"),
     ("candidates", "worst_mae", "FLOAT NOT NULL DEFAULT 0.0"),
     ("kss_sessions", "strategy_mode", "TEXT DEFAULT 'dca_down'"),
+    # P1 Fix 2: wave-0 sizing snapshot, frozen at creation. Nullable, NO default — a NULL
+    # here is the "legacy row" marker PyramidSession.pip_size falls back on; giving it a
+    # default would erase that signal for every pre-existing session on migration.
+    ("kss_sessions", "first_wave_usd", "FLOAT"),
 ]
 
 

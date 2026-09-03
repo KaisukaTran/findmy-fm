@@ -339,6 +339,30 @@ def test_open_session_resolves_settings_at_call_time(db, monkeypatch):
     assert sess.max_waves == 7
 
 
+# --- item 5: a mid-sweep rate abort inside run_scan's OWN miss-fetch must say what it is ---
+
+
+def test_run_scan_writes_one_sweep_abort_audit_row_on_a_mid_sweep_rate_hold(db, scan_env, monkeypatch):
+    """Before this, the symbols an in-sweep rate hold cut short surfaced downstream as
+    ordinary `skipped_thin_data` — a misleading diagnosis. `_run_scan_locked`'s own
+    miss-fetch call site (the second of the two `_prefetch_candles` callers) must write its
+    own `scan_rate_hold`/`sweep_abort` audit row when `_prefetch_candles` reports it aborted
+    mid-sweep."""
+    monkeypatch.setattr(scanner, "_prefetch_candles", lambda *a, **k: ({}, True))
+
+    scanner.run_scan(db, mode="semi")
+
+    rows = db.query(models.AuditLog).filter_by(action="scan_rate_hold", entity="sweep_abort").all()
+    assert len(rows) == 1
+
+
+def test_run_scan_writes_no_sweep_abort_row_on_an_ordinary_scan(db, scan_env):
+    scanner.run_scan(db, mode="semi")
+
+    rows = db.query(models.AuditLog).filter_by(action="scan_rate_hold", entity="sweep_abort").all()
+    assert rows == []
+
+
 # --- S2: candle cache tests --------------------------------------------------
 
 

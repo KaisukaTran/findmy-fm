@@ -73,7 +73,7 @@ class _SpyProvider:
     def __init__(self):
         self.calls = 0
 
-    def get_prices(self, symbols):
+    def get_prices(self, symbols, fresh=False):  # fresh: protocol kwarg (P2 force pass-through)
         self.calls += 1
         return dict.fromkeys(symbols, 999.0)
 

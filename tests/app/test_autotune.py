@@ -124,3 +124,4 @@ def test_the_result_is_always_a_reachable_gate(db, monkeypatch, tp):
     assert not costengine.expectancy_gate_unsatisfiable(
         settings.min_expectancy_pct, settings.scan_tp_pct
     )
+

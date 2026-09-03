@@ -429,6 +429,7 @@ class KssSettingsBody(BaseModel):
     trailing_pct: float | None = Field(None, ge=0, le=100)
     deadline_days: int | None = Field(None, ge=1, le=365)
     max_concurrent_sessions: int | None = Field(None, ge=1, le=500)  # raised for wide-scale paper tests (~universe size)
+    kss_ladder_reserve_slack_pct: float | None = Field(None, ge=0, le=10)
     max_sessions_per_symbol: int | None = Field(None, ge=0, le=20)
     max_deployed_pct: float | None = Field(None, gt=0, le=100)
     equity_backup_pct: float | None = Field(None, ge=0, le=90)
@@ -501,6 +502,11 @@ class KssSettingsBody(BaseModel):
     opus_solo_min_consensus: float | None = Field(None, ge=0, le=100)
     opus_lessons_max: int | None = Field(None, ge=0, le=50)
     opus_history_n: int | None = Field(None, ge=0, le=200)
+    # P4 hardening: outbound heartbeat (dead-man's switch), repeated-placement-failure alert,
+    # and the min_net_edge micro-trade gate (now autotune-covered like min_expectancy_pct).
+    heartbeat_url: str | None = None
+    placement_alert_after: int | None = Field(None, ge=1)
+    min_net_edge: float | None = Field(None, ge=0, le=10)
 
 
 @api_router.get("/api/kss-settings")

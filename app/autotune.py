@@ -17,6 +17,15 @@ strict, and never invents a value from a model's opinion. A contradiction has on
 answer; a preference does not, and preferences stay the operator's. Later stages (fitting the
 levels to realised volatility, and learning from closed sessions) build on this one.
 
+A third rule (relaxing `min_net_edge` against this same global ceiling) briefly lived here and
+was REMOVED (2026-09-01, audit finding): unlike `min_expectancy_pct`, `min_net_edge` is
+evaluated per candidate against that SYMBOL's own AUTOTUNED take-profit (`_effective_params`
+in app.scanner), not the global `scan_tp_pct` — so a comparison against the global ceiling is
+blind to what the gate is actually checked against, exactly the blindness
+`app.scanner._tp_cannot_clear_gate` documents one level down. The removed rule could LOOSEN a
+real risk gate for no reason (a low global tp with autotune_levels on rewrote min_net_edge
+0.5 -> 0.32) while nothing it claimed to "unblock" was actually blocked.
+
 Off by `autotune_enabled=false`, in which case a broken setting is left broken — visibly.
 """
 

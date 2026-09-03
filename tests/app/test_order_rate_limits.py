@@ -99,6 +99,16 @@ def test_an_ordinary_429_is_still_a_plain_retry_not_orders_exceeded():
     assert action == "retry"
 
 
+def test_the_venue_named_window_wins_over_a_shorter_retry_after():
+    """Fix round A / item 5(a): `_orders_exceeded_wait` used to prefer `retry_after` OVER the
+    window the venue's own message named — inverted vs its own docstring. A Retry-After header
+    must never SHORTEN an "... per 1 DAY." hold to whatever short value it happens to carry."""
+    action, wait = execution.classify_rate_error(_orders_exceeded("1 DAY"), retry_after=5.0)
+
+    assert action == "orders_exceeded"
+    assert wait == pytest.approx(86400.0), "the message-named DAY window must win over retry_after=5"
+
+
 def test_a_1015_hold_never_blocks_a_sell(monkeypatch):
     """End to end: a stop-loss must reach the venue even while an ORDERS-budget hold is live."""
     sent = []

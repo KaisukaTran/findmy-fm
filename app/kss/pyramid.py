@@ -94,6 +94,12 @@ class PyramidSession:
     timeout_x_min: float
     gap_y_min: float
 
+    # Wave-0 sizing override, frozen at session creation (P1 Fix 2). ``None`` (legacy rows,
+    # pre-migration) falls back to the LIVE global in ``pip_size`` below; any other value —
+    # including 0.0, which a session created while the global was 0 will have — is used as-is
+    # so a later global edit can never re-price an already-reserved session's remaining rungs.
+    first_wave_usd: float | None = None
+
     # Session state
     id: int | None = None
     status: PyramidSessionStatus = field(default=PyramidSessionStatus.PENDING)
@@ -170,15 +176,27 @@ class PyramidSession:
 
         Default (legacy): ``pip_multiplier × minQty``.
 
-        Opt-in override: when ``settings.kss_first_wave_usd > 0`` and
-        ``self.entry_price > 0``, returns ``kss_first_wave_usd / entry_price``
-        so that wave-0 qty = (0+1) × pip_size and its notional ≈ the configured
-        USD value.  Later waves keep the ``(n+1)×`` pyramid shape unchanged.
-        Setting ``kss_first_wave_usd`` to 0 (default) leaves all behaviour
-        identical to the legacy pip-based formula.
+        Opt-in override: when the effective first-wave USD (see below) is > 0 and
+        ``self.entry_price > 0``, returns ``first_wave_usd / entry_price`` so that
+        wave-0 qty = (0+1) × pip_size and its notional ≈ the configured USD value.
+        Later waves keep the ``(n+1)×`` pyramid shape unchanged.
+
+        The effective first-wave USD is ``self.first_wave_usd`` when set (P1 Fix 2 —
+        frozen on the session at creation time), falling back to the LIVE
+        ``settings.kss_first_wave_usd`` global ONLY when ``self.first_wave_usd`` is
+        ``None`` (a legacy row from before this field existed). This matters because a
+        session's ``isolated_fund`` is a fund reserved ONCE, against the pip_size in
+        effect at creation — re-pricing it against a LATER global edit can size a rung
+        larger than the fund that was actually set aside for it (ETC#5: raising the
+        global 15→40 turned a $43 rung the session could afford into a $115 one it
+        could not, killing the ladder). Setting the effective value to 0 (default)
+        leaves all behaviour identical to the legacy pip-based formula.
         """
-        if settings.kss_first_wave_usd > 0 and self.entry_price > 0:
-            return settings.kss_first_wave_usd / self.entry_price
+        first_wave_usd = (
+            self.first_wave_usd if self.first_wave_usd is not None else settings.kss_first_wave_usd
+        )
+        if first_wave_usd > 0 and self.entry_price > 0:
+            return first_wave_usd / self.entry_price
         return settings.pip_multiplier * self._min_qty
 
     def _tp_target_pct(self) -> float:
@@ -357,13 +375,32 @@ class PyramidSession:
         next_wave = self.generate_wave(next_wave_num)
         next_cost = next_wave.quantity * next_wave.target_price
 
-        if next_cost > self.remaining_fund:
+        # P1 Fix 3 (belt): a tiny float-dust tolerance on the comparison. isolated_fund and
+        # total_cost each accumulate independent chains of multiplication/subtraction across
+        # many fills, so a rung that is mathematically EXACTLY affordable can come out a few
+        # ULPs above remaining_fund from float noise alone — a bare '>' kills the ladder over
+        # that. 1e-9 is sized ONLY for that float-dust class (far below any real order's
+        # notional) — it does NOT and cannot bridge a real shortfall like ONDO#14's (remaining
+        # 110.0752 vs rung 110.0830, a genuine $0.0078 gap from step/tick re-quantization
+        # between session open and the wave, four orders of magnitude above this tolerance).
+        # That real-money class of gap is handled elsewhere: `kss_ladder_reserve_slack_pct`
+        # reserves extra headroom for a NEW session at open time, and the standalone
+        # `scripts/rearm_dead_ladders.py` migration backfills/re-arms an EXISTING session that
+        # already died from it. Do not read this line as covering the running book.
+        if next_cost > self.remaining_fund + 1e-9:
             logger.warning(
                 f"Insufficient fund for wave {next_wave_num}: "
                 f"need {next_cost:.4f}, have {self.remaining_fund:.4f}"
             )
+            # P1 Fix 4: a machine-readable reason (+ the raw amounts) so the SERVICE layer can
+            # audit a dead ladder instead of string-matching `message` (which was the only
+            # trace before — a starved session died with no record of why).
             return {
                 "action": "none",
+                "reason": "insufficient_fund",
+                "wave_num": next_wave_num,
+                "need": next_cost,
+                "remaining": self.remaining_fund,
                 "message": f"Insufficient fund for wave {next_wave_num}",
             }
 

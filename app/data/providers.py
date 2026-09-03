@@ -14,11 +14,26 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from typing import Protocol, TypedDict
 
 import ccxt
 
+from app.execution import note_if_rate_error
+
 logger = logging.getLogger(__name__)
+
+# Fix C (2026-09-01): `fetch_tickers()` costs 80 weight regardless of a `symbols` filter — in
+# the installed ccxt 4.0.5, binance.fetch_tickers sends NO symbol filter to the venue at all
+# (see ccxt's binance.py: `response = getattr(self, method)(query)` with `query` holding only
+# `params`, never `symbols` — the `symbols` arg is applied CLIENT-side by `parse_tickers` after
+# the full-universe response is already back). Current Binance `GET /api/v3/ticker/24hr`
+# weight: 2 for a single symbol, 40 for 21-100 symbols, 80 when the symbol filter is omitted
+# (the full-universe response this call always triggers). get_prices/top_symbols/all_symbols
+# each called this independently once per scan cycle, so the same 80-weight full fetch was
+# paid up to 3x. One TTL cache of the raw map, shared by all three, cuts that to at most once
+# per TTL window.
+_TICKERS_TTL_SEC = 60.0
 
 # ccxt id -> quote asset used for that exchange's USD-ish spot pairs.
 # Binance is the only venue this app configures at runtime; the rest stay only
@@ -148,7 +163,7 @@ def _step_size_from_market(precision_mode: object, market: dict) -> float:
 class DataProvider(Protocol):
     """Read-only market data surface used by market.py, the scanner and backtests."""
 
-    def get_prices(self, symbols: list[str]) -> dict[str, float]: ...
+    def get_prices(self, symbols: list[str], fresh: bool = False) -> dict[str, float]: ...
     def get_ohlcv(self, symbol: str, timeframe: str = "1d", limit: int = 200) -> list[Candle]: ...
     def top_symbols(self, n: int = 10) -> list[str]: ...
     def all_symbols(self, min_quote_volume: float = 0.0) -> list[str]: ...
@@ -165,32 +180,81 @@ class CcxtProvider:
         # Binance). It defaults to True in current ccxt, but set it explicitly so an upstream
         # default change can never silently remove our only client-side throttle → IP ban risk.
         self._ex = getattr(ccxt, exchange_id)({"enableRateLimit": True})
+        # Fix C: the shared full-universe fetch_tickers() cache (see _fetch_tickers_map).
+        self._tickers_cache: dict[str, dict] | None = None
+        self._tickers_cache_ts: float = 0.0
 
     def pair(self, symbol: str) -> str:
         """Map a base symbol (e.g. 'BTC') to this exchange's pair (e.g. 'BTC/USD')."""
         return f"{symbol}/{self.quote}"
 
-    def get_prices(self, symbols: list[str]) -> dict[str, float]:
-        """Batch-fetch prices via ``fetch_tickers`` (one call) when the exchange supports it;
-        fall back to per-symbol ``fetch_ticker`` when the batched call fails (B9)."""
+    def _fetch_tickers_map(self, force_refresh: bool = False) -> dict[str, dict]:
+        """Raw ``fetch_tickers()`` result (every pair on this exchange), cached for
+        ``_TICKERS_TTL_SEC`` and shared by ``get_prices``/``top_symbols``/``all_symbols``
+        (Fix C). Called with NO ``symbols`` filter deliberately — see the module note — so
+        every caller derives its own view (a symbol lookup, or a volume-sorted/filtered list)
+        from the same raw map instead of each paying its own full-universe fetch.
+
+        Raises through unchanged on a failed fetch — the cache is simply left as it was (the
+        last good map + its timestamp), so a rate-classified error never poisons it with an
+        empty result; callers decide how to degrade (see get_prices/top_symbols/all_symbols).
+
+        An EMPTY (but non-raising) result is a degenerate success, not a real snapshot — the
+        venue answered with nothing to show for it. Caching that would serve zero
+        prices/zero symbols to every caller for the full TTL, so the empty map is returned
+        as-is but the cache (and its timestamp) is left untouched, letting the NEXT call
+        retry the network instead of parroting the empty map for up to ``_TICKERS_TTL_SEC``.
+        """
+        now = time.monotonic()
+        if (not force_refresh and self._tickers_cache is not None
+                and (now - self._tickers_cache_ts) < _TICKERS_TTL_SEC):
+            return self._tickers_cache
+        tickers = self._ex.fetch_tickers()
+        if not tickers:
+            return tickers
+        self._tickers_cache = tickers
+        self._tickers_cache_ts = now
+        return tickers
+
+    def get_prices(self, symbols: list[str], fresh: bool = False) -> dict[str, float]:
+        """Batch-fetch prices from the shared ticker cache (Fix C, one call/TTL window when
+        the exchange supports it); fall back to per-symbol ``fetch_ticker`` when that fetch
+        itself fails for a NON-rate reason (B9 — an exchange without ``fetch_tickers``, etc).
+
+        Fix B2: a 429/418/-1015 on the batched call must not amplify into one request PER
+        SYMBOL — such an error is noted (``execution.note_rate_error``, via
+        ``note_if_rate_error``) and this returns immediately with whatever was already
+        resolved (nothing, on a cold batch). A rate-classified error discovered mid-fallback
+        stops that loop too, for the same reason.
+        """
         if not symbols:
             return {}
         pairs = [self.pair(s) for s in symbols]
         out: dict[str, float] = {}
         try:
-            tickers = self._ex.fetch_tickers(pairs)
-            for symbol, pair in zip(symbols, pairs, strict=False):
-                t = tickers.get(pair) or {}
-                last = t.get("last")
-                if last is not None:
-                    out[symbol] = float(last)
-        except Exception:
-            # Exchange doesn't support batched fetch_tickers — fall back per-symbol.
+            # ``fresh=True`` pierces the shared TTL cache: the 90s position-guard's forced tick
+            # sizes hard-SL decisions, and "exits are never gated" extends to never being fed a
+            # cached price when the caller explicitly demanded a live one (WS feed down + SL
+            # armed is exactly the moment it matters). Scan paths never pass it.
+            tickers = self._fetch_tickers_map(force_refresh=fresh)
+        except Exception as exc:
+            if note_if_rate_error(exc, self._ex):
+                return out
+            # Exchange doesn't support batched fetch_tickers (or some other non-rate error) —
+            # fall back per-symbol.
             for symbol in symbols:
                 try:
                     out[symbol] = float(self._ex.fetch_ticker(self.pair(symbol))["last"])
-                except Exception:
+                except Exception as exc2:
+                    if note_if_rate_error(exc2, self._ex):
+                        break  # a rate error mid-fallback must stop the loop, not keep hammering
                     continue
+            return out
+        for symbol, pair in zip(symbols, pairs, strict=False):
+            t = tickers.get(pair) or {}
+            last = t.get("last")
+            if last is not None:
+                out[symbol] = float(last)
         return out
 
     def get_ohlcv(self, symbol: str, timeframe: str = "1d", limit: int = 200) -> list[Candle]:
@@ -212,6 +276,9 @@ class CcxtProvider:
             try:
                 raw = self._ex.fetch_ohlcv(pair, timeframe=timeframe, limit=limit)
             except Exception as exc:
+                # Fix B3: note a rate-classified error (429/418/-1015) so the NEXT call
+                # refuses instead of hammering; degrade exactly as before either way.
+                note_if_rate_error(exc, self._ex)
                 logger.warning("%s OHLCV failed for %s: %s", self.exchange_id, symbol, exc)
                 return []
             return [_to_candle(c) for c in raw]
@@ -226,6 +293,7 @@ class CcxtProvider:
                     pair, timeframe=timeframe, since=cursor, limit=_MAX_KLINES
                 )
             except Exception as exc:  # keep the pages we already have
+                note_if_rate_error(exc, self._ex)
                 logger.warning("%s OHLCV page failed for %s (%s bars so far): %s",
                                self.exchange_id, symbol, len(rows), exc)
                 break
@@ -250,8 +318,9 @@ class CcxtProvider:
     def top_symbols(self, n: int = 10) -> list[str]:
         """Top-N base symbols by quote volume for this exchange's quote asset."""
         try:
-            tickers = self._ex.fetch_tickers()
+            tickers = self._fetch_tickers_map()
         except Exception as exc:
+            note_if_rate_error(exc, self._ex)  # 429/418/-1015: note the hold before degrading
             logger.warning("%s fetch_tickers failed: %s", self.exchange_id, exc)
             return []
         rows: list[tuple[str, float]] = []
@@ -270,8 +339,9 @@ class CcxtProvider:
     def all_symbols(self, min_quote_volume: float = 0.0) -> list[str]:
         """All base symbols for this quote whose quote volume clears the floor, by volume desc."""
         try:
-            tickers = self._ex.fetch_tickers()
+            tickers = self._fetch_tickers_map()
         except Exception as exc:
+            note_if_rate_error(exc, self._ex)  # 429/418/-1015: note the hold before degrading
             logger.warning("%s fetch_tickers failed: %s", self.exchange_id, exc)
             return []
         rows: list[tuple[str, float]] = []

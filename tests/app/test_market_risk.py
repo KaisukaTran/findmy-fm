@@ -30,7 +30,7 @@ class _FakeProvider:
     def __init__(self, calls):
         self._calls = calls
 
-    def get_prices(self, symbols):
+    def get_prices(self, symbols, fresh=False):  # fresh: protocol kwarg (P2 force pass-through)
         self._calls["n"] += 1
         prices = {"BTC": 65000.0, "ETH": 3500.0}
         return {s: prices[s] for s in symbols if s in prices}
@@ -49,6 +49,58 @@ def test_get_current_prices_cached(monkeypatch):
     p2 = market.get_current_prices(["BTC", "ETH"])
     assert p2 == p1
     assert calls["n"] == 1
+
+
+def test_force_pass_through_to_provider_fresh_kwarg(monkeypatch):
+    """P2 wired `get_current_prices(force=True)` -> `live_provider().get_prices(missing,
+    fresh=force)`, but nothing directly asserted the hand-off. force=True with no WS feed
+    registered (the paper/default case) must reach the provider with fresh=True."""
+    calls: list[bool] = []
+
+    class _Spy:
+        def get_prices(self, symbols, fresh=False):
+            calls.append(fresh)
+            return {"BTC": 65000.0}
+
+    monkeypatch.setattr(market, "live_provider", lambda: _Spy())
+    market.get_current_prices(["BTC"], force=True)
+    assert calls == [True]
+
+
+def test_force_false_passes_fresh_false_to_provider(monkeypatch):
+    calls: list[bool] = []
+
+    class _Spy:
+        def get_prices(self, symbols, fresh=False):
+            calls.append(fresh)
+            return {"BTC": 65000.0}
+
+    monkeypatch.setattr(market, "live_provider", lambda: _Spy())
+    market.get_current_prices(["BTC"], force=False)
+    assert calls == [False]
+
+
+def test_force_with_a_stale_ws_feed_still_passes_fresh_true(monkeypatch):
+    """A REGISTERED but STALE WS feed must not be treated as 'the WS already covers this' —
+    only a fresh one downgrades force back to False (see get_current_prices)."""
+    calls: list[bool] = []
+
+    class _Spy:
+        def get_prices(self, symbols, fresh=False):
+            calls.append(fresh)
+            return {"BTC": 65000.0}
+
+    class _StaleFeed:
+        def is_fresh(self, max_age):
+            return False
+
+    monkeypatch.setattr(market, "live_provider", lambda: _Spy())
+    market.register_ws_feed(_StaleFeed())
+    try:
+        market.get_current_prices(["BTC"], force=True)
+    finally:
+        market.unregister_ws_feed()
+    assert calls == [True]
 
 
 def test_get_exchange_info_defaults_on_failure(monkeypatch):

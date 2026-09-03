@@ -42,6 +42,83 @@ class InsufficientCashError(ValueError):
     route → HTTP 400) keep working unchanged."""
 
 
+# --- placement failure-streak tracker (D2-gap) ----------------------------
+#
+# `_place_resting` and the live placement call in `_execute` used to swallow every
+# placement exception with `logger.exception(...); return False` — a PERSISTENT non-auth
+# failure (a filter error, -1013, insufficient balance) produced total silence, because only
+# `execution.note_credential_error` alerted, and only for credential errors. This mirrors
+# that same alert-cooldown shape (module-level state, one alert per streak, a later success
+# clears it) but keyed per PENDING ORDER ID and driven by a failure COUNT rather than a wall
+# clock, since "the Nth consecutive failure of the same order" is the signal that matters,
+# not "N minutes since the last alert".
+
+_placement_fail_streak: dict[int, int] = {}
+_placement_alerted: set[int] = set()
+
+# Only a SUCCESS clears a tracked order id (`_note_placement_success`) — an id that simply
+# stops being retried (approved, rejected, its session closed, ...) never leaves the dict on
+# its own, so a long-running instance would grow it forever. Cap it.
+_PLACEMENT_STREAK_MAX = 500
+
+
+def _evict_placement_streak_overflow() -> None:
+    """Past ``_PLACEMENT_STREAK_MAX`` tracked ids, drop the OLDEST half (insertion order, which
+    Python dicts preserve). Cheap and approximate on purpose: a still-failing order id gets a
+    fresh entry on its very next attempt regardless, so this can only ever delay a re-alert by
+    one failure, never suppress a genuinely stuck one."""
+    if len(_placement_fail_streak) <= _PLACEMENT_STREAK_MAX:
+        return
+    oldest = list(_placement_fail_streak)[: len(_placement_fail_streak) // 2]
+    for oid in oldest:
+        _placement_fail_streak.pop(oid, None)
+        _placement_alerted.discard(oid)
+
+
+def reset_placement_alert_state() -> None:
+    """Clear every tracked placement-failure streak/alert flag (tests; a fresh boot)."""
+    _placement_fail_streak.clear()
+    _placement_alerted.clear()
+
+
+def _note_placement_success(order_id: int) -> None:
+    """A placement attempt for *order_id* just succeeded — clear its streak so a future run
+    of failures starts counting from zero (and can alert again)."""
+    _placement_fail_streak.pop(order_id, None)
+    _placement_alerted.discard(order_id)
+
+
+def _note_placement_failure(order: PendingOrder, reason: str) -> None:
+    """Record one more CONSECUTIVE placement failure for *order*. Fires exactly one
+    ``notify.event('risk', ...)`` on the ``settings.placement_alert_after``-th consecutive
+    failure, then stays quiet — the 'alerted' flag (not a timer) is the throttle — until a
+    later ``_note_placement_success`` for the same order id clears it, at which point the
+    next failing streak can alert again. Alert-only: never raises, never gates anything (same
+    contract as ``execution.note_credential_error``).
+    """
+    try:
+        oid = order.id
+        streak = _placement_fail_streak.get(oid, 0) + 1
+        _placement_fail_streak[oid] = streak
+        _evict_placement_streak_overflow()
+        threshold = max(settings.placement_alert_after, 1)
+        if streak >= threshold and oid not in _placement_alerted:
+            _placement_alerted.add(oid)
+            from app import notify
+
+            notify.event(
+                "risk",
+                f"⚠️ Order {oid} ({order.symbol} {order.side}) failed to place {streak} "
+                f"times in a row: {reason}. It stays queued and keeps retrying — check for a "
+                "persistent problem (filter error, insufficient balance, a bad price/qty, ...).",
+            )
+    except Exception:  # an alert must never break placement
+        logger.debug(
+            "_note_placement_failure: alert failed for order %s", getattr(order, "id", "?"),
+            exc_info=True,
+        )
+
+
 # --- cash floor (hard guard: account cash may never go negative) ---------
 
 
@@ -424,11 +501,22 @@ def _live_execute(db: Session, order: PendingOrder) -> Fill:
             "via sync_resting_orders, not execute synchronously"
         )
 
+    # A7 fix: whether the cancel-resting branch below ran for this call. That branch, by
+    # construction, already asked the venue for this order's final state (via _cancel_resting
+    # -> _book_delta) — so the probe further down must never re-ask about the SAME
+    # clientOrderId afterward: `order.exchange_order_id` is cleared to None on a successful
+    # cancel, which would otherwise make the probe's "nothing linked yet" condition always
+    # true right after a cancel and hand it back the order JUST cancelled (a zero-fill cancel
+    # would then be adopted as a fresh fill; a partial-fill cancel would have its cumulative
+    # fill booked a SECOND time on top of what _cancel_resting already booked).
+    was_resting = False
+
     # 1.5: this row already rests on the exchange. Reaching here means someone wants it
     # filled NOW (an operator approval, or the position-guard forcing a crash exit), so take
     # the resting order off the book first — a row must never have two live orders. A cancel
     # that fails aborts the placement: placing anyway would double the exposure.
     if order.exchange_order_id:
+        was_resting = True
         # Book whatever it filled BEFORE unlinking. A cancel races the venue, and
         # reconcile_live_orders only looks at linked rows — dropping the link first loses that
         # fill for good. _cancel_resting already does exactly this, so reuse it; a refusal
@@ -488,12 +576,90 @@ def _live_execute(db: Session, order: PendingOrder) -> Fill:
     # produced. So wave 0 goes out as MARKET: the spread is the price of being in the trade.
     # Every DCA rung below it still rests and still earns the maker side.
     entry = is_entry_wave(order)
-    result = execution.place_live_order(
-        pair, order.side, order.quantity, order.price,
-        "MARKET" if entry else order.order_type,
-        maker_orders=False if entry else None,
-        client_order_id=execution.client_order_id(order.id),  # idempotent placement (1.10)
-    )
+    cid = execution.client_order_id(order.id)  # idempotent placement (1.10)
+
+    # A7: probe the venue for this clientOrderId BEFORE placing, catching a lost response after
+    # Binance already accepted a PRIOR attempt — see execution.fetch_order_by_client_id for why
+    # the reactive duplicate-clientOrderId recovery inside place_live_order cannot catch this for
+    # a MARKET order. Skipped entirely when this call just cancelled a resting order above
+    # (`was_resting`): that path already asked the venue for this exact order's final state
+    # (_cancel_resting -> _book_delta), so re-probing the SAME clientOrderId would hand back the
+    # order just cancelled/booked instead of anything new. Also skipped while a rate/order-budget
+    # hold is active: a SIGNED probe call during a 418 amplifies an IP ban, and skipping it never
+    # gates anything — the fall-through is placement, whose own rate gates are urgent-exempt for
+    # a SELL.
+    result: dict | None = None
+    if (
+        execution.live_enabled()
+        and not was_resting
+        and order.exchange_order_id is None
+        and not execution.rate_hold_active()
+    ):
+        try:
+            probed = execution.fetch_order_by_client_id(pair, cid)
+        except Exception:
+            probed = None
+            logger.warning(
+                "order %s: idempotency probe failed for clientOrderId %s — placing normally",
+                order.id, cid, exc_info=True,
+            )
+        else:
+            if probed is not None:
+                probed_status = str(probed.get("status") or "").lower()
+                probed_qty = float(probed.get("quantity") or 0.0)
+                booked_already, _ = _booked_qty_fee(db, order.id)
+                if probed_qty > 1e-12 and booked_already <= 1e-9:
+                    # The clean lost-response case: Binance accepted a prior attempt whose
+                    # response never reached us, this row has never booked anything against it,
+                    # and the venue now reports a real fill quantity — adopt it instead of a
+                    # second placement. Credit the ORDERS budget the lost attempt never got to
+                    # record (no placement, no fill, ever went through our own tracker for it).
+                    result = probed
+                    execution.record_order_placed()
+                    execution.record_order_filled()
+                    logger.info(
+                        "order %s: recovered an existing venue order for clientOrderId %s — "
+                        "not placing a second one", order.id, cid,
+                    )
+                elif probed_status in _TERMINAL_EXCHANGE_STATUS and probed_qty <= 1e-12:
+                    # Terminal (cancelled/expired/rejected) with nothing filled — nothing to
+                    # adopt here; place normally.
+                    result = None
+                elif probed_status and probed_status not in _TERMINAL_EXCHANGE_STATUS:
+                    # Still resting on the venue (open/new) with no clean fill to adopt (either
+                    # nothing filled yet, or this row already booked fills against a prior
+                    # order). Link this row to it and hand off to reconcile_live_orders rather
+                    # than invent a fill price here — mirrors the normal placement link below:
+                    # stamped + committed BEFORE raising, so a rollback can never erase a link
+                    # to an order that is really out there.
+                    if probed.get("raw_id") is not None:
+                        order.exchange_order_id = str(probed.get("raw_id"))
+                    order.exchange_status = probed_status or None
+                    db.commit()
+                    raise ValueError(
+                        f"order {order.id}: recovered a resting live order; awaiting reconcile"
+                    )
+                else:
+                    # Ambiguous — placing is always recoverable via the venue's own
+                    # duplicate-clientOrderId rejection; adopting wrongly is not.
+                    result = None
+    if result is None:
+        # D2-gap: this is the actual venue placement call (as opposed to the gate checks
+        # above/below, which are refusals this row will legitimately retry, not exchange
+        # failures) — track it the same way `_place_resting` tracks its own placement call,
+        # so a PERSISTENT non-auth failure here (filter error, -1013, insufficient balance)
+        # is no longer totally silent.
+        try:
+            result = execution.place_live_order(
+                pair, order.side, order.quantity, order.price,
+                "MARKET" if entry else order.order_type,
+                maker_orders=False if entry else None,
+                client_order_id=cid,
+            )
+        except Exception as exc:
+            _note_placement_failure(order, f"{type(exc).__name__}: {exc}")
+            raise
+    _note_placement_success(order.id)
     # Link the order to its exchange id + last-seen status FIRST, so reconcile_live_orders()
     # (1.4) can pick up any further fills (e.g. a partial that completes later) — and, above
     # all, so an order that reached the venue is never left untracked. This used to happen
@@ -640,6 +806,25 @@ def _book_delta(db: Session, order: PendingOrder, res: dict) -> bool:
     avg = float(res.get("average") or 0.0)
     cum_fee = float(res.get("fee") or 0.0)
 
+    def _stamp_exchange_state() -> None:
+        # Record the venue status — and EXECUTED once terminal with something filled. Runs
+        # BEFORE the KSS fill hook (not after, as this originally did): the hook's deploy-
+        # headroom check (_pending_wave_notional) queries rows still PENDING/APPROVED to size
+        # the next rung's reservation, and this order must drop OUT of that count the instant
+        # its money is booked into total_cost, or it is charged twice — once as total_cost,
+        # once as still-pending notional (WLD#13, audit row 1532: headroom computed 48.21
+        # instead of the real 124.11). Mirrors approve_order's ordering — the synchronous path
+        # never had this bug. The stamp runs immediately before the Fill's own `db.flush()`
+        # (same call site, right below) — the two are the SAME unit of work: if booking throws
+        # before that flush, neither the stamp nor the Fill were ever sent to the database, and
+        # nothing here needs a rollback of its own. Once the flush succeeds, the stamp IS
+        # visible to any query on this connection (including the KSS hook's) before the
+        # eventual commit — that visibility, not avoidance, is the whole point of the ordering.
+        order.exchange_status = status or order.exchange_status
+        if status in _TERMINAL_EXCHANGE_STATUS and cum_filled > 0:
+            order.status = EXECUTED
+            order.decided_at = order.decided_at or utcnow()
+
     booked = False
     venue_order_id = str(res.get("raw_id") or order.exchange_order_id or "") or None
     booked_qty, booked_fee = _booked_qty_fee(db, order.id, venue_order_id)
@@ -661,6 +846,7 @@ def _book_delta(db: Session, order: PendingOrder, res: dict) -> bool:
             exchange_order_id=venue_order_id,
         )
         db.add(fill)
+        _stamp_exchange_state()  # before the flush + KSS hook — see the note above
         db.flush()
         booked = True
         # A resting maker order was still OUTSTANDING against the ORDERS budget (a cancel never
@@ -690,11 +876,8 @@ def _book_delta(db: Session, order: PendingOrder, res: dict) -> bool:
         except Exception:
             logger.debug("fill_alert failed for fill %s", fill.id)
 
-    order.exchange_status = status or order.exchange_status
-    # A fully/terminally settled order with any fill is done — mark it executed.
-    if status in _TERMINAL_EXCHANGE_STATUS and cum_filled > 0:
-        order.status = EXECUTED
-        order.decided_at = order.decided_at or utcnow()
+    if not booked:
+        _stamp_exchange_state()  # nothing new to book — still record the venue's state
     return booked
 
 
@@ -802,12 +985,19 @@ def _place_resting(db: Session, order: PendingOrder) -> bool:
             "LIMIT", maker_orders=True,
             client_order_id=execution.client_order_id(order.id),  # idempotent (1.10)
         )
-    except Exception:  # exchange/filter error — stays queued, retried next cycle
+    except Exception as exc:  # exchange/filter error — stays queued, retried next cycle
         logger.exception("resting: placement failed for order %s", order.id)
+        _note_placement_failure(order, f"{type(exc).__name__}: {exc}")
         return False
 
     # Post-only rejected = the market is already at/through the rung, so resting there is
     # impossible right now. Leave it queued; the next cycle retries once the book moves away.
+    # Does NOT feed the placement-failure streak: a rung priced at/through the book is
+    # post-only-rejected EVERY cycle by design until price moves away — that is a normal market
+    # condition, not a persistent problem, and the default alert threshold (3) turned it into
+    # Telegram risk spam on every session with a rung sitting near the touch. The streak stays
+    # reserved for exchange/filter errors (the branch above) and the synchronous placement call
+    # in `_live_execute`, where 3 in a row really does mean something is stuck.
     if res.get("status") == "rejected" or res.get("raw_id") is None:
         return False
 
@@ -821,6 +1011,7 @@ def _place_resting(db: Session, order: PendingOrder) -> bool:
         side=order.side, qty=round(order.quantity, 8), price=round(order.price, 8),
         exchange_order_id=order.exchange_order_id,
     )
+    _note_placement_success(order.id)
     return True
 
 

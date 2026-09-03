@@ -9,6 +9,7 @@ state. Generated orders always go through the pending-order approval queue.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timedelta
 from typing import Any
@@ -29,6 +30,7 @@ from app.models import (
     WAVE_CANCELLED,
     WAVE_FILLED,
     WAVE_SENT,
+    AuditLog,
     KssSession,
     KssWave,
     PendingOrder,
@@ -55,6 +57,7 @@ def _to_pyramid(row: KssSession) -> PyramidSession:
     from app.config import settings
 
     py.id = row.id
+    py.first_wave_usd = row.first_wave_usd  # P1 Fix 2: frozen sizing, NULL = legacy fallback
     py.status = PyramidSessionStatus(row.status)
     py.current_wave = row.current_wave
     py.avg_price = row.avg_price
@@ -152,21 +155,45 @@ def _anchor_dca_price(
 
 def _pending_wave_notional(db: Session, session_id: int) -> float:
     """USD of this session's still-pending BUY waves (queued but not yet filled), so the deploy
-    cap counts committed-but-unfilled rungs, not just filled cost."""
-    from sqlalchemy import func
+    cap counts committed-but-unfilled rungs, not just filled cost.
 
+    P1 Fix 1(b): counts only the UNBOOKED remainder of each pending/approved wave order, never
+    its full original quantity. A PARTIALLY-filled order already has its booked slice inside
+    ``total_cost`` (via ``handle_fill_event`` -> ``on_fill``); charging the full quantity here
+    AGAIN double-counts that slice against the deploy cap and can starve the next wave of
+    headroom that is actually free (see the WLD#13 audit trail). Iterates only this session's
+    rows — cheap, a session has at most a handful of pending waves at once."""
     from app.models import APPROVED, PENDING, PendingOrder
 
-    total = (
-        db.query(func.coalesce(func.sum(PendingOrder.quantity * PendingOrder.price), 0.0))
+    rows = (
+        db.query(PendingOrder.id, PendingOrder.quantity, PendingOrder.price,
+                 PendingOrder.exchange_order_id)
         .filter(
             PendingOrder.side == "BUY",
             PendingOrder.status.in_((PENDING, APPROVED)),
             PendingOrder.source_ref.like(f"pyramid:{session_id}:%"),
         )
-        .scalar()
+        .all()
     )
-    return float(total or 0.0)
+    total = 0.0
+    for order_id, qty, price, exch_id in rows:
+        # Scope booked-qty to the row's CURRENT venue order: after a cancel-and-re-place the
+        # row's ``quantity`` is already the unfilled remainder, so netting the OLD venue
+        # order's fills against it would under-count the resting exposure and overstate
+        # headroom — the one direction that breaches the deploy cap.
+        #
+        # Net past fills only when the row is LINKED (exch_id set). An UNLINKED row — e.g. one
+        # a failed re-place left PENDING after ``_cancel_resting`` already reduced ``quantity``
+        # to the unfilled remainder — has nothing further to net: ``quantity`` IS what will be
+        # placed next, and whatever it already filled left with the OLD (now-dropped) exchange
+        # link, already counted in ``total_cost``, not here. Passing ``exch_id=None`` into
+        # ``_booked_qty_fee`` would instead sum EVERY fill this row ever had, lifetime, and net
+        # that against the reduced remainder — under-counting the pending notional (the deploy-
+        # cap-BREACH direction, not the safe one).
+        booked_qty = orders._booked_qty_fee(db, order_id, exch_id)[0] if exch_id else 0.0
+        remainder = max((qty or 0.0) - booked_qty, 0.0)
+        total += remainder * (price or 0.0)
+    return total
 
 
 def _session_deploy_headroom(db: Session, session_id: int, deployed_cost: float) -> float:
@@ -221,6 +248,84 @@ def _queue_wave_if_above_sl(
         )
     )
     return True
+
+
+def _rearm_dead_ladders(db: Session) -> None:
+    """Watchdog: re-attempt a dead DCA-down ladder's next rung once per ``manage_open_sessions``
+    pass, for every ACTIVE session with room left in ``max_waves`` and nothing already queued.
+
+    A rung only ever gets queued from INSIDE ``handle_fill_event`` (the fill-driven auto-chain)
+    or a manual ``queue_next_wave`` click — nothing else in the system ever asks a ladder to try
+    again. So a session whose fill-time queue attempt was refused (insufficient fund at the
+    time, a transient error) stays dead FOREVER, even after funds free up (verified live: after
+    a fund-restoring migration, two full cycles ran with the ladder still dead — zero rungs
+    queued).
+
+    Re-attempts through the EXACT SAME guarded path a fill uses (``_queue_wave_if_above_sl`` —
+    deploy-cap headroom + below-SL skip + its own audits), never inventing a new one — the next
+    wave dict is built the same way ``handle_fill_event``'s "next_wave" action does
+    (``py.generate_wave`` + ``py._wave_to_order``, mirroring ``queue_next_wave``). Mirrors
+    ``on_fill``'s own (un-anchored) remaining-fund check FIRST, so a STILL-unaffordable rung
+    never even reaches ``_queue_wave_if_above_sl`` (whose ``deploy_cap_hit`` audit is not
+    deduped across passes) — the existing ``insufficient_fund`` audit dedupe (keyed per
+    session+wave, ``_audit_insufficient_fund``) already covers visibility for that case, so
+    re-checking it here never spams.
+
+    Never touches a pyramid_up session (its ladder is armed add-on triggers, not this DCA-down
+    chain) or a non-ACTIVE one. ``pyramid.py`` stays frozen — this only calls its existing
+    ``generate_wave``/``_wave_to_order``, the same translation ``queue_next_wave`` already uses.
+    """
+    from app.models import APPROVED, PENDING
+
+    for row in (
+        db.query(KssSession)
+        .filter(KssSession.status == SESSION_ACTIVE, KssSession.strategy_mode == "dca_down")
+        .all()
+    ):
+        if row.trail_active:
+            # An ARMED dynamic exit deliberately DROPPED its ladder ("committing to trail-up
+            # -> drop the DCA ladder", _handle_dynamic/_evaluate arming path) — a rung-less
+            # armed session is intentional strategy state, not a dead ladder. Re-queueing here
+            # would average down into a position the strategy has switched to riding out.
+            continue
+        if row.current_wave + 1 >= row.max_waves:
+            continue  # ladder already full — nothing left to re-arm
+        pending_wave = (
+            db.query(PendingOrder.id)
+            .filter(
+                PendingOrder.side == "BUY",
+                PendingOrder.status.in_((PENDING, APPROVED)),
+                PendingOrder.source_ref.like(f"pyramid:{row.id}:wave:%"),
+            )
+            .first()
+        )
+        if pending_wave is not None:
+            continue  # a rung is already queued/resting — the chain is alive, not dead
+
+        py = _to_pyramid(row)
+        next_wave_num = py.current_wave + 1
+        next_wave = py.generate_wave(next_wave_num)
+        next_cost = next_wave.quantity * next_wave.target_price
+        # Same float-dust tolerance as on_fill's own check (pyramid.py), computed the SAME
+        # (un-anchored) way, so this reports the identical (session, wave) shortfall on_fill
+        # would have — the dedupe below recognises it as the same one instead of a new alert.
+        if next_cost > py.remaining_fund + 1e-9:
+            _audit_insufficient_fund(
+                db, row,
+                {"wave_num": next_wave_num, "need": next_cost, "remaining": py.remaining_fund},
+            )
+            continue
+
+        py.current_wave = next_wave_num
+        next_wave.status = "sent"
+        py.waves.append(next_wave)
+        if _queue_wave_if_above_sl(db, py, row.id, row.symbol, py._wave_to_order(next_wave)):
+            _save_state(row, py)
+            audit.log(db, "kss", "ladder_rearmed", entity=f"kss:{row.id}", symbol=row.symbol,
+                      wave=next_wave_num, cost=round(next_cost, 2))
+        # else: _queue_wave_if_above_sl already audited why (wave_already_queued / wave_below_sl
+        # / deploy_cap_hit) — py/row's mutated current_wave is discarded unsaved here, mirroring
+        # handle_fill_event's own revert of a speculative advance that was not actually queued.
 
 
 # --- lifecycle ----------------------------------------------------------
@@ -299,6 +404,11 @@ def create_session(db: Session, **params: Any) -> KssSession:
             params.get("tp_pct"), floor,
         )
         params["tp_pct"] = floor
+    # P1 Fix 2: snapshot the CURRENT global wave-0 sizing onto the session. isolated_fund is
+    # reserved ONCE, against the pip_size in effect right now — a later edit to the global
+    # must never re-price this session's remaining rungs (ETC#5). setdefault: a caller may
+    # already have supplied one explicitly (none currently do, but this keeps the door open).
+    params.setdefault("first_wave_usd", settings.kss_first_wave_usd)
     PyramidSession(**params)  # raises ValueError on invalid params (strategy fields only)
     row = KssSession(status=SESSION_PENDING, note=note, deadline_days=deadline_days, **params)
     db.add(row)
@@ -428,6 +538,10 @@ def create_pyramid_up_session(
         sl_pct=settings.sl_pct,  # disaster floor before the BE+ trail arms (no DCA-down to average)
         deadline_days=deadline_days,
         strategy_mode="pyramid_up",
+        # P1 Fix 2: same snapshot as create_session, for consistency — pyramid_up's own ladder
+        # math (pyramid_up.build_ladder above) never reads this column, but a session should
+        # never carry a NULL "legacy" marker it wasn't actually legacy for.
+        first_wave_usd=settings.kss_first_wave_usd,
         note=note,
     )
     db.add(row)
@@ -719,9 +833,40 @@ def handle_fill_event(
             row.current_wave = wave_num  # frozen on_fill advanced it; nothing was queued
     elif result.get("action") == "tp_triggered":
         _handle_tp_triggered(db, row, result)
+    elif result.get("reason") == "insufficient_fund":
+        # P1 Fix 4: on_fill declined to queue the next wave (isolated_fund exhausted) — this is
+        # a DEAD LADDER with no other trace, so it must be audited, not just logged.
+        _audit_insufficient_fund(db, row, result)
 
     db.commit()
     return result
+
+
+def _audit_insufficient_fund(db: Session, row: KssSession, result: dict) -> None:
+    """Audit a dead ladder (on_fill couldn't afford the next wave) — at MOST ONCE per
+    (session, wave). Without the dedupe, the same starved wave would re-audit every time the
+    fill/manage path re-evaluates it (the frozen on_fill logs the SAME warning every cycle —
+    see pyramid.py), flooding the trail with duplicates of one dead rung. A NEW wave number
+    (once the ladder actually advances) always gets its own fresh audit."""
+    wave_num = result.get("wave_num")
+    if wave_num is None:
+        return
+    entity = f"kss:{row.id}"
+    existing = (
+        db.query(AuditLog)
+        .filter(AuditLog.action == "insufficient_fund", AuditLog.entity == entity)
+        .all()
+    )
+    for a in existing:
+        try:
+            detail = json.loads(a.detail or "{}")
+        except (TypeError, ValueError):
+            continue
+        if detail.get("wave") == wave_num:
+            return  # already audited this exact (session, wave) shortfall
+    audit.log(db, "kss", "insufficient_fund", entity=entity, symbol=row.symbol,
+              wave=wave_num, need=round(result.get("need", 0.0), 4),
+              remaining=round(result.get("remaining", 0.0), 4))
 
 
 def _handle_pyramid_up_fill(
@@ -1656,6 +1801,11 @@ def manage_open_sessions(db: Session) -> list[int]:
             else:
                 _save_state(row, py)
     db.commit()
+    # Watchdog for a ladder whose fill-time queue attempt was refused and never got asked
+    # again (see _rearm_dead_ladders). Runs AFTER the commit above so it sees a fresh, fully
+    # up to date view of anything the loop just closed/queued this same pass.
+    _rearm_dead_ladders(db)
+    db.commit()
     return triggered
 
 
@@ -1684,12 +1834,21 @@ def _k2_floor_price(db: Session, symbol: str) -> float:
 
 
 def _resting_tp_rows(db: Session) -> list[PendingOrder]:
-    """Every queued take-profit order (one per session at most)."""
+    """Every queued RESTING (maker LIMIT) take-profit order (one per session at most).
+
+    ``pyramid:{id}:tp`` is ambiguous: this is also the ``source_ref`` a MARKET dynamic-TP exit
+    uses (``_queue_dynamic_exit``/``check_tp``). Filtering on ``order_type == "LIMIT"`` is what
+    scopes this to the resting maker exit this module manages — without it, the stale-row sweep
+    in ``sync_resting_tp`` would REJECT a MARKET tp exit the position-guard is trying to
+    force-fill in the very same tick (its session is no longer ACTIVE by then), stranding the
+    session TP_TRIGGERED with no exit anywhere.
+    """
     return (
         db.query(PendingOrder)
         .filter(
             PendingOrder.status == models.PENDING,
             PendingOrder.source == "kss",
+            PendingOrder.order_type == "LIMIT",
             PendingOrder.source_ref.like("pyramid:%:tp"),
         )
         .all()
@@ -1850,16 +2009,29 @@ def run_position_guard(db: Session) -> dict:
     # so a circuit-breaker freeze never blocks a protective exit — this also rescues SL/deadline
     # SELLs the 30-min cycle queued but could not fill during a freeze (auto_fill_due_orders no-ops
     # while frozen). Exits reduce risk and are never gated (the never-gate-exits rule).
+    # A4: `orphan:%` (queued by manage_orphan_positions) is included too — those are MARKET
+    # sweeps of leftover position quantity, and without this rescue they sit PENDING forever
+    # while the breaker is frozen, exactly when a losing streak makes the exit most needed.
+    from sqlalchemy import or_
+
     resting = orders.resting_model_active()
     for o in (db.query(PendingOrder)
               .filter(PendingOrder.status == PENDING, PendingOrder.side == "SELL",
-                      PendingOrder.source_ref.like("pyramid:%"))
+                      or_(PendingOrder.source_ref.like("pyramid:%"),
+                          PendingOrder.source_ref.like("orphan:%")))
               .all()):
-        # 1.5: the resting take-profit is a STANDING limit exit sitting on the exchange, not a
+        ref = str(o.source_ref or "")
+        # 1.5: a pyramid take-profit is a STANDING limit exit sitting on the exchange, not a
         # protective one. Force-filling it here would pull it off the book and re-place it —
         # churn at best, an orphaned live order at worst — and it is not what this guard is for.
         # Risk exits (sl / trailing / deadline / crash) are MARKET and still fill immediately.
-        if resting and str(o.source_ref).endswith(":tp"):
+        # `orphan:tp` is a MARKET sweep with no resting leg — key the skip on the `pyramid:`
+        # prefix, not the `:tp` suffix alone, or an orphan TP would be wrongly left to rot.
+        # `pyramid:{id}:tp` is ALSO the ref a MARKET dynamic-TP exit uses (_queue_dynamic_exit /
+        # check_tp) — the discriminator must be order_type, not the ref shape alone, or this
+        # skip swallows that MARKET exit too (it never rests, so nothing else force-fills it —
+        # a session ends TP_TRIGGERED holding inventory with no exit anywhere).
+        if resting and o.order_type == "LIMIT" and ref.startswith("pyramid:") and ref.endswith(":tp"):
             continue
         try:
             orders.approve_order(db, o.id, reviewer="guard")

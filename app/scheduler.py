@@ -17,6 +17,8 @@ import logging
 import socket
 import threading
 import time
+import urllib.parse
+import urllib.request
 
 from sqlalchemy.orm import Session
 
@@ -35,6 +37,13 @@ _guard_task: asyncio.Task | None = None
 _work_lock = threading.Lock()
 _last_cycle_at: str | None = None
 _last_summary: dict = {}
+
+# The 90s guard's own reconcile pass fetches every tracked order SERIALLY (one weight-4 call
+# each) ahead of the hard-SL check, under `_work_lock` — so a large tracked-order count adds
+# tens of seconds of latency in front of the exit check the guard exists to run fast. Above
+# this count, `_guard_once` skips its own reconcile for that tick (`run_cycle`'s own reconcile,
+# every scan_interval_min, still covers everything) rather than block the guard.
+GUARD_RECONCILE_MAX_ORDERS = 30
 
 # Cross-process singleton lock. Two app processes each running this scan loop race
 # scanner._can_open (separate DB transactions) and blow past max_concurrent_sessions
@@ -200,6 +209,48 @@ def _run_periodic(db: Session) -> tuple[int, bool]:
     return hyperopt_runs, ml_trained
 
 
+_HEARTBEAT_ALLOWED_SCHEMES = {"http", "https"}
+
+
+def _fire_heartbeat_ping(url: str) -> None:
+    """Best-effort GET to *url* (a healthchecks.io-style dead-man's switch). Runs on the
+    calling thread — `_ping_heartbeat` is what offloads this to a daemon thread. NEVER
+    raises: a monitor that is slow, unreachable, or returns an error must not surface here,
+    only be noted at debug level.
+
+    Scheme allowlist: `urllib.request.urlopen` happily opens `file://`/`ftp://`/etc, and
+    `settings.heartbeat_url` is operator-supplied config, not a validated http(s) endpoint —
+    only `http`/`https` are ever requested; anything else is refused with one debug log and
+    no request. The response is read+closed via a context manager rather than left to the
+    garbage collector (urlopen's return value is a connection that stays open until closed).
+    """
+    scheme = urllib.parse.urlsplit(url).scheme.lower()
+    if scheme not in _HEARTBEAT_ALLOWED_SCHEMES:
+        logger.debug("heartbeat ping to %s skipped — unsupported scheme %r", url, scheme)
+        return
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:  # noqa: S310 — scheme allowlisted above
+            resp.read(1)
+    except Exception:
+        logger.debug("heartbeat ping to %s failed", url, exc_info=True)
+
+
+def _spawn_daemon(target, args: tuple = ()) -> None:
+    """Run *target* on a new daemon thread. A thin, overridable seam so a test can make the
+    call synchronous without touching the global `threading.Thread` (which every other
+    thread pool in the process — e.g. the scanner's OHLCV fetch pool — also constructs from)."""
+    threading.Thread(target=target, args=args, daemon=True).start()
+
+
+def _ping_heartbeat() -> None:
+    """Fire the configured heartbeat URL (settings.heartbeat_url) in a daemon thread so a
+    slow or dead monitor can never block the scheduler loop. No-op when unconfigured."""
+    url = settings.heartbeat_url
+    if not url:
+        return
+    _spawn_daemon(_fire_heartbeat_ping, (url,))
+
+
 def run_cycle(db: Session) -> dict:
     """One scheduler cycle. Returns a small summary (counts), not data dumps."""
     global _last_cycle_at, _last_summary
@@ -333,6 +384,12 @@ def run_cycle(db: Session) -> dict:
     }
     _last_cycle_at = utcnow().isoformat()
     _last_summary = {k: (len(v) if isinstance(v, list) else v) for k, v in summary.items()}
+    # Outbound dead-man's switch (C4): ping an external monitor now that the cycle reached
+    # here WITHOUT raising. Placed after every other bookkeeping line in the function so an
+    # exception anywhere above (scan, TP, guardian, ...) skips the ping — a failed cycle must
+    # stay silent, that silence IS the alert on the monitor's side. Fire-and-forget in a
+    # daemon thread: a slow/dead monitor must never hold up the next cycle.
+    _ping_heartbeat()
     return summary
 
 
@@ -354,10 +411,54 @@ def _cycle_once() -> None:
         db.close()
 
 
+def _guard_reconcile_backlog(db: Session) -> int:
+    """Count of tracked (linked, non-terminal) orders reconcile would fetch this pass — the
+    same filter ``orders.reconcile_live_orders`` queries. Cheap: one COUNT, no per-order fetch."""
+    from app.models import PendingOrder
+
+    return (
+        db.query(PendingOrder)
+        .filter(
+            PendingOrder.exchange_order_id.isnot(None),
+            (PendingOrder.exchange_status.is_(None))
+            | (PendingOrder.exchange_status.notin_(orders._TERMINAL_EXCHANGE_STATUS)),
+        )
+        .count()
+    )
+
+
 def _guard_once() -> None:
     db = SessionLocal()
     try:
         with _work_lock:  # serialize with the 30-min cycle
+            # C2: reconcile BEFORE the guard's exit checks — without this, `run_position_guard`
+            # sizes hard-SL decisions off `total_filled_qty` that can be a full scan_interval_min
+            # stale while rungs fill on the venue between run_cycle's own reconcile calls.
+            # Self-gates on live_enabled() (paper no-ops) and is idempotent, so calling it here
+            # on top of run_cycle's call is safe. At ~9 tracked orders this is ~36 weight per
+            # 90s (fetch_order is weight 4) — bounded below by GUARD_RECONCILE_MAX_ORDERS so a
+            # larger backlog cannot add tens of seconds of SERIAL fetch_order latency ahead of
+            # the hard-SL check this guard exists to run fast; run_cycle's own reconcile (every
+            # scan_interval_min) still covers everything regardless. Any exception is swallowed
+            # AND rolled back: a flush/commit-level failure (e.g. "database is locked") leaves
+            # the session needing a rollback, and without one `run_position_guard`'s first query
+            # would raise PendingRollbackError and kill the entire 90s exit tick — repeatedly.
+            try:
+                backlog = _guard_reconcile_backlog(db)
+                if backlog > GUARD_RECONCILE_MAX_ORDERS:
+                    logger.warning(
+                        "position-guard reconcile skipped this tick — %d tracked orders exceeds "
+                        "GUARD_RECONCILE_MAX_ORDERS (%d); run_cycle's reconcile still covers "
+                        "everything", backlog, GUARD_RECONCILE_MAX_ORDERS,
+                    )
+                else:
+                    orders.reconcile_live_orders(db)
+            except Exception:
+                logger.exception("position-guard reconcile failed")
+                try:
+                    db.rollback()
+                except Exception:
+                    logger.exception("position-guard reconcile rollback also failed")
             service.run_position_guard(db)
     finally:
         db.close()

@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from app import audit, costengine, hyperopt, ml, orders, runtime
+from app import audit, costengine, execution, hyperopt, ml, orders, runtime
 from app.agents import SIGNAL_AGENTS, BacktestAgent, aggregate, decide
 from app.backtest import estimate_win_rate
 from app.config import settings
@@ -62,16 +62,93 @@ class ScanInProgress(RuntimeError):
 # Grok outage); under fail_mode="open" (default) it opens as before.
 
 
-def _provider_factory(exchange_id: str) -> CcxtProvider:
-    """Return a *fresh* CcxtProvider for the given exchange.
+_thread_local_providers = threading.local()
 
-    Called inside each ThreadPoolExecutor worker so every thread owns its own
-    ccxt client.  ccxt sync instances share HTTP session state and are NOT
-    thread-safe across concurrent callers; one-client-per-worker avoids locks
-    and delivers true parallelism.  (enableRateLimit=True is set by default on
-    each fresh instance so per-exchange rate limits are still respected.)
+
+def _provider_factory(exchange_id: str) -> CcxtProvider:
+    """Return a CcxtProvider cached PER (exchange_id, calling thread).
+
+    Called inside each ThreadPoolExecutor worker so every thread owns its own ccxt client —
+    ccxt sync instances share HTTP session state and are NOT thread-safe across concurrent
+    callers, so one-client-per-worker (rather than a single shared client) avoids locks and
+    delivers true parallelism.
+
+    Fix A (2026-09-01): this used to construct a *fresh* CcxtProvider on every call, but the
+    caller (`_prefetch_candles`'s pool, via `candle_cache.get_candles`) invokes it once per
+    SYMBOL, not once per worker thread's lifetime — a cold CcxtProvider re-downloads
+    exchangeInfo on its first real call (~22 weight, ~17.5 MB), so a 100-symbol cold scan
+    across 2 workers paid that cost up to 100 times (~2,200 weight) for clients that were then
+    thrown away. `threading.local()` gives each worker ONE client per exchange that it reuses
+    across every symbol a THREAD handles.
+
+    Fix B (2026-09-01): Fix A's own docstring used to claim this reuse spans "every symbol it
+    handles this scan (and the next)" — false. `_prefetch_candles` used to build a brand-new
+    `ThreadPoolExecutor` on every call (`with ThreadPoolExecutor(...) as pool:`); leaving that
+    `with` block joins and destroys the pool's worker threads, taking their `threading.local()`
+    slots (and cached CcxtProvider clients) down with them. `_prefetch_candles` runs at least
+    TWICE per scheduler cycle (`prefetch_universe_candles`'s off-lock warm-up, then
+    `_run_scan_locked`'s own miss-fetch), so every cycle still cold-built up to
+    `scan_fetch_workers` clients TWICE. The pool is now a lazily-created MODULE-LEVEL singleton
+    (see `_fetch_pool` below) that outlives any single call, so a worker thread — and the
+    provider cache this function stores on it — really does persist "this scan and the next".
+    Races are still avoided because each thread only ever reads/writes its OWN
+    `threading.local()` slot, never another thread's.
     """
-    return CcxtProvider(exchange_id)
+    cache: dict[str, CcxtProvider] | None = getattr(_thread_local_providers, "cache", None)
+    if cache is None:
+        cache = {}
+        _thread_local_providers.cache = cache
+    provider = cache.get(exchange_id)
+    if provider is None:
+        provider = CcxtProvider(exchange_id)
+        cache[exchange_id] = provider
+    return provider
+
+
+def reset_provider_factory_cache() -> None:
+    """Drop the thread-local provider cache (tests only — the real cache is meant to
+    outlive a scan; this exists so a test's monkeypatched CcxtProvider does not leak into
+    a later test on the SAME thread)."""
+    _thread_local_providers.cache = {}
+
+
+# Fix B (2026-09-01): the OHLCV fetch pool, lazily built ONCE and reused by every
+# `_prefetch_candles` call for the rest of the process's life. `_prefetch_candles` used to
+# open a fresh `ThreadPoolExecutor` per call inside a `with` block, which joins and destroys
+# the pool's worker threads (and their `threading.local()` provider caches) the moment that
+# call returns — so the "each worker keeps its client across scans" story in
+# `_provider_factory` was never actually true; every call cold-built its clients again.
+#
+# `scan_fetch_workers` is read only here, at construction — it is not runtime-tunable (no
+# code path reloads it into a live pool), so there is deliberately no resize logic: once
+# built, `_fetch_pool` keeps its worker count for the rest of the process.
+#
+# Never wrap this in a `with` block or call `.shutdown()` on it in production code —
+# `concurrent.futures` registers its own `atexit` hook that joins every live executor before
+# interpreter shutdown, so this needs no explicit teardown.
+_fetch_pool: ThreadPoolExecutor | None = None
+_fetch_pool_lock = threading.Lock()
+
+
+def _get_fetch_pool() -> ThreadPoolExecutor:
+    """Return the module-level OHLCV fetch pool, building it on first use."""
+    global _fetch_pool
+    if _fetch_pool is None:
+        with _fetch_pool_lock:
+            if _fetch_pool is None:
+                _fetch_pool = ThreadPoolExecutor(max_workers=max(1, settings.scan_fetch_workers))
+    return _fetch_pool
+
+
+def reset_scan_fetch_pool() -> None:
+    """Tests only: drop the module-level fetch pool so the next call rebuilds it (e.g. after
+    monkeypatching `settings.scan_fetch_workers`, or to isolate a test from whatever pool an
+    earlier test already warmed up). Shuts the old pool down without waiting — there should be
+    no in-flight work between tests."""
+    global _fetch_pool
+    pool, _fetch_pool = _fetch_pool, None
+    if pool is not None:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def _prefetch_candles(
@@ -79,16 +156,29 @@ def _prefetch_candles(
     symbols: list[str],
     timeframe: str,
     limit: int,
-) -> dict[str, tuple[list, bool]]:
+) -> tuple[dict[str, tuple[list, bool]], bool]:
     """Warm the candle cache for *symbols* in parallel.
 
-    Returns a dict ``symbol -> (candles, was_hit)`` for every symbol in the
-    input list.  Cache-hit symbols are resolved immediately without spawning a
-    thread; only cache-miss symbols are fetched in the thread pool (up to
-    ``settings.scan_fetch_workers`` concurrent threads).
+    Returns ``(results, aborted)``: *results* is a dict ``symbol -> (candles, was_hit)`` for
+    every symbol in the input list. Cache-hit symbols are resolved immediately without
+    spawning a thread; only cache-miss symbols are fetched in the shared fetch pool (up to
+    ``settings.scan_fetch_workers`` concurrent threads — see ``_get_fetch_pool``). *aborted*
+    is True iff a rate/weight hold started MID-SWEEP and cut the miss set short (item 5
+    below) — false for every other outcome, including a hold that was already active before
+    this call started (that case has its own explicit caller-side check/audit; see
+    ``prefetch_universe_candles``).
 
     Any individual symbol failure returns ``([], False)`` — the caller treats
     that as thin data and audits via *skipped_thin_data* (unchanged behaviour).
+
+    Fix B4 (scan-sweep rate circuit): a rate/weight hold means the exchange already told us
+    to back off — spending this cycle's network budget on the miss set would just re-trip it
+    (or pile more weight onto an active 418 ban). Cache hits above are served for free either
+    way; only the NETWORK fetch for misses is skipped. This is "wherever the scan's candle
+    sweep iterates symbols" — both `prefetch_universe_candles` (the off-lock warm-up) and
+    `_run_scan_locked`'s own miss-fetch call this same function, so the check here covers
+    both. This never touches `market.get_current_prices` (the exit-guard's SL price feed) —
+    only this BULK scan fetch honors the hold.
     """
     results: dict[str, tuple[list, bool]] = {}
     misses: list[str] = []
@@ -103,22 +193,36 @@ def _prefetch_candles(
             misses.append(sym)
 
     if not misses:
-        return results
+        return results, False
 
-    # Second pass: fetch misses in parallel.
+    if execution.rate_hold_active():
+        return results, False
+
+    # Second pass: fetch misses in parallel. `_rate_abort`: the first worker whose fetch comes
+    # back empty while a rate hold is now active (set by `note_rate_error` somewhere on the
+    # failed call — see providers.py/candle_cache.py) stops the REST of this cycle's misses
+    # from being attempted, rather than every remaining symbol individually tripping the same
+    # hold. get_candles's signature is unchanged — this reads the shared hold flag rather than
+    # having the fetch report its own classification.
+    _rate_abort = threading.Event()
+
     def _fetch(sym: str) -> tuple[str, list, bool]:
+        if _rate_abort.is_set():
+            return sym, [], False
         candles, hit = candle_cache.get_candles(
             exchange_id, sym, timeframe, limit, _provider_factory
         )
+        if not candles and not hit and execution.rate_hold_active():
+            _rate_abort.set()
         return sym, candles, hit
 
-    with ThreadPoolExecutor(max_workers=max(1, settings.scan_fetch_workers)) as pool:
-        futures = {pool.submit(_fetch, sym): sym for sym in misses}
-        for future in as_completed(futures):
-            sym, candles, hit = future.result()
-            results[sym] = (candles, hit)
+    pool = _get_fetch_pool()
+    futures = {pool.submit(_fetch, sym): sym for sym in misses}
+    for future in as_completed(futures):
+        sym, candles, hit = future.result()
+        results[sym] = (candles, hit)
 
-    return results
+    return results, _rate_abort.is_set()
 
 # Bars per day for each supported timeframe — used to convert the lookback_days setting
 # into the correct bar ``limit`` regardless of the active timeframe.
@@ -292,11 +396,44 @@ def prefetch_universe_candles(db: Session) -> int:
     Uses the SAME ``exchange``/``timeframe``/``limit``/``_universe`` the locked ``run_scan`` uses,
     so the warmed entries match exactly what ``run_scan`` then requests (the universe is a superset
     of run_scan's ``to_fetch``). Best-effort: any failure just leaves ``run_scan`` to fetch under
-    the lock exactly as before. Returns the number of symbols warmed."""
+    the lock exactly as before. Returns the number of symbols warmed.
+
+    NOT read-only w.r.t. the DB: on top of the pre-existing hold-already-active audit row
+    below, item 5 (2026-09-01) writes ONE ``scan_rate_hold``/``sweep_abort`` row when a
+    rate/weight hold starts MID-sweep and cuts this call's own fetch short (see
+    ``_prefetch_candles``'s *aborted* return value) — one row per cycle, deliberate; every
+    other write in this function stays confined to the in-process candle cache.
+
+    Fix B4 (scan-sweep rate circuit): if a rate/weight hold is already active when this
+    starts, the WHOLE sweep — including ``_universe()``'s own network call — is skipped this
+    cycle with one log line + one audit row (action ``scan_rate_hold``), instead of letting
+    every universe symbol individually fail into the same hold. ``_prefetch_candles`` itself
+    also honours the hold (so ``_run_scan_locked``'s own miss-fetch is covered too); the audit
+    row here is specific to THIS entry point. Never touches ``market.get_current_prices`` (the
+    90s position-guard's SL price feed) — exits keep their normal cache/WS/REST flow.
+    """
+    if execution.rate_hold_active():
+        logger.warning(
+            "prefetch_universe_candles: rate/weight hold active — skipping this cycle's "
+            "candle sweep"
+        )
+        audit.log(db, "scanner", "scan_rate_hold", entity="prefetch",
+                  reason="rate/weight hold active")
+        db.commit()
+        return 0
     provider = data_provider()
     universe = _universe(db, provider)
     limit = _days_to_bars(settings.backtest_lookback_days, settings.backtest_timeframe)
-    warmed = _prefetch_candles(settings.data_exchange, universe, settings.backtest_timeframe, limit)
+    warmed, aborted = _prefetch_candles(
+        settings.data_exchange, universe, settings.backtest_timeframe, limit
+    )
+    if aborted:
+        # Item 5: a mid-sweep rate hold cut this fetch short — without this row the remaining
+        # symbols just look like ordinary thin-data skips downstream, which is a misleading
+        # diagnosis (they were never actually fetched, not found empty).
+        audit.log(db, "scanner", "scan_rate_hold", entity="sweep_abort",
+                  reason="rate/weight hold started mid-sweep", where="prefetch_universe_candles")
+        db.commit()
     # Autotune stage 2 lives here rather than inside the scan: when every session slot is full
     # the scan is skipped entirely (capital saturated), and the levels would then go stale for
     # exactly as long as the app is busiest. This runs on the candles just warmed, off-lock,
@@ -420,9 +557,16 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
     limit = _days_to_bars(settings.backtest_lookback_days, settings.backtest_timeframe)
     exchange_id = settings.data_exchange
     _t_fetch = time.monotonic()
-    _candle_map = _prefetch_candles(
+    _candle_map, _fetch_aborted = _prefetch_candles(
         exchange_id, to_fetch, settings.backtest_timeframe, limit
     )
+    if _fetch_aborted:
+        # Item 5: without this row the symbols this abort cut short surface downstream as
+        # ordinary `skipped_thin_data` — a misleading diagnosis (never fetched, not found
+        # empty). One row per cycle at most, deliberate.
+        audit.log(db, "scanner", "scan_rate_hold", entity="sweep_abort",
+                  reason="rate/weight hold started mid-sweep", where=f"run:{scan.id}")
+        db.commit()
     t_fetch_ms = int((time.monotonic() - _t_fetch) * 1000)
     _cache_hits = sum(1 for _, hit in _candle_map.values() if hit)
     _cache_misses = len(to_fetch) - _cache_hits
@@ -955,6 +1099,13 @@ def _review_and_open(
             c["need"] if entry == c["entry"]
             else service.projected_ladder_cost(symbol, entry, c["distance_pct"], c["max_waves"])
         )
+        # P1: reserve a hair MORE than the exact projection. Step/tick filters can drift between
+        # now and a later wave (exchange-info refresh, restart), and a re-quantized rung then
+        # costs slightly more than the exact reserve — a one-cent shortfall kills the whole
+        # ladder (ONDO#14 died over $0.0078). The budget gate below sees the same inflated
+        # number, so the slack is funded, not borrowed.
+        if settings.kss_ladder_reserve_slack_pct > 0:
+            need *= 1.0 + settings.kss_ladder_reserve_slack_pct / 100.0
         # A first order the exchange will not accept can never trade: wave 0 comes out at the
         # symbol's minimum quantity, the venue rejects it (-1013) every cycle, and the session
         # sits ACTIVE holding nothing while occupying one of the concurrency slots. With every
@@ -1238,6 +1389,10 @@ def _open_session(
         max_waves = settings.scan_max_waves
     if isolated_fund is None:
         isolated_fund = service.projected_ladder_cost(symbol, entry, distance_pct, max_waves)
+        # Same reserve slack as the scan path (see the note there) — only when WE derive the
+        # fund; an explicitly-passed isolated_fund is the caller's number, untouched.
+        if settings.kss_ladder_reserve_slack_pct > 0:
+            isolated_fund *= 1.0 + settings.kss_ladder_reserve_slack_pct / 100.0
 
     if strategy_mode == "pyramid_up":
         row = service.create_pyramid_up_session(

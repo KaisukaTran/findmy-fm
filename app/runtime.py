@@ -72,6 +72,7 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "loss_reentry_blacklist_after": int,
     "loss_reentry_pardon": str,  # comma-separated manual pardon list
     "max_session_deploy_usd": float,  # hard ceiling on total USD deployed per session (0=off)
+    "kss_ladder_reserve_slack_pct": float,  # extra % on the ladder reserve at open (step-drift buffer)
     "min_expectancy_pct": float,
     "max_avg_mae_pct": float,  # drawdown gate (0=off) + ranking: shallower backtest dip = better
     "min_win_rate": float,
@@ -132,6 +133,12 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "opus_solo_min_consensus": float,
     "opus_lessons_max": int,
     "opus_history_n": int,
+    # P4 hardening: outbound heartbeat + repeated-placement-failure alert + the min_net_edge
+    # gate (an unsatisfiable pair with scan_tp_pct is the same silent-skip failure mode
+    # min_expectancy_pct had — autotune.enforce_consistency now covers it too).
+    "heartbeat_url": str,
+    "placement_alert_after": int,
+    "min_net_edge": float,
 }
 
 # ---------------------------------------------------------------------------

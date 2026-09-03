@@ -969,13 +969,32 @@ def _audit_insufficient_fund(db: Session, row: KssSession, result: dict) -> None
 
 
 def _floor_to_step(value: float, step: float) -> float:
-    """Quantize *value* DOWN to a multiple of *step* (Decimal-based — no binary-float drift).
-    Never rounds up: rounding up is exactly what turns a rung that just fits into one that
-    doesn't. ``step<=0`` is treated as "no snapping" (value returned unchanged)."""
+    """Quantize *value* DOWN to a multiple of *step* (Decimal-based — no binary-float drift),
+    tolerant of binary-float NOISE at the boundary (INJ session 18, live: a position holding
+    ``8.06 + 16.13`` INJ is ``24.189999999999998`` in binary float, not the mathematically
+    exact ``24.19`` — INJ's real stepSize IS ``0.01``, so ``24.19`` is perfectly step-legal and
+    the venue had already accepted an order of exactly that size for this position. Strict
+    flooring rounded that down a WHOLE step to ``24.18``, stranding the 0.01 residue below
+    minNotional once the TP filled — the shape behind this book's orphan sweeps).
+
+    A value within a RELATIVE epsilon (``1e-9 * max(1, |value|)`` — scaled to the value's own
+    magnitude, not a fixed absolute one, so it catches noise at any size without ever mistaking
+    a genuine shortfall for it) of the NEXT step boundary snaps UP to that boundary instead of
+    flooring a whole step down. A value that is truly below the boundary by more than noise —
+    including the ordinary case of "doesn't reach the next step at all" — still floors DOWN
+    exactly as before; callers that rely on strict flooring (``_try_partial_rung``'s
+    ``reserved_fund / price`` sizing, Fix 1) keep working because a real shortfall is never
+    noise-scale. ``step<=0`` is treated as "no snapping" (value returned unchanged)."""
     if step <= 0 or value <= 0:
         return max(value, 0.0)
-    d = (Decimal(str(value)) / Decimal(str(step))).quantize(Decimal("1"), rounding=ROUND_DOWN)
-    return float(d * Decimal(str(step)))
+    step_d = Decimal(str(step))
+    value_d = Decimal(str(value))
+    floor_units = (value_d / step_d).to_integral_value(rounding=ROUND_DOWN)
+    remainder = value_d - floor_units * step_d
+    epsilon = Decimal(str(1e-9 * max(1.0, abs(value))))
+    if step_d - remainder <= epsilon:
+        floor_units += 1
+    return float(floor_units * step_d)
 
 
 def _try_partial_rung(
@@ -1002,6 +1021,20 @@ def _try_partial_rung(
     and the pre-existing anchor-to-market safety net (``_anchor_dca_price``, which only ever
     lowers a rung, never raises it above ``next_wave.target_price``) apply identically. If that
     path refuses the shrunk rung, nothing is queued and this returns False — no retry around it.
+
+    Two gaps between "sized" and "actually paid" are closed here, not one. The ANCHORING half
+    is closed by sizing against the anchored price below, not the raw geometric one (see the
+    comment on ``price``). The TICK half — ``execution.round_to_filters`` quantises price
+    ``ROUND_HALF_UP`` at live placement, so a BUY can rest up to a half tick ABOVE the price
+    this function sized its quantity against (ATOM session 16, live: anchored 1.39055558,
+    resting venue price 1.39100000, tick 0.001) — is closed by sizing the quantity against the
+    remaining fund SHRUNK by ``kss_ladder_reserve_slack_pct`` (default 1%, dwarfing a
+    half-tick on any sane symbol) instead of the raw remainder. The session's own exchange-info
+    dict carries only stepSize/minQty (``providers.get_exchange_info`` never returns tickSize —
+    a known gap), so the exact post-quantisation price can't be replicated here; the slack is a
+    headroom reservation, not a tick simulation. A symbol whose tick is wide enough to eat more
+    than the slack is still refused by the ``qty * price > remaining`` guard below rather than
+    allowed to overshoot — that guard is the backstop for exactly that case.
     """
     from app.config import settings
 
@@ -1022,15 +1055,20 @@ def _try_partial_rung(
     if remaining <= 0 or price <= 0:
         return False
 
+    # The TICK half (see the docstring): reserve headroom against the venue's later price
+    # ROUND_HALF_UP by sizing against a shrunk fraction of remaining_fund, not the whole of
+    # it. slack_pct=0 reproduces the exact pre-reservation behaviour (remaining unchanged).
+    reserved_fund = remaining * (1 - settings.kss_ladder_reserve_slack_pct / 100.0)
+
     step = py._step_size if py._step_size > 0 else 0.00001
-    qty = _floor_to_step(remaining / price, step)
+    qty = _floor_to_step(reserved_fund / price, step)
     if qty < py._min_qty:
         return False
     partial_cost = qty * price
     if partial_cost < settings.scan_min_notional:
         return False
 
-    if qty * price > remaining:  # belt: the floor-to-step above must never round a cent UP
+    if qty * price > remaining:  # belt: reservation + floor-to-step above must never let this through
         return False
     full_cost = next_wave.quantity * next_wave.target_price
     partial_wave = WaveInfo(

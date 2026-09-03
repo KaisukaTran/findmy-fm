@@ -206,13 +206,28 @@ def _stub_exchange_info(monkeypatch, *, min_qty: float, step: float) -> None:
 
 
 def test_ragged_qty_is_floored_to_the_step_before_it_is_written(db, monkeypatch):
-    """Live evidence: INJ session 18 wrote quantity 24.189999999999998 to the DB while Binance
-    floored the SAME order to 24.18 (its 0.01 LOT_SIZE) — the residue that produced this
-    book's orphan sweeps once the TP filled. The row must carry the venue-legal quantity from
-    the moment it is written."""
+    """Live evidence: INJ session 18's position held ``8.06 + 16.13`` INJ, which is
+    ``24.189999999999998`` in binary float — not the mathematically exact ``24.19`` that
+    Binance had already accepted for this exact position (its stepSize IS 0.01, so 24.19 is
+    perfectly step-legal). ``_floor_to_step`` used to floor this STRICTLY, writing 24.18 and
+    stranding the 0.01 residue below minNotional once the TP filled — the shape behind this
+    book's orphan sweeps (Fix 2). It must now recognise the float noise and write the
+    step-legal 24.19, not a whole step below it."""
     _live(monkeypatch)
     _stub_exchange_info(monkeypatch, min_qty=0.01, step=0.01)
-    row = _session(db, avg=10.0, qty=24.189999999999998)
+    row = _session(db, avg=10.0, qty=8.06 + 16.13)
+
+    assert service.sync_resting_tp(db)["queued"] == 1
+
+    assert _tp_order(db, row.id).quantity == 24.19
+
+
+def test_a_genuinely_ragged_qty_still_floors_down_a_whole_step(db, monkeypatch):
+    """A quantity that is truly short of the next step boundary by more than float noise
+    (0.0051, not ~2e-15) must still floor DOWN, exactly as before Fix 2."""
+    _live(monkeypatch)
+    _stub_exchange_info(monkeypatch, min_qty=0.01, step=0.01)
+    row = _session(db, avg=10.0, qty=24.1849)
 
     assert service.sync_resting_tp(db)["queued"] == 1
 
@@ -231,18 +246,19 @@ def test_already_legal_qty_is_untouched(db, monkeypatch):
 
 def test_a_replace_also_writes_the_floored_quantity(db, monkeypatch):
     """The replace path (avg moved on a new fill) must not reintroduce the ragged qty the
-    create path just fixed."""
+    create path just fixed — and (Fix 2) must recognise float noise the same way the create
+    path does, writing the step-legal 24.19 rather than flooring a whole step down to 24.18."""
     _live(monkeypatch)
     _stub_exchange_info(monkeypatch, min_qty=0.01, step=0.01)
     row = _session(db, avg=10.0, qty=3.0)
     service.sync_resting_tp(db)
 
     row.avg_price = 9.0
-    row.total_filled_qty = 24.189999999999998
+    row.total_filled_qty = 8.06 + 16.13
     db.commit()
 
     assert service.sync_resting_tp(db)["replaced"] == 1
-    assert _tp_order(db, row.id).quantity == 24.18
+    assert _tp_order(db, row.id).quantity == 24.19
 
 
 def test_flooring_below_minqty_leaves_the_qty_alone(db, monkeypatch):

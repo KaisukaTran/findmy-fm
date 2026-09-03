@@ -301,3 +301,92 @@ def test_partial_rung_refused_below_sl_queues_nothing(db, mock_market):
     assert _pending_waves(db, row.id) == []
     assert _audits(db, "partial_rung", row.id) == []
     assert len(_audits(db, "wave_below_sl", row.id)) == 1
+
+
+# --- 8. the tick half: reserve slack so a partial rung survives the venue's price ROUND_HALF_UP -
+
+
+def _ledger_session(
+    db, *, symbol: str, isolated_fund: float, total_cost: float, avg_price: float = 1.45,
+) -> KssSession:
+    """A bare session row carrying only what ``_try_partial_rung`` itself reads
+    (isolated_fund/total_cost -> remaining_fund via ``_to_pyramid``/``PyramidSession``); the
+    anchored price is injected directly by the caller (monkeypatching ``_anchor_dca_price``),
+    so entry_price/distance_pct here are placeholders, not the real session's. ``avg_price``
+    defaults to just above the injected 1.39-ish price (row.sl_pct=0.0 still falls back to the
+    LIVE ``settings.sl_pct`` default of 8%% via ``_to_pyramid`` — an avg unrelated to the
+    injected price, like a flat 100.0, would trip that SL floor for no reason and refuse the
+    rung the test means to exercise)."""
+    row = KssSession(
+        symbol=symbol, entry_price=4.62, distance_pct=2.98, max_waves=6,
+        isolated_fund=isolated_fund, tp_pct=90.0, timeout_x_min=1440.0, gap_y_min=0.0,
+        status=SESSION_ACTIVE, current_wave=1, avg_price=avg_price, total_filled_qty=25.0,
+        total_cost=total_cost, sl_pct=0.0, strategy_mode="dca_down", first_wave_usd=39.98,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def test_atom_shortfall_reserves_slack_so_it_still_fits_after_a_tick_bump_up(
+    db, mock_market, monkeypatch
+):
+    """Fix 1 (live evidence, ATOM session 16, right now): ``execution.round_to_filters``
+    quantises price ``ROUND_HALF_UP`` at placement, so the order that actually rests can sit
+    up to a half tick ABOVE the price the partial rung's quantity was sized against — book
+    price 1.39055558, ATOM tick 0.001, venue resting price 1.39100000. Reproduced with the
+    session's REAL numbers (remaining fund $112.87818507 = isolated_fund 230.49528507 minus
+    total_cost 117.6171) and ATOM's REAL LOT_SIZE (stepSize/minQty 0.01, not the generic
+    mock_market 0.00001) — the pre-fix formula queues qty 81.17 (matches the live venue's
+    ``origQty`` exactly), which costs $112.90747 once the venue rounds the price up to 1.391:
+    MORE than the $112.87818507 that was reserved. The fix must still fit after that bump."""
+    monkeypatch.setattr(
+        "app.kss.pyramid.get_exchange_info",
+        lambda s: {"minQty": 0.01, "stepSize": 0.01, "maxQty": 10000.0},
+    )
+    row = _ledger_session(
+        db, symbol="ATOM", isolated_fund=230.49528507, total_cost=117.6171,
+    )
+    py = service._to_pyramid(row)
+    assert py.remaining_fund == pytest.approx(112.87818507, abs=1e-6)
+    monkeypatch.setattr(service, "_anchor_dca_price", lambda *a, **kw: 1.39055558)
+
+    next_wave = service.WaveInfo(wave_num=2, quantity=100.0, target_price=1.4, status="sent")
+    ok = service._try_partial_rung(db, py, row, next_wave)
+    assert ok
+
+    queued = [p for p in orders.list_pending(db) if p.source_ref == f"pyramid:{row.id}:wave:2"]
+    assert len(queued) == 1
+    wave2 = queued[0]
+    assert wave2.price == pytest.approx(1.39055558)
+    # Pre-fix: qty would be 81.17 (fits the raw price, overshoots once the venue bumps it).
+    assert wave2.quantity < 81.17, "must be shrunk below the pre-fix (no-slack) quantity"
+    assert wave2.quantity * wave2.price <= py.remaining_fund  # fits at the raw (anchored) price
+    # ...and STILL fits when the venue then rounds the price up to the next tick (0.001).
+    assert wave2.quantity * 1.391 <= 112.87818507
+
+
+def test_slack_reservation_refuses_when_the_shrunk_quantity_cannot_clear_the_notional_floor(
+    db, mock_market, monkeypatch
+):
+    """A remaining fund engineered so the PRE-FIX (no-slack) sizing would have queued exactly
+    at ``scan_min_notional`` ($10.00), but the 1% reservation knocks the shrunk notional under
+    the floor — the refuse-path (today's ``insufficient_fund`` dead end) must still fire
+    rather than queue dust the venue would reject anyway."""
+    monkeypatch.setattr(
+        "app.kss.pyramid.get_exchange_info",
+        lambda s: {"minQty": 0.01, "stepSize": 0.01, "maxQty": 10000.0},
+    )
+    row = _ledger_session(
+        db, symbol="ATOM", isolated_fund=1000.0, total_cost=1000.0 - 10.005, avg_price=1.05,
+    )
+    py = service._to_pyramid(row)
+    assert py.remaining_fund == pytest.approx(10.005, abs=1e-9)
+    monkeypatch.setattr(service, "_anchor_dca_price", lambda *a, **kw: 1.0)
+
+    next_wave = service.WaveInfo(wave_num=2, quantity=100.0, target_price=1.4, status="sent")
+    ok = service._try_partial_rung(db, py, row, next_wave)
+
+    assert not ok
+    assert _pending_waves(db, row.id) == []

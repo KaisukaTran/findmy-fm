@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timedelta
+from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -310,6 +311,8 @@ def _rearm_dead_ladders(db: Session) -> None:
         # (un-anchored) way, so this reports the identical (session, wave) shortfall on_fill
         # would have — the dedupe below recognises it as the same one instead of a new alert.
         if next_cost > py.remaining_fund + 1e-9:
+            if _try_partial_rung(db, py, row, next_wave):
+                continue
             _audit_insufficient_fund(
                 db, row,
                 {"wave_num": next_wave_num, "need": next_cost, "remaining": py.remaining_fund},
@@ -326,6 +329,63 @@ def _rearm_dead_ladders(db: Session) -> None:
         # else: _queue_wave_if_above_sl already audited why (wave_already_queued / wave_below_sl
         # / deploy_cap_hit) — py/row's mutated current_wave is discarded unsaved here, mirroring
         # handle_fill_event's own revert of a speculative advance that was not actually queued.
+
+
+def _reconcile_tp_triggered(db: Session) -> None:
+    """Watchdog: a ``TP_TRIGGERED`` session is meant to be transient — ``_handle_tp_triggered``
+    returns it to ACTIVE whenever K-2 defers the sell, and otherwise its resting/market exit is
+    expected to complete it (``handle_fill_event``'s ``tp`` branch → SESSION_COMPLETED). If that
+    exit is instead rejected or lost outside that flow, nothing else reconciles it: the guard,
+    the deadline sweep and ``_rearm_dead_ladders`` above all filter on ``status ==
+    SESSION_ACTIVE``, so a TP_TRIGGERED session can strand forever.
+
+    Live evidence: EIGEN session 15 — its MARKET exit was killed by the resting-tp stale-row
+    sweep, the orphan sweep swept the position 11 minutes later, and the session was still
+    ``status='tp_triggered'`` two days on with ``positions.EIGEN.quantity == 0.0``.
+
+    A PENDING ``pyramid:{id}:tp`` order (the resting LIMIT exit, or a MARKET dynamic-TP sell
+    ``_queue_dynamic_exit`` just queued this very pass) has not resolved yet — that is the
+    ordinary, still-open path to SESSION_COMPLETED, not a strand; left alone for a later pass.
+
+    A FLAT session with NOTHING left pending (Position for the symbol missing or ``quantity <=
+    0``) was closed by some OTHER path — finalise it to the same terminal status a normal TP
+    completion uses (SESSION_COMPLETED; never invent a new one), with one audit row so the
+    forensic trail records why. A session that still HOLDS inventory must NOT be touched here —
+    silently completing it would abandon real coin the book still thinks it owns — it is
+    audited once (deduped, mirroring ``_audit_insufficient_fund``) so a human notices instead.
+    """
+    from app.models import PENDING, Position
+
+    for row in (
+        db.query(KssSession).filter(KssSession.status == SESSION_TP_TRIGGERED).all()
+    ):
+        pending_tp = (
+            db.query(PendingOrder.id)
+            .filter(
+                PendingOrder.status == PENDING,
+                PendingOrder.side == "SELL",
+                PendingOrder.source_ref == f"pyramid:{row.id}:tp",
+            )
+            .first()
+        )
+        if pending_tp is not None:
+            continue  # still resolving — not a strand
+        pos = db.query(Position).filter(Position.symbol == row.symbol).one_or_none()
+        qty = pos.quantity if pos is not None else 0.0
+        entity = f"kss:{row.id}"
+        if qty <= 0:
+            row.status = SESSION_COMPLETED
+            audit.log(db, "kss", "tp_triggered_reconciled", entity=entity, symbol=row.symbol,
+                      flat=True)
+            continue
+        existing = (
+            db.query(AuditLog)
+            .filter(AuditLog.action == "tp_triggered_stranded", AuditLog.entity == entity)
+            .first()
+        )
+        if existing is None:
+            audit.log(db, "kss", "tp_triggered_stranded", entity=entity, symbol=row.symbol,
+                      quantity=round(qty, 8))
 
 
 # --- lifecycle ----------------------------------------------------------
@@ -868,9 +928,14 @@ def handle_fill_event(
     elif result.get("action") == "tp_triggered":
         _handle_tp_triggered(db, row, result)
     elif result.get("reason") == "insufficient_fund":
-        # P1 Fix 4: on_fill declined to queue the next wave (isolated_fund exhausted) — this is
-        # a DEAD LADDER with no other trace, so it must be audited, not just logged.
-        _audit_insufficient_fund(db, row, result)
+        # ATOM#16: on_fill declined to queue the full-size next wave (isolated_fund exhausted,
+        # sometimes by pennies). Try a SHRUNK rung at the SAME price before giving up — the
+        # owner's call is to spend what the ladder actually reserved, never top it up. Only
+        # when that too is impossible (below minQty/minNotional, or refused by the SL/deploy-
+        # cap walls) does this fall back to the original dead-ladder audit (P1 Fix 4).
+        next_wave = py.generate_wave(result["wave_num"])
+        if not _try_partial_rung(db, py, row, next_wave):
+            _audit_insufficient_fund(db, row, result)
 
     db.commit()
     return result
@@ -901,6 +966,114 @@ def _audit_insufficient_fund(db: Session, row: KssSession, result: dict) -> None
     audit.log(db, "kss", "insufficient_fund", entity=entity, symbol=row.symbol,
               wave=wave_num, need=round(result.get("need", 0.0), 4),
               remaining=round(result.get("remaining", 0.0), 4))
+
+
+def _floor_to_step(value: float, step: float) -> float:
+    """Quantize *value* DOWN to a multiple of *step* (Decimal-based — no binary-float drift).
+    Never rounds up: rounding up is exactly what turns a rung that just fits into one that
+    doesn't. ``step<=0`` is treated as "no snapping" (value returned unchanged)."""
+    if step <= 0 or value <= 0:
+        return max(value, 0.0)
+    d = (Decimal(str(value)) / Decimal(str(step))).quantize(Decimal("1"), rounding=ROUND_DOWN)
+    return float(d * Decimal(str(step)))
+
+
+def _try_partial_rung(
+    db: Session, py: PyramidSession, row: KssSession, next_wave: WaveInfo
+) -> bool:
+    """ATOM#16 / kss_partial_last_rung_enabled: when the full-size geometric rung
+    ``next_wave`` does not fit the session's ``remaining_fund``, queue a rung at the SAME
+    ``next_wave.target_price`` with a REDUCED quantity sized to spend exactly what remains,
+    instead of leaving the ladder with no rung at all. Returns True iff a (partial) rung was
+    queued; the caller falls back to the ordinary ``insufficient_fund`` audit on False.
+
+    Quantity is the largest step-legal amount whose notional clears BOTH the symbol's minQty
+    (reused from ``py`` — the SAME ``_min_qty``/``_step_size`` the session's own
+    ``PyramidSession`` already loaded via ``get_exchange_info`` in ``__post_init__``, no extra
+    exchange-info round trip) and ``settings.scan_min_notional`` — the project's own dust
+    floor, which is what a shrunk BUY is actually checked against elsewhere in this codebase
+    (``orders._apply_cash_cap``, the scanner's ``_first_wave_too_small``: "the venue would
+    reject it"). The venue's raw NOTIONAL filter is enforced separately and unconditionally at
+    live placement time (``execution.round_to_filters``), live-only — this is a pre-flight
+    floor, not a bypass of it.
+
+    Price is passed through UNCHANGED as the input to ``_queue_wave_if_above_sl`` — exactly
+    like a full-size rung already does — so the existing SL-floor / deploy-cap / dedupe walls
+    and the pre-existing anchor-to-market safety net (``_anchor_dca_price``, which only ever
+    lowers a rung, never raises it above ``next_wave.target_price``) apply identically. If that
+    path refuses the shrunk rung, nothing is queued and this returns False — no retry around it.
+    """
+    from app.config import settings
+
+    if not settings.kss_partial_last_rung_enabled:
+        return False
+    remaining = py.remaining_fund
+    # Size against the price the order will ACTUALLY be queued at, not the raw geometric one:
+    # `_queue_wave_if_above_sl` re-anchors every rung to the live market, and that anchored
+    # price can sit a hair ABOVE the raw one (it rounds to 8dp off the previous wave's own
+    # rounded price, while generate_wave rounds from entry to the symbol's precision). Sizing
+    # on the raw price and paying the anchored one put the notional back OVER remaining_fund —
+    # by ~$1e-5 here, but "a rung that costs a hair more than was reserved" is exactly the
+    # one-cent class of bug that killed ONDO#14's ladder. Anchoring is idempotent for the same
+    # inputs, so the value computed here is the value that path will compute again.
+    price = _anchor_dca_price(
+        db, row.id, row.symbol, py.distance_pct, next_wave.target_price, py.entry_price,
+    )
+    if remaining <= 0 or price <= 0:
+        return False
+
+    step = py._step_size if py._step_size > 0 else 0.00001
+    qty = _floor_to_step(remaining / price, step)
+    if qty < py._min_qty:
+        return False
+    partial_cost = qty * price
+    if partial_cost < settings.scan_min_notional:
+        return False
+
+    if qty * price > remaining:  # belt: the floor-to-step above must never round a cent UP
+        return False
+    full_cost = next_wave.quantity * next_wave.target_price
+    partial_wave = WaveInfo(
+        wave_num=next_wave.wave_num, quantity=qty, target_price=price, status="sent",
+    )
+    py.current_wave = next_wave.wave_num
+    py.waves.append(partial_wave)
+    if not _queue_wave_if_above_sl(db, py, row.id, row.symbol, py._wave_to_order(partial_wave)):
+        return False  # SL/deploy-cap/dedupe refused it — nothing queued, current_wave discarded
+
+    _save_state(row, py)
+    _audit_partial_rung(
+        db, row, wave_num=next_wave.wave_num, full_qty=next_wave.quantity, partial_qty=qty,
+        full_cost=full_cost, partial_cost=partial_cost, remaining_fund=remaining,
+    )
+    return True
+
+
+def _audit_partial_rung(
+    db: Session, row: KssSession, *, wave_num: int, full_qty: float, partial_qty: float,
+    full_cost: float, partial_cost: float, remaining_fund: float,
+) -> None:
+    """Audit a shrunk (partial) rung — at MOST ONCE per (session, wave), mirroring
+    ``_audit_insufficient_fund``'s dedupe so a repeated manage/fill pass over the same starved
+    wave cannot spam the trail (once queued, the wave/pending-order row itself is also what
+    stops both callers from re-attempting it — this dedupe is belt-and-suspenders)."""
+    entity = f"kss:{row.id}"
+    existing = (
+        db.query(AuditLog)
+        .filter(AuditLog.action == "partial_rung", AuditLog.entity == entity)
+        .all()
+    )
+    for a in existing:
+        try:
+            detail = json.loads(a.detail or "{}")
+        except (TypeError, ValueError):
+            continue
+        if detail.get("wave") == wave_num:
+            return  # already audited this exact (session, wave) partial rung
+    audit.log(db, "kss", "partial_rung", entity=entity, symbol=row.symbol, wave=wave_num,
+              full_qty=round(full_qty, 8), partial_qty=round(partial_qty, 8),
+              full_cost=round(full_cost, 4), partial_cost=round(partial_cost, 4),
+              remaining_fund=round(remaining_fund, 4))
 
 
 def _handle_pyramid_up_fill(
@@ -1761,86 +1934,96 @@ def manage_open_sessions(db: Session) -> list[int]:
     from app.market import get_current_prices
 
     active = db.query(KssSession).filter(KssSession.status == SESSION_ACTIVE).all()
-    if not active:
-        return []
-    prices = get_current_prices(list({s.symbol for s in active}))
     triggered: list[int] = []
-    for row in active:
-        price = prices.get(row.symbol)
-        if not price:
-            continue
-        if _exit_in_flight(db, row.id):
-            continue  # its stop/TP sell is already queued — re-queueing would duplicate it
-        if row.strategy_mode == "pyramid_up":
-            # Defensive-DCA trigger FIRST (reversal-flip): if price has fallen to the defensive
-            # rung, fill it now — the session flips to dca_down in _handle_pyramid_up_fill and the
-            # up-add loop below becomes moot (its ARMED waves get cancelled on the flip).
-            _maybe_queue_pyramid_defensive(db, row, price)
-            # Add-trigger loop (docs/pyramid-up-plan.md): queue the next armed add-on once price
-            # clears its trigger, the prior add is filled, and capital caps allow it. Exit
-            # (TP/trail/SL) is the existing _evaluate_dynamic_exit below — pyramid_up never queues
-            # a DCA-down wave, so it never falls through to py.check_tp.
-            _maybe_queue_pyramid_add(db, row, price)
-            if row.total_filled_qty > 0:
-                if _evaluate_dynamic_exit(db, row, price):
-                    if row.status != SESSION_ACTIVE:
+    # `if active:` rather than an early `return []`: the only session in the book can be a
+    # stranded TP_TRIGGERED one (see _reconcile_tp_triggered below) with nothing ACTIVE at
+    # all — an early return used to skip the watchdogs below it, forever, for exactly that case.
+    if active:
+        prices = get_current_prices(list({s.symbol for s in active}))
+        for row in active:
+            price = prices.get(row.symbol)
+            if not price:
+                continue
+            if _exit_in_flight(db, row.id):
+                continue  # its stop/TP sell is already queued — re-queueing would duplicate it
+            if row.strategy_mode == "pyramid_up":
+                # Defensive-DCA trigger FIRST (reversal-flip): if price has fallen to the
+                # defensive rung, fill it now — the session flips to dca_down in
+                # _handle_pyramid_up_fill and the up-add loop below becomes moot (its ARMED
+                # waves get cancelled on the flip).
+                _maybe_queue_pyramid_defensive(db, row, price)
+                # Add-trigger loop (docs/pyramid-up-plan.md): queue the next armed add-on once
+                # price clears its trigger, the prior add is filled, and capital caps allow it.
+                # Exit (TP/trail/SL) is the existing _evaluate_dynamic_exit below — pyramid_up
+                # never queues a DCA-down wave, so it never falls through to py.check_tp.
+                _maybe_queue_pyramid_add(db, row, price)
+                if row.total_filled_qty > 0:
+                    if _evaluate_dynamic_exit(db, row, price):
+                        if row.status != SESSION_ACTIVE:
+                            triggered.append(row.id)
+                    elif _pyramid_up_hard_sl(db, row, price):
+                        # not armed / still accumulating → the hard SL is the only floor (no
+                        # DCA-down).
                         triggered.append(row.id)
-                elif _pyramid_up_hard_sl(db, row, price):
-                    # not armed / still accumulating → the hard SL is the only floor (no DCA-down).
+                continue
+            if row.total_filled_qty <= 0:
+                continue
+            if _evaluate_dynamic_exit(db, row, price):
+                # the dynamic channel took over this session this tick — skip the frozen exits
+                # + DCA.
+                if row.status != SESSION_ACTIVE:
                     triggered.append(row.id)
-            continue
-        if row.total_filled_qty <= 0:
-            continue
-        if _evaluate_dynamic_exit(db, row, price):
-            # the dynamic channel took over this session this tick — skip the frozen exits + DCA.
-            if row.status != SESSION_ACTIVE:
-                triggered.append(row.id)
-            continue
-        py = _to_pyramid(row)
-        # 1.5 live maker: the exit already rests on the exchange (sync_resting_tp), so
-        # triggering a market TP here would sell the same inventory twice.
-        res = None if orders.resting_model_active() else py.check_tp(price)
-        if res and not _tp_clears_cost(db, row.symbol, price):
-            # K-2 defer: market hit the session TP but it would realize below true cost+fees.
-            py.status = PyramidSessionStatus.ACTIVE
-            audit.log(db, "scheduler", "tp_deferred", entity=f"kss:{row.id}",
-                      symbol=row.symbol, price=price)
-            res = None  # fall through to the stop-loss check below
-        if res:
-            _queue(db, res["order"])
-            _save_state(row, py)
-            audit.log(db, "scheduler", "tp_queued", entity=f"kss:{row.id}",
-                      symbol=row.symbol, price=price)
-            _cancel_pending_waves(db, row.id)  # session closing → kill stale DCA orders (else they
-            triggered.append(row.id)           # fill later into a position no session owns = orphan
-        else:
-            # check_stop also updates peak_price; always save so the high-water
-            # mark is persisted even when neither exit triggers.
-            res = py.check_stop(price)
-            if (res and res.get("action") == "trailing_stop"
-                    and not _tp_clears_cost(db, row.symbol, price)):
-                # K-trail: a trailing stop must only LOCK PROFIT, never sell below the true
-                # cost basis + fees. Defer — the hard stop-loss (sl_pct) still cuts genuine
-                # losers; the position rides so DCA can pull avg down toward TP.
-                audit.log(db, "scheduler", "trailing_deferred", entity=f"kss:{row.id}",
+                continue
+            py = _to_pyramid(row)
+            # 1.5 live maker: the exit already rests on the exchange (sync_resting_tp), so
+            # triggering a market TP here would sell the same inventory twice.
+            res = None if orders.resting_model_active() else py.check_tp(price)
+            if res and not _tp_clears_cost(db, row.symbol, price):
+                # K-2 defer: market hit the session TP but it would realize below true cost+fees.
+                py.status = PyramidSessionStatus.ACTIVE
+                audit.log(db, "scheduler", "tp_deferred", entity=f"kss:{row.id}",
                           symbol=row.symbol, price=price)
-                _save_state(row, py)  # persist the peak high-water mark
-            elif res:
+                res = None  # fall through to the stop-loss check below
+            if res:
                 _queue(db, res["order"])
                 _save_state(row, py)
-                audit.log(
-                    db, "scheduler", "stop_queued", entity=f"kss:{row.id}",
-                    symbol=row.symbol, price=price, kind=res["action"],
-                )
+                audit.log(db, "scheduler", "tp_queued", entity=f"kss:{row.id}",
+                          symbol=row.symbol, price=price)
                 _cancel_pending_waves(db, row.id)  # session closing → kill stale DCA orders
-                triggered.append(row.id)
+                triggered.append(row.id)           # (else they fill later into a position no
+                                                    # session owns = orphan)
             else:
-                _save_state(row, py)
-    db.commit()
-    # Watchdog for a ladder whose fill-time queue attempt was refused and never got asked
-    # again (see _rearm_dead_ladders). Runs AFTER the commit above so it sees a fresh, fully
-    # up to date view of anything the loop just closed/queued this same pass.
+                # check_stop also updates peak_price; always save so the high-water
+                # mark is persisted even when neither exit triggers.
+                res = py.check_stop(price)
+                if (res and res.get("action") == "trailing_stop"
+                        and not _tp_clears_cost(db, row.symbol, price)):
+                    # K-trail: a trailing stop must only LOCK PROFIT, never sell below the true
+                    # cost basis + fees. Defer — the hard stop-loss (sl_pct) still cuts genuine
+                    # losers; the position rides so DCA can pull avg down toward TP.
+                    audit.log(db, "scheduler", "trailing_deferred", entity=f"kss:{row.id}",
+                              symbol=row.symbol, price=price)
+                    _save_state(row, py)  # persist the peak high-water mark
+                elif res:
+                    _queue(db, res["order"])
+                    _save_state(row, py)
+                    audit.log(
+                        db, "scheduler", "stop_queued", entity=f"kss:{row.id}",
+                        symbol=row.symbol, price=price, kind=res["action"],
+                    )
+                    _cancel_pending_waves(db, row.id)  # session closing → kill stale DCA orders
+                    triggered.append(row.id)
+                else:
+                    _save_state(row, py)
+        db.commit()
+    # Watchdogs: re-attempt a dead ladder's next rung (_rearm_dead_ladders) and finalise/flag a
+    # TP_TRIGGERED session its exit never actually closed (_reconcile_tp_triggered). Run
+    # unconditionally (not nested under `if active:`) so a session that is itself the ONLY one
+    # in the book and not ACTIVE — the stranded TP_TRIGGERED shape this exists to fix — still
+    # gets reconciled. Runs AFTER the commit above so it sees a fresh, fully up to date view of
+    # anything the loop just closed/queued this same pass.
     _rearm_dead_ladders(db)
+    _reconcile_tp_triggered(db)
     db.commit()
     return triggered
 
@@ -1913,6 +2096,17 @@ def sync_resting_tp(db: Session) -> dict:
     for row in db.query(KssSession).filter(KssSession.status == SESSION_ACTIVE).all():
         py = _to_pyramid(row)
         qty = py.total_filled_qty
+        # Quantise DOWN to the venue's LOT_SIZE step before this quantity is ever written to
+        # the DB, or book and venue can disagree (INJ session 18, live: the DB wrote
+        # 24.189999999999998, Binance floored the SAME order to 24.18 — the 0.01 residue that
+        # produced this book's orphan sweeps once the TP filled). Reuses the session's already
+        # loaded step (no extra exchange-info round trip). Never rounds UP (_floor_to_step's
+        # own invariant), and never lets flooring push the exit below minQty — an exit is
+        # never gated/shrunk to nothing, so a qty that would floor under minQty is left exactly
+        # as it was computed.
+        floored_qty = _floor_to_step(qty, py._step_size)
+        if floored_qty >= py._min_qty:
+            qty = floored_qty
         price = max(py.estimated_tp_price, _k2_floor_price(db, row.symbol))
         if qty <= 0 or price <= 0:
             continue
@@ -1953,11 +2147,26 @@ def sync_resting_tp(db: Session) -> dict:
         if session_id not in live_sessions:
             order.status = models.REJECTED
             order.reviewer = "resting-tp"
+            order.reject_reason = _resting_tp_drop_reason(db, session_id)
             order.decided_at = utcnow()
             out["dropped"] += 1
 
     db.commit()
     return out
+
+
+def _resting_tp_drop_reason(db: Session, session_id: int) -> str:
+    """Why ``sync_resting_tp``'s stale-row sweep dropped a resting TP row — the forensic trail
+    should never again require inference (live evidence: EIGEN session 15, orders 39/43,
+    ``reject_reason`` was NULL and the real cause had to be reconstructed from a sibling MARKET
+    order's timestamp). Mirrors the wording style of ``_cancel_pending_waves``'s ``reason`` /
+    ``_reap_orphan_rungs``'s ``"session ended (orphan rung swept)"``."""
+    sess = db.get(KssSession, session_id)
+    if sess is None:
+        return "resting-tp: session no longer exists"
+    if sess.status != SESSION_ACTIVE:
+        return f"resting-tp: session no longer active ({sess.status})"
+    return "resting-tp: session flat or unpriced"
 
 
 # Last price the position-guard saw per session — for crash-detect (in-memory, best-effort; resets

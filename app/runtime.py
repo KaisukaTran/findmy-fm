@@ -73,6 +73,7 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "loss_reentry_pardon": str,  # comma-separated manual pardon list
     "max_session_deploy_usd": float,  # hard ceiling on total USD deployed per session (0=off)
     "kss_ladder_reserve_slack_pct": float,  # extra % on the ladder reserve at open (step-drift buffer)
+    "kss_partial_last_rung_enabled": _to_bool,  # shrink a starved rung to fit remaining_fund instead of skipping it
     "min_expectancy_pct": float,
     "max_avg_mae_pct": float,  # drawdown gate (0=off) + ranking: shallower backtest dip = better
     "min_win_rate": float,
@@ -124,6 +125,9 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "maker_orders": _to_bool,
     "order_fill_timeout_sec": int,
     "live_use_testnet": _to_bool,
+    # 2026-09-03 hang hardening: socket timeout applied to every ccxt client (execution._client
+    # AND every data provider) — see config.py's exchange_timeout_sec docstring.
+    "exchange_timeout_sec": float,
     # Phase 0 capital anchor (docs/capital-scaling-2026-08-23.md §2.1) — LIVE + opt-in only;
     # off (default) or paper always uses settings.account_equity unchanged.
     "use_exchange_balance": _to_bool,

@@ -177,6 +177,87 @@ def test_stopped_session_drops_its_exit(db, monkeypatch):
     assert _tp_order(db, row.id).status == REJECTED
 
 
+def test_dropped_exit_records_why(db, monkeypatch):
+    """Live evidence (EIGEN session 15, order 39/43): the stale-row sweep rejected two
+    resting-tp rows with reject_reason=NULL — the forensic trail had to be inferred from a
+    match against the sibling MARKET exit. It must never again require inference."""
+    _live(monkeypatch)
+    row = _session(db)
+    service.sync_resting_tp(db)
+
+    row.status = models.SESSION_STOPPED
+    db.commit()
+    service.sync_resting_tp(db)
+
+    order = _tp_order(db, row.id)
+    assert order.status == REJECTED
+    assert order.reject_reason
+    assert "resting-tp" in order.reject_reason
+
+
+# --- LOT_SIZE quantisation before the row is written (Fix 2) ----------------
+
+
+def _stub_exchange_info(monkeypatch, *, min_qty: float, step: float) -> None:
+    monkeypatch.setattr(
+        "app.kss.pyramid.get_exchange_info",
+        lambda symbol: {"minQty": min_qty, "stepSize": step, "minNotional": 0.0},
+    )
+
+
+def test_ragged_qty_is_floored_to_the_step_before_it_is_written(db, monkeypatch):
+    """Live evidence: INJ session 18 wrote quantity 24.189999999999998 to the DB while Binance
+    floored the SAME order to 24.18 (its 0.01 LOT_SIZE) — the residue that produced this
+    book's orphan sweeps once the TP filled. The row must carry the venue-legal quantity from
+    the moment it is written."""
+    _live(monkeypatch)
+    _stub_exchange_info(monkeypatch, min_qty=0.01, step=0.01)
+    row = _session(db, avg=10.0, qty=24.189999999999998)
+
+    assert service.sync_resting_tp(db)["queued"] == 1
+
+    assert _tp_order(db, row.id).quantity == 24.18
+
+
+def test_already_legal_qty_is_untouched(db, monkeypatch):
+    _live(monkeypatch)
+    _stub_exchange_info(monkeypatch, min_qty=0.01, step=0.01)
+    row = _session(db, avg=10.0, qty=3.0)
+
+    service.sync_resting_tp(db)
+
+    assert _tp_order(db, row.id).quantity == 3.0
+
+
+def test_a_replace_also_writes_the_floored_quantity(db, monkeypatch):
+    """The replace path (avg moved on a new fill) must not reintroduce the ragged qty the
+    create path just fixed."""
+    _live(monkeypatch)
+    _stub_exchange_info(monkeypatch, min_qty=0.01, step=0.01)
+    row = _session(db, avg=10.0, qty=3.0)
+    service.sync_resting_tp(db)
+
+    row.avg_price = 9.0
+    row.total_filled_qty = 24.189999999999998
+    db.commit()
+
+    assert service.sync_resting_tp(db)["replaced"] == 1
+    assert _tp_order(db, row.id).quantity == 24.18
+
+
+def test_flooring_below_minqty_leaves_the_qty_alone(db, monkeypatch):
+    """The never-gate-exits invariant: flooring must never shrink a resting exit to something
+    the venue won't even accept as a minimum lot — leave the (still ragged) qty as-is rather
+    than block or zero the exit."""
+    _live(monkeypatch)
+    _stub_exchange_info(monkeypatch, min_qty=0.02, step=0.01)
+    row = _session(db, avg=10.0, qty=0.014)
+
+    assert service.sync_resting_tp(db)["queued"] == 1
+
+    assert _tp_order(db, row.id).quantity == 0.014
+
+
 # --- no second, market TP ---------------------------------------------------
 
 

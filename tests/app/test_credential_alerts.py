@@ -428,3 +428,78 @@ def test_health_reports_how_long_ago_the_last_cycle_completed(client, monkeypatc
     assert body["scheduler_running"] is True
     assert body["last_cycle_at"] == stamp
     assert body["last_cycle_seconds_ago"] == pytest.approx(42.0, abs=2.0)
+
+
+# --- 2026-09-03 hang hardening: /health.stalled — a wedged (not crashed) process --------------
+
+
+def _health_status(*, last_cycle_at=None, last_guard_at=None):
+    return {
+        "scheduler_running": True, "interval_min": settings.scan_interval_min,
+        "last_cycle_at": last_cycle_at, "last_guard_at": last_guard_at, "last_summary": {},
+    }
+
+
+def test_health_reports_guard_seconds_ago(client):
+    body = client.get("/health").json()
+    assert "guard_seconds_ago" in body
+    assert "stalled" in body
+
+
+def test_health_not_stalled_with_fresh_timestamps(client, monkeypatch):
+    from datetime import timedelta
+
+    from app.clock import utcnow
+
+    now_ish = (utcnow() - timedelta(seconds=5)).isoformat()
+    monkeypatch.setattr(scheduler, "status",
+                         lambda: _health_status(last_cycle_at=now_ish, last_guard_at=now_ish))
+
+    body = client.get("/health").json()
+
+    assert body["stalled"] is False
+
+
+def test_health_stalled_true_on_an_old_cycle_timestamp(client, monkeypatch):
+    from datetime import timedelta
+
+    from app.clock import utcnow
+
+    monkeypatch.setattr(settings, "scan_interval_min", 15)  # threshold = max(3*15*60, 900) = 2700s
+    old = (utcnow() - timedelta(seconds=2701)).isoformat()
+    fresh = utcnow().isoformat()
+    monkeypatch.setattr(scheduler, "status",
+                         lambda: _health_status(last_cycle_at=old, last_guard_at=fresh))
+
+    body = client.get("/health").json()
+
+    assert body["stalled"] is True
+
+
+def test_health_stalled_true_on_an_old_guard_timestamp(client, monkeypatch):
+    from datetime import timedelta
+
+    from app.clock import utcnow
+
+    monkeypatch.setattr(settings, "kss_exit_check_sec", 90)  # threshold = max(10*90, 600) = 900s
+    old = (utcnow() - timedelta(seconds=901)).isoformat()
+    fresh = utcnow().isoformat()
+    monkeypatch.setattr(scheduler, "status",
+                         lambda: _health_status(last_cycle_at=fresh, last_guard_at=old))
+
+    body = client.get("/health").json()
+
+    assert body["stalled"] is True
+
+
+def test_health_not_stalled_when_the_scheduler_never_ran(client, monkeypatch):
+    """A fresh boot (neither loop has completed a pass yet) is not a stall — None means
+    'hasn't run yet', not 'went silent'."""
+    monkeypatch.setattr(scheduler, "status",
+                         lambda: _health_status(last_cycle_at=None, last_guard_at=None))
+
+    body = client.get("/health").json()
+
+    assert body["stalled"] is False
+    assert body["last_cycle_seconds_ago"] is None
+    assert body["guard_seconds_ago"] is None

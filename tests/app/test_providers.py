@@ -1,10 +1,14 @@
 """Tests for app.data.providers (ccxt wrapper) with a fake offline exchange."""
 
+import threading
+import time
+
 import ccxt
 import pytest
 
 from app import execution
-from app.data.providers import CcxtProvider
+from app.config import settings
+from app.data.providers import CcxtProvider, get_provider, reset_providers
 
 
 class _FakeEx:
@@ -68,6 +72,16 @@ def test_all_symbols_volume_floor():
 def test_exchange_info():
     info = _provider().get_exchange_info("BTC")
     assert info["minQty"] == 0.0001 and info["minNotional"] == 5.0
+
+
+def test_ccxt_provider_applies_the_configured_socket_timeout(monkeypatch):
+    """ccxt.coinbase() constructs offline (no network) — the real client is safe to inspect
+    directly. Without an explicit timeout a wedged socket hangs forever instead of raising."""
+    monkeypatch.setattr(settings, "exchange_timeout_sec", 8.25)
+
+    p = CcxtProvider("coinbase")
+
+    assert p._ex.timeout == 8250, "ccxt timeout is milliseconds"
 
 
 # --- P2 Fix B2/B3: the data path must recognize 429/418 and stop, not amplify ------------
@@ -329,3 +343,91 @@ def test_an_empty_tickers_result_is_not_cached(monkeypatch):
     # Now within the TTL of the GOOD map: served from cache, no further network call.
     assert prov.get_prices(["BTC"]) == {"BTC": 100.0}
     assert calls["n"] == 3
+
+
+# --- 2026-09-03 hang hardening: thread-safety around the shared ccxt client ------------------
+#
+# ccxt's sync client wraps ONE requests.Session, which is NOT thread-safe: the scheduler's
+# scan sweep (outside _work_lock) and the 90s guard's price fetch share the SAME CcxtProvider
+# instance, so a per-instance lock must serialize their HTTP calls onto that client.
+
+
+class _OverlapTrackingEx:
+    """A fake ccxt client whose fetch_tickers records whether two calls ever ran concurrently."""
+
+    def __init__(self, hold_sec: float = 0.05):
+        self.hold_sec = hold_sec
+        self._active = 0
+        self.max_active = 0
+        self._guard = threading.Lock()
+
+    def fetch_tickers(self):
+        with self._guard:
+            self._active += 1
+            self.max_active = max(self.max_active, self._active)
+        time.sleep(self.hold_sec)
+        with self._guard:
+            self._active -= 1
+        return {"BTC/USD": {"quoteVolume": 1.0, "last": 1.0}}
+
+
+def test_provider_serializes_concurrent_calls_on_the_same_instance():
+    """Two threads calling the same provider method must never overlap on the shared client."""
+    p = CcxtProvider("coinbase")
+    p._ex = _OverlapTrackingEx()
+
+    threads = [
+        threading.Thread(target=lambda: p.get_prices(["BTC"], fresh=True)) for _ in range(5)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert p._ex.max_active == 1, "two threads called the shared ccxt client concurrently"
+
+
+def test_execution_client_lock_and_provider_lock_do_not_block_each_other(monkeypatch):
+    """An exit (execution._client_lock) must never wait behind a scan sweep (provider._lock) —
+    they must be genuinely INDEPENDENT locks, not one shared module-level lock."""
+    p = CcxtProvider("coinbase")
+    p._ex = _OverlapTrackingEx(hold_sec=0.3)
+
+    scan_thread = threading.Thread(target=lambda: p.get_prices(["BTC"], fresh=True))
+    scan_thread.start()
+    time.sleep(0.05)  # let the scan actually be inside the provider lock
+
+    class _FastFakeEx:
+        def cancel_order(self, order_id, pair):
+            return None
+
+    monkeypatch.setattr(execution, "_client", lambda: _FastFakeEx())
+    start = time.monotonic()
+    execution.cancel_live_order("BTC/USDT", "1")
+    elapsed = time.monotonic() - start
+
+    scan_thread.join()
+    assert elapsed < 0.2, f"execution call blocked behind the provider's scan lock ({elapsed:.3f}s)"
+
+
+def test_get_provider_and_execution_client_are_distinct_objects(monkeypatch):
+    """The scan-side lock lives on the PROVIDER (public data, no key); orders go through the
+    EXECUTION client (authenticated). If these were ever the SAME object, a lock protecting one
+    would also serialize the other — exactly what task 2 must NOT do (a SELL queueing behind a
+    100-symbol sweep). Real ccxt construction is offline/no-network (verified: `timeout` is
+    just a constructor kwarg), so this needs no fake."""
+    reset_providers()
+    execution.reset_client_cache()
+    monkeypatch.setattr(settings, "live_exchange", "binance")
+    monkeypatch.setattr(settings, "live_api_key", "k")
+    monkeypatch.setattr(settings, "live_api_secret", "s")
+    monkeypatch.setattr(settings, "live_use_testnet", False)
+    try:
+        provider_ex = get_provider("binance")._ex
+        exec_ex = execution._client()
+
+        assert provider_ex is not exec_ex
+        assert type(provider_ex).__module__ == type(exec_ex).__module__  # both real ccxt.binance
+    finally:
+        reset_providers()
+        execution.reset_client_cache()

@@ -16,6 +16,7 @@ from __future__ import annotations
 import collections
 import logging
 import re
+import threading
 import time
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 
@@ -24,6 +25,17 @@ import ccxt
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# ccxt's sync client wraps ONE requests.Session, which is NOT thread-safe: concurrent use can
+# corrupt connection state and hang. `_client()` is a process-wide singleton reached from the
+# scheduler thread, the 90s position-guard thread (which also drives reconcile_live_orders'
+# serial fetch_order loop) AND FastAPI request threads (routes.py's approve paths) — so every
+# actual venue call made through it is serialized here. Deliberately narrow: this guards the
+# HTTP call ONLY, never a sleep/DB commit, so an urgent SELL never waits behind an unrelated
+# in-flight call for longer than that one call takes. Distinct from
+# `app.data.providers.CcxtProvider._lock` — see that module for why a SELL must not queue
+# behind a scan sweep.
+_client_lock = threading.RLock()
 
 
 def _secret(value) -> str:
@@ -300,7 +312,8 @@ def _refresh_clock(ex) -> None:
         return
     _last_clock_refresh[id(ex)] = now
     try:
-        ex.load_markets(True)  # reload=True: re-runs the time-difference measurement too
+        with _client_lock:
+            ex.load_markets(True)  # reload=True: re-runs the time-difference measurement too
     except Exception:  # a stale offset is better than a broken call path
         logger.debug("clock/markets refresh failed", exc_info=True)
 
@@ -316,6 +329,11 @@ def _client():
         return cached
     ex = getattr(ccxt, settings.live_exchange)({
         "apiKey": key, "secret": secret, "enableRateLimit": True,
+        # exchange_timeout_sec (config.py): ccxt takes this in MILLISECONDS. Without an
+        # explicit timeout a wedged socket hangs forever instead of raising — the mechanism
+        # behind the 2026-09-03 72-minute Application Hang (a shared, non-thread-safe
+        # requests.Session used from several threads).
+        "timeout": int(settings.exchange_timeout_sec * 1000),
         "options": {
             # Binance rejects a timestamp more than 1s ahead of ITS clock with -1021, whatever
             # recvWindow says, and a Windows host syncs weekly. Without this every signed call
@@ -441,13 +459,17 @@ def place_live_order(
     assert_order_budget_available(urgent=urgent)
     assert_weight_budget_available(urgent=urgent)
     try:
-        if ccxt_type == "market" or px <= 0:
-            order = ex.create_order(pair, "market", side_l, qty, None, params) if params \
-                else ex.create_order(pair, "market", side_l, qty)
-        elif params:
-            order = ex.create_order(pair, "limit", side_l, qty, px, params)
-        else:
-            order = ex.create_order(pair, "limit", side_l, qty, px)
+        # Narrowest point: only the actual venue call is serialized (see _client_lock's
+        # docstring) — never the bookkeeping below it, and never across the except branch's
+        # own recovery fetch (that call locks itself, inside _fetch_by_client_id).
+        with _client_lock:
+            if ccxt_type == "market" or px <= 0:
+                order = ex.create_order(pair, "market", side_l, qty, None, params) if params \
+                    else ex.create_order(pair, "market", side_l, qty)
+            elif params:
+                order = ex.create_order(pair, "limit", side_l, qty, px, params)
+            else:
+                order = ex.create_order(pair, "limit", side_l, qty, px)
         # A request that actually reached the venue spends its ORDERS/REQUEST_WEIGHT budget
         # regardless of what happens to it next — record it here, inside the try, so a
         # duplicate-recovery (which skips this whole block, see except below) never re-counts
@@ -507,7 +529,7 @@ def place_live_order(
     )
     return {
         "price": avg, "quantity": filled, "fee": fee, "fee_base": fee_base,
-        "raw_id": order.get("id"), "status": status,
+        "raw_id": order.get("id"), "status": status, "filled_at_ms": _venue_fill_ms(order),
     }
 
 
@@ -520,7 +542,8 @@ def cancel_live_order(pair: str, order_id: str) -> None:
     """
     ex = _client()
     try:
-        ex.cancel_order(order_id, pair)
+        with _client_lock:
+            ex.cancel_order(order_id, pair)
     except Exception as exc:
         # a 429/418 here must pause the next call, not be retried blindly
         note_rate_error(exc, retry_after_seconds(exc, ex))
@@ -597,6 +620,17 @@ def fee_base_qty(order: dict, base: str) -> float:
     return total
 
 
+def _venue_fill_ms(order: dict) -> int | None:
+    """The venue's own fill time (ms epoch), for ``place_live_order``/``fetch_live_order`` to
+    propagate as ``filled_at_ms``. ccxt normalises both ``lastTradeTimestamp`` (the moment of
+    the most recent trade against this order — what actually filled it) and ``timestamp`` (the
+    order's own creation time) onto every order structure it returns; the former is preferred,
+    falling back to the latter. ``None`` when the venue reports neither — the caller (``app.
+    orders._book_delta``) then falls back to "now", same as before this existed."""
+    ts = order.get("lastTradeTimestamp") or order.get("timestamp")
+    return int(ts) if ts else None
+
+
 _ORDER_GONE_RE = re.compile(r'"code"\s*:\s*-201[13]\b')
 
 
@@ -623,16 +657,21 @@ def order_is_gone(exc: Exception) -> bool:
 
 def fetch_live_order(pair: str, order_id: str) -> dict:
     """Fetch the live status of a resting order and return a normalised dict
-    ``{status, filled, average, fee, raw_id}``.
+    ``{status, filled, average, fee, raw_id, filled_at_ms}``.
 
     Used by ``app.orders.reconcile_live_orders`` to book a maker order's fill
     asynchronously (live-readiness task 1.4). ``filled`` is the venue's *cumulative*
     filled quantity (ccxt-normalised); ``status`` is ccxt's 'open'|'closed'|'canceled'.
+    ``filled_at_ms`` is the venue's own fill time (see ``_venue_fill_ms``) — most fills are
+    booked through THIS path under the resting model, so it is where a Fill's ``executed_at``
+    stamped with the reconcile pass's own time (instead of when the venue actually filled it,
+    sometimes hours or days earlier after an outage) is most consequential.
     Raises on any exchange error (the caller logs + skips); never logs the secret.
     """
     ex = _client()
     try:
-        order = ex.fetch_order(order_id, pair)
+        with _client_lock:
+            order = ex.fetch_order(order_id, pair)
     except Exception as exc:
         note_rate_error(exc, retry_after_seconds(exc, ex))
         note_credential_error(exc)  # alert only — the reconciliation pass must still be retried
@@ -650,7 +689,7 @@ def fetch_live_order(pair: str, order_id: str) -> dict:
     # common way the book comes to believe it holds coin the wallet does not have.
     fee_base = fee_base_qty(order, pair.partition("/")[0])
     return {"status": status, "filled": filled, "average": avg, "fee": fee,
-            "fee_base": fee_base, "raw_id": order.get("id")}
+            "fee_base": fee_base, "raw_id": order.get("id"), "filled_at_ms": _venue_fill_ms(order)}
 
 
 def fetch_account_balance(quote: str) -> float:
@@ -663,7 +702,8 @@ def fetch_account_balance(quote: str) -> float:
     (``app.risk.capital_anchor``) must catch and fail soft. Never logs the key/secret.
     """
     ex = _client()
-    bal = ex.fetch_balance()
+    with _client_lock:
+        bal = ex.fetch_balance()
     row = bal.get(quote) or {}
     free = float(row.get("free") or 0.0)
     used = float(row.get("used") or 0.0)
@@ -784,7 +824,8 @@ def is_duplicate_client_order(exc: Exception) -> bool:
 
 def _fetch_by_client_id(ex, pair: str, cid: str) -> dict:
     """Live wrapper: fetch an order by its ``clientOrderId`` (idempotent recovery, 1.10)."""
-    return ex.fetch_order(cid, pair, {"clientOrderId": cid})
+    with _client_lock:
+        return ex.fetch_order(cid, pair, {"clientOrderId": cid})
 
 
 def fetch_order_by_client_id(pair: str, cid: str) -> dict | None:
@@ -884,11 +925,12 @@ def _market_filters(ex, pair: str) -> dict:
     order unrounded, which is how a ragged quantity still reached the venue and came back
     -1013 despite the rounding. Load them explicitly and retry once.
     """
-    try:
-        return filters_from_market(ex.market(pair))
-    except Exception:
-        ex.load_markets()
-        return filters_from_market(ex.market(pair))
+    with _client_lock:
+        try:
+            return filters_from_market(ex.market(pair))
+        except Exception:
+            ex.load_markets()
+            return filters_from_market(ex.market(pair))
 
 
 # --- 1.6: rate-limit guard (Binance REQUEST_WEIGHT / 429 / 418) -------------------------
@@ -1301,7 +1343,8 @@ def refresh_venue_limits(force: bool = False) -> dict[str, tuple[float, int]]:
         return dict(_venue_limits_cache)
     try:
         ex = _client()
-        info = ex.publicGetExchangeInfo()
+        with _client_lock:
+            info = ex.publicGetExchangeInfo()
         parsed_orders, parsed_weight = parse_venue_rate_limits(info.get("rateLimits") or [])
     except Exception:
         logger.debug("venue rateLimits refresh failed — keeping the fallback", exc_info=True)

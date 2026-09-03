@@ -15,6 +15,8 @@ add tens of seconds of SERIAL fetch_order latency ahead of the hard-SL check und
 
 from __future__ import annotations
 
+import pytest
+
 from app import orders, scheduler
 from app.kss import service
 from app.models import PENDING, PendingOrder
@@ -113,3 +115,35 @@ def test_reconcile_runs_at_or_below_the_bound(db, monkeypatch):
     scheduler._guard_once()
 
     assert calls == ["reconcile", "guard"], "at/below the bound, reconcile must still run"
+
+
+# --- 2026-09-03 hang hardening: _guard_once stamps its own liveness marker -------------------
+
+
+def test_guard_once_stamps_last_guard_at_on_success(db, monkeypatch):
+    """`/health`'s `guard_seconds_ago`/`stalled` read this — an outside watchdog needs proof
+    the 90s guard actually completed a pass, not just that the thread is alive."""
+    monkeypatch.setattr(orders, "reconcile_live_orders", lambda db: [])
+    monkeypatch.setattr(service, "run_position_guard", lambda db: {})
+    scheduler._last_guard_at = None
+
+    scheduler._guard_once()
+
+    assert scheduler._last_guard_at is not None
+
+
+def test_guard_once_does_not_stamp_last_guard_at_when_the_guard_itself_raises(db, monkeypatch):
+    """Mirrors `_last_cycle_at`'s "only on success" semantics — a raised exception must leave
+    the marker stale so a genuinely wedged/broken guard is visible as stalled, not hidden."""
+    monkeypatch.setattr(orders, "reconcile_live_orders", lambda db: [])
+
+    def _boom(db):
+        raise RuntimeError("guard exploded")
+
+    monkeypatch.setattr(service, "run_position_guard", _boom)
+    scheduler._last_guard_at = None
+
+    with pytest.raises(RuntimeError):
+        scheduler._guard_once()
+
+    assert scheduler._last_guard_at is None

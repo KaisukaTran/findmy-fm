@@ -9,6 +9,8 @@ refuses to ask for an unbounded number of intraday bars in the first place.
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from app.data.providers import CcxtProvider
@@ -52,6 +54,10 @@ def _provider(ex) -> CcxtProvider:
     prov.exchange_id = "binance"
     prov.quote = "USDT"
     prov._ex = ex
+    # 2026-09-03 hang hardening: get_ohlcv now serializes each fetch_ohlcv call through this
+    # per-instance lock (see CcxtProvider.__init__) — __new__ skips __init__ entirely, so it
+    # must be set here too, same as _ex.
+    prov._lock = threading.RLock()
     return prov
 
 

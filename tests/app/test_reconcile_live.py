@@ -5,9 +5,12 @@ since the last cycle. All offline: live_enabled / fetch_live_order / live_provid
 stubbed, so no network and no real keys. Paper path is never exercised here.
 """
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from app import execution, orders
+from app.clock import utcnow
 from app.models import APPROVED, EXECUTED, Fill, PendingOrder, Position
 
 
@@ -127,3 +130,78 @@ def test_unfilled_resting_order_books_nothing(db, monkeypatch):
     assert db.query(Fill).count() == 0
     db.refresh(order)
     assert order.status == APPROVED  # still resting, not executed
+
+
+# --- Fill.executed_at stamped with the VENUE's fill time, not the reconcile time -----------
+#
+# Live evidence: four DCA rungs filled during a 30h outage all recorded `executed_at` as the
+# reconcile pass's own time, 2 to 24 hours after the venue actually filled them. `_book_delta`
+# must prefer `res["filled_at_ms"]` (execution.fetch_live_order's normalised venue time).
+
+
+def _dt_from_ms(ms: int) -> datetime:
+    return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).replace(tzinfo=None)
+
+
+def test_fill_executed_at_uses_the_venues_last_trade_time(db, monkeypatch):
+    order = _resting(db, exchange_order_id="X7")
+    ms = 1788313020000  # 2026-09-02 01:37:00 UTC
+    _enable_live(monkeypatch, {"status": "closed", "filled": 5.0, "average": 100.0,
+                               "fee": 0.5, "raw_id": "X7", "filled_at_ms": ms})
+    orders.reconcile_live_orders(db)
+
+    fill = db.query(Fill).filter(Fill.pending_order_id == order.id).one()
+    assert fill.executed_at == _dt_from_ms(ms)
+
+
+def test_fill_executed_at_falls_back_to_now_when_filled_at_ms_absent(db, monkeypatch):
+    order = _resting(db, exchange_order_id="X8")
+    before = utcnow()
+    _enable_live(monkeypatch, {"status": "closed", "filled": 5.0, "average": 100.0,
+                               "fee": 0.5, "raw_id": "X8"})  # no filled_at_ms key at all
+    orders.reconcile_live_orders(db)
+    after = utcnow()
+
+    fill = db.query(Fill).filter(Fill.pending_order_id == order.id).one()
+    assert before <= fill.executed_at <= after
+
+
+def test_fill_executed_at_falls_back_to_now_for_garbage_ms(db, monkeypatch):
+    order = _resting(db, exchange_order_id="X9")
+    before = utcnow()
+    _enable_live(monkeypatch, {"status": "closed", "filled": 5.0, "average": 100.0,
+                               "fee": 0.5, "raw_id": "X9", "filled_at_ms": 0})
+    orders.reconcile_live_orders(db)
+    after = utcnow()
+
+    fill = db.query(Fill).filter(Fill.pending_order_id == order.id).one()
+    assert before <= fill.executed_at <= after
+
+
+def test_fill_executed_at_falls_back_to_now_for_a_future_timestamp(db, monkeypatch):
+    """Clock skew must never write a FUTURE fill — more than 24h ahead falls back to now."""
+    order = _resting(db, exchange_order_id="X10")
+    future_ms = int((utcnow() + timedelta(hours=48)).replace(tzinfo=timezone.utc).timestamp() * 1000)
+    before = utcnow()
+    _enable_live(monkeypatch, {"status": "closed", "filled": 5.0, "average": 100.0,
+                               "fee": 0.5, "raw_id": "X10", "filled_at_ms": future_ms})
+    orders.reconcile_live_orders(db)
+    after = utcnow()
+
+    fill = db.query(Fill).filter(Fill.pending_order_id == order.id).one()
+    assert before <= fill.executed_at <= after
+
+
+def test_paper_fill_keeps_the_default_executed_at(db, monkeypatch):
+    """The synchronous paper path (`_paper_execute`) never touches `filled_at_ms` — it keeps
+    today's behaviour (the column default, current time)."""
+    from app import market
+
+    monkeypatch.setattr(market, "get_current_prices", lambda syms: {"SOL": 100.0})
+    order, _ = orders.queue_order(
+        db, symbol="SOL", side="BUY", quantity=1.0, price=0.0, order_type="MARKET",
+    )
+    before = utcnow()
+    fill = orders.approve_order(db, order.id)
+    after = utcnow()
+    assert before <= fill.executed_at <= after

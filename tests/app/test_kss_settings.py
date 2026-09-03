@@ -136,6 +136,38 @@ def test_live_exec_endpoint_and_partial_render():
         assert "VIP0" in html  # BNB / fee-reality note is present
 
 
+def test_exchange_timeout_sec_persists_and_restores(db):
+    """2026-09-03 hang hardening: the ccxt socket timeout must be a real runtime knob, not a
+    literal — else fixing the hang requires an edit + restart instead of a Strategy-tab save."""
+    runtime.set_kss_settings(db, {"exchange_timeout_sec": 12.5})
+    assert settings.exchange_timeout_sec == 12.5
+    settings.exchange_timeout_sec = 20.0  # corrupt in-memory, then restore from DB
+    runtime.sync_from_db(db)
+    assert settings.exchange_timeout_sec == 12.5
+
+
+def test_exchange_timeout_sec_endpoint_and_partial_render():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    with TestClient(app) as c:
+        r = c.post("/api/kss-settings", json={"exchange_timeout_sec": 15.0})
+        assert r.status_code == 200
+        assert r.json()["exchange_timeout_sec"] == 15.0
+        assert c.get("/api/kss-settings").json()["exchange_timeout_sec"] == 15.0
+        html = c.get("/partials/kss-settings").text
+        assert 'name="exchange_timeout_sec"' in html
+
+
+def test_exchange_timeout_sec_endpoint_validates_bounds():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    with TestClient(app) as c:
+        # 0.5 violates ge=1.0 -> 422, settings untouched
+        assert c.post("/api/kss-settings", json={"exchange_timeout_sec": 0.5}).status_code == 422
+
+
 def test_partial_shows_depth_warning(monkeypatch):
     from fastapi.testclient import TestClient
 

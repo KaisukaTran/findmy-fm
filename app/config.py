@@ -109,6 +109,19 @@ class Settings(BaseSettings):
         description="LIVE only: route real orders to the exchange TESTNET (ccxt set_sandbox_mode) "
         "instead of production — validate the live path before using real keys. No effect on paper.",
     )
+    exchange_timeout_sec: float = Field(
+        default=20.0, ge=1.0, le=120.0,
+        description="Socket timeout (seconds) applied to EVERY ccxt client — both the "
+        "authenticated live-execution client (app.execution._client) and every public data "
+        "provider (app.data.providers.CcxtProvider). ccxt takes this in milliseconds; the app "
+        "converts. Before this existed no ccxt client anywhere had an explicit timeout, so a "
+        "single wedged socket (the shared requests.Session is not thread-safe under concurrent "
+        "use from the scheduler/guard/request threads) could hang forever instead of raising — "
+        "that is what let the process run unresponsive for 72 minutes until Windows killed it "
+        "(2026-09-03 Application Hang). Bounded so it can neither block indefinitely (no "
+        "unbounded default) nor fire so eagerly on a slow-but-alive connection that it starts "
+        "manufacturing its own retries.",
+    )
     scheduler_lock_port: int = Field(
         default=8801,
         description="Localhost port for the single-process scheduler mutex. Give each parallel "
@@ -276,6 +289,8 @@ class Settings(BaseSettings):
     max_session_deploy_usd: float = Field(default=0.0, description="Hard ceiling on the total USD a SINGLE session may deploy (filled + still-pending waves). Any wave — auto-chain, manual DCA+, or the Telegram '➕' button — that would breach it is refused. 0 = off. The missing 'top fix': the C disaster deployed $162k unbounded. Set this for live (e.g. ~15-20% of equity).")
 
     kss_ladder_reserve_slack_pct: float = Field(default=1.0, ge=0.0, le=10.0, description="Extra %% reserved on top of the projected ladder cost when a session's isolated_fund is set at open. The projection and the real rungs use the SAME math, but the venue's step/tick filters can change between session open and a later wave (exchange-info refresh, restart) and the re-quantized rung then costs slightly more than was reserved — ONDO#14's ladder died over $0.0078 exactly this way. 1%% ≈ pocket change per session; 0 = the old exact reserve.")
+
+    kss_partial_last_rung_enabled: bool = Field(default=True, description="When the next DCA rung's full geometric cost does not fit the session's remaining isolated_fund (the ATOM#16 shape: short by a few cents to a few dollars), queue it anyway at the SAME target price with a REDUCED quantity sized to spend exactly what remains, instead of leaving the ladder with no rung at all. The trade-off (owner's call): the ladder spends its whole reservation instead of stranding the last rung, at the cost of a smaller final average-down — never a top-up of isolated_fund. Still refused (today's insufficient_fund behaviour) when the shrunken rung would fall below the venue's minQty/minNotional floor, or below the session's other guards (SL floor, deploy cap). OFF = today's exact behaviour (a starved rung is skipped, not shrunk).")
 
     # --- Grok scanner gate: a Grok (xAI) endorse/veto pass over qualified candidates ---
     grok_scanner_enabled: bool = Field(default=False, description="Have Grok review scanner candidates that passed every deterministic gate (one batched call/scan). Needs xai_api_key. Off = no cost, deterministic behaviour unchanged.")

@@ -14,6 +14,7 @@ Position is the derived running state per symbol.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -782,6 +783,27 @@ def reconcile_live_orders(db: Session) -> list[int]:
     return booked
 
 
+def _venue_fill_time(res: dict) -> datetime:
+    """The venue's own fill time from ``res["filled_at_ms"]`` (see ``execution._venue_fill_ms``),
+    converted to this codebase's naive-UTC convention (``app.clock.utcnow``). Falls back to
+    "now" when the venue reported nothing usable — absent, zero/negative, or more than 24h in
+    the FUTURE (clock skew must never write a future fill; a reconcile pass should record "when
+    we found out" rather than a lie). Fixes fills being mis-dated by hours to a day after any
+    outage or delayed reconcile pass (live evidence: four DCA rungs filled during a 30h outage
+    all carried the reconcile pass's own time instead of the venue's 2026-09-02 fill times)."""
+    now = utcnow()
+    ms = res.get("filled_at_ms")
+    if not ms or ms <= 0:
+        return now
+    try:
+        dt = datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).replace(tzinfo=None)
+    except (OverflowError, OSError, ValueError):
+        return now
+    if dt > now + timedelta(hours=24):
+        return now
+    return dt
+
+
 def _book_delta(db: Session, order: PendingOrder, res: dict) -> bool:
     """Book the *delta* between the venue's cumulative fill and what we already recorded.
 
@@ -844,6 +866,7 @@ def _book_delta(db: Session, order: PendingOrder, res: dict) -> bool:
             source_ref=order.source_ref,
             strategy_name=order.strategy_name,
             exchange_order_id=venue_order_id,
+            executed_at=_venue_fill_time(res),
         )
         db.add(fill)
         _stamp_exchange_state()  # before the flush + KSS hook — see the note above

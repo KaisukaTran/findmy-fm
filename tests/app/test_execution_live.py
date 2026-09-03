@@ -63,6 +63,69 @@ def test_closed_without_filled_field_trusts_amount(monkeypatch):
     assert res["price"] == 50.0
 
 
+# --- the venue's own fill time (Fix: fills were stamped with reconcile time) ----------
+#
+# ccxt normalises both `timestamp` and `lastTradeTimestamp` (ms epoch) onto the order dict
+# `place_live_order`/`fetch_live_order` get back. Propagated here as `filled_at_ms` so
+# `orders._book_delta` can stamp `Fill.executed_at` with the venue's own fill time instead of
+# whenever the reconcile pass happened to run.
+
+
+def test_place_live_order_prefers_last_trade_timestamp(monkeypatch):
+    _patch_client(monkeypatch, {"status": "closed", "filled": 5.0, "amount": 5.0,
+                                "average": 101.5, "fee": {"cost": 0.05}, "id": "m1",
+                                "timestamp": 1000, "lastTradeTimestamp": 2000})
+    res = execution.place_live_order("SOL/USDT", "BUY", 5.0, 0.0, "MARKET")
+    assert res["filled_at_ms"] == 2000
+
+
+def test_place_live_order_falls_back_to_timestamp(monkeypatch):
+    _patch_client(monkeypatch, {"status": "closed", "filled": 5.0, "amount": 5.0,
+                                "average": 101.5, "fee": {"cost": 0.05}, "id": "m1",
+                                "timestamp": 1000})
+    res = execution.place_live_order("SOL/USDT", "BUY", 5.0, 0.0, "MARKET")
+    assert res["filled_at_ms"] == 1000
+
+
+def test_place_live_order_filled_at_ms_absent_when_venue_reports_neither(monkeypatch):
+    _patch_client(monkeypatch, {"status": "closed", "filled": 5.0, "amount": 5.0,
+                                "average": 101.5, "fee": {"cost": 0.05}, "id": "m1"})
+    res = execution.place_live_order("SOL/USDT", "BUY", 5.0, 0.0, "MARKET")
+    assert res.get("filled_at_ms") is None
+
+
+class _FetchOrderFakeEx:
+    """ccxt-like stub: fetch_order returns a preset normalised order dict."""
+
+    def __init__(self, order):
+        self._order = order
+
+    def fetch_order(self, order_id, pair, params=None):
+        return self._order
+
+
+def test_fetch_live_order_prefers_last_trade_timestamp(monkeypatch):
+    monkeypatch.setattr(execution, "_client", lambda: _FetchOrderFakeEx(
+        {"status": "closed", "filled": 5.0, "average": 100.0, "id": "r1",
+         "timestamp": 1000, "lastTradeTimestamp": 2000}))
+    res = execution.fetch_live_order("SOL/USDT", "r1")
+    assert res["filled_at_ms"] == 2000
+
+
+def test_fetch_live_order_falls_back_to_timestamp(monkeypatch):
+    monkeypatch.setattr(execution, "_client", lambda: _FetchOrderFakeEx(
+        {"status": "closed", "filled": 5.0, "average": 100.0, "id": "r1", "timestamp": 1000}))
+    res = execution.fetch_live_order("SOL/USDT", "r1")
+    assert res["filled_at_ms"] == 1000
+
+
+def test_fetch_live_order_filled_at_ms_absent_when_venue_reports_neither(monkeypatch):
+    monkeypatch.setattr(execution, "_client", lambda: _FetchOrderFakeEx(
+        {"status": "closed", "filled": 5.0, "average": 100.0, "id": "r1"}))
+    res = execution.fetch_live_order("SOL/USDT", "r1")
+    assert res.get("filled_at_ms") is None
+
+
 # --- 1.2: exchange-filter compliance (SOLUSDT-style filters) ------------------
 
 _SOL = {"tickSize": 0.01, "stepSize": 0.001, "minQty": 0.001, "minNotional": 5.0}

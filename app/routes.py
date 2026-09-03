@@ -104,6 +104,16 @@ class RejectBody(BaseModel):
 # --- JSON API -----------------------------------------------------------
 
 
+def _seconds_ago(iso_ts: str | None) -> float | None:
+    """Seconds since *iso_ts* (an isoformat UTC timestamp), or None if absent/unparseable."""
+    if not iso_ts:
+        return None
+    try:
+        return (utcnow() - datetime.fromisoformat(iso_ts)).total_seconds()
+    except ValueError:
+        return None
+
+
 @api_router.get("/health")
 def health():
     """Liveness + truthfulness check. A bare {"status": "ok"} used to be returned even when a
@@ -111,20 +121,34 @@ def health():
     the owner was never told. Fields ADDED (existing "status"/"ok" kept for anything already
     depending on it): whether the scheduler loop is actually running, how long ago its last
     cycle completed (None if it has never run), and whether the last signed exchange call
-    succeeded (credentials_ok — see app.execution.credentials_ok)."""
+    succeeded (credentials_ok — see app.execution.credentials_ok).
+
+    2026-09-03 hang hardening: a wedged ccxt socket (no client-side timeout — since fixed, see
+    config.exchange_timeout_sec) let the process run unresponsive for 72 minutes before Windows
+    force-killed it — the scheduler thread was simply never coming back, but nothing here said
+    so. `stalled` reports whether either background loop (the ~scan_interval_min cycle, or the
+    90s exit guard) has gone conspicuously longer than its own interval without completing a
+    pass, so an OUTSIDE watchdog (data/ensure_live.ps1) can restart a wedged-but-not-crashed
+    process. Deliberately does NOT change the HTTP status code — an external monitor parses the
+    body, and a 500 here would make the watchdog kill a possibly-fine app (e.g. mid-restart,
+    before either loop has run its first pass — the boot case, never stalled)."""
     st = scheduler.status()
     last_cycle_at = st["last_cycle_at"]
-    last_cycle_seconds_ago = None
-    if last_cycle_at:
-        try:
-            last_cycle_seconds_ago = (utcnow() - datetime.fromisoformat(last_cycle_at)).total_seconds()
-        except ValueError:
-            last_cycle_seconds_ago = None
+    # .get(): an older/partial test double for scheduler.status() may not carry this key yet.
+    last_guard_at = st.get("last_guard_at")
+    last_cycle_seconds_ago = _seconds_ago(last_cycle_at)
+    guard_seconds_ago = _seconds_ago(last_guard_at)
+    cycle_stall_after = max(3 * settings.scan_interval_min * 60, 900)
+    guard_stall_after = max(10 * settings.kss_exit_check_sec, 600)
+    cycle_stalled = last_cycle_seconds_ago is not None and last_cycle_seconds_ago > cycle_stall_after
+    guard_stalled = guard_seconds_ago is not None and guard_seconds_ago > guard_stall_after
     return {
         "status": "ok",
         "scheduler_running": st["scheduler_running"],
         "last_cycle_at": last_cycle_at,
         "last_cycle_seconds_ago": last_cycle_seconds_ago,
+        "guard_seconds_ago": guard_seconds_ago,
+        "stalled": bool(cycle_stalled or guard_stalled),
         "credentials_ok": execution.credentials_ok(),
     }
 
@@ -430,6 +454,7 @@ class KssSettingsBody(BaseModel):
     deadline_days: int | None = Field(None, ge=1, le=365)
     max_concurrent_sessions: int | None = Field(None, ge=1, le=500)  # raised for wide-scale paper tests (~universe size)
     kss_ladder_reserve_slack_pct: float | None = Field(None, ge=0, le=10)
+    kss_partial_last_rung_enabled: bool | None = None
     max_sessions_per_symbol: int | None = Field(None, ge=0, le=20)
     max_deployed_pct: float | None = Field(None, gt=0, le=100)
     equity_backup_pct: float | None = Field(None, ge=0, le=90)
@@ -494,6 +519,8 @@ class KssSettingsBody(BaseModel):
     maker_orders: bool | None = None
     order_fill_timeout_sec: int | None = Field(None, ge=0)
     live_use_testnet: bool | None = None
+    # 2026-09-03 hang hardening: socket timeout (seconds) for every ccxt client.
+    exchange_timeout_sec: float | None = Field(None, ge=1.0, le=120.0)
     # Phase 0 capital anchor (docs/capital-scaling-2026-08-23.md §2.1) — LIVE + opt-in only.
     use_exchange_balance: bool | None = None
     # OPUS god-mode scaffolding (docs/opus-godmode-plan.md §3) — wiring deferred to later phases.

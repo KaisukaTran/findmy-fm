@@ -14,11 +14,13 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 import time
 from typing import Protocol, TypedDict
 
 import ccxt
 
+from app.config import settings
 from app.execution import note_if_rate_error
 
 logger = logging.getLogger(__name__)
@@ -179,10 +181,23 @@ class CcxtProvider:
         # enableRateLimit makes ccxt pace requests to the exchange's per-IP limit (≈20 req/s for
         # Binance). It defaults to True in current ccxt, but set it explicitly so an upstream
         # default change can never silently remove our only client-side throttle → IP ban risk.
-        self._ex = getattr(ccxt, exchange_id)({"enableRateLimit": True})
+        self._ex = getattr(ccxt, exchange_id)({
+            "enableRateLimit": True,
+            # exchange_timeout_sec (config.py): ccxt takes this in MILLISECONDS. Without an
+            # explicit timeout a wedged socket hangs forever instead of raising — see
+            # app.execution._client for the same setting on the authenticated client.
+            "timeout": int(settings.exchange_timeout_sec * 1000),
+        })
         # Fix C: the shared full-universe fetch_tickers() cache (see _fetch_tickers_map).
         self._tickers_cache: dict[str, dict] | None = None
         self._tickers_cache_ts: float = 0.0
+        # Serializes every HTTP call THIS provider instance makes through self._ex — ccxt's
+        # sync client wraps one requests.Session, which is not thread-safe. Per-INSTANCE (not
+        # module-level): the scan path (prefetch_universe_candles, outside _work_lock) and the
+        # 90s guard's price fetch (app.market.get_current_prices) share this same provider
+        # instance and must not interleave on it, but this lock is entirely separate from
+        # execution._client_lock — a SELL never waits behind a scan sweep (see execution.py).
+        self._lock = threading.RLock()
 
     def pair(self, symbol: str) -> str:
         """Map a base symbol (e.g. 'BTC') to this exchange's pair (e.g. 'BTC/USD')."""
@@ -209,7 +224,8 @@ class CcxtProvider:
         if (not force_refresh and self._tickers_cache is not None
                 and (now - self._tickers_cache_ts) < _TICKERS_TTL_SEC):
             return self._tickers_cache
-        tickers = self._ex.fetch_tickers()
+        with self._lock:
+            tickers = self._ex.fetch_tickers()
         if not tickers:
             return tickers
         self._tickers_cache = tickers
@@ -244,7 +260,9 @@ class CcxtProvider:
             # fall back per-symbol.
             for symbol in symbols:
                 try:
-                    out[symbol] = float(self._ex.fetch_ticker(self.pair(symbol))["last"])
+                    with self._lock:
+                        last = self._ex.fetch_ticker(self.pair(symbol))["last"]
+                    out[symbol] = float(last)
                 except Exception as exc2:
                     if note_if_rate_error(exc2, self._ex):
                         break  # a rate error mid-fallback must stop the loop, not keep hammering
@@ -274,7 +292,8 @@ class CcxtProvider:
         tf_ms = self._timeframe_ms(timeframe)
         if limit <= _MAX_KLINES or tf_ms <= 0:
             try:
-                raw = self._ex.fetch_ohlcv(pair, timeframe=timeframe, limit=limit)
+                with self._lock:
+                    raw = self._ex.fetch_ohlcv(pair, timeframe=timeframe, limit=limit)
             except Exception as exc:
                 # Fix B3: note a rate-classified error (429/418/-1015) so the NEXT call
                 # refuses instead of hammering; degrade exactly as before either way.
@@ -289,9 +308,10 @@ class CcxtProvider:
         rows: list[list] = []
         for _ in range(pages):
             try:
-                batch = self._ex.fetch_ohlcv(
-                    pair, timeframe=timeframe, since=cursor, limit=_MAX_KLINES
-                )
+                with self._lock:
+                    batch = self._ex.fetch_ohlcv(
+                        pair, timeframe=timeframe, since=cursor, limit=_MAX_KLINES
+                    )
             except Exception as exc:  # keep the pages we already have
                 note_if_rate_error(exc, self._ex)
                 logger.warning("%s OHLCV page failed for %s (%s bars so far): %s",
@@ -369,9 +389,10 @@ class CcxtProvider:
             # exchange would reject on live. load_markets() is idempotent and ccxt-cached.
             # getattr: test doubles stand in for the ccxt client and don't carry `.markets`;
             # a real ccxt exchange always does, so the load still happens where it matters.
-            if not getattr(self._ex, "markets", None) and hasattr(self._ex, "load_markets"):
-                self._ex.load_markets()
-            market = self._ex.market(self.pair(symbol))
+            with self._lock:
+                if not getattr(self._ex, "markets", None) and hasattr(self._ex, "load_markets"):
+                    self._ex.load_markets()
+                market = self._ex.market(self.pair(symbol))
             limits = market.get("limits", {})
             amount = limits.get("amount", {})
             cost = limits.get("cost", {})

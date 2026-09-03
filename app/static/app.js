@@ -11,10 +11,19 @@ function esc(s) {
   return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-// --- U2: API key management (sessionStorage, not localStorage) ----------
-// Initialise from sessionStorage on load so a page refresh within the same
-// browser session does not re-prompt.
-window.API_KEY = sessionStorage.getItem("api_key") || "";
+// --- U2: API key management (localStorage) -------------------------------
+// The key is remembered PERMANENTLY on this machine, so the dashboard asks for
+// it exactly once, ever. It used to live in sessionStorage, which is wiped when
+// the tab closes — every new tab re-prompted before any settings change, which
+// is pure friction for a single-operator app bound to 127.0.0.1 (anyone who can
+// open this page can already read .env). Auth itself is untouched: the server
+// still requires X-API-Key on every mutating call.
+// Migration: an existing sessionStorage key is adopted once so the operator is
+// not asked again just because of this change.
+window.API_KEY = localStorage.getItem("api_key") || sessionStorage.getItem("api_key") || "";
+if (window.API_KEY && !localStorage.getItem("api_key")) {
+  localStorage.setItem("api_key", window.API_KEY);   // carry the old session key over
+}
 
 // --- Toast notifications (P3) -------------------------------------------
 // Container is injected once from JS — CSP-safe, no inline style or script.
@@ -82,8 +91,9 @@ function apiHeaders() {
   return h;
 }
 
-// U2: On the first 401, prompt once for the API key, store in sessionStorage,
-// and retry the failed call once.  Subsequent 401s (wrong key) surface as errors.
+// U2: On the first 401, prompt once for the API key, store it in localStorage
+// (remembered for good — see above), and retry the failed call once. Subsequent
+// 401s (wrong key) surface as errors.
 let _promptingKey = false;
 
 async function api(method, url, body) {
@@ -100,7 +110,7 @@ async function api(method, url, body) {
     const entered = window.prompt("Nhập API key để tiếp tục:", "") ?? "";
     if (entered) {
       window.API_KEY = entered;
-      sessionStorage.setItem("api_key", entered);
+      localStorage.setItem("api_key", entered);
       _updateKeyIndicator();
       res = await doFetch();  // single retry with new key
     }
@@ -436,7 +446,8 @@ const actions = {
   },
   clearKey() {
     window.API_KEY = "";
-    sessionStorage.removeItem("api_key");
+    localStorage.removeItem("api_key");
+    sessionStorage.removeItem("api_key");   // also drop any pre-migration copy
     _updateKeyIndicator();
     location.reload();
   },
@@ -605,6 +616,7 @@ document.addEventListener("submit", async (e) => {
       equity_backup_pct: num(f.get("equity_backup_pct")),
       cash_floor_usd: num(f.get("cash_floor_usd")),
       kss_ladder_reserve_slack_pct: num(f.get("kss_ladder_reserve_slack_pct")),
+      kss_partial_last_rung_enabled: f.get("kss_partial_last_rung_enabled") === "1",
       loss_streak_block_k: num(f.get("loss_streak_block_k")),
       loss_streak_window_days: num(f.get("loss_streak_window_days")),
       min_expectancy_pct: num(f.get("min_expectancy_pct")),
@@ -647,6 +659,7 @@ document.addEventListener("submit", async (e) => {
       opus_history_n: num(f.get("opus_history_n")),
       heartbeat_url: f.get("heartbeat_url"),
       placement_alert_after: num(f.get("placement_alert_after")),
+      exchange_timeout_sec: num(f.get("exchange_timeout_sec")),
     });
     toast("Đã lưu cấu hình KSS — áp dụng cho phiên mới.", "success");
     refreshTrading(); refreshStatus();

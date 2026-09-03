@@ -37,6 +37,12 @@ _guard_task: asyncio.Task | None = None
 _work_lock = threading.Lock()
 _last_cycle_at: str | None = None
 _last_summary: dict = {}
+# 2026-09-03 hang hardening: the 90s guard's last COMPLETED pass — set at the end of
+# `_guard_once`, mirroring `_last_cycle_at`'s "only on success" semantics (an exception
+# anywhere above skips the stamp, same as run_cycle). `/health` uses this + `_last_cycle_at` to
+# report `stalled`, so an OUTSIDE watchdog (data/ensure_live.ps1) can detect a wedged process
+# (e.g. a hung ccxt socket call) and restart it even though the app itself never crashed.
+_last_guard_at: str | None = None
 
 # The 90s guard's own reconcile pass fetches every tracked order SERIALLY (one weight-4 call
 # each) ahead of the hard-SL check, under `_work_lock` — so a large tracked-order count adds
@@ -85,6 +91,7 @@ def status() -> dict:
         "scheduler_running": is_running(),
         "interval_min": settings.scan_interval_min,
         "last_cycle_at": _last_cycle_at,
+        "last_guard_at": _last_guard_at,
         "last_summary": _last_summary,
     }
 
@@ -428,6 +435,7 @@ def _guard_reconcile_backlog(db: Session) -> int:
 
 
 def _guard_once() -> None:
+    global _last_guard_at
     db = SessionLocal()
     try:
         with _work_lock:  # serialize with the 30-min cycle
@@ -460,6 +468,7 @@ def _guard_once() -> None:
                 except Exception:
                     logger.exception("position-guard reconcile rollback also failed")
             service.run_position_guard(db)
+            _last_guard_at = utcnow().isoformat()
     finally:
         db.close()
 

@@ -81,6 +81,17 @@ def test_the_client_asks_ccxt_to_correct_clock_drift(monkeypatch):
     assert ex.cfg.get("options", {}).get("recvWindow") or ex.cfg.get("recvWindow")
 
 
+def test_the_client_applies_the_configured_socket_timeout(monkeypatch):
+    """Without an explicit timeout a wedged socket on the shared client hangs forever instead
+    of raising — the mechanism behind the 2026-09-03 72-minute Application Hang."""
+    _patch_ccxt(monkeypatch)
+    monkeypatch.setattr(settings, "exchange_timeout_sec", 7.5)
+
+    ex = execution._client()
+
+    assert ex.cfg.get("timeout") == 7500, "ccxt timeout is milliseconds"
+
+
 def test_switching_between_testnet_and_real_gives_different_clients(monkeypatch):
     """Never hand a real-money client to code that asked for the sandbox."""
     _patch_ccxt(monkeypatch)

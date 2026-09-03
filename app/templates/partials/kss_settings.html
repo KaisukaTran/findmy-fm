@@ -32,6 +32,11 @@
     <input name="max_session_deploy_usd" type="number" step="any" min="0" value="{{ '%.0f'|format(k.max_session_deploy_usd) }}" required></label>
   <label title="Phần trăm dự phòng CỘNG THÊM lên chi phí thang DCA dự tính khi mở session (đặt isolated_fund). Phép tính lúc mở và các rung thực tế dùng CÙNG công thức, nhưng bộ lọc step/tick của sàn có thể đổi giữa lúc mở session và một sóng sau (làm mới exchange-info, restart), khiến rung tính lại tốn nhỉnh hơn phần đã để dành — ví dụ ONDO#14 từng chết thang chỉ vì thiếu đúng $0.0078. 1% ≈ tiền lẻ mỗi session; 0 = để dành khớp đúng như cũ.">Dự phòng thang DCA % <span class="varname">kss_ladder_reserve_slack_pct</span>
     <input name="kss_ladder_reserve_slack_pct" type="number" step="0.1" min="0" max="10" value="{{ '%.1f'|format(k.kss_ladder_reserve_slack_pct) }}"></label>
+  <label title="Khi rung DCA tiếp theo (giá đầy đủ theo công thức) KHÔNG vừa vốn còn lại của session (kiểu ATOM#16: thiếu vài xu tới vài đô), vẫn đặt lệnh ở ĐÚNG giá mục tiêu nhưng GIẢM khối lượng để tiêu vừa đúng số vốn còn lại — thay vì bỏ trống rung đó. Đánh đổi: thang DCA tiêu hết phần đã để dành thay vì bị treo, nhưng lần gồng giá cuối sẽ nhỏ hơn — KHÔNG bao giờ nạp thêm isolated_fund. Vẫn bị từ chối như cũ nếu rung đã giảm còn dưới minQty/minNotional của sàn, hoặc dưới các chốt chặn khác (SL, trần deploy). TẮT = giữ nguyên hành vi hiện tại (rung thiếu vốn bị bỏ qua, không giảm khối lượng).">Rung cuối giảm khối lượng <span class="varname">kss_partial_last_rung_enabled</span>
+    <select name="kss_partial_last_rung_enabled" class="select-inline">
+      <option value="1" {% if k.kss_partial_last_rung_enabled %}selected{% endif %}>Bật</option>
+      <option value="0" {% if not k.kss_partial_last_rung_enabled %}selected{% endif %}>Tắt</option>
+    </select></label>
   <label title="Chặn mở session mới cho coin đã thua K lần ĐÓNG LỆNH liên tiếp (một lần lãi sẽ phá chuỗi). Tăng để khó bị chặn hơn.">Chặn sau K lần thua <span class="varname">loss_streak_block_k</span>
     <input name="loss_streak_block_k" type="number" step="1" min="1" max="20" value="{{ k.loss_streak_block_k }}" required></label>
   <label title="Chỉ tính các lần đóng lệnh trong N ngày gần nhất — lỗ cũ trôi ra ngoài cửa sổ thì coin tự được giao dịch lại.">Cửa sổ lỗ (ngày) <span class="varname">loss_streak_window_days</span>
@@ -190,6 +195,8 @@
     <input name="heartbeat_url" type="text" placeholder="https://hc-ping.com/xxxxxxxx" value="{{ k.heartbeat_url }}"></label>
   <label title="Số lần đặt lệnh THẤT BẠI LIÊN TIẾP của CÙNG một lệnh chờ (resting order) trước khi bắn MỘT cảnh báo risk (lỗi filter, -1013, thiếu số dư... trước đây hoàn toàn im lặng — chỉ lỗi xác thực mới cảnh báo). Một cảnh báo mỗi chuỗi lỗi; hễ có lần thành công là chuỗi được xoá, lần sau lại cảnh báo được.">Ngưỡng cảnh báo đặt lệnh lỗi <span class="varname">placement_alert_after</span>
     <input name="placement_alert_after" type="number" step="1" min="1" value="{{ k.placement_alert_after }}"></label>
+  <label title="Timeout socket (giây) áp dụng cho MỌI client ccxt — cả client thực thi live có ký (execution._client) lẫn mọi provider dữ liệu công khai (paper VÀ live đều dùng provider để scan/lấy giá). Trước khi có knob này không client nào có timeout tường minh — một socket bị treo sẽ treo VÔ HẠN thay vì báo lỗi, đây chính là nguyên nhân treo tiến trình 72 phút ngày 2026-09-03.">Timeout socket ccxt (giây) <span class="varname">exchange_timeout_sec</span>
+    <input name="exchange_timeout_sec" type="number" step="0.5" min="1" max="120" value="{{ k.exchange_timeout_sec }}"></label>
   <button type="submit" class="ok">Lưu cấu hình KSS</button>
 </form>
 

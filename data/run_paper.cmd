@@ -1,9 +1,19 @@
 @echo off
-REM FINDMY-FM paper server launcher (used by the "FINDMY-Paper" scheduled task).
-REM Launches uvicorn DETACHED with its OWN hidden console (Start-Process -WindowStyle Hidden)
-REM so it is NOT attached to the launching console — closing a PowerShell window / the IDE no
-REM longer sends it CTRL+C (the bug that killed the earlier interactive-console run). The cmd +
-REM powershell wrappers exit immediately; the uvicorn process keeps running on 127.0.0.1:8000,
-REM logging to data\uvicorn.{out,err}.log. (Survives window/IDE close + RDP disconnect; a full
-REM logoff/reboot still ends it — the AtLogOn task trigger restarts it on next logon.)
-powershell -NoProfile -Command "Start-Process -FilePath 'D:\FINDMY\.venv\Scripts\python.exe' -ArgumentList '-m','uvicorn','app.main:app','--host','127.0.0.1','--port','8000' -WorkingDirectory 'D:\FINDMY' -RedirectStandardOutput 'D:\FINDMY\data\uvicorn.out.log' -RedirectStandardError 'D:\FINDMY\data\uvicorn.err.log' -WindowStyle Hidden"
+REM ---------------------------------------------------------------------------
+REM PAPER LAUNCH DISABLED 2026-08-30 — the system was consolidated onto ONE
+REM instance for the month of Binance-testnet demo before real funds: the
+REM testnet app on :8001 (D:\FINDMY-live). Two apps would also share one IP's
+REM exchange rate limit.
+REM
+REM This file is a no-op on purpose. The "FINDMY-Paper" scheduled task still
+REM exists and still runs this, so it starts nothing — that is how paper stays
+REM off across logons without needing an elevated shell to disable the task.
+REM
+REM TO BRING PAPER BACK: restore the real launcher and start it again:
+REM     copy /Y "D:\FINDMY\data\run_paper.cmd.enabled-backup" "D:\FINDMY\data\run_paper.cmd"
+REM     schtasks /Run /TN FINDMY-Paper
+REM Its book (data\findmy.db) was never touched: 51 completed sessions,
+REM 11 open positions, +$72.13 simulated at the time of shutdown.
+REM ---------------------------------------------------------------------------
+echo FINDMY-Paper launcher is disabled - see the comments in this file.
+exit /b 0

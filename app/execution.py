@@ -77,7 +77,7 @@ def reset_client_cache() -> None:
     _venue_limits_cache = None
     _venue_limits_fetched_at = 0.0
     _credentials_ok = True
-    _credential_alert_last = 0.0
+    _credential_alert_last = None
     _rate_alert_last_end = 0.0
     reset_order_budget()
 
@@ -223,7 +223,7 @@ def classify_credential_error(exc: Exception) -> bool:
 
 
 _credentials_ok: bool = True
-_credential_alert_last: float = 0.0
+_credential_alert_last: float | None = None  # None = no alert ever fired (see note_credential_error)
 
 
 def credentials_ok() -> bool:
@@ -260,7 +260,11 @@ def note_credential_error(exc: Exception) -> bool:
     _credentials_ok = False
     now = time.monotonic()
     cooldown = max(settings.credential_alert_cooldown_min, 0.0) * 60.0
-    if cooldown > 0 and now - _credential_alert_last < cooldown:
+    # `is None` = never alerted; a 0.0 sentinel would compare against monotonic-since-BOOT and
+    # mute the FIRST credential alert for a whole cooldown after every restart — exactly when a
+    # dead key is most likely to be discovered.
+    if (cooldown > 0 and _credential_alert_last is not None
+            and now - _credential_alert_last < cooldown):
         return True
     _credential_alert_last = now
     logger.error("LIVE credential failure — %s: %s", type(exc).__name__, exc)
@@ -291,8 +295,8 @@ _last_clock_refresh: dict[int, float] = {}
 def _refresh_clock(ex) -> None:
     """Re-measure the venue clock (and refresh market metadata) periodically. Best effort."""
     now = time.monotonic()
-    last = _last_clock_refresh.get(id(ex), 0.0)
-    if now - last < _CLOCK_REFRESH_SEC:
+    last = _last_clock_refresh.get(id(ex))  # None = never refreshed: always refresh (see notify)
+    if last is not None and now - last < _CLOCK_REFRESH_SEC:
         return
     _last_clock_refresh[id(ex)] = now
     try:

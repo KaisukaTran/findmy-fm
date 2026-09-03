@@ -304,7 +304,12 @@ def _throttle_ok(key: str, cooldown: float) -> bool:
     if cooldown <= 0:
         return True
     now = time.monotonic()
-    if now - _last_event.get(key, 0.0) < cooldown:
+    last = _last_event.get(key)
+    # `last is None` = never fired, which must ALWAYS pass. A 0.0 default cannot express that:
+    # time.monotonic() counts from BOOT, so on a freshly started machine `now` is itself
+    # smaller than any long cooldown and every first alert was swallowed — the 6h digest
+    # stayed silent for the first 6 hours of uptime, and so did anything else that throttles.
+    if last is not None and now - last < cooldown:
         return False
     _last_event[key] = now
     return True

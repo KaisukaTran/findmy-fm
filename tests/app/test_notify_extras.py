@@ -160,8 +160,20 @@ def test_maybe_send_digest_off_when_zero(db, monkeypatch, _no_network):
     assert notify.maybe_send_digest(db) is False and _no_network == []
 
 
+def test_a_never_fired_throttle_key_passes_on_a_freshly_booted_machine(monkeypatch):
+    """`time.monotonic()` counts from BOOT, so a 0.0 "never fired" sentinel made every first
+    alert compare `now - 0.0 < cooldown` — on a machine up for less than the cooldown that is
+    True, and the alert was swallowed. Found live: the 6h digest stayed silent for the first
+    6h of uptime after a reboot, and the credential/rate alerts behaved the same way."""
+    monkeypatch.setattr(notify, "_last_event", {})
+    monkeypatch.setattr(notify.time, "monotonic", lambda: 2951.0)  # 0.82h since boot
+    assert notify._throttle_ok("digest", 6 * 3600.0) is True   # never fired -> must pass
+    assert notify._throttle_ok("digest", 6 * 3600.0) is False  # now genuinely throttled
+
+
 def test_maybe_send_digest_sends_when_enabled(db, monkeypatch, _no_network):
     monkeypatch.setattr(notify, "enabled", lambda: True)
+    monkeypatch.setattr(notify, "_last_event", {})  # hermetic: never depend on process history
     monkeypatch.setattr(settings, "telegram_digest_hours", 6)
     assert notify.maybe_send_digest(db) is True
     assert any("digest" in m for m in _no_network)

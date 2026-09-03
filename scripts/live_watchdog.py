@@ -20,8 +20,9 @@ WHAT IT DOES
     a single slow response never triggers a restart during a heavy scan.
 
 USAGE
-    Started at logon by the Startup-folder shortcut; can also be run by hand:
-        D:\\FINDMY\\.venv\\Scripts\\python.exe D:\\FINDMY-live\\scripts\\live_watchdog.py
+    Started by the `FINDMY-Live-Watchdog` scheduled task (SYSTEM, AtStartup); can also be
+    run by hand with the repo's venv interpreter. Paths follow this file, so the script
+    keeps working wherever the repo is moved to.
 """
 
 from __future__ import annotations
@@ -35,8 +36,12 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(r"D:\FINDMY-live")
-VENV_PYTHON = Path(r"D:\FINDMY\.venv\Scripts\python.exe")
+# Derived, never hardcoded: the watchdog must keep working after the worktrees are merged
+# into one folder (and from whatever path it is copied to). ROOT is the repo that contains
+# this script; the interpreter is whichever one is running it, which is the venv python
+# because that is what the scheduled task launches.
+ROOT = Path(__file__).resolve().parents[1]
+VENV_PYTHON = Path(sys.executable)
 HEALTH_URL = "http://127.0.0.1:8001/health"
 LOG = ROOT / "data" / "watchdog.log"
 PORT = "8001"

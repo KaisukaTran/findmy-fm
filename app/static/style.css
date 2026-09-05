@@ -1,6 +1,26 @@
 :root {
+  /* base surfaces (kept: bg, panel, line, fg, muted, green, red, accent — other
+     rules reference these names directly) */
   --bg: #0f1419; --panel: #1a2129; --line: #2a333d; --fg: #e6edf3;
   --muted: #8b98a5; --green: #2ea043; --red: #e5534b; --accent: #2f81f7;
+
+  /* elevated surfaces */
+  --bg-2: #141b22; --panel-2: #202932; --line-soft: #232b33; --muted-2: #6b7683;
+
+  /* price-direction (alias green/red so "up/down" reads intent-first) + low-alpha
+     tints for the tick-flash animation below */
+  --up: var(--green); --down: var(--red);
+  --up-soft: color-mix(in srgb, var(--up) 22%, transparent);
+  --down-soft: color-mix(in srgb, var(--down) 22%, transparent);
+
+  /* extra accents used across badges / charts, previously hardcoded inline */
+  --warn: #e3b341; --purple: #bc8cff; --orange: #f0883e; --amber: #d29922;
+
+  /* real-money safety chrome */
+  --danger: #f85149;
+
+  /* raw literals used a couple of places (button text, tooltip bg) */
+  --white: #fff; --black: #000;
 }
 * { box-sizing: border-box; }
 body {
@@ -11,6 +31,16 @@ header {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   flex-wrap: wrap;
   padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel);
+}
+
+/* --- Environment identity: real money is unmistakable at a glance ------ */
+/* Inset shadow so the frame draws INSIDE the viewport edge — never shifts layout.
+   .env-testnet / .env-paper get no frame (rule only fires for .env-real). */
+body.env-real {
+  box-shadow: inset 0 0 0 3px var(--danger);
+}
+body.env-real header {
+  border-bottom-color: var(--danger);
 }
 header h1 { font-size: 18px; margin: 0; }
 header .actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -30,8 +60,26 @@ main { padding: 16px 24px; max-width: 1680px; margin: 0 auto; }
 /* horizontal-scroll wrapper so wide tables never spill out of a panel */
 .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
-.tbl th, .tbl td { text-align: left; padding: 5px 7px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.tbl th, .tbl td { text-align: left; padding: 4px 7px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .tbl th { color: var(--muted); font-weight: 500; }
+.tbl tbody tr:hover { background: var(--panel-2); }
+/* right-align numeric columns (Qty/Price/Fee/P&L/etc — trading-terminal density) */
+.tbl th.num, .tbl td.num { text-align: right; }
+
+/* --- Sticky <thead> for long, vertically-scrolling tables (positions, trades,
+   audit) — the wrapper already scrolls horizontally via .scroll; tbl-scroll adds
+   a bounded height + vertical scroll so the header can stick to its top. */
+.tbl-scroll { max-height: 62vh; overflow-y: auto; }
+/* border-collapse merges each th's own bottom border into the shared grid
+   line, which does not travel with the th once it goes position:sticky —
+   the header appears to lose its underline as soon as the table scrolls.
+   A box-shadow is drawn on the element itself (unaffected by border-collapse)
+   so it stays glued to the sticky header; var(--line) keeps it on the same
+   token every other cell border uses. */
+.tbl-scroll thead th {
+  position: sticky; top: 0; z-index: 2; background: var(--panel);
+  box-shadow: inset 0 -1px 0 var(--line);
+}
 .pos { color: var(--green); } .neg { color: var(--red); }
 .badge { padding: 1px 7px; border-radius: 999px; font-size: 11px; border: 1px solid var(--line); }
 .badge.active { color: var(--green); border-color: var(--green); }
@@ -46,24 +94,22 @@ main { padding: 16px 24px; max-width: 1680px; margin: 0 auto; }
 .badge.telegram-on { color: var(--accent); border-color: var(--accent); }
 .badge.telegram-off { color: var(--muted); border-color: var(--muted); }
 .badge.veto { color: var(--red); border-color: var(--red); font-weight: 600; }
-.badge.hyperopt-on { color: #e3b341; border-color: #e3b341; font-weight: 600; }
+.badge.hyperopt-on { color: var(--warn); border-color: var(--warn); font-weight: 600; }
 .badge.hyperopt-off { color: var(--muted); border-color: var(--muted); }
-.badge.ml-on { color: #bc8cff; border-color: #bc8cff; font-weight: 600; }
-.badge.strategy-dca { color: #2f81f7; border-color: #2f81f7; }
-.badge.strategy-pyr { color: #2ea043; border-color: #2ea043; font-weight: 600; }
+.badge.ml-on { color: var(--purple); border-color: var(--purple); font-weight: 600; }
+.badge.strategy-dca { color: var(--accent); border-color: var(--accent); }
+.badge.strategy-pyr { color: var(--green); border-color: var(--green); font-weight: 600; }
 .badge.ml-off { color: var(--muted); border-color: var(--muted); }
 .statusbar-full-auto, .statusbar-breaker,
 .statusbar-guardian, .statusbar-telegram,
 .statusbar-hyperopt, .statusbar-ml { display: inline-flex; align-items: center; gap: 4px; }
 button {
-  background: var(--accent); color: #fff; border: 0; border-radius: 6px;
+  background: var(--accent); color: var(--white); border: 0; border-radius: 6px;
   padding: 6px 12px; cursor: pointer; font-size: 13px;
 }
 button.ghost { background: transparent; border: 1px solid var(--line); color: var(--fg); }
 button.danger { background: var(--red); } button.ok { background: var(--green); }
 button.sm { padding: 3px 8px; font-size: 12px; }
-.modal { margin-top: 12px; padding: 12px; border: 1px dashed var(--line); border-radius: 8px; background: var(--bg); }
-.modal form { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); align-items: end; }
 label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
 /* The config-key (variable) name shown under each Strategy-tab label so an operator can map
    an explanation that uses the variable name to the control they need to change. */
@@ -100,7 +146,7 @@ button { white-space: nowrap; }
 .af-system .audit-row:not(.cat-system) { display: none; }
 /* .af-all shows everything */
 .audit-sym-hidden { display: none !important; }
-.audit-warn { color: #f0883e; }
+.audit-warn { color: var(--orange); }
 .audit-tbl td { padding: 4px 7px; vertical-align: top; }
 .audit-row.sev-danger td:nth-child(3) { font-weight: 600; }
 .audit-sym { padding: 1px 6px; font-size: 11px; }
@@ -200,7 +246,7 @@ button { white-space: nowrap; }
   content: attr(data-tip);
   position: absolute; left: 0; top: 130%; z-index: 50;
   width: max-content; max-width: 280px; white-space: normal;
-  background: #000; color: var(--fg); border: 1px solid var(--line); border-radius: 6px;
+  background: var(--black); color: var(--fg); border: 1px solid var(--line); border-radius: 6px;
   padding: 7px 9px; font-size: 12px; font-weight: 400; line-height: 1.45;
   text-transform: none; letter-spacing: normal;
   box-shadow: 0 4px 14px rgba(0,0,0,.5);
@@ -252,7 +298,7 @@ button { white-space: nowrap; }
 }
 .conn-live        { background: var(--green); }
 .conn-error       { background: var(--red); animation: chip-blink .8s infinite; }
-.conn-reconnecting { background: #e3b341; animation: chip-blink 1.2s infinite; }
+.conn-reconnecting { background: var(--warn); animation: chip-blink 1.2s infinite; }
 @keyframes chip-blink {
   0%, 100% { opacity: 1; }
   50%       { opacity: .35; }
@@ -275,11 +321,6 @@ button { white-space: nowrap; }
 .scan-stats-empty { font-size: 12px; margin-top: 6px; }
 
 /* --- P3: Modal header (close button row) ------------------------------ */
-.modal-header {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 8px;
-}
-.modal-header h2 { margin: 0; }
 
 /* --- P4: U13 inline-style sweep utility classes ----------------------- */
 /* hidden: replaces style="display:none" on the ladder overlay (.overlay has
@@ -348,21 +389,21 @@ button { white-space: nowrap; }
 
 /* --- ladder price-level color badges ---------------------------------- */
 /* avg price — amber */
-.badge-avg-price    { border-color: #d29922; color: #d29922; }
+.badge-avg-price    { border-color: var(--amber); color: var(--amber); }
 /* current price — blue */
-.badge-current-price { border-color: #2f81f7; color: #2f81f7; }
+.badge-current-price { border-color: var(--accent); color: var(--accent); }
 /* next DCA wave — orange */
-.badge-next-wave    { border-color: #f0883e; color: #f0883e; }
+.badge-next-wave    { border-color: var(--orange); color: var(--orange); }
 /* take-profit — green */
-.badge-tp           { border-color: #2ea043; color: #2ea043; }
+.badge-tp           { border-color: var(--green); color: var(--green); }
 /* stop-loss — red */
-.badge-sl           { border-color: #e5534b; color: #e5534b; }
+.badge-sl           { border-color: var(--red); color: var(--red); }
 
 /* --- pending.html auto-approve status badges -------------------------- */
 /* manual (TAY) — orange; same color as badge-next-wave intentionally */
-.badge-manual       { border-color: #f0883e; color: #f0883e; }
+.badge-manual       { border-color: var(--orange); color: var(--orange); }
 /* auto-pending (waiting for price) — blue */
-.badge-auto-pending { border-color: #2f81f7; color: #2f81f7; }
+.badge-auto-pending { border-color: var(--accent); color: var(--accent); }
 
 /* --- U2: API key indicator in the header ------------------------------ */
 .key-indicator {
@@ -415,3 +456,105 @@ button { white-space: nowrap; }
   }
   /* x-cloak hides it before Alpine initialises; after that x-show takes over */
 }
+
+/* --- kss_settings "blocked coins" note ---------------------------------
+   Replaces style="grid-column: 1 / -1; margin: 2px 0 6px;" (CSP: no inline style). */
+.settings-note-full { grid-column: 1 / -1; margin: 2px 0 6px; }
+
+/* --- Tick-flash on value change -----------------------------------------
+   Contract: a sibling script diffs the OLD/NEW text of every [data-k] element
+   across an htmx:afterSwap and (re)adds .tick-up / .tick-down for 600ms. This
+   is the CSS half only — a keyframe (not a plain transition) so re-adding the
+   same class after the flash has finished re-triggers the animation. */
+/* Tab-switch fade. Deliberately CSS-only: wrapping the panel swap in
+   document.startViewTransition() made the switch wait on a compositor frame, and a
+   throttled window then froze navigation entirely (measured: no flip after 6s). A plain
+   animation on the revealed panel is cosmetic and cannot delay the state change. */
+[data-tab-panel][data-active="true"] { animation: panel-in 160ms ease-out; }
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-tab-panel][data-active="true"] { animation: none; }
+}
+
+@keyframes tick-flash-up {
+  0%   { background-color: var(--up-soft); color: var(--up); }
+  100% { background-color: transparent; }
+}
+@keyframes tick-flash-down {
+  0%   { background-color: var(--down-soft); color: var(--down); }
+  100% { background-color: transparent; }
+}
+.tick-up   { animation: tick-flash-up 600ms ease-out; }
+.tick-down { animation: tick-flash-down 600ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .tick-up, .tick-down { animation: none; }
+}
+
+/* --- Keyboard-shortcut overlay ------------------------------------------
+   Sibling JS builds the DOM and toggles the [hidden] attribute; this defines
+   the look only. z-index sits above the ladder overlay (100) and modals. */
+.kbd-overlay {
+  position: fixed; inset: 0; z-index: 500;
+  background: rgba(0, 0, 0, .6);
+  display: flex; align-items: center; justify-content: center;
+}
+.kbd-overlay[hidden] { display: none; }
+.kbd-panel {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 16px 18px; width: min(480px, 92vw); max-height: 85vh; overflow: auto;
+}
+.kbd-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 6px 0; border-bottom: 1px solid var(--line-soft); font-size: 13px;
+}
+.kbd-row:last-child { border-bottom: 0; }
+.kbd-key {
+  display: inline-block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; line-height: 1; border: 1px solid var(--line); border-radius: 4px;
+  padding: 3px 7px; background: var(--bg-2); color: var(--fg);
+}
+
+/* --- Capital-allocation bar (host: /partials/capital) --------------------
+   The partial emits exactly these classes; widths come from the .w-* utility
+   steps below (inline width is CSP-forbidden, so the partial picks the
+   nearest 5% step class instead of writing style="width:..."). */
+.cap-bar {
+  display: flex; height: 26px; border-radius: 6px; overflow: hidden;
+  background: var(--bg-2); border: 1px solid var(--line);
+}
+.cap-seg { flex: 0 0 0%; min-width: 0; }
+.cap-seg-backup   { background: var(--muted-2); }
+.cap-seg-free     { background: var(--line-soft); }
+.cap-seg-resting  { background: var(--accent); }
+.cap-seg-deployed { background: var(--purple); }
+.cap-seg-promised { background: var(--orange); }
+
+.cap-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.cap-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.cap-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+
+/* 5%-step width utilities for .cap-seg sizing (flex-basis, not inline style). */
+.w-0   { flex: 0 0 0%; }
+.w-5   { flex: 0 0 5%; }
+.w-10  { flex: 0 0 10%; }
+.w-15  { flex: 0 0 15%; }
+.w-20  { flex: 0 0 20%; }
+.w-25  { flex: 0 0 25%; }
+.w-30  { flex: 0 0 30%; }
+.w-35  { flex: 0 0 35%; }
+.w-40  { flex: 0 0 40%; }
+.w-45  { flex: 0 0 45%; }
+.w-50  { flex: 0 0 50%; }
+.w-55  { flex: 0 0 55%; }
+.w-60  { flex: 0 0 60%; }
+.w-65  { flex: 0 0 65%; }
+.w-70  { flex: 0 0 70%; }
+.w-75  { flex: 0 0 75%; }
+.w-80  { flex: 0 0 80%; }
+.w-85  { flex: 0 0 85%; }
+.w-90  { flex: 0 0 90%; }
+.w-95  { flex: 0 0 95%; }
+.w-100 { flex: 0 0 100%; }

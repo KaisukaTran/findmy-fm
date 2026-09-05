@@ -957,25 +957,59 @@ def retrain_ml(db: Session = Depends(get_db)):
     return {"trained": m.to_dict() if m else None}
 
 
+def _asset_version() -> str:
+    """Cache-busting stamp for the hand-written assets, from their own mtimes.
+
+    `StaticFiles` answers with a strong ETag, and a browser that already holds the file will
+    happily keep serving it from cache across a server restart — measured here: after editing
+    `app/static/app.js` and restarting, the page was still running the OLD script, and even a
+    reload did not pick the new one up. Shipping a JS change and having operators keep the
+    previous behaviour is exactly the silent-stale class this project has been bitten by
+    before, so the URL changes whenever the file does. Two stat calls per page load; the
+    partials are unaffected because they carry no asset tags.
+    """
+    stamp = 0
+    for name in ("app.js", "style.css"):
+        try:
+            stamp = max(stamp, int((_TEMPLATES_DIR.parent / "static" / name).stat().st_mtime))
+        except OSError:
+            pass
+    return str(stamp)
+
+
 # --- dashboard (HTMX) ---------------------------------------------------
 
 
 @ui_router.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
-    # Mode badge so the paper (:8000) and live (:8001) dashboards are never confused.
+    # Mode badge so the paper (:8000) and live (:8001) dashboards are never confused. ``env`` is
+    # the machine-readable half: it drives the page <title> and a body class, so real money looks
+    # different at a glance from play money (a testnet dashboard used to be indistinguishable).
     if not settings.live_trading:
-        mode = {"label": "PAPER", "cls": "full-auto-off"}
+        mode = {"label": "PAPER", "cls": "full-auto-off", "env": "paper"}
     elif settings.live_use_testnet:
-        mode = {"label": "LIVE · TESTNET", "cls": "guardian-on"}
+        mode = {"label": "LIVE · TESTNET", "cls": "guardian-on", "env": "testnet"}
     else:
-        mode = {"label": "LIVE · REAL", "cls": "breaker-frozen"}
-    return templates.TemplateResponse("dashboard.html", {"request": request, "mode": mode})
+        mode = {"label": "LIVE · REAL", "cls": "breaker-frozen", "env": "real"}
+    return templates.TemplateResponse(
+        "dashboard.html", {"request": request, "mode": mode, "asset_v": _asset_version()}
+    )
 
 
 @ui_router.get("/partials/summary", response_class=HTMLResponse)
 def partial_summary(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         "partials/summary.html", {"request": request, "s": portfolio.summary_view(db)}
+    )
+
+
+@ui_router.get("/partials/capital", response_class=HTMLResponse)
+def partial_capital(request: Request, db: Session = Depends(get_db)):
+    """Capital-utilisation panel: the equity split (backup/free/resting/deployed) plus
+    a trailing-window realized-yield-per-locked-dollar-day figure."""
+    return templates.TemplateResponse(
+        "partials/capital.html",
+        {"request": request, "c": portfolio.capital_view(db), "y": portfolio.capital_yield_view(db)},
     )
 
 

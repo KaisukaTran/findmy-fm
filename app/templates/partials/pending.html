@@ -1,6 +1,6 @@
 <div id="pending-pane"
      hx-get="/partials/pending?page={{ page }}"
-     hx-trigger="every 10s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body"
+     hx-trigger="every 10s, refresh-trading from:body"
      hx-target="this" hx-swap="outerHTML">
 <div class="flex-spaced mb-8">
   <span class="muted" title="Quy tắc tự duyệt: chỉ duyệt lệnh từ các nguồn này có notional (KL×giá) ≤ ngưỡng. Notional lớn hơn vẫn phải người duyệt.">auto-approve:</span> <span class="muted">{{ aa_sources }} ≤ $<input id="aa-max-input" type="number" min="1" step="1"

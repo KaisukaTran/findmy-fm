@@ -10,15 +10,16 @@
      ('market_value', 'Giá trị', 'Giá trị thị trường = KL × giá hiện tại, và % so với TỔNG vốn (equity).'),
      ('unrealized_pnl', 'uP&L', 'Lãi/lỗ tạm tính = (giá hiện tại − avg) × KL, và % so với giá vốn.'),
 ] %}
-<div id="positions-pane" class="scroll"
+<div id="positions-pane"
      hx-get="/partials/positions?page={{ page }}{{ qs | safe }}"
-     hx-trigger="every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body"
+     hx-trigger="every 15s, refresh-trading from:body"
      hx-target="this" hx-swap="outerHTML">
 {% if rows %}
+<div class="scroll tbl-scroll">
 <table class="tbl">
   <thead><tr>
     {% for key, label, title in sortcols %}
-    <th title="{{ title }} Bấm để sắp xếp {{ 'nhỏ→lớn' if not (sort == key and dir == 'asc') else 'lớn→nhỏ' }}.">
+    <th {% if key != 'symbol' %}class="num"{% endif %} title="{{ title }} Bấm để sắp xếp {{ 'nhỏ→lớn' if not (sort == key and dir == 'asc') else 'lớn→nhỏ' }}.">
       <a class="th-sort" role="button" tabindex="0"
          hx-get="/partials/positions?page=1&sort={{ key }}&dir={{ 'desc' if (sort == key and dir == 'asc') else 'asc' }}"
          hx-target="#positions-pane" hx-swap="outerHTML">{{ label }}{% if sort == key %} <span class="sort-ico">{{ '▲' if dir == 'asc' else '▼' }}</span>{% endif %}</a>
@@ -32,11 +33,11 @@
     {% for r in rows %}
     <tr>
       <td>{{ r.symbol }}</td>
-      <td>{{ r.quantity | qty }}</td>
-      <td>{{ r.avg_entry_price | money }}</td>
-      <td>{{ r.current_price | money }}</td>
-      <td>${{ r.market_value | money_kmb }} <span class="muted fs-11">{{ "%.1f"|format(r.market_value_pct) }}%</span></td>
-      <td class="{{ 'pos' if r.unrealized_pnl >= 0 else 'neg' }}">
+      <td class="num" data-k="pos:{{ r.symbol }}:qty" data-v="{{ "%.8f"|format(r.quantity or 0) }}">{{ r.quantity | qty }}</td>
+      <td class="num">{{ r.avg_entry_price | money }}</td>
+      <td class="num" data-k="pos:{{ r.symbol }}:price" data-v="{{ "%.8f"|format(r.current_price or 0) }}">{{ r.current_price | money }}</td>
+      <td class="num" data-k="pos:{{ r.symbol }}:value" data-v="{{ "%.8f"|format(r.market_value or 0) }}">${{ r.market_value | money_kmb }} <span class="muted fs-11">{{ "%.1f"|format(r.market_value_pct) }}%</span></td>
+      <td class="num {{ 'pos' if r.unrealized_pnl >= 0 else 'neg' }}" data-k="pos:{{ r.symbol }}:upnl" data-v="{{ "%.8f"|format(r.unrealized_pnl or 0) }}">
         ${{ r.unrealized_pnl | money_kmb }} ({{ "%.1f"|format(r.unrealized_pnl_pct) }}%)
       </td>
       <td>
@@ -49,6 +50,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}<p class="muted">No open positions.</p>{% endif %}
 <div class="page-nav">
   <button class="sm ghost" {{ 'disabled' if not has_prev }}

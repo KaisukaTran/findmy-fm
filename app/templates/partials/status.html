@@ -1,10 +1,10 @@
 <span id="conn-chip" class="conn-chip conn-live" aria-label="Trạng thái kết nối"></span>
-<span class="statusbar" x-data="{ autoOpen: false }">
+<span class="statusbar" x-data="autoPopover">
 
   {# ── Mobile toggle + popover: the whole .auto-mobile-wrap is hidden at >=600px
        via a CSS media query, so Alpine x-show can work freely inside it. ── #}
   <span class="auto-mobile-wrap">
-    <button class="sm ghost" @click="autoOpen = !autoOpen" :aria-expanded="autoOpen.toString()">Automation ▾</button>
+    <button class="sm ghost" @click="toggleAuto" :aria-expanded="autoOpen">Automation ▾</button>
     <span class="auto-popover" x-show="autoOpen" x-cloak>
       <span class="{{ 'pos' if a.auto_trade else 'muted' }}">Auto-trade {{ 'ON' if a.auto_trade else 'OFF' }}</span>
       <span class="statusbar-full-auto">

@@ -1,6 +1,6 @@
-<div id="trades-pane" class="scroll"
+<div id="trades-pane"
      hx-get="/partials/trades?page={{ page }}&side={{ side }}"
-     hx-trigger="every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-trading from:body"
+     hx-trigger="every 15s, refresh-trading from:body"
      hx-target="this" hx-swap="outerHTML">
 <div class="audit-filters">
   {% for key, label in [('ALL', '≡ Tất cả'), ('BUY', '🟢 BUY'), ('SELL', '🔴 SELL')] %}
@@ -10,15 +10,16 @@
   {% endfor %}
 </div>
 {% if rows %}
+<div class="scroll tbl-scroll">
 <table class="tbl">
   <thead><tr>
     <th title="Thời điểm khớp lệnh (ngày giờ VN GMT+7, YYYY-MM-DD HH:MM:SS).">Time</th>
     <th title="Mã coin.">Sym</th>
     <th title="Hướng: BUY (mua) / SELL (bán).">Side</th>
-    <th title="Khối lượng khớp.">Qty</th>
-    <th title="Giá khớp thực tế (đã gồm slippage mô phỏng).">Price</th>
-    <th title="Phí giao dịch = notional × taker_fee_pct (mặc định 0.1%).">Fee</th>
-    <th title="Lãi/lỗ đã chốt của lệnh bán = tiền bán − giá vốn − phí.">P&L</th>
+    <th class="num" title="Khối lượng khớp.">Qty</th>
+    <th class="num" title="Giá khớp thực tế (đã gồm slippage mô phỏng).">Price</th>
+    <th class="num" title="Phí giao dịch = notional × taker_fee_pct (mặc định 0.1%).">Fee</th>
+    <th class="num" title="Lãi/lỗ đã chốt của lệnh bán = tiền bán − giá vốn − phí.">P&L</th>
     <th title="Nguồn lệnh: OPUS (Opus điều phối), KSS (chiến lược full-auto), manual/auto.">Src</th>
   </tr></thead>
   <tbody>
@@ -27,15 +28,16 @@
       <td class="muted">{{ r.executed_at | localdt }}</td>
       <td>{{ r.symbol }}</td>
       <td class="{{ 'pos' if r.side == 'BUY' else 'neg' }}">{{ r.side }}</td>
-      <td>{{ r.quantity | qty }}</td>
-      <td>{{ r.price | money }}</td>
-      <td>{{ "%.4f"|format(r.fee) }}</td>
-      <td class="{{ 'pos' if r.realized_pnl >= 0 else 'neg' }}">{{ r.realized_pnl | money_kmb }}</td>
+      <td class="num">{{ r.quantity | qty }}</td>
+      <td class="num">{{ r.price | money }}</td>
+      <td class="num">{{ "%.4f"|format(r.fee) }}</td>
+      <td class="num {{ 'pos' if r.realized_pnl >= 0 else 'neg' }}">{{ r.realized_pnl | money_kmb }}</td>
       <td><span class="badge {{ 'ml-on' if r.source == 'OPUS' else ('active' if r.source == 'KSS' else '') }}">{{ r.source }}</span></td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}<p class="muted">No trades yet.</p>{% endif %}
 <div class="page-nav">
   <button class="sm ghost" {{ 'disabled' if not has_prev }}

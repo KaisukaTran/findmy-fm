@@ -73,18 +73,6 @@ function setChip(state) {
              : "Đang kết nối lại…";
 }
 
-// --- Modal helpers (P3) -------------------------------------------------
-
-function closeModal(prop) {
-  try {
-    const alpine = document.body._x_dataStack && document.body._x_dataStack[0];
-    if (alpine && prop in alpine) { alpine[prop] = false; return; }
-    // Fallback: Alpine.$data via public API (Alpine 3).
-    const data = window.Alpine && Alpine.$data(document.body);
-    if (data && prop in data) data[prop] = false;
-  } catch (_) {}
-}
-
 function apiHeaders() {
   const h = { "Content-Type": "application/json" };
   if (window.API_KEY) h["X-API-Key"] = window.API_KEY;
@@ -147,6 +135,11 @@ function _updateKeyIndicator() {
 // Fire a targeted custom event on document.body so only the relevant partials
 // re-fetch.  refreshAll() remains for WS pushes (fires every scoped event).
 
+// Hosts that have completed at least one request, keyed by id/hx-get (see the poll gate
+// in DOMContentLoaded). A Set of KEYS, not a WeakSet of nodes: the self-swapping panes
+// replace their own node on every swap.
+const _polledOnce = new Set();
+
 function fireRefresh(scope) {
   document.body.dispatchEvent(new CustomEvent(scope));
 }
@@ -161,10 +154,15 @@ function refreshCosts()   { fireRefresh("refresh-costs"); }
 function refreshSavings() { fireRefresh("refresh-savings"); }
 
 function refreshAll() {
-  // Used by WS push — refetch everything.
-  ["refresh-status","refresh-trading","refresh-scanner",
-   "refresh-opus","refresh-losses","refresh-audit","refresh-costs","refresh-savings"]
-    .forEach((ev) => document.body.dispatchEvent(new CustomEvent(ev)));
+  // WS push: refresh what the user can actually SEE. Firing all eight scopes made every
+  // hidden panel refetch too — measured on the running dashboard, one push cost 13 partial
+  // requests instead of 4, and every one of them a DB round trip inside the same process
+  // that runs the 90s exit guard. Nothing goes stale behind the user's back: each panel
+  // refetches on `tab-shown` the moment it is revealed.
+  refreshStatus();
+  const panel = document.querySelector('[data-tab-panel][data-active="true"]');
+  const scope = panel && _TAB_REFRESH_SCOPE[panel.dataset.tabPanel];
+  if (scope) scope();
 }
 
 // Symbol filter for the audit feed lives on row classes (inside the swapped partial), so
@@ -175,11 +173,101 @@ function applyAuditSymbol() {
     r.classList.toggle("audit-sym-hidden", sym !== "" && r.dataset.symbol !== sym);
   });
 }
+// --- Flash-on-change (U9) -------------------------------------------------
+// The reader can't see what a poll changed unless we tell them. Every numeric
+// cell carries data-k="<stable key>" (contract with the template layer). We
+// snapshot pre-swap state on htmx:beforeSwap and compare post-swap state on
+// htmx:afterSwap, flashing .tick-up/.tick-down on the delta.
+//
+// F1: scope is document, not e.detail.target. Four panes swap themselves with
+// hx-target="this" hx-swap="outerHTML" (positions/trades/kss/audit) — for an
+// outerHTML swap the OLD node is detached and e.detail.target still points at
+// it, so scoping the snapshot/compare to the event target reads the very node
+// it snapshotted and prev === next every time (nothing ever flashes). Running
+// both passes over the whole document instead sidesteps htmx's target
+// semantics entirely: it is correct for innerHTML and outerHTML swaps alike,
+// and elements outside the swapped region are unchanged so they never flash
+// (their prev/next values are identical). The page carries on the order of a
+// hundred [data-k] elements, so a full pass costs nothing.
+//
+// Snapshots are still keyed by data-k VALUE (not DOM node identity) in one
+// page-wide Map, since a fresh outerHTML-swapped node is a different object
+// from the one queried on the previous pass even though we now always query
+// via `document`.
+const _tickSnap = new Map(); // data-k -> { text, num } last-seen
+
+// F2 fallback parser (only used when data-v is absent): pull the FIRST
+// number out of the string instead of stripping the whole cell to digits —
+// a cell with two numbers ("$40.58 (+2.03%)", "$2.1K (12.0%)") used to
+// concatenate into garbage ("40.582.03") and get silently skipped. Honours a
+// K/M/B suffix immediately after that first number (money_kmb output) and a
+// leading '-' as negative. No digits found = not a number (letters-only or
+// dash-only cells must never flash).
+function _tickNum(text) {
+  const s = String(text);
+  const m = s.match(/-?[0-9][0-9,]*(?:\.[0-9]+)?/);
+  if (!m) return null;
+  let n = Number(m[0].replace(/,/g, ""));
+  if (!Number.isFinite(n)) return null;
+  const suffix = s.charAt(m.index + m[0].length).toUpperCase();
+  const mult = { K: 1e3, M: 1e6, B: 1e9 }[suffix];
+  if (mult) n *= mult;
+  return n;
+}
+
+// F2: prefer the raw unformatted value the template emits alongside data-k
+// (data-v="<raw float>") — falls back to parsing the rendered text only for
+// cells that don't carry one.
+function _tickReadNum(el) {
+  const raw = el.dataset.v;
+  if (raw !== undefined && raw !== "") {
+    const n = Number(raw);
+    if (Number.isFinite(n)) return n;
+  }
+  return _tickNum(el.textContent.trim());
+}
+
+function _tickFlash(el, cls) {
+  // Remove-then-reflow-then-add: if the class is already present (two changes
+  // in quick succession) simply re-adding it is a no-op to the CSS animation
+  // engine — the reflow forces the browser to notice the removal first so the
+  // keyframes actually replay.
+  el.classList.remove("tick-up", "tick-down");
+  void el.offsetWidth;
+  el.classList.add(cls);
+  setTimeout(() => el.classList.remove(cls), 700);
+}
+
+function _tickSnapshot(root) {
+  if (!root || !root.querySelectorAll) return;
+  root.querySelectorAll("[data-k]").forEach((el) => {
+    _tickSnap.set(el.dataset.k, { text: el.textContent.trim(), num: _tickReadNum(el) });
+  });
+}
+
+function _tickCompare(root) {
+  if (!root || !root.querySelectorAll) return;
+  root.querySelectorAll("[data-k]").forEach((el) => {
+    const key = el.dataset.k;
+    const prev = _tickSnap.get(key); // undefined = never seen -> first load, not a change
+    const nextText = el.textContent.trim();
+    const nextNum = _tickReadNum(el);
+    _tickSnap.set(key, { text: nextText, num: nextNum }); // baseline for the next swap regardless of outcome below
+    if (!prev || prev.text === nextText) return;
+    if (prev.num === null || nextNum === null || prev.num === nextNum) return; // non-numeric or equal-value change
+    _tickFlash(el, nextNum > prev.num ? "tick-up" : "tick-down");
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   // U2: sync key indicator on load.
   _updateKeyIndicator();
 
   document.body.addEventListener("htmx:afterSwap", applyAuditSymbol);
+  // F1: scope is `document`, not the (possibly-detached, for outerHTML swaps)
+  // event target — see the Flash-on-change comment above.
+  document.body.addEventListener("htmx:beforeSwap", () => _tickSnapshot(document));
+  document.body.addEventListener("htmx:afterSwap", () => _tickCompare(document));
 
   // P3: connection chip — htmx request lifecycle.
   // htmx:afterRequest fires for every completed request (success or error).
@@ -189,13 +277,44 @@ document.addEventListener("DOMContentLoaded", () => {
   document.body.addEventListener("htmx:responseError", () => setChip("error"));
   document.body.addEventListener("htmx:sendError", () => setChip("error"));
 
-  // P3: Esc closes any open Alpine modal.
+  // Poll gate. The `hx-trigger` filters `[tabActive(this) && visibilityState==='visible']`
+  // have NEVER run: htmx compiles them with the Function constructor, and this app's own CSP
+  // (`default-src 'self'`, no `unsafe-eval`) blocks that — the browser console fills with
+  // EvalError from htmx.min.js and htmx then polls unconditionally. Measured on the running
+  // dashboard: sitting on Giao dịch still refetched opus, losses, costs, savings, scanner and
+  // both capital hosts. This does the same job without eval.
+  //
+  // Only TIMER polls are gated (`requestConfig.triggeringEvent` is null for those; a click, a
+  // `tab-shown`, or a scoped `refresh-*` always carries one and is never blocked). Each host
+  // keeps its first load so a hidden panel still has content the moment it is revealed —
+  // keyed by id/hx-get, not node identity, because the four self-swapping panes replace
+  // themselves with `outerHTML` and a fresh node would otherwise look "first" every time.
+  document.body.addEventListener("htmx:beforeRequest", (e) => {
+    const cfg = e.detail && e.detail.requestConfig;
+    if (!cfg) return;
+    // Broadcast = nobody asked for THIS panel: a poll timer (no triggering event) or a
+    // scoped `refresh-*` fired at the whole body. A click, a submit or a `tab-shown` is a
+    // direct request for this panel and is never blocked.
+    const te = cfg.triggeringEvent;
+    const broadcast = !te || (typeof te.type === "string" && te.type.indexOf("refresh-") === 0);
+    if (!broadcast) return;
+    const el = e.detail.elt;
+    if (!el || !el.closest) return;
+    const key = el.id || el.getAttribute("hx-get") || "";
+    if (key && !_polledOnce.has(key)) { _polledOnce.add(key); return; }
+    if (document.visibilityState !== "visible") { e.preventDefault(); return; }
+    const panel = el.closest("[data-tab-panel]");
+    if (panel && panel.dataset.active === "false") e.preventDefault();
+  });
+
+  // P3: Esc closes the shortcut overlay, then the ladder modal — one Esc closes
+  // ONE thing. Without the return, closing the overlay used to fall straight through
+  // into the next close on the same keypress.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    closeModal("orderOpen");
-    closeModal("kssOpen");
-    closeModal("previewOpen");
-    // Also close the plain JS ladder modal.
+    if (_kbdOverlay && !_kbdOverlay.hidden) { _toggleKbdOverlay(false); return; }
+    // The ladder modal is the only modal left (the manual order / new-session / pyramid
+    // preview dialogs and their Alpine state were removed with their header buttons).
     const m = document.getElementById("ladder-modal");
     if (m && !m.classList.contains("hidden")) m.classList.add("hidden");
   });
@@ -511,20 +630,17 @@ document.addEventListener("click", (e) => {
 
 // --- Tab navigation (plain JS, CSP-safe — Alpine only handles modals) ----
 
-// tabActive(el): returns true when the element's tab panel is active.
-// Used in hx-trigger conditional-polling guards: every Ns [tabActive(this)].
-// Degrades to true (always-poll) if data-active is absent (no JS or missing attr).
+// tabActive(el) used to gate hx-trigger polling: `every Ns [tabActive(this)]`. Those filters
+// were removed from every template because htmx compiles them with the Function constructor,
+// which this app's CSP blocks — they never ran, and each one threw an EvalError on every poll,
+// keeping the console permanently red and hiding real errors. The poll gate registered in
+// DOMContentLoaded does the same job in JavaScript, so the helper has no callers left.
 function tabActive(el) {
-  try {
-    const panel = el.closest("[data-tab-panel]");
-    if (!panel) return true; // outside any panel — always poll
-    return panel.dataset.active === "true";
-  } catch (_) {
-    return true; // degrade: poll as before
-  }
+  const panel = el && el.closest ? el.closest("[data-tab-panel]") : null;
+  return !panel || panel.dataset.active !== "false";
 }
 
-function showTab(name) {
+function _applyTab(name) {
   document.querySelectorAll("[data-tab]").forEach((b) => {
     const isActive = b.dataset.tab === name;
     b.classList.toggle("active", isActive);
@@ -532,16 +648,44 @@ function showTab(name) {
   });
   document.querySelectorAll("[data-tab-panel]").forEach((p) => {
     const isActive = p.dataset.tabPanel === name;
-    p.style.display = isActive ? "" : "none";
+    // data-active first, then display: the CSS fade keys off the attribute, and setting it
+    // after the element is already shown would skip the animation on the revealed panel.
     p.dataset.active = isActive ? "true" : "false";
+    p.style.display = isActive ? "" : "none";
     if (isActive) {
       // Fire tab-shown so inactive panels that just became active trigger their
       // first poll immediately rather than waiting up to Ns for the interval.
       try { htmx.trigger(p, "tab-shown"); } catch (_) {}
     }
   });
-  // U8: persist active tab in location.hash
-  try { location.hash = name; } catch (_) {}
+}
+
+// U8: tab names read from the sidebar DOM (not a hardcoded list) so a tab added
+// later is deep-linkable/shortcut-able without another edit to this file.
+function _knownTabs() {
+  return Array.from(document.querySelectorAll("[data-tab]")).map((b) => b.dataset.tab);
+}
+
+function _tabFromHash() {
+  const hash = location.hash.replace("#", "").trim();
+  const known = _knownTabs();
+  // Unknown/missing hash must not throw — fall back to the first (default) tab.
+  return known.includes(hash) ? hash : (known[0] || "overview");
+}
+
+function showTab(name) {
+  // Applied SYNCHRONOUSLY, on purpose. This used to be wrapped in
+  // document.startViewTransition() for a crossfade, and that turned out to make the tab
+  // switch depend on the compositor producing a frame: measured on the running dashboard
+  // with a MutationObserver, the panel had still not flipped SIX SECONDS after the call,
+  // and each click only landed when the next one was made. A throttled or backgrounded
+  // window would freeze navigation outright. The fade is now a plain CSS animation on the
+  // revealed panel (style.css .panel-in), which is cosmetic only and can never delay or
+  // swallow the state change.
+  _applyTab(name);
+  // U8: persist active tab in the URL. replaceState (not location.hash=, which pushes) so
+  // tab switches never grow the back-stack — only real navigation should be back/forward-able.
+  try { history.replaceState(null, "", "#" + name); } catch (_) {}
 }
 
 document.addEventListener("click", (e) => {
@@ -549,16 +693,143 @@ document.addEventListener("click", (e) => {
   if (tabBtn) showTab(tabBtn.dataset.tab);
 });
 document.addEventListener("DOMContentLoaded", () => {
-  // U8: restore tab from hash on load; fallback to overview.
-  const hash = location.hash.replace("#", "").trim();
-  const valid = ["overview", "trading", "opus", "losses", "calendar", "strategy", "logs"];
-  showTab(valid.includes(hash) ? hash : "overview");
+  // U8: restore tab from hash on load.
+  // F3: call _applyTab directly, not showTab — showTab's View Transition
+  // snapshots every stacked [data-tab-panel] (nothing hides them by default
+  // until _applyTab runs) and crossfades to the restored tab, producing a
+  // full-dashboard flash on every page load. showTab (with the transition)
+  // stays reserved for real user navigation (click/shortcut/hashchange).
+  const name = _tabFromHash();
+  _applyTab(name);
+  try { history.replaceState(null, "", "#" + name); } catch (_) {}
 });
+// U8: back/forward (or a hand-typed/linked #tab) still switches panels even
+// though our own writes use replaceState (which does not itself fire this).
+window.addEventListener("hashchange", () => showTab(_tabFromHash()));
 
 // Close the ladder modal when clicking the dark backdrop (outside the box).
 document.addEventListener("click", (e) => {
   const m = document.getElementById("ladder-modal");
   if (m && e.target === m) m.classList.add("hidden");
+});
+
+// --- Keyboard shortcuts (U9) ----------------------------------------------
+// 1-9 tabs, r refresh, s scan, ? help overlay. Built once, reused — the overlay
+// node lives outside any htmx swap target so it survives every poll.
+
+let _kbdOverlay = null;
+
+function _buildKbdOverlay() {
+  if (_kbdOverlay) return _kbdOverlay;
+  const overlay = document.createElement("div");
+  overlay.className = "kbd-overlay";
+  overlay.hidden = true;
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-label", "Phím tắt");
+
+  const panel = document.createElement("div");
+  panel.className = "kbd-panel";
+  overlay.appendChild(panel);
+
+  const title = document.createElement("h3");
+  title.textContent = "Phím tắt";
+  panel.appendChild(title);
+
+  const addRow = (key, label) => {
+    const row = document.createElement("div");
+    row.className = "kbd-row";
+    const kbd = document.createElement("span");
+    kbd.className = "kbd-key";
+    kbd.textContent = key;
+    const lbl = document.createElement("span");
+    lbl.textContent = label;
+    row.appendChild(kbd);
+    row.appendChild(lbl);
+    panel.appendChild(row);
+  };
+
+  // Tab rows mirror the sidebar's own order/labels (read from the DOM, not
+  // duplicated as a string literal here) — stays correct if the sidebar copy
+  // changes. Only the first 9 are bound to number keys.
+  document.querySelectorAll("[data-tab]").forEach((b, i) => {
+    if (i >= 9) return;
+    const spans = b.querySelectorAll("span");
+    const label = spans.length ? spans[spans.length - 1].textContent.trim() : b.textContent.trim();
+    addRow(String(i + 1), label);
+  });
+  addRow("r", "Làm mới tab hiện tại");
+  addRow("s", "Quét thị trường (scan)");
+  addRow("?", "Hiện/ẩn bảng phím tắt này");
+  addRow("Esc", "Đóng hộp thoại đang mở");
+
+  document.body.appendChild(overlay);
+  // Click the dark backdrop (outside kbd-panel) to close — same pattern as ladder-modal.
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) _toggleKbdOverlay(false); });
+  _kbdOverlay = overlay;
+  return overlay;
+}
+
+function _toggleKbdOverlay(force) {
+  const overlay = _buildKbdOverlay();
+  overlay.hidden = force !== undefined ? !force : !overlay.hidden;
+}
+
+// r: each tab panel already re-fires its own hx-get on a named refresh-* event
+// (see fireRefresh/refreshXxx above) — reuse those instead of a new fetch path.
+// Panels with no dedicated push-refresh (calendar; the KSS settings form, which
+// is deliberately load-once so it never clobbers an unsaved edit) just get the
+// always-visible top status bar refreshed, which is a harmless no-op for them.
+const _TAB_REFRESH_SCOPE = {
+  overview: () => { refreshScanner(); refreshTrading(); },
+  trading: refreshTrading,
+  opus: refreshOpus,
+  losses: refreshLosses,
+  costs: refreshCosts,
+  savings: refreshSavings,
+  strategy: () => fireRefresh("refresh-live"),
+  logs: () => fireRefresh("refresh-audit"),
+};
+
+function _refreshCurrentTab() {
+  refreshStatus(); // top summary/status bar is visible on every tab
+  const panel = document.querySelector('[data-tab-panel][data-active="true"]');
+  const scope = panel && _TAB_REFRESH_SCOPE[panel.dataset.tabPanel];
+  if (scope) scope();
+}
+
+function _isTypingTarget(t) {
+  if (!t) return false;
+  const tag = t.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || !!t.isContentEditable;
+}
+
+document.addEventListener("keydown", (e) => {
+  // Never hijack typing (the symbol box, forms, contenteditable) or a
+  // modifier chord (ctrl/alt/meta) — only shift is allowed through, since "?"
+  // is shift+/ on a US layout.
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  if (_isTypingTarget(e.target)) return;
+
+  if (e.key === "?") {
+    e.preventDefault();
+    _toggleKbdOverlay();
+    return;
+  }
+  if (e.key >= "1" && e.key <= "9") {
+    const tabs = document.querySelectorAll("[data-tab]");
+    const btn = tabs[Number(e.key) - 1];
+    if (btn) { e.preventDefault(); showTab(btn.dataset.tab); }
+    return;
+  }
+  const k = e.key.toLowerCase();
+  if (k === "r") {
+    e.preventDefault();
+    _refreshCurrentTab();
+  } else if (k === "s") {
+    e.preventDefault();
+    Promise.resolve(actions.scan()).catch(() => {}); // reuse the existing scan action, no second fetch
+  }
 });
 
 // --- forms --------------------------------------------------------------
@@ -569,36 +840,7 @@ function num(v) {
 
 document.addEventListener("submit", async (e) => {
   const form = e.target;
-  if (form.id === "order-form") {
-    e.preventDefault();
-    const f = new FormData(form);
-    await api("POST", "/api/orders", {
-      symbol: f.get("symbol"),
-      side: f.get("side"),
-      quantity: num(f.get("quantity")),
-      price: Number(f.get("price") || 0),
-      order_type: f.get("order_type") || "LIMIT",
-    });
-    form.reset();
-    closeModal("orderOpen");
-    toast("Đã thêm lệnh vào hàng chờ.", "success");
-    refreshTrading(); refreshStatus();
-  } else if (form.id === "kss-form") {
-    e.preventDefault();
-    const f = new FormData(form);
-    await api("POST", "/api/kss/sessions", {
-      symbol: f.get("symbol"),
-      entry_price: Number(f.get("entry_price")),
-      distance_pct: Number(f.get("distance_pct")),
-      max_waves: Number(f.get("max_waves")),
-      isolated_fund: Number(f.get("isolated_fund")),
-      tp_pct: Number(f.get("tp_pct")),
-    });
-    form.reset();
-    closeModal("kssOpen");
-    toast("Đã tạo phiên KSS mới.", "success");
-    refreshTrading(); refreshStatus();
-  } else if (form.id === "kss-settings-form") {
+  if (form.id === "kss-settings-form") {
     e.preventDefault();
     const f = new FormData(form);
     await api("POST", "/api/kss-settings", {
@@ -694,43 +936,8 @@ document.addEventListener("submit", async (e) => {
       ml: num(f.get("ml")),
     });
     toast("Đã lưu trọng số đồng thuận.", "success");
-  } else if (form.id === "preview-form") {
-    e.preventDefault();
-    const f = new FormData(form);
-    const r = await api("POST", "/api/kss/preview", {
-      symbol: f.get("symbol") || "BTC",
-      entry_price: Number(f.get("entry_price")),
-      distance_pct: Number(f.get("distance_pct")),
-      max_waves: Number(f.get("max_waves")),
-      isolated_fund: Number(f.get("isolated_fund")),
-      tp_pct: Number(f.get("tp_pct")),
-    });
-    renderPreview(r);
   }
 });
-
-// ##,###.## money formatting; qty keeps crypto precision.
-const money = (v) =>
-  Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const qtyFmt = (v) =>
-  Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 6 });
-
-function renderPreview(r) {
-  const el = document.getElementById("preview-output");
-  if (!el) return;
-  const rows = r.waves
-    .map(
-      (w) =>
-        `<tr><td>${w.wave_num}</td><td>${money(w.target_price)}</td><td>${qtyFmt(w.quantity)}</td>` +
-        `<td>${money(w.avg_price_after)}</td><td>${money(w.tp_price_after)}</td></tr>`
-    )
-    .join("");
-  el.innerHTML =
-    `<p>Total cost ≈ <b>$${money(r.total_cost)}</b> · range ${r.price_range_pct}% · ` +
-    `final avg $${money(r.final_avg_price)}</p>` +
-    `<table class="tbl"><thead><tr><th>#</th><th>Price</th><th>Qty</th>` +
-    `<th>Avg after</th><th>TP after</th></tr></thead><tbody>${rows}</tbody></table>`;
-}
 
 // --- WebSocket live refresh --------------------------------------------
 
@@ -750,17 +957,24 @@ function connectWs() {
 }
 connectWs();
 
+// The poll gate suppresses background refreshes while the tab is hidden, so catch up the
+// moment it comes back rather than leaving the operator looking at minutes-old numbers.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") refreshAll();
+});
+
 
 // --- Alpine (CSP build): modal visibility only -------------------------
 
 document.addEventListener("alpine:init", () => {
   // eslint-disable-next-line no-undef
-  Alpine.data("ui", () => ({
-    orderOpen: false,
-    kssOpen: false,
-    previewOpen: false,
-    toggleOrder() { this.orderOpen = !this.orderOpen; },
-    toggleKss() { this.kssOpen = !this.kssOpen; },
-    togglePreview() { this.previewOpen = !this.previewOpen; },
+  // The mobile "Automation" popover used an inline `x-data="{ autoOpen: false }"` with
+  // `@click="autoOpen = !autoOpen"` and `:aria-expanded="autoOpen.toString()"`. Alpine's
+  // CSP build cannot interpret ANY of those three — it allows a bare property reference and
+  // nothing else — so the console threw on every status poll and the button did nothing.
+  // Same shape as `ui` above: the logic lives here, the markup only names things.
+  Alpine.data("autoPopover", () => ({
+    autoOpen: false,
+    toggleAuto() { this.autoOpen = !this.autoOpen; },
   }));
 });

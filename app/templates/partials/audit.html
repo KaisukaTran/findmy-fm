@@ -1,6 +1,6 @@
 <div id="audit-pane"
      hx-get="/partials/audit?category={{ category }}&page={{ page }}"
-     hx-trigger="every 15s [tabActive(this) && document.visibilityState==='visible'], refresh-audit from:body"
+     hx-trigger="every 15s, refresh-audit from:body"
      hx-target="this" hx-swap="outerHTML">
 {% set icons = {'important':'⭐','trade':'🟢','risk':'🛑','opus':'🤖','system':'⚙️','all':'≡'} %}
 {% set sev = {'good':'pos','danger':'neg','warn':'audit-warn','info':'muted'} %}
@@ -12,6 +12,7 @@
   {% endfor %}
 </div>
 {% if rows %}
+<div class="tbl-scroll">
 <table class="tbl audit-tbl">
   <tbody>
     {% for r in rows %}
@@ -26,6 +27,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 <div class="page-nav">
   <button class="sm ghost" {{ 'disabled' if not has_prev }}
           hx-get="/partials/audit?category={{ category }}&page={{ page - 1 }}"

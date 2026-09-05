@@ -1,6 +1,6 @@
 <div id="savings-pane"
      hx-get="/partials/savings"
-     hx-trigger="every 30s [tabActive(this) && document.visibilityState==='visible'], refresh-savings from:body"
+     hx-trigger="every 30s, refresh-savings from:body"
      hx-target="this" hx-swap="outerHTML">
 
 <p class="muted mb-10-0">Coin bạn tự tích trữ (mua ngoài), tag <b>KAI</b> — ghi nhận để theo dõi + hiển thị.

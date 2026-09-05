@@ -9,13 +9,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.clock import utcnow
 from app.config import settings
 from app.market import get_current_prices
-from app.models import Fill, PendingOrder, Position
+from app.models import SESSION_ACTIVE, Fill, KssSession, PendingOrder, Position
 
 
 def order_source(source_ref: str | None) -> str:
@@ -243,6 +243,351 @@ def summary_view(db: Session) -> dict:
         "cash": cash,
         "cash_pct": cash / eq * 100,
         "total_equity": total_equity,
+    }
+
+
+def _resting_buy_notional(db: Session) -> float:
+    """Σ quantity × price over PENDING BUY LIMIT orders — cash already earmarked for a fill
+    the venue has not made yet (so it is neither `deployed` nor `free_cash`)."""
+    from app.models import PENDING
+
+    total = (
+        db.query(func.coalesce(func.sum(PendingOrder.quantity * PendingOrder.price), 0.0))
+        .filter(
+            PendingOrder.status == PENDING,
+            PendingOrder.side == "BUY",
+            PendingOrder.order_type == "LIMIT",
+        )
+        .scalar()
+    )
+    return float(total or 0.0)
+
+
+def _snap5(pct: float) -> int:
+    """Clamp to [0, 100] and round to the nearest 5% step (the only widths CSS defines)."""
+    pct = max(0.0, min(100.0, pct))
+    return int(round(pct / 5.0)) * 5
+
+
+def _capital_bar(
+    equity: float, backup: float, free_after_backup: float, resting_buy: float, deployed: float,
+) -> list[dict]:
+    """Stacked-bar segments for `partials/capital.html` (D1/D5).
+
+    The four values here are disjoint (they must already sum to ``equity`` — the caller is
+    responsible for that, e.g. passing ``free_after_backup`` rather than raw ``free_cash``,
+    which double-counts ``backup``). Every segment snaps to the nearest 5%, then the residual
+    needed to reach exactly 100 is absorbed by the LARGEST segment. Absorbing it in the last
+    segment instead would dump up to three roundings (±7.5%) onto ``deployed`` — the one
+    number this panel exists to show, and typically the smallest slice, so the distortion
+    would land where it does the most damage. The largest segment can carry the same residual
+    invisibly. Only classes ``.cap-seg-backup|free|resting|deployed`` and ``.w-0``…``.w-100``
+    (5% steps) are ever emitted — no inline ``style=`` (CSP-blocked).
+    """
+    segments = [
+        ("cap-seg-backup", backup),
+        ("cap-seg-free", free_after_backup),
+        ("cap-seg-resting", resting_buy),
+        ("cap-seg-deployed", deployed),
+    ]
+    bar = [
+        {"cls": cls, "step": _snap5((value / equity * 100) if equity else 0.0), "value": value}
+        for cls, value in segments
+    ]
+    if equity <= 0:
+        return bar  # nothing to divide: an empty bar, not a bar that is 100% "backup"
+    residual = 100 - sum(seg["step"] for seg in bar)
+    if residual:
+        sink = max(bar, key=lambda seg: seg["value"])
+        sink["step"] = max(0, min(100, sink["step"] + residual))
+        # Clamping the sink can leave the total off 100 (only when one segment is the whole
+        # bar and the residual is negative); re-settle onto whichever segment still has room.
+        drift = 100 - sum(seg["step"] for seg in bar)
+        for seg in sorted(bar, key=lambda s: -s["value"]):
+            if drift == 0:
+                break
+            room = (100 - seg["step"]) if drift > 0 else -seg["step"]
+            take = drift if abs(drift) <= abs(room) else room
+            seg["step"] += take
+            drift -= take
+    return bar
+
+
+def capital_view(db: Session) -> dict:
+    """Capital-utilisation panel: the equity split that shows why only part of the
+    account is actually working (docs: measured audit put per-dollar edge near
+    1%/day, but only ~29% of capital-days deployed -> ~0.42%/day portfolio return).
+
+    Reuses ``summary_view`` for cash, ``risk.account_equity`` for mark-to-market equity,
+    and the scanner's own lend-the-idle-reservation rule (``scanner._session_lock``) for
+    what an active session actually locks against the deployable budget — none of that
+    is re-derived here.
+    """
+    from app import risk  # lazy: risk -> portfolio; avoid an import cycle at load
+    from app.scanner import _session_lock  # lazy: scanner -> orders -> risk -> portfolio
+
+    active = db.query(KssSession).filter(KssSession.status == SESSION_ACTIVE).all()
+
+    equity = risk.account_equity(db)
+    backup = equity * settings.equity_backup_pct / 100
+    budget = equity - backup
+
+    deployed = sum(s.total_cost or 0.0 for s in active)
+    resting_buy = _resting_buy_notional(db)
+    committed = sum(s.isolated_fund or 0.0 for s in active)
+    promised = max(committed - deployed - resting_buy, 0.0)
+
+    cash = summary_view(db)["cash"]
+    free_cash = max(cash - resting_buy, 0.0)
+    # `backup` is a policy claim ON `free_cash`, not a disjoint fourth pot — subtract it so
+    # the bar's four segments are disjoint and sum to `equity` (D1).
+    free_after_backup = max(free_cash - backup, 0.0)
+
+    locked_book = sum(_session_lock(s) for s in active)
+    budget_free = max(budget - locked_book, 0.0)
+
+    working_pct = (deployed + resting_buy) / equity * 100 if equity else 0.0
+    committed_pct = committed / equity * 100 if equity else 0.0
+
+    sessions_active = len(active)
+    sessions_cap = settings.max_concurrent_sessions
+    # The book's own evidence of what a typical session actually needs, instead of the flat
+    # `scan_fund` constant (which the real scanner gate doesn't use either — it sizes off
+    # `kss_service.projected_ladder_cost`, ~4x smaller on the live book — D2). No network
+    # call: this endpoint is polled every 15s and that helper reaches for exchange info.
+    typical_need = (committed / sessions_active) if sessions_active else settings.scan_fund
+    if sessions_active >= sessions_cap:
+        binding = "count"
+    elif budget_free < typical_need:
+        binding = "budget"
+    else:
+        binding = "none"
+
+    bar = _capital_bar(equity, backup, free_after_backup, resting_buy, deployed)
+
+    return {
+        "equity": equity,
+        "backup": backup,
+        "budget": budget,
+        "deployed": deployed,
+        "resting_buy": resting_buy,
+        "promised": promised,
+        "committed": committed,
+        "free_cash": free_cash,
+        "free_after_backup": free_after_backup,
+        "locked_book": locked_book,
+        "budget_free": budget_free,
+        "typical_need": typical_need,
+        "working_pct": working_pct,
+        "committed_pct": committed_pct,
+        "sessions_active": sessions_active,
+        "sessions_cap": sessions_cap,
+        "binding": binding,
+        "bar": bar,
+    }
+
+
+def _next_session_start(db: Session, s: KssSession, start: datetime) -> datetime | None:
+    """Start time of the next session opened on the same symbol after ``start``, if any.
+
+    Bounds the exit-time fallback (D3) so it can never wander into a later session's
+    fills — without this, a stopped session with no own exit fill routinely resolves to
+    whatever the NEXT session on that symbol later did, mis-dating it by days.
+    """
+    order_key = func.coalesce(KssSession.started_at, KssSession.created_at)
+    nxt = (
+        db.query(KssSession)
+        .filter(KssSession.symbol == s.symbol, KssSession.id != s.id, order_key > start)
+        .order_by(order_key.asc())
+        .first()
+    )
+    if nxt is None:
+        return None
+    return nxt.started_at or nxt.created_at
+
+
+def _session_exit_time(db: Session, s: KssSession, now: datetime) -> datetime | None:
+    """When a finished KSS session actually stopped locking capital.
+
+    Prefers the newest ``Fill`` whose order was a SELL for this session (the real exit,
+    e.g. TP/SL/trailing/deadline) — NOT ``last_fill_at``, which an exit never updates and
+    so understates how long the capital was locked. Falls back to the newest SELL fill for
+    the session's symbol inside its own lifetime AND strictly before the next session on
+    that symbol started (an ``orphan:`` sweep of this session's leftover inventory lands
+    here legitimately) — bounded so it can never resolve to a LATER session's fill (D3).
+    ``None`` (counted as ``skipped`` by the caller) if nothing can be found at all.
+    """
+    exit_fill = (
+        db.query(Fill)
+        .join(PendingOrder, Fill.pending_order_id == PendingOrder.id)
+        .filter(
+            PendingOrder.side == "SELL",
+            PendingOrder.source_ref.like(f"pyramid:{s.id}:%"),
+        )
+        .order_by(Fill.executed_at.desc())
+        .first()
+    )
+    if exit_fill is not None:
+        return exit_fill.executed_at
+
+    start = s.started_at or s.created_at
+    if start is None:
+        return None
+    next_start = _next_session_start(db, s, start)
+    fallback_q = db.query(Fill).filter(
+        Fill.symbol == s.symbol,
+        Fill.side == "SELL",
+        Fill.executed_at >= start,
+        Fill.executed_at <= now,
+    )
+    if next_start is not None:
+        fallback_q = fallback_q.filter(Fill.executed_at < next_start)
+    fallback = fallback_q.order_by(Fill.executed_at.desc()).first()
+    return fallback.executed_at if fallback else None
+
+
+def _own_exit_time(s_id: int, own_exit: dict[int, datetime]) -> datetime | None:
+    """Newest SELL fill tagged exactly ``pyramid:{s_id}:...`` — the good path of D3's
+    fallback order, looked up in an already-built map (no DB access)."""
+    return own_exit.get(s_id)
+
+
+def _resolve_exit_time(
+    s: KssSession,
+    now: datetime,
+    own_exit: dict[int, datetime],
+    sell_times_by_symbol: dict[str, list[datetime]],
+    next_start: datetime | None,
+) -> datetime | None:
+    """Pure, DB-free re-implementation of ``_session_exit_time``'s resolution order (D3),
+    given prebuilt lookups — the core of ``capital_yield_view``'s batched pass (D6)."""
+    own = _own_exit_time(s.id, own_exit)
+    if own is not None:
+        return own
+
+    start = s.started_at or s.created_at
+    if start is None:
+        return None
+    best: datetime | None = None
+    for t in sell_times_by_symbol.get(s.symbol, ()):
+        if t < start or t > now:
+            continue
+        if next_start is not None and t >= next_start:
+            continue
+        if best is None or t > best:
+            best = t
+    return best
+
+
+def capital_yield_view(db: Session, window_days: int = 7) -> dict:
+    """Trailing-window realized yield per dollar-day of locked capital.
+
+    For every KSS session that was ever active (status != pending), integrates its lock
+    value (``scanner._session_lock``) over the hours it was active inside the window —
+    ``now`` for a still-ACTIVE session, its exit-fill time for a finished one (see
+    ``_session_exit_time`` / ``_resolve_exit_time`` for the same D3-bounded resolution
+    order, applied here from prebuilt lookups so this stays O(1) queries — D6). Kept
+    separate from ``capital_view`` so it can be tested on its own.
+
+    ``realized_pnl_window`` is restricted to fills whose order is KSS-originated
+    (``pyramid:`` or ``orphan:``) so the numerator covers the same book as the
+    denominator (``locked_dollar_days`` only ever counts KSS sessions) — a manual or OPUS
+    fill must not inflate the KSS-only yield ratio (D4).
+    """
+    from app import risk  # lazy: risk -> portfolio; avoid an import cycle at load
+    from app.models import SESSION_PENDING
+    from app.scanner import _session_lock  # lazy: scanner -> orders -> risk -> portfolio
+
+    now = utcnow()
+    window_start = now - timedelta(days=window_days)
+
+    # One query for every session (any status — pending sessions still matter as
+    # same-symbol ordering bounds for D3) instead of one per session (D6).
+    all_sessions = db.query(KssSession).all()
+    sessions = [s for s in all_sessions if s.status != SESSION_PENDING]
+
+    by_symbol_sessions: dict[str, list[KssSession]] = {}
+    for sess in all_sessions:
+        by_symbol_sessions.setdefault(sess.symbol, []).append(sess)
+    for lst in by_symbol_sessions.values():
+        lst.sort(key=lambda x: x.started_at or x.created_at or window_start)
+
+    # One query for every SELL fill instead of one/two per session (D6). `Fill.source_ref`
+    # is copied from the order at fill time, so no join to `pending_orders` is needed.
+    sell_fills = (
+        db.query(Fill.symbol, Fill.source_ref, Fill.executed_at)
+        .filter(Fill.side == "SELL")
+        .all()
+    )
+    own_exit: dict[int, datetime] = {}
+    sell_times_by_symbol: dict[str, list[datetime]] = {}
+    for symbol, source_ref, executed_at in sell_fills:
+        sell_times_by_symbol.setdefault(symbol, []).append(executed_at)
+        if source_ref and source_ref.startswith("pyramid:"):
+            parts = source_ref.split(":")
+            if len(parts) >= 2:
+                try:
+                    sid = int(parts[1])
+                except ValueError:
+                    sid = None
+                if sid is not None and (sid not in own_exit or executed_at > own_exit[sid]):
+                    own_exit[sid] = executed_at
+
+    locked_dollar_days = 0.0
+    skipped = 0
+    for s in sessions:
+        start = s.started_at or s.created_at
+        if start is None:
+            continue
+        if s.status == SESSION_ACTIVE:
+            end = now
+        else:
+            same_symbol = by_symbol_sessions.get(s.symbol, [])
+            idx = next((i for i, x in enumerate(same_symbol) if x.id == s.id), None)
+            next_start = None
+            if idx is not None:
+                for nxt in same_symbol[idx + 1:]:
+                    cand = nxt.started_at or nxt.created_at
+                    if cand is not None and cand > start:
+                        next_start = cand
+                        break
+            end = _resolve_exit_time(s, now, own_exit, sell_times_by_symbol, next_start)
+            if end is None:
+                skipped += 1
+                continue
+        overlap_start = max(start, window_start)
+        overlap_end = min(end, now)
+        if overlap_end <= overlap_start:
+            continue
+        hours = (overlap_end - overlap_start).total_seconds() / 3600.0
+        locked_dollar_days += _session_lock(s) * hours / 24.0
+
+    realized_pnl_window = float(
+        db.query(func.coalesce(func.sum(Fill.realized_pnl), 0.0))
+        .filter(
+            Fill.executed_at >= window_start,
+            Fill.executed_at <= now,
+            or_(Fill.source_ref.like("pyramid:%"), Fill.source_ref.like("orphan:%")),
+        )
+        .scalar()
+        or 0.0
+    )
+
+    pct_per_locked_dollar_day = (
+        realized_pnl_window / locked_dollar_days * 100 if locked_dollar_days > 0 else None
+    )
+    equity = risk.account_equity(db)
+    utilisation_pct = (
+        locked_dollar_days / (equity * window_days) * 100 if equity and window_days else 0.0
+    )
+
+    return {
+        "window_days": window_days,
+        "locked_dollar_days": locked_dollar_days,
+        "realized_pnl_window": realized_pnl_window,
+        "pct_per_locked_dollar_day": pct_per_locked_dollar_day,
+        "utilisation_pct": utilisation_pct,
+        "skipped": skipped,
     }
 
 

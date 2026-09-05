@@ -54,7 +54,7 @@
     <input name="loss_reentry_blacklist_after" type="number" step="1" min="1" max="50" value="{{ k.loss_reentry_blacklist_after }}" required></label>
   <label title="Danh sách coin ĐƯỢC MIỄN chặn (ân xá / gỡ blacklist thủ công), cách nhau bằng dấu phẩy. Ví dụ: C, MIRA. Để trống = không miễn ai.">Ân xá (bỏ chặn) <span class="varname">loss_reentry_pardon</span>
     <input name="loss_reentry_pardon" type="text" placeholder="vd: C, MIRA" value="{{ k.loss_reentry_pardon }}"></label>
-  <div class="muted" style="grid-column: 1 / -1; margin: 2px 0 6px;">
+  <div class="muted settings-note-full">
     Đang bị chặn mở lại:
     {% if blocked %}
       {% for b in blocked %}<span class="varname" title="{{ b.reason }}">{{ b.symbol }} ({{ b.hard_sls }}×SL)</span>{% if not loop.last %} · {% endif %}{% endfor %}

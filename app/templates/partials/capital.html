@@ -1,0 +1,108 @@
+{#
+  Capital-utilisation panel: makes the gap between "edge per dollar" and "portfolio
+  return" visible every day. A measured audit found the per-dollar edge near 1%/day
+  but only ~29% of capital-days deployed, so the account only compounds ~0.42%/day —
+  the gap is capital sitting idle, and nothing in the UI showed that until this panel.
+
+  The four segments (`c.bar`, built in `portfolio._capital_bar`) are disjoint and their
+  snapped steps always sum to exactly 100 — `backup` is a policy claim ON `free_cash`,
+  not a fifth pot, so the bar uses `free_after_backup` under the "free" segment.
+#}
+{% set _titles = {
+  "cap-seg-backup":   "Dự phòng an toàn — AUTO không bao giờ triển khai phần này.",
+  "cap-seg-free":     "Tiền mặt rảnh — có thể triển khai ngay (đã trừ phần đang treo chờ khớp và phần dự phòng).",
+  "cap-seg-resting":  "Lệnh mua LIMIT đang chờ khớp trên sàn — tiền coi như đã hẹn chi, chưa phải vị thế.",
+  "cap-seg-deployed": "Tiền thật đã nằm trong vị thế (tổng total_cost các session đang active).",
+} %}
+<div class="cap-bar">
+  {% for seg in c.bar %}
+  <div class="cap-seg {{ seg.cls }} w-{{ seg.step }}" title="{{ _titles[seg.cls] }} (${{ seg.value | money_kmb }})"></div>
+  {% endfor %}
+</div>
+<div class="cap-legend">
+  <span class="cap-legend-item"><span class="cap-dot cap-seg-backup"></span>Dự phòng ${{ c.backup | money_kmb }}</span>
+  <span class="cap-legend-item"><span class="cap-dot cap-seg-free"></span>Tiền rảnh (sau dự phòng) ${{ c.free_after_backup | money_kmb }}</span>
+  <span class="cap-legend-item"><span class="cap-dot cap-seg-resting"></span>Đang treo ${{ c.resting_buy | money_kmb }}</span>
+  <span class="cap-legend-item"><span class="cap-dot cap-seg-deployed"></span>Đã triển khai ${{ c.deployed | money_kmb }}</span>
+</div>
+<p class="muted fs-12 mt-6"
+   title="Tổng isolated_fund của các session active, TRỪ phần đã chi và đang treo. Đây là một khoản CAM KẾT cho ladder DCA, không phải tiền đã rời tài khoản — nên không nằm trong thanh trên.">
+  Cam kết nhưng chưa chi (đặt trước cho ladder): ${{ c.promised | money_kmb }}
+</p>
+
+<table class="tbl mt-6">
+  <tbody>
+    <tr>
+      <td title="Vốn định giá theo thị trường (mark-to-market) — cùng con số risk.account_equity dùng cho mọi giới hạn rủi ro.">Vốn (equity)</td>
+      <td>${{ c.equity | money }}</td>
+    </tr>
+    <tr>
+      <td title="Phần vốn AUTO không bao giờ đụng tới, giữ làm dự phòng.">Dự phòng</td>
+      <td>${{ c.backup | money }}</td>
+    </tr>
+    <tr>
+      <td title="Vốn − dự phòng = ngân sách scanner được phép triển khai.">Ngân sách khả triển khai</td>
+      <td>${{ c.budget | money }}</td>
+    </tr>
+    <tr>
+      <td title="Tổng total_cost của các session ACTIVE — tiền đã thực sự chi ra mua coin.">Đã triển khai</td>
+      <td>${{ c.deployed | money }}</td>
+    </tr>
+    <tr>
+      <td title="Tổng giá trị (số lượng × giá) các lệnh mua LIMIT đang treo chờ khớp trên sàn.">Đang treo (mua chờ khớp)</td>
+      <td>${{ c.resting_buy | money }}</td>
+    </tr>
+    <tr>
+      <td title="Tổng isolated_fund đặt trước cho toàn bộ ladder DCA của các session active.">Tổng cam kết</td>
+      <td>${{ c.committed | money }}</td>
+    </tr>
+    <tr>
+      <td title="Tiền mặt USDT tự do, đã trừ phần đang treo chờ khớp.">Tiền mặt rảnh</td>
+      <td>${{ c.free_cash | money }}</td>
+    </tr>
+    <tr>
+      <td title="Vốn bị khoá theo đúng luật cho-mượn-phần-rỗi của scanner: session đã khớp &lt;50% ladder chỉ khoá phần đã chi, khớp ≥50% khoá trọn isolated_fund.">Vốn khoá (luật scanner)</td>
+      <td>${{ c.locked_book | money }}</td>
+    </tr>
+    <tr>
+      <td title="Ngân sách khả triển khai − vốn khoá — phần scanner còn thực sự mở được phiên mới.">Ngân sách còn trống</td>
+      <td>${{ c.budget_free | money }}</td>
+    </tr>
+    <tr>
+      <td title="Số phiên đang ACTIVE / trần số phiên đồng thời cho phép (max_concurrent_sessions).">Số phiên đang chạy</td>
+      <td>{{ c.sessions_active }} / {{ c.sessions_cap }}</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="cards mt-6">
+  <div class="card" title="(Đã triển khai + đang treo) / vốn — phần vốn thực sự đang làm việc ngay lúc này.">
+    <div class="label">Đang làm việc</div>
+    <div class="value">{{ "%.0f"|format(c.working_pct) }}%</div>
+  </div>
+  <div class="card" title="Tổng cam kết (isolated_fund) / vốn — phần vốn đã hứa cho ladder DCA, kể cả chưa chi hết.">
+    <div class="label">Đã cam kết</div>
+    <div class="value">{{ "%.0f"|format(c.committed_pct) }}%</div>
+  </div>
+  <div class="card" title="Vốn-ngày bị khoá trong {{ y.window_days }} ngày gần nhất, chia cho (vốn × {{ y.window_days }} ngày) — mức độ vốn thực sự được đưa vào việc trong cửa sổ này.">
+    <div class="label">Hiệu suất dùng vốn ({{ y.window_days }}d)</div>
+    <div class="value">{{ "%.0f"|format(y.utilisation_pct) }}%</div>
+  </div>
+  <div class="card"
+       title="Lãi/lỗ đã chốt trong {{ y.window_days }} ngày / tổng vốn-ngày bị khoá trong cửa sổ đó. Số liệu đo trên cửa sổ NGẮN và đang tăng dần — chưa đủ dài để coi là ổn định, chỉ mang tính tham khảo.">
+    <div class="label">%/vốn-ngày bị khoá</div>
+    <div class="value {{ 'pos' if (y.pct_per_locked_dollar_day or 0) >= 0 else 'neg' }}">
+      {% if y.pct_per_locked_dollar_day is none %}—{% else %}{{ "%+.3f"|format(y.pct_per_locked_dollar_day) }}%{% endif %}
+    </div>
+  </div>
+</div>
+
+<p class="muted fs-12 mt-6">
+  {% if c.binding == 'count' %}
+  Đang bị chặn: đã đầy SỐ PHIÊN tối đa ({{ c.sessions_active }}/{{ c.sessions_cap }}) — phải đóng bớt phiên hoặc nới trần mới mở được phiên mới.
+  {% elif c.binding == 'budget' %}
+  Đang bị chặn: hết NGÂN SÁCH khả dụng (còn trống ${{ c.budget_free | money_kmb }}, một phiên điển hình cần ~${{ c.typical_need | money_kmb }}) — phần vốn nhàn rỗi không đủ mở thêm một phiên điển hình.
+  {% else %}
+  Không có gì đang chặn phiên mới — còn cả chỗ trống lẫn ngân sách, chỉ chờ scanner tìm ra cơ hội.
+  {% endif %}
+</p>

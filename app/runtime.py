@@ -128,6 +128,10 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     # 2026-09-03 hang hardening: socket timeout applied to every ccxt client (execution._client
     # AND every data provider) — see config.py's exchange_timeout_sec docstring.
     "exchange_timeout_sec": float,
+    # Fee realism on the live path — see config.py for why testnet's zero commission is a
+    # hazard rather than a convenience.
+    "simulated_fee_pct": float,
+    "fee_safety_margin_pct": float,
     # Phase 0 capital anchor (docs/capital-scaling-2026-08-23.md §2.1) — LIVE + opt-in only;
     # off (default) or paper always uses settings.account_equity unchanged.
     "use_exchange_balance": _to_bool,

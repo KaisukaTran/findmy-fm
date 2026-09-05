@@ -109,6 +109,28 @@ class Settings(BaseSettings):
         description="LIVE only: route real orders to the exchange TESTNET (ccxt set_sandbox_mode) "
         "instead of production — validate the live path before using real keys. No effect on paper.",
     )
+    simulated_fee_pct: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description="TESTNET only: book a spot BUY as if the venue had charged this base-asset "
+        "commission (Binance VIP0 = 0.1%%). Binance testnet charges nothing, which is exactly why "
+        "the 2026-08-31 gross-fill bug survived 24 live fills — the whole exit path is otherwise "
+        "rehearsed on quantities a real account never produces. The error leans SAFE: the book "
+        "holds less coin than the testnet wallet, so an exit can never come up short. Ignored on "
+        "mainnet, where the real commission is used, and on paper.",
+    )
+    fee_safety_margin_pct: float = Field(
+        default=0.05,
+        ge=0.0,
+        le=1.0,
+        description="Extra sliver shaved off a live BUY's booked quantity, on top of the "
+        "commission (both testnet and mainnet). Keeps the book deliberately a hair poorer than "
+        "the wallet, so a mis-read fee tier, a rounding step, or a commission we failed to parse "
+        "can never leave an exit asking the venue for coin that is not there (-2010, which kills "
+        "the take-profit AND the stop-loss in silence). Costs dust: 0.05%% of a $40 position is "
+        "two cents. Capped with the commission at 1%% of the fill.",
+    )
     exchange_timeout_sec: float = Field(
         default=20.0, ge=1.0, le=120.0,
         description="Socket timeout (seconds) applied to EVERY ccxt client — both the "

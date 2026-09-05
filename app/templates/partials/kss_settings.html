@@ -197,6 +197,10 @@
     <input name="placement_alert_after" type="number" step="1" min="1" value="{{ k.placement_alert_after }}"></label>
   <label title="Timeout socket (giây) áp dụng cho MỌI client ccxt — cả client thực thi live có ký (execution._client) lẫn mọi provider dữ liệu công khai (paper VÀ live đều dùng provider để scan/lấy giá). Trước khi có knob này không client nào có timeout tường minh — một socket bị treo sẽ treo VÔ HẠN thay vì báo lỗi, đây chính là nguyên nhân treo tiến trình 72 phút ngày 2026-09-03.">Timeout socket ccxt (giây) <span class="varname">exchange_timeout_sec</span>
     <input name="exchange_timeout_sec" type="number" step="0.5" min="1" max="120" value="{{ k.exchange_timeout_sec }}"></label>
+  <label title="CHỈ TESTNET: ghi sổ lệnh MUA như thể sàn đã thu hoa hồng bằng coin ở mức này (Binance VIP0 = 0,1%). Testnet không thu phí — đó chính là lý do lỗi ghi-sổ-gộp ngày 2026-08-31 sống sót qua 24 lệnh khớp mà không có triệu chứng gì, và là lý do toàn bộ đường thoát lệnh đang được diễn tập trên những con số mà tài khoản thật không bao giờ tạo ra. Sai lệch nghiêng về phía AN TOÀN: sổ giữ ít coin hơn ví testnet nên lệnh bán không bao giờ thiếu hàng. Trên mainnet dùng phí thật, knob này bị bỏ qua.">Phí giả lập (%, chỉ testnet) <span class="varname">simulated_fee_pct</span>
+    <input name="simulated_fee_pct" type="number" step="0.01" min="0" max="1" value="{{ k.simulated_fee_pct }}"></label>
+  <label title="Phần dôi ra cắt bớt khỏi số lượng ghi sổ của một lệnh MUA live, cộng thêm trên hoa hồng (cả testnet lẫn mainnet). Giữ cho sổ nghèo hơn ví một chút, để một bậc phí đọc sai, một bước làm tròn, hay một khoản hoa hồng không parse được KHÔNG BAO GIỜ khiến lệnh thoát đòi sàn số coin không tồn tại (-2010 — thứ giết chết cả chốt lời lẫn cắt lỗ trong im lặng). Giá phải trả là bụi: 0,05% của một vị thế $40 là hai xu. Cùng với hoa hồng bị chặn trần ở 1% của lệnh khớp.">Biên an toàn phí (%) <span class="varname">fee_safety_margin_pct</span>
+    <input name="fee_safety_margin_pct" type="number" step="0.01" min="0" max="1" value="{{ k.fee_safety_margin_pct }}"></label>
   <button type="submit" class="ok">Lưu cấu hình KSS</button>
 </form>
 

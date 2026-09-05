@@ -902,6 +902,8 @@ document.addEventListener("submit", async (e) => {
       heartbeat_url: f.get("heartbeat_url"),
       placement_alert_after: num(f.get("placement_alert_after")),
       exchange_timeout_sec: num(f.get("exchange_timeout_sec")),
+      simulated_fee_pct: num(f.get("simulated_fee_pct")),
+      fee_safety_margin_pct: num(f.get("fee_safety_margin_pct")),
     });
     toast("Đã lưu cấu hình KSS — áp dụng cho phiên mới.", "success");
     refreshTrading(); refreshStatus();

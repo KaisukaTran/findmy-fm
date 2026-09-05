@@ -521,8 +521,10 @@ def place_live_order(
     # Booking gross makes the book believe it owns ~0.1% more of every coin than it does, and
     # the exit then asks the venue for more than exists → -2010, the order REJECTED, and both
     # the take-profit and the stop-loss silently dead. Surfaced so the caller can book NET.
-    # Testnet charges no commission, which is exactly why 24 live fills never showed it.
-    fee_base = fee_base_qty(order, pair.partition("/")[0])
+    # Testnet charges no commission, which is exactly why 24 live fills never showed it — so on
+    # testnet `booked_fee_base` synthesises one, and in both environments it adds the safety
+    # margin that keeps the book a hair poorer than the wallet.
+    fee_base = booked_fee_base(order, pair.partition("/")[0], filled, side)
     logger.info(
         "LIVE order placed: %s %s/%s %s @ %s status=%s (exch id %s)",
         side, filled, qty, pair, avg, status, order.get("id"),
@@ -620,6 +622,44 @@ def fee_base_qty(order: dict, base: str) -> float:
     return total
 
 
+# A misconfigured knob must never be able to shrink a position: the commission plus the safety
+# margin together may not exceed this fraction of the fill. An exit sized off a gutted quantity
+# would strand the remainder as unsellable dust — the exact failure the margin exists to prevent.
+_MAX_BOOKED_FEE_FRACTION = 0.01
+
+
+def booked_fee_base(order: dict, base: str, filled: float, side: str) -> float:
+    """The base-asset quantity to withhold when booking a live BUY fill.
+
+    Three terms, in order of authority:
+
+    1. **What the venue actually charged** (``fee_base_qty``). On mainnet this is the whole
+       story and nothing is ever synthesised on top of it.
+    2. **A simulated commission, TESTNET ONLY, and only when the venue reported none.** Binance
+       testnet charges zero, so the NET-booking fix of 2026-08-31 is a no-op there and every
+       downstream number — exit quantity, step rounding, minNotional, the K-2 floor — is
+       rehearsed on quantities a real account will never produce. Synthesising it makes the
+       error lean the SAFE way: the book holds less coin than the testnet wallet really does,
+       so an exit cannot come up short, while the arithmetic finally sees mainnet shapes.
+    3. **A safety margin, both environments.** The book ends up a hair poorer than the wallet,
+       so a fee tier we mis-read or a commission we failed to parse cannot produce a -2010 on
+       an exit — which would kill the take-profit and the stop-loss together, in silence.
+
+    A SELL is never charged here: its commission comes out of the proceeds, so its quantity
+    stands whole (shaving it would under-sell the position and strand the remainder).
+    Proportional to ``filled`` by construction, so the cumulative figures ``_book_delta``
+    works on stay consistent across partial fills.
+    """
+    if (side or "").upper() != "BUY" or filled <= 0:
+        return 0.0
+    charged = fee_base_qty(order, base)
+    simulated = 0.0
+    if charged <= 0 and settings.live_use_testnet:
+        simulated = filled * settings.simulated_fee_pct / 100.0
+    margin = filled * settings.fee_safety_margin_pct / 100.0
+    return min(charged + simulated + margin, filled * _MAX_BOOKED_FEE_FRACTION)
+
+
 def _venue_fill_ms(order: dict) -> int | None:
     """The venue's own fill time (ms epoch), for ``place_live_order``/``fetch_live_order`` to
     propagate as ``filled_at_ms``. ccxt normalises both ``lastTradeTimestamp`` (the moment of
@@ -686,8 +726,9 @@ def fetch_live_order(pair: str, order_id: str) -> dict:
     fee = fee_cost(order, pair.partition("/")[2])
     # Cumulative base-asset commission, for the same reason as in `place_live_order`: under the
     # 1.5 resting model MOST fills arrive through this path, so booking gross here is the more
-    # common way the book comes to believe it holds coin the wallet does not have.
-    fee_base = fee_base_qty(order, pair.partition("/")[0])
+    # common way the book comes to believe it holds coin the wallet does not have. The side is
+    # the venue's own (this path has no caller-supplied one) — a SELL is never charged in base.
+    fee_base = booked_fee_base(order, pair.partition("/")[0], filled, order.get("side") or "")
     return {"status": status, "filled": filled, "average": avg, "fee": fee,
             "fee_base": fee_base, "raw_id": order.get("id"), "filled_at_ms": _venue_fill_ms(order)}
 
@@ -874,7 +915,8 @@ def fetch_order_by_client_id(pair: str, cid: str) -> dict | None:
         avg = float(order.get("price") or 0.0)
     quote = pair.partition("/")[2]
     fee = fee_cost(order, quote)
-    fee_base = fee_base_qty(order, pair.partition("/")[0])
+    fee_base = booked_fee_base(order, pair.partition("/")[0], filled,
+                               order.get("side") or "")
     return {"price": avg, "quantity": filled, "fee": fee, "fee_base": fee_base,
             "raw_id": order.get("id"), "status": status}
 

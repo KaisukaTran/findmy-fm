@@ -521,6 +521,8 @@ class KssSettingsBody(BaseModel):
     live_use_testnet: bool | None = None
     # 2026-09-03 hang hardening: socket timeout (seconds) for every ccxt client.
     exchange_timeout_sec: float | None = Field(None, ge=1.0, le=120.0)
+    simulated_fee_pct: float | None = Field(None, ge=0.0, le=1.0)
+    fee_safety_margin_pct: float | None = Field(None, ge=0.0, le=1.0)
     # Phase 0 capital anchor (docs/capital-scaling-2026-08-23.md §2.1) — LIVE + opt-in only.
     use_exchange_balance: bool | None = None
     # OPUS god-mode scaffolding (docs/opus-godmode-plan.md §3) — wiring deferred to later phases.

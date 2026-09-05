@@ -904,6 +904,11 @@ document.addEventListener("submit", async (e) => {
       exchange_timeout_sec: num(f.get("exchange_timeout_sec")),
       simulated_fee_pct: num(f.get("simulated_fee_pct")),
       fee_safety_margin_pct: num(f.get("fee_safety_margin_pct")),
+      // Buoc DCA = he so nay x ATR%/ngay cua coin. Do 2026-09-05 tren 83 coin/3 nam: 0.5 la
+      // knob tai hai nhat toan he thong (5 song/SL20 di tu -$17.882 @0.5 -> -$1.845 @1.5).
+      // Learner KHONG tu ghi knob nay (autotune.learn_from_outcomes chi chinh tp_atr_mult),
+      // nen noi day tu form la an toan — khong co rui ro ghi de thu may vua hoc.
+      autotune_dca_atr_mult: num(f.get("autotune_dca_atr_mult")),
     });
     toast("Đã lưu cấu hình KSS — áp dụng cho phiên mới.", "success");
     refreshTrading(); refreshStatus();

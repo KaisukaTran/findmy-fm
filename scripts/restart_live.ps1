@@ -67,6 +67,18 @@ if ($conns.Count -eq 0) {
     Start-Sleep -Seconds 3
 }
 
+# NEVER launch on top of a listener we failed to stop. Without this the script happily started a
+# second server that completed its lifespan (ws feed + notify poller, and it would have taken the
+# scheduler lock had it been free) before dying on "only one usage of each socket address" - seen
+# 2026-09-06 00:32:53 when this file was called from a NON-elevated shell against a process the
+# elevated task owned. A restart that cannot stop the old process is a failure, not a launch.
+$still = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty OwningProcess -Unique)
+if ($still.Count -gt 0) {
+    Write-Log "ABORT: port $Port still held by PID(s) $($still -join ',') - not launching a second server (run this from an ELEVATED shell)"
+    return
+}
+
 # Both redirects are mandatory, not cosmetic: a detached child started without them is
 # reaped when the launching shell's command ends, which is why every earlier attempt at a
 # background process here died silently.

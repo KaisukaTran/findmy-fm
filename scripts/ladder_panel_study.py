@@ -73,7 +73,8 @@ def to_candles(bars: list[tuple]) -> list[dict]:
 
 def run_panel(series: dict, *, spacing: int, distance: float, tp: float, waves: int,
               sl: float, deadline: int, cost: float, min_bars: int, warmup: int,
-              vol_window: int, pessimistic: bool, bars_per_day: float = 1.0) -> list[dict]:
+              vol_window: int, pessimistic: bool, bars_per_day: float = 1.0,
+              since: str | None = None, until: str | None = None) -> list[dict]:
     """One row per entry: the ladder result and the single-entry result on the SAME bar."""
     out: list[dict] = []
     reserve = reserved_capital(distance, waves)
@@ -94,13 +95,16 @@ def run_panel(series: dict, *, spacing: int, distance: float, tp: float, waves: 
                 deadline_days=float(deadline), sl_pct=sl, cost_pct=cost,
                 pessimistic_intrabar=pessimistic, wave0_notional_usd=WAVE0_USD,
             )
+            day = datetime.fromtimestamp(bars[i][1] / 1000, timezone.utc).strftime("%Y-%m-%d")
+            if (since and day < since) or (until and day > until):
+                continue
             single = simulate(bars, i, tp, sl, horizon_bars, cost)
             if single is None:
                 continue
             out.append({
                 "symbol": sym,
                 "reserved": reserve,
-                "day": datetime.fromtimestamp(bars[i][1] / 1000, timezone.utc).strftime("%Y-%m-%d"),
+                "day": day,
                 "tier": tier_of(qv),
                 "ladder_pnl": lad.pnl_pct,
                 "ladder_days": lad.capital_days,
@@ -197,6 +201,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--interval", default="1d", help="candle interval in the research DB")
     p.add_argument("--bars-per-day", type=float, default=1.0,
                    help="24 for 1h bars: converts the day-based deadline into bars")
+    p.add_argument("--since", default=None, help="only entries on/after YYYY-MM-DD")
+    p.add_argument("--until", default=None, help="only entries on/before YYYY-MM-DD")
     p.add_argument("--limit-coins", type=int, default=0)
     p.add_argument("--tier-split", action="store_true", help="also break the result down by liquidity tier")
     args = p.parse_args(argv)
@@ -216,6 +222,7 @@ def main(argv: list[str] | None = None) -> int:
             sl=args.sl, deadline=args.deadline, cost=args.cost, min_bars=args.min_bars,
             warmup=max(args.warmup, args.vol_window), vol_window=args.vol_window,
             pessimistic=pessimistic, bars_per_day=args.bars_per_day,
+            since=args.since, until=args.until,
         )
         bound = "PESSIMISTIC" if pessimistic else "OPTIMISTIC"
         print(f"{bound} intra-bar bound   (reserve ${reserved_capital(args.distance, args.waves):.2f}/session)")

@@ -351,7 +351,12 @@ def main(argv: list[str] | None = None) -> int:
             verdict = "no evidence"
         print(f"{name:22} {s['n_days']:>6} {s['ic']:>+8.4f} {s['t']:>+7.2f} "
               f"[{s['lo']:>+7.4f},{s['hi']:>+7.4f}]   {verdict}")
+    # Multiplicity: every feature x every arm is a test, and at 5% two-sided roughly one in
+    # twenty passes by luck. The '*' marks a verdict that also clears a Bonferroni-style bar.
+    n_tests = len(names) * 2
     print(f"\nPICKING {args.top_k} A DAY — what the system actually does with a ranking")
+    print(f"  {n_tests} tests ({len(names)} features x top/bottom): about "
+          f"{n_tests * 0.05:.1f} false verdicts expected at 5%. '*' = also clears Bonferroni.")
     hdr2 = (f"{'feature':22} {'top':>9} {'bottom':>9} {'random':>9} "
             f"{'top-random 95% CI':>22}   verdict")
     print(hdr2)
@@ -361,8 +366,14 @@ def main(argv: list[str] | None = None) -> int:
         if not r:
             print(f"{name:22}   too few days")
             continue
-        beats = ("BEATS random" if r["lo"] > 0 else
-                 "LOSES to random" if r["hi"] < 0 else "no evidence")
+        # Bonferroni: widen to 1 - 0.05/n_tests by requiring the interval to clear zero with
+        # room. Approximated on the bootstrap spread, which is what we have.
+        half = (r["hi"] - r["lo"]) / 2
+        centre = (r["hi"] + r["lo"]) / 2
+        z_ratio = (2.807 / 1.96) if n_tests > 10 else 1.0    # ~alpha 0.005 vs 0.05
+        strong = abs(centre) > half * z_ratio
+        beats = (("BEATS random" + ("*" if strong else "")) if r["lo"] > 0 else
+                 ("LOSES to random" + ("*" if strong else "")) if r["hi"] < 0 else "no evidence")
         # The BOTTOM arm gets its own inference. Printing it without one hid the most robust
         # result in the table: picking the LOWEST realised volatility beat random at both exit
         # shapes, while the column it sat in was never tested.
@@ -373,6 +384,11 @@ def main(argv: list[str] | None = None) -> int:
 
     print("\nNote: an IC measured on a feature chosen AFTER seeing this table is not evidence. "
           "The features above were fixed in advance from the published-evidence review.")
+    print("COST WARNING: every row is charged the SAME flat round trip, but real slippage rises "
+          "as liquidity falls. Erasing an illiquidity edge of the size measured here needs only "
+          "~9-18 bps a side of extra spread, and the real difference between a $0.5M/day and a "
+          "$3M/day pair is about 5-20 bps a side. An illiquidity result here is a measurement, "
+          "not a tradable edge.")
     return 0
 
 

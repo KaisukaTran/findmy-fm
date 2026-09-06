@@ -1,7 +1,9 @@
 <div class="live-box">
   <div class="live-state">
     Chế độ:
-    {% if lt.live_trading %}
+    {% if lt.live_trading and lt.live_use_testnet %}
+    <span class="badge guardian-on">● LIVE · TESTNET</span>
+    {% elif lt.live_trading %}
     <span class="badge full-auto-on">● LIVE (tiền thật)</span>
     {% else %}
     <span class="badge full-auto-off">PAPER (mô phỏng)</span>

@@ -2319,10 +2319,12 @@ def _crash_exit(db: Session, row: KssSession, price: float) -> bool:
 
 
 def _maintain_live_stop(db: Session, row: KssSession, price: float) -> None:
-    """LIVE-only (§10.2): keep a resting STOP-MARKET on the exchange at the current ``trail_sl_price``
-    for server-side (ms) gap protection. INERT on paper / when disabled / without live keys — the
-    actual exchange placement is gated off until live trading is enabled (it must be validated against
-    a real exchange before it ships). The paper-side defence is the guard loop (§10.1) + crash-detect."""
+    """STUB — not implemented. LIVE-only (§10.2): intended to keep a resting STOP-MARKET on the
+    exchange at the current ``trail_sl_price`` for server-side (ms) gap protection. INERT on paper /
+    when disabled / without live keys — the actual exchange placement is gated off until live trading
+    is enabled (it must be validated against a real exchange before it ships). The paper-side defence
+    in the meantime is the guard loop (§10.1) + crash-detect. The API rejects enabling
+    ``kss_live_stop_orders`` (see routes.set_kss_settings) precisely because this function is a stub."""
     from app.config import settings
 
     if not (settings.kss_live_stop_orders and settings.live_trading and row.trail_sl_price > 0):

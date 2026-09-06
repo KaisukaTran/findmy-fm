@@ -357,9 +357,14 @@ def autotrade_state():
 
 
 @api_router.post("/api/autotrade", dependencies=[Depends(require_api_key)])
-def set_autotrade(body: AutoTradeBody):
-    """Toggle full-auto for this process. Persist via env/.env for restarts."""
-    settings.auto_trade = body.enabled
+def set_autotrade(body: AutoTradeBody, db: Session = Depends(get_db)):
+    """Toggle auto-trade, persisted via runtime.KEY_AUTO_TRADE so it survives a restart.
+
+    Before this, the toggle was in-process only: any restart while full_auto was persisted
+    ON silently re-armed auto-trade with no message (runtime.sync_from_db's cascade). An
+    explicit False here now outranks that cascade — see the comment in sync_from_db.
+    """
+    runtime.set_autotrade(db, body.enabled)
     return autotrade_state()
 
 
@@ -394,6 +399,7 @@ def get_live_trading(db: Session = Depends(get_db)):
     """Current go-live state: master flag, whether exchange keys are present, breaker."""
     return {
         "live_trading": settings.live_trading,
+        "live_use_testnet": settings.live_use_testnet,
         "live_keys": execution.live_key_present(),
         "exchange": settings.live_exchange,
         "max_notional": settings.live_max_order_notional,
@@ -575,6 +581,18 @@ def set_kss_settings(body: KssSettingsBody, db: Session = Depends(get_db)):
                     f"{costengine.expectancy_ceiling_pct(tp):.2f}% (= scan_tp {tp:.2f}% − chi phí "
                     f"vòng {costengine.round_trip_cost_pct():.2f}%) → không coin nào qua được cửa, "
                     f"scanner sẽ skip 100% universe. Hạ min_expectancy_pct hoặc nâng scan_tp_pct."),
+        )
+    # kss_live_stop_orders is CHƯA DỰNG: app/kss/service.py:_maintain_live_stop passes every gate
+    # and then hits a bare `return` (a documented stub). The knob is harmless off, but flipping it
+    # on would tell the operator a resting exchange-side stop exists when it does not — reject the
+    # request outright rather than silently accept a promise nothing implements.
+    if values.get("kss_live_stop_orders"):
+        raise HTTPException(
+            status_code=400,
+            detail=("kss_live_stop_orders CHƯA DỰNG: bật cờ này không đặt lệnh STOP-MARKET nào "
+                    "trên sàn — app/kss/service.py:_maintain_live_stop hiện là stub (trả về ngay "
+                    "khi được gọi). Bảo vệ gap giá hôm nay là vòng guard ~90s + crash-detect. Phải "
+                    "xây _maintain_live_stop thật và kiểm chứng trên sàn trước khi bật knob này."),
         )
     return runtime.set_kss_settings(db, values)
 

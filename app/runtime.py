@@ -40,6 +40,7 @@ KEY_AUTOAPPROVE_MAX = "autoapprove_max_notional"
 KEY_CONSENSUS_WEIGHTS = "consensus_weights"  # S4: JSON dict of agent weights
 KEY_GROK_FAIL_MODE = "grok_scanner_fail_mode"  # S5: "open" | "closed"
 KEY_LIVE_TRADING = "live_trading"  # Phase 6: real-money master switch (default off)
+KEY_AUTO_TRADE = "auto_trade"  # explicit operator override; wins over full_auto's cascade (see sync_from_db)
 
 def _to_bool(v: object) -> bool:
     """Bool-aware cast for the string-valued KV store. ``bool('0')`` is True (non-empty
@@ -207,6 +208,11 @@ def full_auto_on(db: Session) -> dict:
     settings.auto_trade = True
     settings.autoapprove_enabled = True
     set_bool(db, KEY_FULL_AUTO, True)
+    # Persist auto-trade too, not just the cascade. KEY_AUTO_TRADE outranks that cascade in
+    # `sync_from_db`, so an operator who had switched auto-trade OFF and then switched full-auto
+    # ON would otherwise boot into full-auto with auto-trade silently disarmed — the same defect
+    # this key was added to fix, running backwards. The store must hold the LAST action taken.
+    set_bool(db, KEY_AUTO_TRADE, True)
     if _xai_key_present():
         grok_set(db, True)
         grok_scanner_set(db, True)
@@ -220,6 +226,7 @@ def full_auto_off(db: Session) -> dict:
     settings.auto_trade = False
     settings.autoapprove_enabled = False
     set_bool(db, KEY_FULL_AUTO, False)
+    set_bool(db, KEY_AUTO_TRADE, False)  # the disarm must survive the restart, same as the arm
     grok_set(db, False)
     grok_scanner_set(db, False)
     return state(db)
@@ -244,6 +251,19 @@ def set_live_trading(db: Session, enabled: bool) -> dict:
     only flips intent. The caller (route) is responsible for the typed-confirm gate."""
     settings.live_trading = enabled
     set_bool(db, KEY_LIVE_TRADING, enabled)
+    return state(db)
+
+
+def set_autotrade(db: Session, enabled: bool) -> dict:
+    """Persist the auto-trade toggle (KEY_AUTO_TRADE) so a dashboard change survives a restart.
+
+    Before this, ``/api/autotrade`` wrote only ``settings.auto_trade`` in-process, so a restart
+    while ``full_auto`` was persisted ON silently re-armed auto-trade with no message — an
+    operator clicking "Tắt auto-trade" got it back on the next boot. Turning auto-trade OFF
+    reduces risk, so an explicit False here must outrank full_auto's cascade in ``sync_from_db``.
+    """
+    settings.auto_trade = enabled
+    set_bool(db, KEY_AUTO_TRADE, enabled)
     return state(db)
 
 
@@ -432,6 +452,13 @@ def sync_from_db(db: Session) -> None:
         settings.full_auto = True
         settings.auto_trade = True
         settings.autoapprove_enabled = True
+    # An explicitly persisted auto_trade always wins over the full-auto cascade above. Turning
+    # auto-trade OFF reduces risk, so that direction must survive a restart even when full_auto
+    # is on — before this, /api/autotrade only wrote settings.auto_trade in-process, so a boot
+    # while full_auto was persisted ON silently re-armed a manually-disabled auto-trade (this
+    # happened twice on live 2026-09-06). Absent key = no explicit override = cascade stands.
+    if get(db, KEY_AUTO_TRADE) is not None:
+        settings.auto_trade = get_bool(db, KEY_AUTO_TRADE)
     settings.opus_mode = get_bool(db, KEY_OPUS_MODE, default=settings.opus_mode)
     settings.opus_shadow = get_bool(db, KEY_OPUS_SHADOW, default=settings.opus_shadow)
     settings.grok_enabled = get_bool(db, KEY_GROK_ENABLED, default=settings.grok_enabled)

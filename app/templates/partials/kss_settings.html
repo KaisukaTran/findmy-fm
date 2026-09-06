@@ -128,7 +128,7 @@
     <input name="kss_exit_check_sec" type="number" step="1" min="5" value="{{ k.kss_exit_check_sec }}"></label>
   <label title="Crash-detect: nếu một lần guard thấy giá rớt > % này so với lần quan sát trước VÀ giá ≤ SL → bán market NGAY (chặn chảy máu trên gap). 0 = tắt.">Crash-detect % <span class="varname">kss_crash_drop_pct</span>
     <input name="kss_crash_drop_pct" type="number" step="0.5" min="0" value="{{ '%.1f'|format(k.kss_crash_drop_pct) }}"></label>
-  <label title="CHỈ LIVE: duy trì lệnh STOP-MARKET treo sẵn trên sàn tại SL (bảo vệ gap ở mức mili-giây). Vô hiệu ở paper / khi automation tắt.">Stop sàn native (LIVE) <span class="varname">kss_live_stop_orders</span>
+  <label title="CHỈ LIVE — CHƯA DỰNG: bật cờ này KHÔNG đặt lệnh STOP-MARKET nào trên sàn. app/kss/service.py:_maintain_live_stop hiện là stub, luôn return ngay. Bảo vệ khi gap giá hôm nay là vòng guard ~90s (kss_exit_check_sec) cộng crash-detect (kss_crash_drop_pct) — KHÔNG phải một lệnh nằm sẵn trên sàn. API sẽ từ chối bật knob này (400) cho tới khi _maintain_live_stop được dựng thật.">Stop sàn native (LIVE, CHƯA DỰNG) <span class="varname">kss_live_stop_orders</span>
     <select name="kss_live_stop_orders" class="select-inline">
       <option value="1" {% if k.kss_live_stop_orders %}selected{% endif %}>Bật</option>
       <option value="0" {% if not k.kss_live_stop_orders %}selected{% endif %}>Tắt</option>

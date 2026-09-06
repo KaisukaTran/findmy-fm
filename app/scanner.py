@@ -391,6 +391,14 @@ def _scan_snapshot(btc_ret: float | None, breadth: float | None) -> dict:
     snap["consensus_weights"] = None            # filled by run_scan (needs the db session)
     snap["btc_ret"] = round(btc_ret, 6) if btc_ret is not None else None
     snap["breadth"] = round(breadth, 4) if breadth is not None else None
+    # grok_scanner_enabled above is the raw knob; the gate that actually runs is
+    # grok.scanner_enabled() (knob AND a non-empty xai_api_key). acaec7f fixed the same lie in
+    # /api/automation — live has the knob on with no key, so every scan row was recording a gate
+    # that never ran. Keep the raw knob (for "what was configured") and add the effective value
+    # beside it (for "what happened"), mirroring routes._grok_scanner_active's enabled/active pair.
+    from app.orchestrator import grok  # lazy — avoid import-time coupling
+
+    snap["grok_scanner_active"] = grok.scanner_enabled()
     return snap
 
 

@@ -47,7 +47,8 @@ ipdb = "^0.13.13"
 pip-audit = "^2.6.1"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
+include = ["app*"]
 
 [tool.black]
 line-length = 100

@@ -508,7 +508,14 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
     except Exception:  # never let the probe block a scan
         can_open, why = True, ""
     if not can_open:
-        scan = ScanRun(mode=mode, universe_size=0, params=json.dumps(_thresholds()))
+        # Snapshot the configuration here too. On the live book 90 of 99 scans in a day end on
+        # this branch (the 6-session cap is nearly always binding), so recording only three
+        # knobs here would leave the configuration timeline blank for 90% of the history —
+        # the exact gap that makes a retrospective study assume knobs it cannot verify.
+        # btc_ret/breadth are None by construction: no candles are fetched on this path.
+        scan = ScanRun(mode=mode, universe_size=0, params=json.dumps(
+            _scan_snapshot(None, None)
+            | {"consensus_weights": runtime.get_consensus_weights(db), "skipped": why}))
         db.add(scan)
         db.flush()
         audit.log(db, "scanner", "scan_skipped", entity=f"run:{scan.id}", reason=why)

@@ -78,6 +78,20 @@ class TestScanSnapshot:
         assert isinstance(params["consensus_weights"], dict)
         assert "dip" in params["consensus_weights"]
 
+    def test_a_capacity_skipped_scan_still_records_the_configuration(self, db, monkeypatch):
+        # 90 of 99 live scans a day end at the capacity gate, so if this branch recorded only
+        # three knobs the configuration timeline would be blank for most of the history.
+        monkeypatch.setattr(scanner, "_has_open_capacity", lambda _db: (False, "max concurrent 6"))
+        out = scanner.run_scan(db, mode="semi")
+        assert out["skipped"] == "max concurrent 6"
+
+        params = json.loads(db.query(models.ScanRun).one().params)
+        assert params["skipped"] == "max concurrent 6"
+        assert "min_expectancy_pct" in params and "max_concurrent_sessions" in params
+        assert isinstance(params["consensus_weights"], dict)
+        # No candles are fetched on this path, so the market state is honestly absent.
+        assert params["btc_ret"] is None and params["breadth"] is None
+
     def test_breadth_is_recorded_even_though_the_ramp_is_off(self, db, monkeypatch):
         monkeypatch.setattr(settings, "regime_ramp_enabled", False)
         scanner.run_scan(db, mode="semi")

@@ -41,6 +41,10 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("candidates", "trials", "INTEGER NOT NULL DEFAULT 0"),
     ("candidates", "avg_mae", "FLOAT NOT NULL DEFAULT 0.0"),
     ("candidates", "worst_mae", "FLOAT NOT NULL DEFAULT 0.0"),
+    # P1 instrumentation: evidence for EVERY candidate, so a new signal can be scored against
+    # what the scanner actually saw instead of a re-fetch that cannot reproduce it.
+    ("candidates", "ta_json", "TEXT"),
+    ("candidates", "grok_verdict", "VARCHAR(12)"),
     ("kss_sessions", "strategy_mode", "TEXT DEFAULT 'dca_down'"),
     # P1 Fix 2: wave-0 sizing snapshot, frozen at creation. Nullable, NO default — a NULL
     # here is the "legacy row" marker PyramidSession.pip_size falls back on; giving it a

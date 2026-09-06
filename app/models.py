@@ -336,6 +336,16 @@ class Candidate(Base):
     est_days_to_tp: Mapped[float | None] = mapped_column(Float, nullable=True)
     decision: Mapped[str] = mapped_column(String(8), nullable=False, default="skip")  # trade / skip
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # P1 instrumentation (2026-09-06). The TA bundle used to be built ONLY for `trade`
+    # candidates and kept only as a compact tag inside `reason`, so every REJECTED coin left no
+    # evidence at all and no signal could be scored after the fact — which is why the ranking
+    # measurement had to re-fetch candles and could not reproduce what the scanner actually saw.
+    # Recorded for every candidate now, as JSON, and read by nothing: pure evidence.
+    ta_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Grok's verdict as an ENUM rather than free text appended to `reason`:
+    # endorse / veto / unavailable (call failed or unparseable) / absent (not reviewed).
+    # Recording only — enforcement is unchanged and still driven by `reviews`.
+    grok_verdict: Mapped[str | None] = mapped_column(String(12), nullable=True)
     session_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 

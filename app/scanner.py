@@ -363,6 +363,36 @@ def _thresholds() -> dict:
     }
 
 
+# Every knob that shapes which coin is picked. `_thresholds()` cannot carry these — it is
+# splatted into `decide()` — so the snapshot lives separately.
+_SNAPSHOT_KNOBS = (
+    "min_win_rate", "min_confidence", "deadline_days", "min_trials", "min_expectancy_pct",
+    "min_net_edge", "max_loss_rate", "max_avg_mae_pct", "scan_distance_pct", "scan_tp_pct",
+    "scan_max_waves", "scan_max_symbols", "min_quote_volume", "max_concurrent_sessions",
+    "max_new_sessions_per_scan", "max_sessions_per_symbol", "max_session_deploy_usd",
+    "kss_first_wave_usd", "block_downtrend_adx", "entry_momentum_gate", "rel_strength_enabled",
+    "rel_strength_lookback_bars", "rel_strength_margin_pct", "mae_quartile_gate_enabled",
+    "regime_ramp_enabled", "strategy_router_enabled", "autotune_levels_enabled",
+    "autotune_tp_atr_mult", "autotune_dca_atr_mult", "grok_scanner_enabled", "ml_enabled",
+)
+
+
+def _scan_snapshot(btc_ret: float | None, breadth: float | None) -> dict:
+    """The full active gate configuration plus the two market-level numbers, for ScanRun.params.
+
+    Before this, `params` carried 3 of ~20 knobs, and `_btc_ret` / breadth were computed and
+    thrown away (breadth only when the ramp was both enabled AND biting). Any retrospective
+    study that assumed a constant knob set across a candidate history was therefore wrong —
+    `min_expectancy_pct` alone moved to 2.16 mid-history. Snapshot, never read back by the
+    scanner itself.
+    """
+    snap = {k: getattr(settings, k, None) for k in _SNAPSHOT_KNOBS}
+    snap["consensus_weights"] = None            # filled by run_scan (needs the db session)
+    snap["btc_ret"] = round(btc_ret, 6) if btc_ret is not None else None
+    snap["breadth"] = round(breadth, 4) if breadth is not None else None
+    return snap
+
+
 def _effective_params(db: Session, symbol: str) -> tuple[float, float, int]:
     """Return (distance_pct, tp_pct, max_waves) for a symbol.
 
@@ -585,6 +615,14 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
 
     # BTC reference return for the relative-strength entry gate (computed once; None = gate off/no data)
     _btc_ret = _btc_ref_return(_candle_map, settings.rel_strength_lookback_bars)
+    # P1 instrumentation: stamp the scan with the market state and the FULL knob set it ran
+    # under. Breadth is computed unconditionally now — it used to exist only inside the
+    # regime ramp, which is off, so no scan in the book records what the market was doing.
+    scan.params = json.dumps(
+        _scan_snapshot(_btc_ret, _market_breadth(_candle_map, to_fetch,
+                                                 settings.rel_strength_lookback_bars))
+        | {"consensus_weights": runtime.get_consensus_weights(db)}
+    )
     for symbol in to_fetch:
         candles, _hit = _candle_map.get(symbol, ([], False))
         if len(candles) < _MIN_CANDLES:
@@ -664,6 +702,13 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
                    + f" flat={wr['flat_rate']:.0f}% (stops={wr['stops']})"
                    + f" edge={net_edge:.2f}% | params {params_tag}",
         )
+        # P1: the TA evidence is now built for EVERY candidate, not just the gate-bound ones,
+        # and stored as JSON. A rejected coin used to leave nothing behind, so a study could
+        # never ask "what did the scanner see when it said no?" — the one question that
+        # decides whether a rejection was right. Costs one indicator pass per symbol on
+        # candles already in memory; changes no decision.
+        ta = ta_bundle.build(candles, db, symbol)
+        cand.ta_json = json.dumps(ta)
         db.add(cand)
         db.flush()
         audit.log(db, "scanner", "candidate", entity=symbol, decision=d["decision"],
@@ -672,9 +717,8 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
                   net_edge=net_edge, days=wr["avg_days_to_tp"])
 
         if d["decision"] == "trade":
-            # Build the TA evidence bundle only for gate-bound candidates (the set the
-            # Grok review actually decides on), and surface a compact tag on the reason.
-            ta = ta_bundle.build(candles, db, symbol)
+            # `ta` is built above for every candidate now; gate-bound ones also carry the
+            # compact human-readable tag on the reason, unchanged.
             cand.reason = (cand.reason or "") + f" | TA: {_ta_tag(ta)}"
             # Hard entry-timing gate: refuse a confirmed downtrend (HTF+ST both down, strong ADX)
             # — don't catch a falling knife. Deterministic mirror of Grok's commonest veto, so it
@@ -1048,6 +1092,14 @@ def _review_and_open(
     for c in ranked:
         cand, symbol = c["cand"], c["symbol"]
         verdict = reviews.get(symbol)
+        # P1: record WHICH of the four states this was, as data. "No verdict" currently
+        # behaves identically to "endorsed" under the default fail-open mode, and because
+        # both looked the same in the book, nobody could tell a working gate from a broken
+        # one — a call that timed out and a call that approved were indistinguishable.
+        if verdict:
+            cand.grok_verdict = "endorse" if verdict.get("endorse") else "veto"
+        elif grok.scanner_enabled():
+            cand.grok_verdict = "unavailable" if symbol in grok_reviewed_symbols else "absent"
         if verdict and not verdict["endorse"]:
             cand.reason = (cand.reason or "") + f" | Grok veto: {verdict['reason']}"
             audit.log(db, "grok", "scanner_veto", entity=symbol, reason=verdict["reason"])

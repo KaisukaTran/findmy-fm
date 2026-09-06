@@ -1139,33 +1139,42 @@ def sync_resting_orders(db: Session) -> dict:
                 audit.log(db, "orders", "resting_timeout", entity=f"order:{order.id}",
                           symbol=order.symbol, timeout_sec=timeout)
 
-    # Resting a rung in advance IS the auto-fill of this model, so it follows the same
+    # Resting a rung in advance IS the auto-fill of this model, so a BUY follows the same
     # switch: with auto_trade off the operator approves by hand (the synchronous path).
     # Cancellation above is not gated — a rejected or timed-out order must always come off
     # the book.
-    if settings.auto_trade:
-        due = (
-            db.query(PendingOrder)
-            .filter(
-                PendingOrder.status == PENDING,
-                PendingOrder.source == "kss",
-                PendingOrder.order_type == "LIMIT",
-                PendingOrder.price > 0,
-                PendingOrder.exchange_order_id.is_(None),
-            )
-            .all()
+    #
+    # A SELL IS NOT GATED EITHER. This query had no side filter, so pausing new buying also
+    # stopped a cancelled take-profit from ever going back on the book: the cancel path above
+    # is ungated, the replacement was not, and the exit simply vanished from the venue until
+    # auto-trade returned. That is 25 of the 30 exits this book has ever made, and CLAUDE.md
+    # is unambiguous — exits are never gated. (Protective MARKET exits were never affected:
+    # the ~90s guard force-fills them through `approve_order`, which has no such gate.) The
+    # switch keeps meaning what it says: no NEW risk. Realising risk already taken is not new.
+    due = (
+        db.query(PendingOrder)
+        .filter(
+            PendingOrder.status == PENDING,
+            PendingOrder.source == "kss",
+            PendingOrder.order_type == "LIMIT",
+            PendingOrder.price > 0,
+            PendingOrder.exchange_order_id.is_(None),
         )
-        # Same guard as the auto-fill path: a rung freed by the dead-link reaper must not be
-        # re-rested on the venue for a session that has ended.
-        due = [o for o in due if session_still_going(db, o.source_ref)]
-        for order in due:
-            # Wave 0 is the entry and takes (is_entry_wave) — the synchronous path owns it.
-            # Resting it as well would put two live orders behind one row, and as a post-only
-            # BUY at the market it would only be rejected anyway.
-            if is_entry_wave(order):
-                continue
-            if _place_resting(db, order):
-                out["placed"] += 1
+        .all()
+    )
+    if not settings.auto_trade:
+        due = [o for o in due if o.side == "SELL"]
+    # Same guard as the auto-fill path: a rung freed by the dead-link reaper must not be
+    # re-rested on the venue for a session that has ended.
+    due = [o for o in due if session_still_going(db, o.source_ref)]
+    for order in due:
+        # Wave 0 is the entry and takes (is_entry_wave) — the synchronous path owns it.
+        # Resting it as well would put two live orders behind one row, and as a post-only
+        # BUY at the market it would only be rejected anyway.
+        if is_entry_wave(order):
+            continue
+        if _place_resting(db, order):
+            out["placed"] += 1
 
     db.commit()
     return out

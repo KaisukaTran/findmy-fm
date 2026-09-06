@@ -220,6 +220,19 @@ def _queue_wave_if_above_sl(
     The rung is first re-anchored to the live market (``_anchor_dca_price``) so the auto-chain
     never queues a buy above the current price (which would fill at an overpay, not a dip)."""
     nwn = int(order_dict["source_ref"].split(":")[-1])
+    # An ARMED session deliberately dropped its ladder when it committed to trailing up, so it
+    # must not get one back here. `_cancel_pending_waves` only rejects the DB rows; the venue
+    # cancel goes out on a later pass (~1.5s measured on INJ 2026-09-06, up to a 90s guard
+    # interval if the cycle aborts, unbounded across a process death). A rung that fills inside
+    # that window runs the auto-chain straight into this function, which would queue the NEXT
+    # rung under a session the strategy has switched to riding — unplanned capital into a
+    # position it chose not to average. `_rearm_dead_ladders` already refuses this for the same
+    # reason (see its `if row.trail_active` guard); the fill path had no equivalent.
+    _row = db.get(KssSession, session_id)
+    if _row is not None and _row.trail_active:
+        audit.log(db, "kss", "wave_after_arm", entity=f"kss:{session_id}", symbol=symbol,
+                  wave=nwn, price=round(order_dict.get("price", 0.0), 8))
+        return False
     # Idempotency guard against the duplicate-wave race: if this wave is already queued/recorded
     # (e.g. a manual DCA+ queued it while the auto-chain is firing), do not queue a second copy —
     # that historically double-bought a rung (session 42/C: wave 13 filled twice, ~$49.9k) and

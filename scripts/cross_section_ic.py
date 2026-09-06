@@ -256,6 +256,7 @@ def portfolio_test(panel: dict[str, list[dict]], feature: str, k: int, min_names
     casualties can post a large IC while adding nothing to the mean the account actually feels.
     """
     rng = random.Random(seed)
+    pnl_key = "outcome"
     days = [rows for rows in panel.values()
             if len([r for r in rows if feature in r]) >= min_names]
     if len(days) < 20:
@@ -277,24 +278,34 @@ def portfolio_test(panel: dict[str, list[dict]], feature: str, k: int, min_names
     def rnd(pool):
         return rng.sample(pool, len(pool))
 
-    def base_of(rows_by_day, draws: int = 8) -> float:
-        """The random baseline as an EXPECTATION, not one draw.
+    def base_of(rows_by_day) -> float:
+        """The random baseline EXACTLY, not by simulation.
 
-        Using a single random pick inside each bootstrap iteration adds the draw's own variance
-        to the difference and widens the interval toward "no evidence" — it would hide a modest
-        real effect. Averaging several draws estimates the day's expected pick instead.
+        The expected outcome of picking k at random from a day's pool IS that pool's mean —
+        zero variance and free. Drawing it by Monte Carlo adds the draw's own variance to the
+        difference and pushes every verdict toward "no evidence"; a single draw per bootstrap
+        replicate (the first version here) hid a real effect that survives Bonferroni.
         """
-        return st.mean([pick(rows_by_day, rnd) for _ in range(draws)])
+        got = []
+        for rows in rows_by_day:
+            pool = [r[pnl_key] for r in rows if feature in r]
+            if pool:
+                got += pool
+        return st.mean(got) if got else float("nan")
 
     t, b = pick(days, top), pick(days, bot)
-    base = base_of(days, draws=20)
-    diffs = []
+    base = base_of(days)
+    diffs, diffs_bot = [], []
     for _ in range(600):
         sample = [rng.choice(days) for _ in days]
-        diffs.append(pick(sample, top) - base_of(sample))
+        base_s = base_of(sample)
+        diffs.append(pick(sample, top) - base_s)
+        diffs_bot.append(pick(sample, bot) - base_s)
     diffs.sort()
+    diffs_bot.sort()
     return {"top": t, "bottom": b, "random": base,
-            "lo": diffs[15], "hi": diffs[-15], "n_days": len(days)}
+            "lo": diffs[15], "hi": diffs[-15],
+            "blo": diffs_bot[15], "bhi": diffs_bot[-15], "n_days": len(days)}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -352,8 +363,13 @@ def main(argv: list[str] | None = None) -> int:
             continue
         beats = ("BEATS random" if r["lo"] > 0 else
                  "LOSES to random" if r["hi"] < 0 else "no evidence")
+        # The BOTTOM arm gets its own inference. Printing it without one hid the most robust
+        # result in the table: picking the LOWEST realised volatility beat random at both exit
+        # shapes, while the column it sat in was never tested.
+        bbeats = ("bottom BEATS" if r["blo"] > 0 else
+                  "bottom LOSES" if r["bhi"] < 0 else "bottom flat")
         print(f"{name:22} {r['top']:>+8.3f}% {r['bottom']:>+8.3f}% {r['random']:>+8.3f}% "
-              f"[{r['lo']:>+8.3f},{r['hi']:>+8.3f}]   {beats}")
+              f"[{r['lo']:>+8.3f},{r['hi']:>+8.3f}]   {beats:15} {bbeats}")
 
     print("\nNote: an IC measured on a feature chosen AFTER seeing this table is not evidence. "
           "The features above were fixed in advance from the published-evidence review.")

@@ -1,4 +1,8 @@
-"""Where does buying the dip actually pay? A liquidity-tier study on five years.
+"""Does the liquidity tier change what a fixed tp/sl bracket earns? Five years, every USDT pair.
+
+    NAMING, because the first version of this file got it wrong: entries here are taken every
+    Nth bar on a CALENDAR grid, with no dip condition, no RSI, no pullback and none of the live
+    scanner's gates. Calling the result "dip-buying" described something the code does not do.
 
 THE QUESTION
     Four independent studies agree on one boundary: illiquid micro-caps mean-revert, liquid
@@ -90,11 +94,11 @@ def simulate(bars: list[tuple], i: int, tp_pct: float, sl_pct: float, horizon: i
             "days": min(horizon, len(bars) - 1 - i)}
 
 
-def load(db_path: Path) -> dict[str, list[tuple]]:
+def load(db_path: Path, interval: str = "1d") -> dict[str, list[tuple]]:
     db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     rows = db.execute(
         "SELECT symbol, ts, high, low, close, quote_volume, open, volume FROM candles "
-        "WHERE interval='1d' ORDER BY symbol, ts").fetchall()
+        "WHERE interval=? ORDER BY symbol, ts", (interval,)).fetchall()
     db.close()
     out: dict[str, list[tuple]] = defaultdict(list)
     for sym, ts, high, low, close, qv, op, vol in rows:
@@ -207,6 +211,29 @@ def main(argv: list[str] | None = None) -> int:
               f"{mean_pnl(rows):>+9.3f}% [{lo:>+7.3f},{hi:>+7.3f}] "
               f"{per_dollar_day(rows):>+12.4f} "
               f"{exits['tp']/n:>5.0%} {exits['sl']/n:>5.0%} {exits['deadline']/n:>5.0%}")
+
+    # WITHIN-DAY estimator, and it is the one to believe. The tiers are not sampled from the
+    # same calendar: >$10M is 26.6% 2021 and 4.5% 2026, while $100k-1M is 0.8% 2021 and 28.8%
+    # 2026, so the raw gap partly measures "2021 versus 2026" rather than thin versus liquid.
+    # Comparing the two arms only inside the SAME day removes the market that both shared.
+    rows_by_day: dict[str, list[dict]] = defaultdict(list)
+    for e in entries:
+        rows_by_day[e["day"]].append(e)
+    paired = []
+    for _day, rows in sorted(rows_by_day.items()):
+        b = [r["pnl"] for r in rows if r["tier"] in TIER_NAMES[:2]]
+        a = [r["pnl"] for r in rows if r["tier"] in TIER_NAMES[2:]]
+        if len(b) >= 3 and len(a) >= 3:
+            paired.append(st.mean(b) - st.mean(a))
+    if len(paired) >= 30:
+        m = st.mean(paired)
+        se = st.pstdev(paired) / (len(paired) ** 0.5)
+        boots = sorted(st.mean([random.choice(paired) for _ in paired]) for _ in range(2000))
+        print(f"\nWITHIN-DAY paired gap ({len(paired)} days with both arms): {m:+.3f} pct-points"
+              f"  t={(m / se) if se else float('nan'):+.1f}"
+              f"  CI [{boots[50]:+.3f}, {boots[-50]:+.3f}]")
+        print("  Believe this one. The raw gap below is confounded by WHEN each tier was")
+        print("  sampled; comparing the arms inside the same day removes the shared market.")
 
     # The decision the study exists to inform.
     below = [e for e in entries if e["tier"] in TIER_NAMES[:2]]

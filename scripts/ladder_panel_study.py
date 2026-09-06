@@ -73,10 +73,11 @@ def to_candles(bars: list[tuple]) -> list[dict]:
 
 def run_panel(series: dict, *, spacing: int, distance: float, tp: float, waves: int,
               sl: float, deadline: int, cost: float, min_bars: int, warmup: int,
-              vol_window: int, pessimistic: bool) -> list[dict]:
+              vol_window: int, pessimistic: bool, bars_per_day: float = 1.0) -> list[dict]:
     """One row per entry: the ladder result and the single-entry result on the SAME bar."""
     out: list[dict] = []
     reserve = reserved_capital(distance, waves)
+    horizon_bars = max(1, round(deadline * bars_per_day))
     for sym, bars in series.items():
         if len(bars) < min_bars:
             continue
@@ -85,12 +86,15 @@ def run_panel(series: dict, *, spacing: int, distance: float, tp: float, waves: 
             qv = trailing_median_volume([b[5] for b in bars[i - vol_window + 1:i + 1]])
             if qv <= 0:
                 continue
+            # Horizon in BARS for the single-entry model, days for simulate_kss (which reads
+            # `ts`). On hourly bars a 7-day deadline is 168 bars, not 7 — getting this wrong
+            # would compare a 7-day ladder against a 7-HOUR single entry.
             lad = simulate_kss(
                 candles, i, distance_pct=distance, max_waves=waves, tp_pct=tp,
                 deadline_days=float(deadline), sl_pct=sl, cost_pct=cost,
                 pessimistic_intrabar=pessimistic, wave0_notional_usd=WAVE0_USD,
             )
-            single = simulate(bars, i, tp, sl, deadline, cost)
+            single = simulate(bars, i, tp, sl, horizon_bars, cost)
             if single is None:
                 continue
             out.append({
@@ -190,12 +194,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--vol-window", type=int, default=30)
     p.add_argument("--warmup", type=int, default=30)
     p.add_argument("--min-bars", type=int, default=90)
+    p.add_argument("--interval", default="1d", help="candle interval in the research DB")
+    p.add_argument("--bars-per-day", type=float, default=1.0,
+                   help="24 for 1h bars: converts the day-based deadline into bars")
     p.add_argument("--limit-coins", type=int, default=0)
     p.add_argument("--tier-split", action="store_true", help="also break the result down by liquidity tier")
     args = p.parse_args(argv)
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-    series = load(Path(args.db))
+    series = load(Path(args.db), args.interval)
     if args.limit_coins:
         series = dict(list(series.items())[: args.limit_coins])
 
@@ -208,7 +215,7 @@ def main(argv: list[str] | None = None) -> int:
             series, spacing=args.spacing, distance=args.distance, tp=args.tp, waves=args.waves,
             sl=args.sl, deadline=args.deadline, cost=args.cost, min_bars=args.min_bars,
             warmup=max(args.warmup, args.vol_window), vol_window=args.vol_window,
-            pessimistic=pessimistic,
+            pessimistic=pessimistic, bars_per_day=args.bars_per_day,
         )
         bound = "PESSIMISTIC" if pessimistic else "OPTIMISTIC"
         print(f"{bound} intra-bar bound   (reserve ${reserved_capital(args.distance, args.waves):.2f}/session)")

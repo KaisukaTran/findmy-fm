@@ -323,7 +323,7 @@ def event(kind: str, text: str, *, throttle_key: str | None = None, cooldown: fl
 
     Trade/digest pushes are gated by the master telegram_push_enabled switch — when it is off
     (default) the bot stays quiet about routine activity and only replies to commands you send.
-    RISK events (SL/breaker/guardian veto) deliberately BYPASS the master mute and fire whenever
+    RISK events (SL/breaker) deliberately BYPASS the master mute and fire whenever
     telegram_notify_risk is on (its own kill switch) — a safety alert must never be silenced by a
     convenience flag. Set telegram_notify_risk=False to disable risk pushes entirely.
     """

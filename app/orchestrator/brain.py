@@ -5,7 +5,8 @@ cost; `policy.py` (O-3) re-validates, clamps to hard caps, and routes anything t
 approval queue. A prompt-injected/hallucinating Opus can at worst emit intents the sandbox
 rejects (least-privilege; see docs §3, §8).
 
-Reuses the guardian's httpx + prompt-caching pattern; model = `opus_model`.
+Carries its own httpx + prompt-caching client; model = `opus_model`. (The pattern originally
+came from `app/guardian.py`, removed 2026-09-06.)
 """
 
 from __future__ import annotations

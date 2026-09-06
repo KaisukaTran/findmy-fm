@@ -34,7 +34,7 @@ from app.config import settings
 from app.data import candle_cache
 from app.data.providers import CcxtProvider, data_provider
 from app.kss import service
-from app.models import SESSION_ACTIVE, AgentVoteRecord, Candidate, KssSession, PendingOrder, ScanRun
+from app.models import SESSION_ACTIVE, AgentVoteRecord, Candidate, KssSession, ScanRun
 from app.ta import bundle as ta_bundle
 
 logger = logging.getLogger(__name__)
@@ -1500,18 +1500,8 @@ def _open_session(
     if mode == "auto":
         if not runtime.is_frozen(db):
             oid = started["pending_order_id"]
+            # Belongs to the marketability gate below — not an orphan, do not delete.
             _vetoed = False
-            from app import guardian  # lazy — avoid import-time cost
-            if guardian.enabled():
-                pending_order = db.get(PendingOrder, oid)
-                if pending_order is not None:
-                    vetoes = guardian.review([pending_order])
-                    if oid in vetoes:
-                        pending_order.auto_veto = True
-                        pending_order.auto_veto_reason = vetoes[oid]
-                        audit.log(db, "scanner", "guardian_veto", entity=f"order:{oid}",
-                                  symbol=symbol, session=row.id)
-                        _vetoed = True
             # Defense-in-depth: only force-fill wave 0 when it is actually marketable — the live
             # market must not sit materially ABOVE the entry limit for a BUY. Force-approving a
             # below-market BUY limit fills it at the stale limit price and books an instant

@@ -32,7 +32,6 @@ from app import (
     costengine,
     costs,
     execution,
-    guardian,
     hyperopt,
     ml,
     notify,
@@ -317,7 +316,6 @@ def _automation_state(db: Session) -> dict:
         "autoapprove": settings.autoapprove_enabled,
         "frozen": runtime.is_frozen(db),
         "open_sessions": active,
-        "guardian": guardian.enabled(),
         "telegram": notify.is_running(),
         "discord": notify_discord.is_running() or notify_discord.webhook_enabled(),
         "hyperopt": settings.hyperopt_enabled,
@@ -713,32 +711,6 @@ async def set_scheduler(body: SchedulerBody):
     else:
         scheduler.stop()
     return scheduler_state()
-
-
-# --- Guardian endpoints -------------------------------------------------
-
-
-class GuardianBody(BaseModel):
-    enabled: bool
-
-
-def _guardian_state() -> dict:
-    return {
-        "enabled": settings.guardian_enabled,
-        "model": settings.guardian_model,
-        "active": guardian.enabled(),
-    }
-
-
-@api_router.get("/api/guardian")
-def get_guardian():
-    return _guardian_state()
-
-
-@api_router.post("/api/guardian", dependencies=[Depends(require_api_key)])
-def set_guardian(body: GuardianBody):
-    settings.guardian_enabled = body.enabled
-    return _guardian_state()
 
 
 # --- Telegram endpoints -------------------------------------------------

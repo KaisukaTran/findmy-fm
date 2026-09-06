@@ -21,10 +21,6 @@
         <button class="sm ghost" data-action="resetBreaker">Khôi phục breaker</button>
       </span>
       {% endif %}
-      <span class="statusbar-guardian">
-        <span class="badge {{ 'guardian-on' if a.guardian else 'guardian-off' }}">GUARDIAN {{ 'ON' if a.guardian else 'OFF' }}</span>
-        <button class="sm {{ 'danger' if a.guardian else 'ok' }}" data-action="toggleGuardian" data-id="{{ 'off' if a.guardian else 'on' }}">{{ 'Tắt' if a.guardian else 'Bật' }}</button>
-      </span>
       <span class="statusbar-telegram">
         <span class="badge {{ 'telegram-on' if a.telegram else 'telegram-off' }}">TELEGRAM {{ 'ON' if a.telegram else 'OFF' }}</span>
         <button class="sm {{ 'danger' if a.telegram else 'ok' }}" data-action="toggleTelegram" data-id="{{ 'off' if a.telegram else 'on' }}">{{ 'Tắt' if a.telegram else 'Bật' }}</button>
@@ -55,11 +51,6 @@
       <button class="sm ghost" data-action="resetBreaker">Khôi phục breaker</button>
     </span>
     {% endif %}
-    <span class="sep">·</span>
-    <span class="statusbar-guardian">
-      <span class="badge {{ 'guardian-on' if a.guardian else 'guardian-off' }}">GUARDIAN {{ 'ON' if a.guardian else 'OFF' }}</span>
-      <button class="sm {{ 'danger' if a.guardian else 'ok' }}" data-action="toggleGuardian" data-id="{{ 'off' if a.guardian else 'on' }}">{{ 'Tắt' if a.guardian else 'Bật' }}</button>
-    </span>
     <span class="sep">·</span>
     <span class="statusbar-telegram">
       <span class="badge {{ 'telegram-on' if a.telegram else 'telegram-off' }}">TELEGRAM {{ 'ON' if a.telegram else 'OFF' }}</span>

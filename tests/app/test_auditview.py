@@ -18,8 +18,6 @@ def test_categories_and_severity(db):
     assert stop["category"] == "risk" and stop["severity"] == "danger" and "Cắt lỗ" in stop["message"]
     defer = R(_row(db, "kss", "tp_deferred", "kss:3", symbol="FET", price=1.0))
     assert defer["category"] == "risk" and defer["severity"] == "warn"
-    veto = R(_row(db, "guardian", "veto", "order:7", reason="big"))
-    assert veto["category"] == "risk" and "Guardian" in veto["message"]
     close = R(_row(db, "opus", "close", "opos:1", symbol="NIGHT", realized=-8.5))
     assert close["category"] == "opus" and close["severity"] == "danger"
     assert R(_row(db, "scheduler", "cycle", candidates=50))["category"] == "system"

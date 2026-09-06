@@ -278,7 +278,9 @@ def auto_approve_by_policy(db: Session) -> list[int]:
     market = get_current_prices(list({o.symbol for o in pend}))
     approved: list[int] = []
     for o in pend:
-        if o.auto_veto:
+        # Exit SELLs reduce risk — never let a (possibly stale) veto trap them; only a
+        # vetoed BUY (new risk) is held back.
+        if o.auto_veto and o.side == "BUY":
             continue
         if o.source not in settings.autoapprove_sources:
             continue
@@ -979,7 +981,7 @@ def _cancel_resting(db: Session, order: PendingOrder) -> bool:
 def _place_resting(db: Session, order: PendingOrder) -> bool:
     """Place one queued order as a resting post-only LIMIT and link it to the row.
 
-    Re-gates exactly like ``_live_execute``: a BUY is new exposure (Guardian veto, breaker,
+    Re-gates exactly like ``_live_execute``: a BUY is new exposure (veto flag, breaker,
     notional cap, cash floor); a SELL exit is never gated. Returns True when the order now
     rests on the exchange. Never raises — a placement failure leaves the order queued for
     the next cycle.

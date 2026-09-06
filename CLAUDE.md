@@ -15,7 +15,8 @@ SQLite file. Real-money execution is wired but ships OFF.
 - **`app/kss/pyramid.py` math is FROZEN.** Build guards/config *around* it.
   `tests/app/test_kss_invariants.py` locks the formulas.
 - **Exits are never gated.** A SELL that reduces risk is never blocked by the circuit
-  breaker, the notional cap, or the Guardian. Slowing an exit is the one unforgivable bug.
+  breaker, the notional cap, or an order's veto flag. Slowing an exit is the one unforgivable
+  bug. (The AI Guardian, previously named here, was removed 2026-09-06 — it never once fired.)
 - **Everything goes through the approval queue.** No path executes an order directly.
 - **K-2:** a take-profit may never realize below the true aggregate cost basis + fees.
 - **Secrets** live only in `settings` as `SecretStr`, and are never logged or serialized.

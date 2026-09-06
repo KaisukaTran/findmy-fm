@@ -6,7 +6,7 @@ This drives the *real* scheduler cycle against a deterministic synthetic provide
 so we can watch the whole full-auto pipeline end-to-end:
 
     scan -> candidate -> KSS session -> auto-approve (auto-trader + policy)
-          -> auto-fill -> guardian veto -> hyperopt/ML retrain -> breaker freeze
+          -> auto-fill -> hyperopt/ML retrain -> breaker freeze
 
 It mutates nothing real: a throwaway SQLite DB under the system temp dir.
 
@@ -83,7 +83,6 @@ def _enable_full_auto():
     settings.auto_trade = True              # auto mode: sessions self-approve wave 0
     settings.autoapprove_enabled = True     # policy approves remaining KSS orders
     settings.autoapprove_sources = ["kss"]
-    settings.guardian_enabled = False       # no API key / no network -> keep off
     settings.hyperopt_enabled = True
     settings.ml_enabled = True
     settings.ml_min_samples = 1
@@ -105,7 +104,6 @@ def _fmt(s: dict) -> str:
             f"auto_filled={L(s['auto_filled']):>2}  "
             f"tp_queued={L(s['tp_queued']):>2}  "
             f"deadlines_closed={L(s['deadlines_closed']):>2}  "
-            f"guardian_vetoes={s['guardian_vetoes']:>2}  "
             f"hyperopt_runs={s['hyperopt_runs']:>2}  "
             f"ml_trained={str(s['ml_trained'])}")
 
@@ -122,7 +120,7 @@ def main() -> None:
         runtime.full_auto_on(db)
         db.commit()
         print(f"DB: {os.environ['DATABASE_URL']}")
-        print(f"Universe: {list(_UNIVERSE)}  |  full_auto ON, guardian OFF (no key)\n")
+        print(f"Universe: {list(_UNIVERSE)}  |  full_auto ON\n")
 
         print("== Normal cycles (breaker armed) ==")
         for i in range(1, 4):

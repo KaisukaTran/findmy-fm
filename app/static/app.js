@@ -575,15 +575,6 @@ const actions = {
     await api("POST", "/api/breaker/reset");
     refreshStatus();
   },
-  async toggleGuardian(desired) {
-    const enable = desired === "on";
-    if (enable &&
-        !confirm("Bật AI Guardian? Nó sẽ phủ quyết lệnh không qua kiểm tra rủi ro.")) return;
-    if (!enable &&
-        !confirm("Tắt AI Guardian? Lệnh sẽ không còn được Guardian kiểm tra.")) return;
-    await api("POST", "/api/guardian", { enabled: enable });
-    refreshStatus();
-  },
   async toggleTelegram(desired) {
     const enable = desired === "on";
     if (enable &&

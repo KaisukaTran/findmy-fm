@@ -70,8 +70,8 @@ TELEGRAM_DIGEST_HOURS=0                 # hours between periodic digest pushes (
 ## Automatic push
 
 - **Trades** — an alert on each fill, gated by `TELEGRAM_NOTIFY_TRADES`.
-- **Risk events** — alerts on stop-loss / trailing exits, breaker freeze, and
-  Guardian vetoes, gated by `TELEGRAM_NOTIFY_RISK`.
+- **Risk events** — alerts on stop-loss / trailing exits and breaker freeze,
+  gated by `TELEGRAM_NOTIFY_RISK`.
 - **Digest** — a periodic summary (equity + today's P&L + open counts) every
   `TELEGRAM_DIGEST_HOURS` hours (`0` = off).
 

@@ -82,12 +82,6 @@ def render(row: AuditLog) -> dict:
     elif act == "auto_approve":
         cat, sev, icon = TRADE, "good", "✅"
         msg = f"Tự duyệt lệnh {row.entity or ''}"
-    elif a == "guardian" and act == "veto":
-        cat, sev, icon = RISK, "danger", "⛔"
-        msg = f"Guardian chặn {row.entity or ''}: {d.get('reason', '')}"
-    elif act == "guardian_veto":
-        cat, sev, icon = RISK, "danger", "⛔"
-        msg = f"Guardian chặn lệnh {s} (session {d.get('session', '')})"
     # --- OPUS lifecycle ---
     elif a == "opus" and act == "decide":
         cat, sev, icon = OPUS, "info", "🧠"

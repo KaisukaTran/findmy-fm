@@ -373,13 +373,7 @@ class Settings(BaseSettings):
     max_consecutive_losses: int = Field(default=4, description="Circuit breaker: freeze auto after this many losing SELL fills in a row.")
     breaker_cooldown_min: int = Field(default=60, description="Minutes the breaker stays frozen before it may auto-rearm.")
 
-    # --- AI Guardian (Phase B): LLM veto layer over auto-approvals ---
-    guardian_enabled: bool = Field(default=False, description="Run the Claude veto layer before auto-approving. Needs anthropic_api_key.")
-    anthropic_api_key: SecretStr = Field(default=SecretStr(""), description="Anthropic API key for the AI Guardian. Empty = guardian no-op.")
-    guardian_model: str = Field(default="claude-haiku-4-5-20251001", description="Claude model id used by the Guardian (cheap by default).")
-    guardian_max_tokens: int = Field(default=1024, description="Max output tokens per Guardian review call.")
-    guardian_fail_open: bool = Field(default=True, description="On Guardian error/timeout, allow auto-approval (fail-open) rather than block.")
-    guardian_veto_ttl_min: int = Field(default=30, description="Minutes a Guardian veto holds before it expires and the order is re-reviewed. Prevents a transient veto from permanently deadlocking a KSS DCA wave. 0 = vetoes never expire.")
+    anthropic_api_key: SecretStr = Field(default=SecretStr(""), description="Anthropic API key for LLM features (e.g. the Opus orchestrator). Empty = disabled.")
 
     # --- Telegram remote-kill (Phase B): alerts + /pause /resume /status /freeze /reset ---
     telegram_enabled: bool = Field(default=False, description="Enable the Telegram notifier + command poller. Needs token + chat id.")
@@ -396,7 +390,7 @@ class Settings(BaseSettings):
     telegram_sibling_url: str = Field(default="", description="Base URL of the sibling instance (e.g. http://127.0.0.1:8001) used to route targeted commands like '/pause live'. Empty = no cross-instance routing (targeted commands reply that it is unconfigured).")
     telegram_push_enabled: bool = Field(default=False, description="MASTER switch for PROACTIVE pushes (trade/risk fills + periodic digest). Default False = the bot only REPLIES to commands you send, never pushes unsolicited messages. The per-category telegram_notify_trades/_risk + digest knobs only matter when this is True. Command replies and the manual /api/telegram/test are never gated by this.")
     telegram_notify_trades: bool = Field(default=True, description="Push a Telegram alert on each fill (trade). Kill switch for trade alerts (only applies when telegram_push_enabled=True).")
-    telegram_notify_risk: bool = Field(default=True, description="Push Telegram alerts on risk events (SL/trailing exits, breaker freeze, guardian veto).")
+    telegram_notify_risk: bool = Field(default=True, description="Push Telegram alerts on risk events (SL/trailing exits, breaker freeze).")
     telegram_notify_maxdca: bool = Field(default=True, description="Push a Telegram alert (with a 1-click 'add a DCA wave' button) when a KSS session's ladder is FULL. Bypasses telegram_push_enabled — you need to see it to decide. Its own kill switch.")
     telegram_digest_hours: int = Field(default=0, ge=0, description="Hours between periodic Telegram digest pushes (equity + today's P&L + open counts). 0 = off.")
 

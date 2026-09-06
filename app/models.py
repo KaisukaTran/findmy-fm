@@ -77,11 +77,9 @@ class PendingOrder(Base):
     reviewer: Mapped[str | None] = mapped_column(String(64), nullable=True)
     reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # AI Guardian (Phase B): a veto blocks AUTO approval only — the order stays
-    # pending so a human can still approve it. Reason is the model's rationale.
-    # auto_veto_at stamps when the veto was set so the scheduler can expire stale
-    # vetoes (TTL) and re-review them — a transient veto must never deadlock a KSS
-    # DCA wave whose limit price has since been reached.
+    # A veto blocks AUTO approval only — the order stays pending so a human can
+    # still approve it. auto_veto_reason records why; auto_veto_at stamps when the
+    # veto was set. Exits (SELLs) are never gated by this flag — see orders.py.
     auto_veto: Mapped[bool] = mapped_column(default=False, nullable=False)
     auto_veto_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     auto_veto_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

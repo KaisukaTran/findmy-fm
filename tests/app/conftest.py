@@ -43,7 +43,7 @@ def _schema():
 _MUTABLE_SETTINGS = (
     "auto_trade", "autoapprove_enabled", "autoapprove_max_notional",
     "full_auto", "scheduler_enabled", "scan_interval_min",
-    "guardian_enabled", "telegram_enabled",
+    "telegram_enabled",
     "opus_mode", "opus_shadow", "opus_allocation_usd", "opus_daily_cost_cap_usd",
     "grok_enabled", "grok_scanner_enabled",
     "scan_distance_pct", "scan_tp_pct", "scan_max_waves", "scan_fund",
@@ -57,13 +57,13 @@ _MUTABLE_SETTINGS = (
 
 
 # Automation on/off flags that must start each test at their MODEL DEFAULT (all
-# off), so a developer's local .env (e.g. GUARDIAN_ENABLED=true, GROK_ENABLED=true)
+# off), so a developer's local .env (e.g. GROK_ENABLED=true, OPUS_MODE=true)
 # does not leak into tests that assert the default-off behaviour. Numeric strategy
 # params are NOT reset here — tests that depend on them set them explicitly, and
 # resetting them could change unrelated assertions.
 _FLAG_SETTINGS = (
     "auto_trade", "autoapprove_enabled", "full_auto", "scheduler_enabled",
-    "guardian_enabled", "telegram_enabled", "opus_mode", "opus_shadow",
+    "telegram_enabled", "opus_mode", "opus_shadow",
     "grok_enabled", "grok_scanner_enabled", "live_trading",
 )
 

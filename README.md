@@ -35,8 +35,8 @@ This `app/` package is a **lean v2 rebuild** of an earlier multi-service design
   a backtested win-rate gate decide which pairs to trade. See
   [docs/AGENTS.md](docs/AGENTS.md).
 - **Automation, gated** — semi-auto (you approve) or full-auto (auto-approved,
-  still risk-checked), guarded by a **circuit breaker**, an optional **AI
-  Guardian** veto layer, and a **loss-streak block**.
+  still risk-checked), guarded by a **circuit breaker** and a **loss-streak
+  block**.
 - **Order safety invariant** — nothing bypasses `pending_orders`; orders only
   execute after `approve`. Risk checks annotate, they never block queuing.
 - **HTMX dashboard** — server-rendered partials, tight CSP, zero-JS SVG charts
@@ -106,7 +106,6 @@ app/
   scanner.py     multi-agent scan pipeline (universe -> backtest -> vote -> act)
   scheduler.py   background scan/manage loop (off by default)
   circuit.py     circuit breaker (drawdown / daily-loss / consecutive-loss)
-  guardian.py    optional LLM veto layer over auto-approvals
   notify.py      Telegram notifier + command poller
   charts.py      server-rendered SVG charts (CSP-safe, zero JS)
   agents/        deterministic quant agents + aggregator + ml/backtest agents

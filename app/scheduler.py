@@ -261,10 +261,7 @@ def _ping_heartbeat() -> None:
 def run_cycle(db: Session) -> dict:
     """One scheduler cycle. Returns a small summary (counts), not data dumps."""
     global _last_cycle_at, _last_summary
-    from datetime import timedelta
-
-    from app import autotune, circuit, guardian, notify
-    from app.models import PENDING, PendingOrder
+    from app import autotune, circuit, notify
     # Before anything reads the gates: a configuration that contradicts itself trades NOTHING
     # and says nothing about it, so put it back into a range that can actually open a session.
     tuned = autotune.enforce_consistency(db)
@@ -293,61 +290,6 @@ def run_cycle(db: Session) -> dict:
     breaker = circuit.evaluate(db)
     frozen = breaker["frozen"]
 
-    # Veto TTL: expire stale Guardian vetoes so a transient veto can't permanently
-    # deadlock a KSS DCA wave whose limit price has since been reached. Cleared orders
-    # become auto-eligible again and are re-reviewed below (if the Guardian is on) — if
-    # still unsafe they get re-vetoed with a fresh timestamp. Runs unconditionally
-    # (even when frozen / Guardian off) so a stuck veto always drains. Legacy rows with
-    # no timestamp are treated as already expired.
-    veto_expired = 0
-    ttl = settings.guardian_veto_ttl_min
-    if ttl > 0:
-        cutoff = utcnow() - timedelta(minutes=ttl)
-        stale = (
-            db.query(PendingOrder)
-            .filter(
-                PendingOrder.status == PENDING,
-                PendingOrder.auto_veto == True,  # noqa: E712
-                (PendingOrder.auto_veto_at == None) | (PendingOrder.auto_veto_at < cutoff),  # noqa: E711
-            )
-            .all()
-        )
-        for order in stale:
-            order.auto_veto = False
-            order.auto_veto_reason = None
-            order.auto_veto_at = None
-            audit.log(db, "guardian", "veto_expired", entity=f"order:{order.id}",
-                      symbol=order.symbol)
-            veto_expired += 1
-
-    # Guardian review: veto any auto-eligible orders the LLM deems unsafe.
-    guardian_vetoes = 0
-    if not frozen and guardian.enabled():
-        _eligible_sources = list(set(settings.autoapprove_sources) | {"kss"})
-        pend = (
-            db.query(PendingOrder)
-            .filter(
-                PendingOrder.status == PENDING,
-                PendingOrder.auto_veto == False,  # noqa: E712
-                PendingOrder.source.in_(_eligible_sources),
-                # Guardian only screens NEW risk (BUYs). Exits (SELLs) reduce risk and must
-                # never be vetoed — vetoing a take-profit/stop traps capital (drawdown).
-                PendingOrder.side == "BUY",
-            )
-            .all()
-        )
-        if pend:
-            vetoes = guardian.review(pend)
-            for oid, reason in vetoes.items():
-                order = db.get(PendingOrder, oid)
-                if order is not None:
-                    order.auto_veto = True
-                    order.auto_veto_reason = reason
-                    order.auto_veto_at = utcnow()
-                    audit.log(db, "guardian", "veto", entity=f"order:{oid}", reason=reason)
-                    notify.event("risk", f"⛔ Guardian vetoed order {oid} ({order.symbol}): {reason}")
-                    guardian_vetoes += 1
-
     # Phase C: periodic per-pair hyperopt + ML retrain (time-gated, never blocks).
     hyperopt_runs, ml_trained = _run_periodic(db)
 
@@ -366,7 +308,6 @@ def run_cycle(db: Session) -> dict:
               resting_placed=resting["placed"], resting_cancelled=resting["cancelled"],
               resting_tp=resting_tp["queued"] + resting_tp["replaced"], frozen=frozen,
               autotuned=len(tuned),
-              guardian_vetoes=guardian_vetoes, veto_expired=veto_expired,
               hyperopt_runs=hyperopt_runs, ml_trained=ml_trained)
     db.commit()
     # Periodic Telegram digest (no-op unless telegram_digest_hours>0 and the interval elapsed).
@@ -384,8 +325,6 @@ def run_cycle(db: Session) -> dict:
         "resting": resting,
         "resting_tp": resting_tp,
         "frozen": frozen,
-        "guardian_vetoes": guardian_vetoes,
-        "veto_expired": veto_expired,
         "hyperopt_runs": hyperopt_runs,
         "ml_trained": ml_trained,
     }
@@ -393,7 +332,7 @@ def run_cycle(db: Session) -> dict:
     _last_summary = {k: (len(v) if isinstance(v, list) else v) for k, v in summary.items()}
     # Outbound dead-man's switch (C4): ping an external monitor now that the cycle reached
     # here WITHOUT raising. Placed after every other bookkeeping line in the function so an
-    # exception anywhere above (scan, TP, guardian, ...) skips the ping — a failed cycle must
+    # exception anywhere above (scan, TP, ...) skips the ping — a failed cycle must
     # stay silent, that silence IS the alert on the monitor's side. Fire-and-forget in a
     # daemon thread: a slow/dead monitor must never hold up the next cycle.
     _ping_heartbeat()

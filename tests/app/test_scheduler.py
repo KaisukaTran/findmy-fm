@@ -193,50 +193,6 @@ def test_heartbeat_opens_and_closes_an_http_url(monkeypatch):
     assert resp.closed is True
 
 
-def test_expired_veto_is_cleared_and_refilled(db, env, monkeypatch):
-    """A stale Guardian veto must not deadlock a due KSS DCA wave: the TTL expires
-    it, the cycle re-enables the order, and (price being due) it fills."""
-    from datetime import datetime, timedelta
-
-    monkeypatch.setattr("app.guardian.enabled", lambda: False)  # deterministic, no re-veto
-    monkeypatch.setattr(settings, "guardian_veto_ttl_min", 30)
-    row = _new_session(db)
-    order = db.query(models.PendingOrder).filter_by(
-        source_ref=f"pyramid:{row.id}:wave:0").one()
-    order.auto_veto = True
-    order.auto_veto_reason = "stale veto"
-    order.auto_veto_at = datetime.utcnow() - timedelta(minutes=31)
-    db.commit()
-
-    scheduler.run_cycle(db)
-
-    db.refresh(order)
-    assert not order.auto_veto
-    assert db.query(models.AuditLog).filter_by(action="veto_expired").count() == 1
-    assert order.status == models.EXECUTED  # cleared veto → auto-filled (price due)
-
-
-def test_fresh_veto_survives_within_ttl(db, env, monkeypatch):
-    """A veto younger than the TTL is left in place — it still blocks auto-fill."""
-    from datetime import datetime
-
-    monkeypatch.setattr("app.guardian.enabled", lambda: False)
-    monkeypatch.setattr(settings, "guardian_veto_ttl_min", 30)
-    row = _new_session(db)
-    order = db.query(models.PendingOrder).filter_by(
-        source_ref=f"pyramid:{row.id}:wave:0").one()
-    order.auto_veto = True
-    order.auto_veto_reason = "fresh veto"
-    order.auto_veto_at = datetime.utcnow()
-    db.commit()
-
-    scheduler.run_cycle(db)
-
-    db.refresh(order)
-    assert order.auto_veto
-    assert order.status == models.PENDING  # still blocked, not filled
-
-
 # --- singleton lock: only one process may run the scan loop --------------------
 
 def test_singleton_lock_blocks_a_second_holder():

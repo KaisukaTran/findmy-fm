@@ -41,19 +41,41 @@ def fee_floor_price(avg: float) -> float:
     return avg * (1 + settings.kss_exit_fee_mult * costengine.round_trip_cost_pct() / 100.0)
 
 
-def arm_threshold(avg: float) -> float:
+def arm_pct_for(tp_pct: float = 0.0) -> float:
+    """The arm percentage this session actually uses.
+
+    A flat ``kss_trail_arm_pct`` is a trap once the take-profit is per-coin. Autotune fits
+    ``tp_pct`` from each coin's ATR (2.8%-6.2% across the live book) while the arm threshold was
+    a global 5%, and BOTH are anchored to the same average — so their race is decided by the two
+    percentages alone, permanently. Measured on the live book 2026-09-06: four of six open
+    sessions had ``tp_pct < 5``, which means their trailing exit could never arm, not once, ever.
+    The resting take-profit simply filled first, every time (25 of 29 live exits).
+
+    With ``kss_trail_arm_tp_frac > 0`` the threshold becomes a FRACTION of this session's own
+    take-profit, so arming always happens strictly before the fixed exit is reachable and the
+    trail gets its window. 0 disables it (the old flat behaviour, byte-identical).
+    """
+    pct = settings.kss_trail_arm_pct
+    frac = settings.kss_trail_arm_tp_frac
+    if frac > 0 and tp_pct > 0:
+        pct = min(pct, frac * tp_pct)
+    return pct
+
+
+def arm_threshold(avg: float, tp_pct: float = 0.0) -> float:
     """Price at/above which a profitable RIDING session ARMS its trailing stop (Ride & Trail):
-    ``avg×(1+kss_trail_arm_pct)``. Below it the session rides (no fixed-TP cap, protected only by
-    the hard SL) so a runner is not capped early and noise does not arm a thin stop."""
-    return avg * (1 + settings.kss_trail_arm_pct / 100.0)
+    ``avg×(1+arm_pct_for(tp_pct))``. Below it the session rides (no fixed-TP cap, protected only
+    by the hard SL) so a runner is not capped early and noise does not arm a thin stop."""
+    return avg * (1 + arm_pct_for(tp_pct) / 100.0)
 
 
-def should_arm(*, market: float, avg: float, filled_qty: float, trail_active: bool) -> bool:
+def should_arm(*, market: float, avg: float, filled_qty: float, trail_active: bool,
+               tp_pct: float = 0.0) -> bool:
     """True only on a filled, not-yet-armed session whose market has cleared the arm threshold while
     the feature is enabled. One-way: callers flip ``trail_active`` permanently."""
     if not settings.kss_dynamic_tp_enabled or trail_active or filled_qty <= 0 or avg <= 0:
         return False
-    return market >= arm_threshold(avg)
+    return market >= arm_threshold(avg, tp_pct)
 
 
 def lock_floor_price(avg: float) -> float:

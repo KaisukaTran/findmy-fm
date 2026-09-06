@@ -101,6 +101,7 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "kss_trail_atr_mult": float,
     "kss_trail_min_pct": float,
     "kss_trail_arm_pct": float,
+    "kss_trail_arm_tp_frac": float,
     "kss_trail_lock_pct": float,
     "kss_exit_check_sec": int,
     "kss_crash_drop_pct": float,

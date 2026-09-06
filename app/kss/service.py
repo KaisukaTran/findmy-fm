@@ -1734,7 +1734,7 @@ def _evaluate_dynamic_exit(db: Session, row: KssSession, price: float) -> bool:
         # stale peak while price was +0.4% → stopped at +0.23%). Arming on current price guarantees
         # price ≥ arm > lock floor at arm, so the SL sits below price (no immediate sub-floor stop).
         if dynamic_exit.should_arm(market=price, avg=avg, filled_qty=row.total_filled_qty,
-                                   trail_active=False):
+                                   trail_active=False, tp_pct=row.tp_pct):
             _cancel_pending_waves(db, row.id)  # committing to trail-up → drop the DCA ladder
             row.peak_price = price             # trail starts at the arm point (discard stale high-water)
             td = dynamic_exit.trail_distance_pct(_session_atr_pct(row.symbol))
@@ -1746,9 +1746,11 @@ def _evaluate_dynamic_exit(db: Session, row: KssSession, price: float) -> bool:
             tp = dynamic_exit.compute_tp(sl=sl, avg=avg)
             audit.log(db, "scheduler", "dyn_tp_armed", entity=f"kss:{row.id}", symbol=row.symbol,
                       price=round(price, 8), sl=round(sl, 8), tp=round(tp, 8),
-                      trail_dist=round(td, 3), arm_pct=settings.kss_trail_arm_pct)
+                      trail_dist=round(td, 3),
+                      arm_pct=round(dynamic_exit.arm_pct_for(row.tp_pct), 3))
             from app import notify
-            notify.event("trade", f"📈 {row.symbol} → trailing-TP (armed +{settings.kss_trail_arm_pct:g}%): "
+            notify.event("trade", f"📈 {row.symbol} → trailing-TP "
+                                  f"(armed +{dynamic_exit.arm_pct_for(row.tp_pct):g}%): "
                                   f"avg={avg:g} SL={sl:g} TP={tp:g}")
             return True  # armed; no exit on the arm tick
         # riding (in profit, < arm): suppress the fixed TP so a runner isn't capped, and keep riding.
@@ -2195,7 +2197,19 @@ def sync_resting_tp(db: Session) -> dict:
         floored_qty = _floor_to_step(qty, py._step_size)
         if floored_qty >= py._min_qty:
             qty = floored_qty
-        price = max(py.estimated_tp_price, _k2_floor_price(db, row.symbol))
+        # An ARMED session's exit belongs to the trailing channel, not to the fixed take-profit.
+        # The guard's ride branch says it "suppresses the fixed TP" — but under the maker model
+        # that TP is no longer in the guard, it is RESTING ON THE EXCHANGE, and it fills whatever
+        # the guard believes. Measured on the live book 2026-09-06: 25 of 29 exits were the
+        # resting TP and only 3 were trailing, because the resting order always got there first.
+        # Once armed the target becomes the ratcheting spike-grab ceiling (SL x (1+gap)), which
+        # rises with the peak, so `sync_resting_orders`' existing cancel+replace walks the exit UP
+        # behind the runner instead of capping it. Nothing is ever cancelled without a replacement
+        # priced first, so the position is never left on the exchange without an exit.
+        target = py.estimated_tp_price
+        if row.trail_active and row.trail_sl_price > 0:
+            target = dynamic_exit.compute_tp(sl=row.trail_sl_price, avg=row.avg_price)
+        price = max(target, _k2_floor_price(db, row.symbol))
         if qty <= 0 or price <= 0:
             continue
         live_sessions.add(row.id)

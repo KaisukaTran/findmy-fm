@@ -306,6 +306,13 @@ def get_performance(db: Session = Depends(get_db)):
     return portfolio.performance_view(db)
 
 
+def _grok_scanner_active() -> bool:
+    """Whether the Grok scanner gate would actually run: the knob AND an xAI key."""
+    from app.orchestrator import grok  # lazy — avoid import-time coupling
+
+    return grok.scanner_enabled()
+
+
 def _automation_state(db: Session) -> dict:
     st = scheduler.status()
     active = db.query(KssSession).filter(KssSession.status == SESSION_ACTIVE).count()
@@ -320,7 +327,13 @@ def _automation_state(db: Session) -> dict:
         "discord": notify_discord.is_running() or notify_discord.webhook_enabled(),
         "hyperopt": settings.hyperopt_enabled,
         "ml": settings.ml_enabled,
-        "grok_scanner": settings.grok_scanner_enabled,
+        # The knob alone does not run anything: `grok.scanner_enabled()` is knob AND xai key, and
+        # `scanner._scan_once` enters the Grok branch only on that. Reporting the raw knob told
+        # every API reader the gate was live while it had never once been called (live 2026-09-06:
+        # grok_scanner_enabled=1, no XAI key, 0 Grok audit rows ever). Report what RUNS, and keep
+        # the knob beside it — the same enabled/active pair the KSS settings panel already renders.
+        "grok_scanner": _grok_scanner_active(),
+        "grok_scanner_enabled": settings.grok_scanner_enabled,
         "ta_lib": settings.ta_lib_enabled,
         "ta_external": settings.ta_external_enabled,
         "live_trading": settings.live_trading,

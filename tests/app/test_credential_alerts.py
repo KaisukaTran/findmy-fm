@@ -238,6 +238,10 @@ def test_check_ip_change_establishes_a_baseline_without_alerting(db, monkeypatch
 
 def test_check_ip_change_alerts_exactly_once_when_the_ip_actually_changes(db, monkeypatch):
     monkeypatch.setattr(settings, "live_trading", True)
+    # Pin the kill switch: this asserts the ALERT LOGIC, which must not depend on whatever the
+    # operator's .env currently says about wanting to be notified. Muting risk pushes in .env
+    # on 2026-09-06 turned this test red without touching a line of the code it covers.
+    monkeypatch.setattr(settings, "telegram_notify_risk", True)
     runtime.set(db, scheduler.RUNTIME_KEY_LAST_PUBLIC_IP, "1.1.1.1")
     sent = []
     monkeypatch.setattr(notify_module, "send", lambda text, **k: sent.append(text) or True)

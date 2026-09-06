@@ -497,6 +497,7 @@ class KssSettingsBody(BaseModel):
     kss_trail_atr_mult: float | None = Field(None, ge=0, le=10)
     kss_trail_min_pct: float | None = Field(None, ge=0, le=50)
     kss_trail_arm_pct: float | None = Field(None, ge=0, le=100)
+    kss_trail_arm_tp_frac: float | None = Field(None, ge=0, le=1)
     kss_trail_lock_pct: float | None = Field(None, ge=0, le=100)
     kss_exit_check_sec: int | None = Field(None, ge=5, le=3600)
     kss_crash_drop_pct: float | None = Field(None, ge=0, le=100)

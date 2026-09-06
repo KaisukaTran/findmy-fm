@@ -493,6 +493,7 @@ class KssSettingsBody(BaseModel):
     grok_scanner_fail_mode: str | None = Field(None, pattern=r"^(open|closed)$")  # S5
     grok_scanner_batch_max: int | None = Field(None, ge=1, le=300)  # Grok reviews up to N/scan
     grok_live_search: bool | None = None  # Grok scan gate uses xAI Live Search (web+X+news)
+    grok_scanner_shadow: bool | None = None  # record Grok's verdict without acting on it
     grok_search_max_results: int | None = Field(None, ge=1, le=30)
     scan_max_symbols: int | None = Field(None, ge=1, le=500)
     max_new_sessions_per_scan: int | None = Field(None, ge=0, le=100)  # cap NEW opens/scan (0=off)

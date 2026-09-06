@@ -1106,12 +1106,12 @@ def _review_and_open(
                           kept=len(batch), dropped=len(dropped),
                           dropped_symbols=",".join(c["symbol"] for c in dropped))
             grok_reviewed_symbols = {c["symbol"] for c in batch}
-            items = [{
-                "symbol": c["symbol"], "consensus": round(c["consensus"], 1),
-                "win_rate": round(c["win_rate"], 1), "loss_rate": round(c["loss_rate"], 1),
-                "net_edge": round(c["net_edge"], 2), "price": c["entry"],
-                "ta": c.get("ta", {}),
-            } for c in batch]
+            # Symbol and price only. The prompt now asks for events a price series cannot
+            # contain and forbids chart reasoning outright, so shipping the TA bundle would be
+            # handing over the exact material we told it not to use — that is how 96.2% of the
+            # old verdicts came back quoting our own indicators. It also cuts the payload from
+            # ~13.8k characters to ~1k, roughly a sixth of the token cost per scan.
+            items = [{"symbol": c["symbol"], "price": c["entry"]} for c in batch]
             reviews = grok.review_candidates(db, items)
 
     # Open best-first (_open_rank_key): within the concurrent/per-scan caps, prefer the highest
@@ -1131,20 +1131,32 @@ def _review_and_open(
         # both looked the same in the book, nobody could tell a working gate from a broken
         # one — a call that timed out and a call that approved were indistinguishable.
         if verdict:
-            cand.grok_verdict = "endorse" if verdict.get("endorse") else "veto"
+            # Three verdicts now: endorse / veto / abstain ("I know nothing about this asset
+            # beyond the chart"). Abstain is recorded as itself — it is the measurement's whole
+            # point — while behaving as endorse, since not knowing is not evidence against.
+            cand.grok_verdict = verdict.get("verdict") or (
+                "endorse" if verdict.get("endorse") else "veto")
         elif grok.scanner_enabled():
             cand.grok_verdict = "unavailable" if symbol in grok_reviewed_symbols else "absent"
+        # SHADOW: ask, record, act on nothing. The scanner decides exactly as if Grok were off,
+        # which leaves a control arm — without one there is no way to tell whether Grok's picks
+        # beat the formula's, and an LLM cannot be back-tested into one (asked about a past date
+        # it may already know how the trade ended). Scored by scripts/grok_shadow_eval.py.
+        shadow = settings.grok_scanner_shadow
         if verdict and not verdict["endorse"]:
-            cand.reason = (cand.reason or "") + f" | Grok veto: {verdict['reason']}"
-            audit.log(db, "grok", "scanner_veto", entity=symbol, reason=verdict["reason"])
-            continue
+            cand.reason = (cand.reason or "") + (
+                f" | Grok veto{' (shadow, not applied)' if shadow else ''}: {verdict['reason']}")
+            audit.log(db, "grok", "scanner_veto_shadow" if shadow else "scanner_veto",
+                      entity=symbol, reason=verdict["reason"])
+            if not shadow:
+                continue
 
         # S5 item 3 — fail_mode="closed": a symbol with no explicit endorse verdict
         # (parse failure, timeout, batch-cap drop, or Grok disabled) must NOT open.
         # Under fail_mode="open" (default) the absent-verdict path is treated as endorsed.
         # Interaction with batch-cap: symbols dropped beyond the top-8 have no verdict;
         # under "closed" they are blocked; under "open" they proceed as if endorsed.
-        if fail_mode == "closed" and not (verdict and verdict.get("endorse")):
+        if fail_mode == "closed" and not shadow and not (verdict and verdict.get("endorse")):
             # Only apply the closed-mode block when the scanner gate is active; if Grok is
             # disabled entirely, fail_mode is irrelevant (no review was attempted).
             if grok.scanner_enabled():

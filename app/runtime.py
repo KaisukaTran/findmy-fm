@@ -111,6 +111,7 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "grok_scanner_fail_mode": str,  # S5: "open" | "closed"
     "grok_scanner_batch_max": int,  # how many candidates Grok reviews per scan (cover them all)
     "grok_live_search": _to_bool,  # let Grok use xAI Live Search (web+X+news) in the scan gate
+    "grok_scanner_shadow": _to_bool,  # record Grok's verdict, act on none of it (measurement mode)
     "grok_search_max_results": int,  # cap Live Search results per scan call
     "scan_max_symbols": int,
     "min_quote_volume": float,

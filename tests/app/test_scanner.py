@@ -278,9 +278,13 @@ def test_grok_failure_is_fail_open(db, scan_env, monkeypatch):
     assert cand.session_id is not None  # opened despite no Grok verdict
 
 
-def test_scanner_passes_ta_bundle_to_grok(db, scan_env, monkeypatch):
-    """Each candidate handed to the Grok gate carries its TA evidence bundle, and the
-    compact TA tag is surfaced on the candidate reason."""
+def test_the_ta_bundle_stays_in_the_book_but_is_no_longer_shipped_to_grok(db, scan_env, monkeypatch):
+    """CHANGED 2026-09-06. This test used to assert the opposite — that every candidate handed to
+    Grok carried its TA bundle — and that is exactly what went wrong: of 5,768 verdicts, 96.2% of
+    the reasons quoted those indicators back and 0.0% named an event. Grok is now asked only for
+    what a price series cannot contain, so shipping the chart is handing over the material the
+    prompt forbids it to use (and six times the tokens). The bundle is still computed and still
+    recorded on the candidate — that is the scanner's own evidence, and the reason it is kept."""
     seen: dict = {}
 
     def _capture(_db, items):
@@ -292,10 +296,10 @@ def test_scanner_passes_ta_bundle_to_grok(db, scan_env, monkeypatch):
     scanner.run_scan(db, mode="semi")
 
     assert seen["items"], "expected at least one gate-bound candidate"
-    ta = seen["items"][0]["ta"]
-    assert {"rsi", "adx", "st", "htf", "macd_h"} <= set(ta)
+    assert set(seen["items"][0]) == {"symbol", "price"}
     cand = db.query(models.Candidate).filter_by(symbol="BTC").one()
-    assert "TA: RSI" in cand.reason
+    assert "TA: RSI" in cand.reason          # the evidence still lands in the book
+    assert cand.ta_json, "the TA bundle must still be recorded for the scanner's own study"
 
 
 # --- B2 & B1 tests -----------------------------------------------------------

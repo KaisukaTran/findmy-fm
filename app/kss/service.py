@@ -869,12 +869,21 @@ def handle_fill_event(
         # pieces routinely, and completing on the first piece abandoned the rest of the
         # position with no managed exit at all.
         remaining = row.total_filled_qty - filled_qty
-        if remaining > 1e-9:
+        if remaining > 1e-9 and not _remainder_is_unsellable(row, remaining, filled_price):
             row.total_filled_qty = remaining
             row.total_cost = max(row.total_cost - filled_qty * row.avg_price, 0.0)
             db.commit()
             return {"action": "partial_tp",
                     "message": f"Session {session_id}: TP filled {filled_qty:g}, {remaining:g} still held"}
+        if remaining > 1e-9:
+            # A sliver the venue itself will not accept. It is written off here rather than
+            # carried, because carrying it is what produced order 118 (FIL session 35, live):
+            # the session stayed ACTIVE holding 0.0034 FIL ≈ $0.0027, the trailing channel duly
+            # fired an exit on it, the exchange rejected the size, and the retry re-alerted on
+            # every restart. See _remainder_is_unsellable for why this does not gate an exit.
+            audit.log(db, "kss", "dust_writeoff", entity=f"session:{session_id}",
+                      symbol=row.symbol, qty=remaining,
+                      notional=round(remaining * (filled_price or row.avg_price or 0.0), 6))
         row.status = SESSION_COMPLETED
         # Take the rest of the ladder OFF the exchange, or a completed session leaves live BUY
         # rungs resting: they lock quote balance, and if the market later dips to one it buys
@@ -995,6 +1004,47 @@ def _floor_to_step(value: float, step: float) -> float:
     if step_d - remainder <= epsilon:
         floor_units += 1
     return float(floor_units * step_d)
+
+
+def _remainder_is_unsellable(row: KssSession, remaining: float, price: float | None) -> bool:
+    """True when the venue itself would refuse a SELL of *remaining* — the position is finished
+    and what is left is arithmetic, not money.
+
+    THIS DOES NOT GATE AN EXIT. Nothing sellable is abandoned: the test is precisely "no legal
+    order of this size exists". Binance takes a spot BUY's commission out of the ASSET, so a
+    filled position is almost never step-legal — 51.07 FIL requested arrives as 50.993395, the
+    take-profit can only offer 50.99, and 0.003395 FIL (≈ $0.0027) is left behind FOREVER. Until
+    this check existed the session stayed ACTIVE holding that sliver: the trailing channel fired
+    an exit on it (live order 118), the venue rejected the size, and the retry re-alerted on
+    every restart. The alternative to writing it off is not "sell it later" — it is an immortal
+    session generating orders that can never be placed.
+
+    Two independent walls, and BOTH must agree, so a failed exchange-info lookup can never write
+    off real value:
+      1. Size belt — the remainder must be under 1% of what the session actually filled. A true
+         rounding sliver is orders of magnitude below that (FIL: 0.0067%), while a genuine
+         partial fill of a resting maker exit is a real slice and must stay ACTIVE.
+      2. Venue floors — below minQty, or below one stepSize (no legal quantity exists at all),
+         or below minNotional.
+    """
+    if remaining <= 0:
+        return True
+    original = row.total_filled_qty or 0.0
+    if original > 0 and remaining > 0.01 * original:
+        return False                      # a real slice: this is a partial fill, not dust
+
+    from app.market import get_exchange_info
+
+    info = get_exchange_info(row.symbol) or {}
+    min_qty = float(info.get("minQty") or 0.0)
+    step = float(info.get("stepSize") or 0.0)
+    min_notional = float(info.get("minNotional") or 0.0)
+    px = price or row.avg_price or 0.0
+    if min_qty and remaining < min_qty:
+        return True
+    if step and _floor_to_step(remaining, step) <= 0:
+        return True
+    return bool(min_notional and px > 0 and remaining * px < min_notional)
 
 
 def _try_partial_rung(

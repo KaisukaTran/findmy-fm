@@ -1731,15 +1731,26 @@ def _evaluate_dynamic_exit(db: Session, row: KssSession, price: float) -> bool:
         # In profit, not yet armed → RIDE (suppress the fixed TP). ARM on the CURRENT price, NOT the
         # high-water peak: peak can be a stale pre-DCA high, and arming off it lets us arm into an
         # already-retraced position and exit BELOW the lock floor (seen live: STG armed off a +13.8%
-        # stale peak while price was +0.4% → stopped at +0.23%). Arming on current price guarantees
-        # price ≥ arm > lock floor at arm, so the SL sits below price (no immediate sub-floor stop).
+        # stale peak while price was +0.4% → stopped at +0.23%).
         if dynamic_exit.should_arm(market=price, avg=avg, filled_qty=row.total_filled_qty,
                                    trail_active=False, tp_pct=row.tp_pct):
-            _cancel_pending_waves(db, row.id)  # committing to trail-up → drop the DCA ladder
-            row.peak_price = price             # trail starts at the arm point (discard stale high-water)
+            # Price the stop BEFORE committing to anything. The threshold and the stop are two
+            # different knobs read in two different modules, and a threshold under the lock floor
+            # arms a session that is already stopped out (live 2026-09-06: SEI armed at +3.25%,
+            # stopped at +2.0% thirteen minutes later, ladder gone). `arm_pct_for` now floors the
+            # threshold, but this is the arithmetic itself: whatever the knobs say, a stop at or
+            # above the arming price is not an exit plan, it is an immediate market sell. Decline
+            # and keep RIDING — the ladder survives and the session arms later, higher up.
             td = dynamic_exit.trail_distance_pct(_session_atr_pct(row.symbol))
             sl = dynamic_exit.compute_sl(peak=price, avg=avg, distance_pct=d, trail_dist_pct=td,
                                          prev_sl=0.0)
+            if sl >= price:
+                audit.log(db, "scheduler", "dyn_tp_arm_declined", entity=f"kss:{row.id}",
+                          symbol=row.symbol, price=round(price, 8), sl=round(sl, 8),
+                          arm_pct=round(dynamic_exit.arm_pct_for(row.tp_pct), 3))
+                return True  # still riding, ladder intact
+            _cancel_pending_waves(db, row.id)  # committing to trail-up → drop the DCA ladder
+            row.peak_price = price             # trail starts at the arm point (discard stale high-water)
             row.trail_active = True
             row.trail_dist_pct = td
             row.trail_sl_price = sl
@@ -2204,11 +2215,16 @@ def sync_resting_tp(db: Session) -> dict:
         # resting TP and only 3 were trailing, because the resting order always got there first.
         # Once armed the target becomes the ratcheting spike-grab ceiling (SL x (1+gap)), which
         # rises with the peak, so `sync_resting_orders`' existing cancel+replace walks the exit UP
-        # behind the runner instead of capping it. Nothing is ever cancelled without a replacement
-        # priced first, so the position is never left on the exchange without an exit.
+        # behind the runner instead of capping it.
+        #
+        # UP, never down. At the arm tick the ceiling is only `avg × lock × gap` = avg×1.071 at the
+        # live settings, which is BELOW the fixed take-profit of every wide-TP coin in the book (ARB
+        # 10.9, DASH 10.9, PROM/NFP/HFT 15.0). Replacing the fixed order with the ceiling there would
+        # hand back 3-8 points of the exit the session already had resting. Take whichever is higher:
+        # the trailing stop still protects the downside, so keeping the wider target costs nothing.
         target = py.estimated_tp_price
         if row.trail_active and row.trail_sl_price > 0:
-            target = dynamic_exit.compute_tp(sl=row.trail_sl_price, avg=row.avg_price)
+            target = max(target, dynamic_exit.compute_tp(sl=row.trail_sl_price, avg=row.avg_price))
         price = max(target, _k2_floor_price(db, row.symbol))
         if qty <= 0 or price <= 0:
             continue
@@ -2227,6 +2243,12 @@ def sync_resting_tp(db: Session) -> dict:
         elif _drifted(existing.price, price) or _drifted(existing.quantity, qty):
             # A wave filled: avg (and the size to exit) moved, so the resting exit must move
             # with it. Cancel first — the venue refusing means we leave it and retry.
+            # HONEST ABOUT THE WINDOW: this re-PRICES the row; `orders.sync_resting_orders` is what
+            # PLACES it, on a later pass. Priced is not placed, so between the cancel here and that
+            # pass the venue holds no exit for this position (the in-app 90s guard and the hard SL
+            # still run — the risk is unattended fill-through, not an unprotected position). An
+            # earlier comment here claimed the opposite; it was wrong. Closing the window means
+            # placing the replacement inline, which is not this function's job today.
             if existing.exchange_order_id and not orders._cancel_resting(db, existing):
                 continue
             # Taking it off the book may have booked a fill that beat the cancel, which marks

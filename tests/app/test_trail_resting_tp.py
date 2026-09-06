@@ -43,9 +43,15 @@ class TestArmPctFollowsTheSessionsOwnTakeProfit:
 
     def test_a_coin_whose_take_profit_is_below_the_flat_threshold_can_now_arm(self, monkeypatch):
         # XLM, live: tp_pct 2.82 against a 5% arm threshold — it could never arm.
+        # CORRECTED 2026-09-06: this asserted 1.692, which is BELOW the 2% lock floor the armed
+        # stop lands on — the session armed already stopped out. The threshold is now floored at
+        # lock + ARM_LOCK_MARGIN_PCT. It still arms (2.5% < its 2.82% take-profit), which is what
+        # this test is for; it just no longer arms underneath its own stop. See
+        # tests/app/test_trail_arm_floor.py for the invariant and the live evidence.
         monkeypatch.setattr(settings, "kss_trail_arm_tp_frac", 0.6)
-        assert dynamic_exit.arm_pct_for(2.82) == pytest.approx(1.692)
-        assert dynamic_exit.arm_threshold(100.0, 2.82) == pytest.approx(101.692)
+        assert dynamic_exit.arm_pct_for(2.82) == pytest.approx(2.5)
+        assert dynamic_exit.arm_threshold(100.0, 2.82) == pytest.approx(102.5)
+        assert dynamic_exit.arm_threshold(100.0, 2.82) > dynamic_exit.lock_floor_price(100.0)
 
     def test_arming_always_lands_strictly_below_the_take_profit(self, monkeypatch):
         monkeypatch.setattr(settings, "kss_trail_arm_tp_frac", 0.6)
@@ -65,10 +71,11 @@ class TestArmPctFollowsTheSessionsOwnTakeProfit:
         monkeypatch.setattr(settings, "kss_trail_arm_tp_frac", 0.6)
         kw = {"avg": 100.0, "filled_qty": 1.0, "trail_active": False, "tp_pct": 2.82}
         assert not dynamic_exit.should_arm(market=101.0, **kw)
-        assert dynamic_exit.should_arm(market=102.0, **kw)      # cleared 101.692
+        assert not dynamic_exit.should_arm(market=102.0, **kw)  # under the 2% lock floor
+        assert dynamic_exit.should_arm(market=103.0, **kw)      # cleared 102.5
         # ...and with the feature off, the same price does not arm.
         monkeypatch.setattr(settings, "kss_trail_arm_tp_frac", 0.0)
-        assert not dynamic_exit.should_arm(market=102.0, **kw)
+        assert not dynamic_exit.should_arm(market=103.0, **kw)
 
 
 class TestArmedCeilingBeatsTheFixedTakeProfit:

@@ -21,6 +21,13 @@ import math
 from app import costengine
 from app.config import settings
 
+# Minimum room, in percentage points, between the arm threshold and the lock floor the armed stop
+# lands on. Not a knob: it is the width of a bug, not a preference. Small enough that it never
+# pushes the threshold past a coin's own take-profit (the narrowest live tp_pct is 1.38, and the
+# floor+margin only binds where the threshold was already unusable), large enough that a session
+# arming at the floor is not stopped out by the first tick of noise.
+ARM_LOCK_MARGIN_PCT = 0.5
+
 
 def price_precision(reference_price: float) -> int:
     """Decimal places for SL/TP, mirroring ``pyramid._calculate_price_precision`` so the dynamic
@@ -54,12 +61,22 @@ def arm_pct_for(tp_pct: float = 0.0) -> float:
     With ``kss_trail_arm_tp_frac > 0`` the threshold becomes a FRACTION of this session's own
     take-profit, so arming always happens strictly before the fixed exit is reachable and the
     trail gets its window. 0 disables it (the old flat behaviour, byte-identical).
+
+    FLOORED AT THE LOCK, always. The armed stop is ``max(grid_sl, lock_floor)`` and at the arm
+    tick ``grid_sl`` collapses to ``avg``, so the stop lands on ``avg×(1+kss_trail_lock_pct)``
+    whatever this returns. A threshold under that floor arms a session that is ALREADY stopped
+    out — and arming cancels the DCA ladder first, so it throws the ladder away to do it. Measured
+    live 2026-09-06 (testnet): at ``frac=0.6`` every coin with ``tp_pct < 3.33`` (BTC 2.63, TRX
+    1.38, ALGO 2.75 — ~25 of the book) armed below its own stop; SEI armed at +3.25% and was
+    stopped out 13 minutes later at +2.0% with its ladder already cancelled. The two knobs live in
+    different modules, so nothing caught it. This floor is that missing validator, and it binds the
+    flat knob too (``arm_pct`` 1% against a 2% lock is the same trap without the fraction).
     """
     pct = settings.kss_trail_arm_pct
     frac = settings.kss_trail_arm_tp_frac
     if frac > 0 and tp_pct > 0:
         pct = min(pct, frac * tp_pct)
-    return pct
+    return max(pct, settings.kss_trail_lock_pct + ARM_LOCK_MARGIN_PCT)
 
 
 def arm_threshold(avg: float, tp_pct: float = 0.0) -> float:

@@ -22,6 +22,7 @@ import pytest
 from scripts.cross_section_ic import (
     COST_HURDLE,
     USABLE,
+    _midranks,
     _ret,
     _sma_ratio,
     amihud_illiquidity,
@@ -107,6 +108,50 @@ class TestSpearman:
     def test_a_constant_feature_returns_none(self):
         # No cross-sectional information: a flat feature must not read as a correlation.
         assert spearman([7, 7, 7, 7, 7, 7], [1, 2, 3, 4, 5, 6]) is None
+
+
+class TestSpearmanTies:
+    """The bug this class exists for, found 2026-09-06 by an independent reimplementation.
+
+    `spearman` used ordinal ranks with no tie handling. In this panel BOTH variables are
+    dominated by ties — the agents' scores saturate (triangular/clamped) and the outcome is
+    essentially three values (take-profit, stop, deadline) — so a stable sort broke every tie
+    by LIST POSITION, both variables inherited the same positional order, and a correlation was
+    manufactured out of the panel's row order. It reported IC +0.15 with t = 21 on a feature
+    whose true IC is +0.006, t = 0.9.
+    """
+
+    def test_ties_get_the_same_rank(self):
+        assert _midranks([5.0, 5.0, 9.0]) == [0.5, 0.5, 2.0]
+        assert _midranks([1.0, 2.0, 3.0]) == [0.0, 1.0, 2.0]
+
+    def test_row_order_cannot_create_a_correlation(self):
+        # Three tied blocks (the guard rejects a feature with fewer than 3 distinct values).
+        # Aligned blocks are a real correlation; the same values dealt round-robin are not,
+        # and ordinal ranking scored the second case almost as high as the first.
+        xs = [0.0] * 8 + [1.0] * 8 + [2.0] * 8
+        aligned = [-8.3] * 8 + [0.0] * 8 + [2.7] * 8
+        assert spearman(xs, aligned) == pytest.approx(1.0)
+
+        round_robin = [-8.3, 0.0, 2.7] * 8      # identical multiset, no relation to xs
+        assert abs(spearman(xs, round_robin)) < 0.2
+
+    def test_the_permutation_control(self):
+        # The decisive test: shuffle the outcomes so that, by construction, no relationship
+        # exists. A rank statistic that still reports a large correlation is broken.
+        import random as _r
+        rng = _r.Random(3)
+        feature = [0.0] * 40 + [round(0.1 * i, 3) for i in range(1, 21)]   # 40 tied + 20 distinct
+        outcome = [2.7] * 40 + [-8.3] * 20
+        ics = []
+        for _ in range(200):
+            shuffled = outcome[:]
+            rng.shuffle(shuffled)
+            ic = spearman(feature, shuffled)
+            if ic is not None:
+                ics.append(ic)
+        mean_ic = sum(ics) / len(ics)
+        assert abs(mean_ic) < 0.05, f"permuted data should carry no signal, got {mean_ic:+.4f}"
 
 
 class TestDailyIc:

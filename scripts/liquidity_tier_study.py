@@ -78,7 +78,9 @@ def simulate(bars: list[tuple], i: int, tp_pct: float, sl_pct: float, horizon: i
         return None
     tp, sl = entry * (1 + tp_pct / 100), entry * (1 - sl_pct / 100)
     for j in range(i + 1, min(i + 1 + horizon, len(bars))):
-        _, _, high, low, close, _ = bars[j]
+        # Index, never unpack: `load` carries more columns than this function needs, and an
+        # unpack silently couples the two every time a column is added.
+        high, low = bars[j][2], bars[j][3]
         if low <= sl:                       # stop first when both are touched: pessimistic
             return {"pnl": -sl_pct - cost_pct, "exit": "sl", "days": j - i}
         if high >= tp:
@@ -91,12 +93,15 @@ def simulate(bars: list[tuple], i: int, tp_pct: float, sl_pct: float, horizon: i
 def load(db_path: Path) -> dict[str, list[tuple]]:
     db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     rows = db.execute(
-        "SELECT symbol, ts, high, low, close, quote_volume FROM candles "
+        "SELECT symbol, ts, high, low, close, quote_volume, open, volume FROM candles "
         "WHERE interval='1d' ORDER BY symbol, ts").fetchall()
     db.close()
     out: dict[str, list[tuple]] = defaultdict(list)
-    for sym, ts, high, low, close, qv in rows:
-        out[sym].append((sym, ts, high, low, close, qv or 0.0))
+    for sym, ts, high, low, close, qv, op, vol in rows:
+        # Index 5 is QUOTE volume (dollars) — that is what the tiers are cut on. Base volume
+        # and the real open live at 6 and 7: anything handing bars to app/agents/* needs them,
+        # and passing quote volume as `volume` made LiquidityAgent compute price x dollars.
+        out[sym].append((sym, ts, high, low, close, qv or 0.0, op or close, vol or 0.0))
     return out
 
 
@@ -108,7 +113,9 @@ def build_entries(series: dict[str, list[tuple]], vol_window: int, spacing: int,
         if len(bars) < min_bars:
             continue
         for i in range(vol_window, len(bars), spacing):
-            vols = [b[5] for b in bars[i - vol_window:i + 1]]      # trailing, includes today
+            # Exactly `vol_window` bars, ending on and including the signal bar. The old
+            # slice took vol_window+1 — harmless for the result but not the window documented.
+            vols = [b[5] for b in bars[i - vol_window + 1:i + 1]]
             qv = trailing_median_volume(vols)
             if qv <= 0:
                 continue

@@ -123,7 +123,10 @@ def realized_vol(bars: list[tuple], i: int, n: int = 30) -> float | None:
 def _as_app_candles(bars: list[tuple], i: int, lookback: int = 200) -> list[dict]:
     """The candle shape app.agents expects, ending at the signal bar."""
     start = max(0, i - lookback + 1)
-    return [{"open": b[4], "high": b[2], "low": b[3], "close": b[4], "volume": b[5]}
+    # b[6] is the real open and b[7] the BASE volume. Passing b[5] (quote volume) as `volume`
+    # made LiquidityAgent score price x dollar-volume — dimensionally wrong, and it saturated
+    # that agent's clamp on 80% of rows, which is what made its tie-inflated IC so large.
+    return [{"ts": b[1], "open": b[6], "high": b[2], "low": b[3], "close": b[4], "volume": b[7]}
             for b in bars[start:i + 1]]
 
 
@@ -160,17 +163,36 @@ FEATURES = {
 # Scoring
 # ---------------------------------------------------------------------------
 
+def _midranks(v: list[float]) -> list[float]:
+    """Ranks with TIES AVERAGED. Ordinal ranks are not a bug you can shrug at here.
+
+    Both variables in this panel are dominated by ties: `triangular()` saturates to exactly 0.0
+    on about a third of rows, and the outcome is essentially three values (take-profit, stop,
+    deadline). Ordinal ranking breaks every tie by list position, both variables inherit the
+    same positional order, and the correlation is manufactured out of the panel's row order.
+    Measured 2026-09-06 by an independent reimplementation: with outcomes PERMUTED at random
+    inside each day — zero signal by construction — the ordinal version still reported
+    IC +0.1445 with t = 19.3. The midrank version reports +0.0043, t = 0.93.
+    """
+    order = sorted(range(len(v)), key=lambda k: v[k])
+    r = [0.0] * len(v)
+    i = 0
+    while i < len(order):
+        j = i
+        while j + 1 < len(order) and v[order[j + 1]] == v[order[i]]:
+            j += 1
+        avg = (i + j) / 2.0
+        for k in range(i, j + 1):
+            r[order[k]] = avg
+        i = j + 1
+    return r
+
+
 def spearman(xs: list[float], ys: list[float]) -> float | None:
     n = len(xs)
     if n < 5 or len(set(xs)) < 3:
         return None
-    def rank(v):
-        order = sorted(range(len(v)), key=lambda k: v[k])
-        r = [0.0] * len(v)
-        for pos, k in enumerate(order):
-            r[k] = pos
-        return r
-    rx, ry = rank(xs), rank(ys)
+    rx, ry = _midranks(xs), _midranks(ys)
     mx, my = st.mean(rx), st.mean(ry)
     num = sum((a - mx) * (b - my) for a, b in zip(rx, ry, strict=True))
     den = math.sqrt(sum((a - mx) ** 2 for a in rx) * sum((b - my) ** 2 for b in ry))
@@ -255,12 +277,21 @@ def portfolio_test(panel: dict[str, list[dict]], feature: str, k: int, min_names
     def rnd(pool):
         return rng.sample(pool, len(pool))
 
+    def base_of(rows_by_day, draws: int = 8) -> float:
+        """The random baseline as an EXPECTATION, not one draw.
+
+        Using a single random pick inside each bootstrap iteration adds the draw's own variance
+        to the difference and widens the interval toward "no evidence" — it would hide a modest
+        real effect. Averaging several draws estimates the day's expected pick instead.
+        """
+        return st.mean([pick(rows_by_day, rnd) for _ in range(draws)])
+
     t, b = pick(days, top), pick(days, bot)
-    base = st.mean([pick(days, rnd) for _ in range(20)])
+    base = base_of(days, draws=20)
     diffs = []
     for _ in range(600):
         sample = [rng.choice(days) for _ in days]
-        diffs.append(pick(sample, top) - pick(sample, rnd))
+        diffs.append(pick(sample, top) - base_of(sample))
     diffs.sort()
     return {"top": t, "bottom": b, "random": base,
             "lo": diffs[15], "hi": diffs[-15], "n_days": len(days)}

@@ -23,6 +23,14 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 _TMP_DIR = tempfile.mkdtemp(prefix="findmy_test_")
 os.environ["DATABASE_URL"] = f"sqlite:///{_TMP_DIR}/test.db"
 os.environ["REQUIRE_AUTH"] = "false"
+# The suite runs on the trading machine, whose .env carries LIVE_TRADING=true and real exchange
+# keys — and pydantic reads that same .env here. Without this line the test process starts with
+# `execution.live_enabled()` returning True (measured 2026-09-06), so every test that touches an
+# order path is one forgotten monkeypatch away from a real placement; and the 11 files that build
+# a TestClient die at collection, because live_trading + the REQUIRE_AUTH=false above is exactly
+# the posture `security.validate_auth_config` refuses to boot. Both symptoms, one cause. A test
+# that wants live semantics sets the flag itself (12 do) — none inherits it from the environment.
+os.environ["LIVE_TRADING"] = "false"
 
 from app import models  # noqa: E402,F401  (register models on Base)
 from app.db import Base, SessionLocal, engine  # noqa: E402

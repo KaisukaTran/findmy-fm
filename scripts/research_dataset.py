@@ -303,7 +303,18 @@ def cmd_klines(args) -> int:
     db = connect(Path(args.out))
     months = month_range(args.start, args.end)
     syms = sorted(s for s in archive_symbols() if is_study_symbol(s, args.quote))
-    if args.limit:
+    if args.like_universe:
+        # Alphabetical truncation is not a universe. An hourly rebuild has to cover the coins
+        # the live scanner would actually see, so rank by the median quote volume already in
+        # the daily table and keep the top N.
+        ranked = db.execute(
+            "SELECT symbol, AVG(quote_volume) v FROM candles WHERE interval='1d' "
+            "AND ts > ? GROUP BY symbol ORDER BY v DESC",
+            (int(datetime(2025, 1, 1, tzinfo=timezone.utc).timestamp() * 1000),)).fetchall()
+        top = [r[0] for r in ranked][: args.like_universe]
+        syms = [s for s in top if s in set(syms)]
+        print(f"universe-like selection: {len(syms)} symbols by 2025+ median quote volume")
+    elif args.limit:
         syms = syms[: args.limit]
     have = loaded_parts(db, f"klines:{args.interval}")
     todo = {s: [m for m in months if (s, m) not in have] for s in syms}
@@ -402,6 +413,9 @@ def main(argv: list[str] | None = None) -> int:
     k.add_argument("--end", default=datetime.now(timezone.utc).strftime("%Y-%m"))
     k.add_argument("--interval", default="1d")
     k.add_argument("--limit", type=int, default=0, help="first N symbols (smoke test)")
+    k.add_argument("--like-universe", type=int, default=0,
+                   help="top N symbols by 2025+ quote volume from the daily table, i.e. the "
+                        "coins the live scanner would actually see")
     k.set_defaults(func=cmd_klines)
 
     m = sub.add_parser("metrics", help="download futures OI / long-short / taker flow")

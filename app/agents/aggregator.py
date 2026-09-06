@@ -15,13 +15,26 @@ from __future__ import annotations
 
 from app.agents.base import AgentVote
 
+# 2026-09-06: `ml` used to carry 0.30 — the LARGEST share — while `ml_enabled` was False in
+# every instance, so `MlAgent` returned confidence 0 and its term vanished from BOTH the
+# numerator and the denominator below. The consensus that leads `_open_rank_key` was therefore
+# already dip/trend/volatility/liquidity renormalised over 0.70, and the config said otherwise.
+#
+# The 0.30 is redistributed here in the SAME proportions, so these numbers reproduce today's
+# consensus to the last decimal — a test asserts exactly that. What the change removes is a
+# trapdoor: with the old table, enabling ML (or training a model) would have handed 30% of the
+# ranking to a model nobody has ever measured, silently, on the next scan. Give it weight when
+# there is evidence for it, not by leaving a default in place.
+# Six decimals, not three: the shares are 0.25/0.70, 0.20/0.70, 0.15/0.70, 0.10/0.70, and
+# rounding them to 0.357/0.286/0.214/0.143 moved a real consensus from 57.14 to 57.10. A
+# book-keeping correction that changes the number it is correcting is not one.
 DEFAULT_WEIGHTS = {
     "backtest": 0.0,   # S4: excluded from consensus; evidence lives in the hard gates
-    "dip": 0.25,
-    "trend": 0.20,
-    "volatility": 0.15,
-    "liquidity": 0.10,
-    "ml": 0.30,
+    "dip": 0.357143,
+    "trend": 0.285714,
+    "volatility": 0.214286,
+    "liquidity": 0.142857,
+    "ml": 0.0,         # was 0.30, unused: turn it on deliberately, with a measurement
 }
 
 

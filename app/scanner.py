@@ -56,7 +56,8 @@ class ScanInProgress(RuntimeError):
     """Raised by run_scan when another scan already holds the scan lock."""
 
 # The Grok review batch size is the runtime setting ``grok_scanner_batch_max`` (default 60):
-# candidates are sorted by expectancy descending and the top N enter the single LLM call. Set it
+# candidates are sorted by ``_open_rank_key`` descending (consensus first, NOT expectancy — the
+# backtest metrics saturate) and the top N enter the single LLM call. Set it
 # high enough to cover every 'trade' candidate so none opens unreviewed. Under fail_mode="closed"
 # any symbol beyond the cap has no explicit endorse verdict and does NOT open this scan (same as a
 # Grok outage); under fail_mode="open" (default) it opens as before.
@@ -594,8 +595,19 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
     limit = _days_to_bars(settings.backtest_lookback_days, settings.backtest_timeframe)
     exchange_id = settings.data_exchange
     _t_fetch = time.monotonic()
+    # BTC is fetched as a REFERENCE even when it is not a candidate. `_btc_ref_return` reads
+    # `candle_map["BTC"]`, and the map only holds symbols that survived `_trade_block_reason` —
+    # so one open BTC session (with max_sessions_per_symbol=1), a BTC stop-cooldown or a
+    # pending BTC sell removed the benchmark, `_btc_ret` became None, and BOTH the
+    # relative-strength gate and the strategy router turned themselves off with no audit row
+    # and no visible symptom. A benchmark must not be a function of whether we happen to hold it.
+    # Fetched only when something actually reads the benchmark, so the S3 promise that a
+    # pre-blocked symbol costs ZERO OHLCV calls still holds in the default configuration
+    # (both consumers are off on live today) — one extra kline call, and only when it is used.
+    _needs_btc_ref = settings.rel_strength_enabled or settings.strategy_router_enabled
+    _ref_only = ["BTC"] if _needs_btc_ref and "BTC" not in to_fetch else []
     _candle_map, _fetch_aborted = _prefetch_candles(
-        exchange_id, to_fetch, settings.backtest_timeframe, limit
+        exchange_id, to_fetch + _ref_only, settings.backtest_timeframe, limit
     )
     if _fetch_aborted:
         # Item 5: without this row the symbols this abort cut short surface downstream as
@@ -605,7 +617,9 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
                   reason="rate/weight hold started mid-sweep", where=f"run:{scan.id}")
         db.commit()
     t_fetch_ms = int((time.monotonic() - _t_fetch) * 1000)
-    _cache_hits = sum(1 for _, hit in _candle_map.values() if hit)
+    # Count over the CANDIDATE set only: a reference-only BTC fetch is not a candidate and
+    # must not shift the cache statistics that the scan-timing audit reports.
+    _cache_hits = sum(1 for s in to_fetch if _candle_map.get(s, ([], False))[1])
     _cache_misses = len(to_fetch) - _cache_hits
 
     # S6: accumulate per-symbol backtest + votes time across the loop.
@@ -622,6 +636,11 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
 
     # BTC reference return for the relative-strength entry gate (computed once; None = gate off/no data)
     _btc_ret = _btc_ref_return(_candle_map, settings.rel_strength_lookback_bars)
+    if _btc_ret is None and settings.rel_strength_enabled:
+        # Say it out loud. A gate that switches itself off because a data fetch came back empty
+        # must leave a trace, or the book records a scan that looks gated and was not.
+        audit.log(db, "scanner", "btc_reference_missing", entity="BTC",
+                  reason="no BTC candles: relative-strength gate and strategy router are inert")
     # P1 instrumentation: stamp the scan with the market state and the FULL knob set it ran
     # under. Breadth is computed unconditionally now — it used to exist only inside the
     # regime ramp, which is off, so no scan in the book records what the market was doing.
@@ -1061,8 +1080,8 @@ def _review_and_open(
             audit.log(db, "scanner", "skipped_capped_batch", entity="grok",
                       reason=_why, symbols=len(to_open))
         else:
-            # Rank EXACTLY like the open loop (_open_rank_key: consensus → avg_mae → win_rate_lb →
-            # expectancy) and cap at the runtime grok_scanner_batch_max, so Grok reviews the SAME
+            # Rank EXACTLY like the open loop (_open_rank_key: consensus → worst_mae →
+            # win_rate_lb → expectancy) and cap at the runtime grok_scanner_batch_max, so Grok reviews the SAME
             # top candidates that will actually be opened. The backtest metrics saturate in a long
             # lookback (most pairs tie at ~100% win / tp−cost), so leading with consensus keeps the
             # batch order meaningful and aligned with what opens (under fail_mode="open" unreviewed

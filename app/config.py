@@ -229,7 +229,7 @@ class Settings(BaseSettings):
     watchlist: list[str] = Field(
         default=["BTC", "ETH", "SOL"], description="Symbols always evaluated by the scanner."
     )
-    scan_top_n: int = Field(default=10, description="Also auto-scan the top-N symbols by volume.")
+    scan_top_n: int = Field(default=10, description="UNUSED (2026-09-06): documented as shaping the universe, but nothing in app/ reads it — `_universe` builds the list from the watchlist plus the `min_quote_volume` floor, capped by `scan_max_symbols`, and never calls `provider.top_symbols`. Kept only so an existing .env setting it does not fail validation; setting it does nothing.")
     min_quote_volume: float = Field(
         default=1_000_000.0,
         description="Scan ALL pairs whose quote volume is above this floor (liquidity filter).",
@@ -316,7 +316,7 @@ class Settings(BaseSettings):
 
     # --- Grok scanner gate: a Grok (xAI) endorse/veto pass over qualified candidates ---
     grok_scanner_enabled: bool = Field(default=False, description="Have Grok review scanner candidates that passed every deterministic gate (one batched call/scan). Needs xai_api_key. Off = no cost, deterministic behaviour unchanged.")
-    grok_scanner_batch_max: int = Field(default=60, ge=1, le=300, description="Max candidates Grok reviews per scan (single batched call). Set high enough to cover EVERY 'trade' candidate so none opens unreviewed; the batch is sorted by expectancy so the strongest are kept if it ever truncates. Larger = more tokens/call.")
+    grok_scanner_batch_max: int = Field(default=60, ge=1, le=300, description="Max candidates Grok reviews per scan (single batched call). Set high enough to cover EVERY 'trade' candidate so none opens unreviewed; the batch is sorted by the same key the open loop uses (consensus first, then worst_mae) so the candidates that would actually open are the ones kept if it ever truncates. Larger = more tokens/call.")
     grok_live_search: bool = Field(default=False, description="Route the Grok scanner gate through the xAI Agent-Tools API (/v1/responses) with server-side web_search + x_search, so Grok weighs real-time trending/sentiment/major catalysts, not just the numeric TA bundle. Grok decides when to search; adds search cost per scan. Needs grok_scanner_enabled. (The old chat 'Live Search' params were retired by xAI — 410.)")
     grok_search_max_results: int = Field(default=8, ge=1, le=30, description="Max web/x search results Grok may pull per scan call (caps search cost).")
     grok_scanner_fail_mode: str = Field(

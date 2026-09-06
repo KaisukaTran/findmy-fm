@@ -22,10 +22,6 @@ class Settings(BaseSettings):
     )
 
     # --- Security ---
-    app_secret_key: SecretStr = Field(
-        default=SecretStr("dev-insecure-change-me"),
-        description="Secret for signing/session use. Set a strong random value in production.",
-    )
     api_key: SecretStr = Field(
         default=SecretStr("dev-key"),
         description="API key required (X-API-Key header) for write/mutation endpoints.",
@@ -58,7 +54,6 @@ class Settings(BaseSettings):
     )
     max_position_size_pct: float = Field(default=10.0, description="Max position as % of equity.")
     max_daily_loss_pct: float = Field(default=5.0, description="Max daily loss as % of equity.")
-    demo_isolated_fund: float = Field(default=10000.0, description="Default demo isolated fund (USD).")
     account_equity: float = Field(default=10000.0, description="Notional account equity for risk checks.")
 
     # --- Go-live execution (SHIPPED OFF — operator flips it) ---
@@ -409,7 +404,6 @@ class Settings(BaseSettings):
     hyperopt_interval_hours: int = Field(default=24, description="Hours between background hyperopt runs.")
     ml_enabled: bool = Field(default=False, description="Augment agent votes with a learned win-rate model.")
     ml_min_samples: int = Field(default=200, description="Min training samples before the ML model is used.")
-    ml_weight: float = Field(default=0.25, description="Aggregator weight for the ML agent vote.")
     ml_retrain_hours: int = Field(default=24, description="Hours between background ML retrains.")
 
     # --- Pending-queue auto-approval policy (AI clears safe orders) ---

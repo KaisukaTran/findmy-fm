@@ -47,6 +47,23 @@ logger = logging.getLogger(__name__)
 TP_MAX_PCT = 15.0
 DCA_MIN_PCT = 0.5
 DCA_MAX_PCT = 10.0
+
+# The DCA step may use at most this share of the distance to the hard stop, so the FIRST rung
+# always sits above it with room to spare. A rung at or below the stop is dead by construction:
+# the stop reaches that price first and ends the session, so the rung can never fill and the
+# strategy loses the averaging-down that defines it.
+#
+# This is not a preference, it is the relationship between two numbers that were chosen in
+# different modules and never compared. `DCA_MAX_PCT` (10%) alone is ABOVE the default
+# `sl_pct` (8%), so even at the default multiplier a coin with ATR >= 20%/day got a dead ladder.
+# Live 2026-09-05..07: `autotune_dca_atr_mult` was raised 0.5 -> 1.5, 52% of the universe ended
+# up with its first rung under the stop, `wave_below_sl` went 1 -> 26 in a day, and sessions
+# opened per day went 7 -> 3 -> 0 while $200k sat idle. The knob was reverted; this is the
+# invariant that makes the knob unable to do it again.
+#
+# 0.75 leaves a quarter of the stop distance as margin — the rung is re-anchored to the live
+# market before it is queued (`_anchor_dca_price`), so it needs real room, not just inequality.
+DCA_SL_HEADROOM = 0.75
 _ATR_BARS = 14
 _MIN_BARS = 15  # ATR needs a previous close per bar, so 14 ranges want 15 candles
 _LEVELS_KEY = "autotune:levels:"
@@ -163,7 +180,17 @@ def fit_levels(db: Session, candles_by_symbol: dict[str, list[dict]]) -> dict[st
         if atr <= 0:
             continue  # too little history — the global defaults still apply
         tp = min(max(atr * settings.autotune_tp_atr_mult, floor), TP_MAX_PCT)
-        dca = min(max(atr * settings.autotune_dca_atr_mult, DCA_MIN_PCT), DCA_MAX_PCT)
+        # The step is capped by the hard stop, not only by DCA_MAX_PCT — see DCA_SL_HEADROOM.
+        ceiling = DCA_MAX_PCT
+        if settings.sl_pct > 0:
+            ceiling = min(ceiling, settings.sl_pct * DCA_SL_HEADROOM)
+        wanted = max(atr * settings.autotune_dca_atr_mult, DCA_MIN_PCT)
+        dca = min(wanted, ceiling)
+        if dca < wanted - 1e-9:
+            # Say so. This going unsaid is what cost three days of not trading.
+            audit.log(db, "autotune", "dca_step_clamped", symbol=symbol,
+                      wanted=round(wanted, 4), used=round(dca, 4),
+                      sl_pct=settings.sl_pct, atr_pct=round(atr, 4))
         level = {"tp_pct": round(tp, 4), "distance_pct": round(dca, 4), "atr_pct": round(atr, 4)}
         runtime.set(db, f"{_LEVELS_KEY}{symbol}", json.dumps(level))
         out[symbol] = level

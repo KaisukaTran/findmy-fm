@@ -2374,7 +2374,16 @@ def run_position_guard(db: Session) -> dict:
             if not price:
                 continue
             before = row.status
-            if row.trail_active:
+            # The armed channel may only OWN a session while it can actually act. A session that
+            # armed while the feature was on, and is still open when it is switched off, matched
+            # `trail_active` here, had `_evaluate_dynamic_exit` return immediately (it is gated on
+            # the same toggle), and never reached the `elif` — so its hard stop silently fell from
+            # this 90s guard to the 15-minute cycle. Seen live 2026-09-09 within minutes of
+            # switching the feature off for an A/B: PUMP #47, armed, wave 2 of 3, unprotected.
+            # `kss_dynamic_tp_enabled` is a profit-taking preference; the hard SL is the disaster
+            # floor, and a preference must never be able to disarm the floor. pyramid_up arms at
+            # BE+ independently of the toggle, so it keeps the channel either way.
+            if row.trail_active and (dyn or row.strategy_mode == "pyramid_up"):
                 # Armed: the dynamic Ride&Trail channel owns this session (crash-detect + trail/exit).
                 if not _crash_exit(db, row, price):
                     _evaluate_dynamic_exit(db, row, price)  # channel: exit or ratchet

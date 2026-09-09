@@ -404,6 +404,25 @@ def _reconcile_tp_triggered(db: Session) -> None:
 # --- lifecycle ----------------------------------------------------------
 
 
+def ladder_cost_for(first_wave_usd: float, distance_pct: float, max_waves: int) -> float:
+    """USD a FULL ladder costs at a HYPOTHETICAL first wave: ``fw · Σ (n+1)(1−d)ⁿ``.
+
+    Same arithmetic as ``projected_ladder_cost``, which prices the ladder at the LIVE
+    ``kss_first_wave_usd``. A settings endpoint has to judge the size being ASKED for, not the
+    one already set, so it needs this form. Kept here, beside its sibling and inside the KSS
+    layer, because it takes the strategy's SHAPE (spacing, wave count) — `app/capital.py` must
+    never take a shape parameter, and `test_capital_scaling.py` enforces that on its public API.
+
+    Mirrors the frozen pyramid math (quantity grows ``(n+1)×``, price decays ``(1−d)ⁿ``); a
+    mirror can drift, so `tests/app/test_ladder_budget_invariant.py` pins it against
+    ``projected_ladder_cost`` across the live parameter range. At the live shape (d=3.2%, 3
+    waves) the multiple is ~5.6, matching the $221-$235 the book reserves per $40 wave.
+    """
+    return first_wave_usd * sum(
+        (n + 1) * ((1 - distance_pct / 100.0) ** n) for n in range(max(0, max_waves))
+    )
+
+
 def projected_ladder_cost(
     symbol: str,
     entry_price: float,

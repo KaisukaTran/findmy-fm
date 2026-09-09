@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app import (
+    capital,
     charts,
     circuit,
     costengine,
@@ -595,6 +596,37 @@ def set_kss_settings(body: KssSettingsBody, db: Session = Depends(get_db)):
                     "khi được gọi). Bảo vệ gap giá hôm nay là vòng guard ~90s + crash-detect. Phải "
                     "xây _maintain_live_stop thật và kiểm chứng trên sàn trước khi bật knob này."),
         )
+    # Cross-field guard: if EVERY session filled its ladder, could the book pay for it?
+    # `scanner._session_lock` lends out the idle reservation of any session under 50% filled, so
+    # the deployable-budget gate sees a fraction of the real commitment (live 2026-09-09: ten
+    # sessions reserved $2,303, the gate saw $739) and effectively never binds. The true ceiling
+    # is `max_concurrent_sessions × ladder`. Harmless at a $40 first wave; at $428 the same 60
+    # slots commit the whole budget while the gate reports a third of it, and one correlated dip
+    # then asks every ladder to fill at once against cash that is not there. Judge only requests
+    # that TOUCH the inputs — as with the expectancy gate above, an already-bad config must not
+    # freeze every unrelated edit.
+    from app import risk  # lazy: risk -> portfolio -> models; avoid an import cycle at load
+    _budget_fields = ("kss_first_wave_usd", "max_concurrent_sessions", "scan_distance_pct",
+                      "scan_max_waves", "equity_backup_pct")
+    if any(f in values for f in _budget_fields):
+        eff = {f: values.get(f, getattr(settings, f)) for f in _budget_fields}
+        ladder = kss_service.ladder_cost_for(
+            eff["kss_first_wave_usd"], eff["scan_distance_pct"], eff["scan_max_waves"])
+        over, worst, budget = capital.ladder_budget_exceeded(
+            max_concurrent=eff["max_concurrent_sessions"], ladder_cost=ladder,
+            equity=risk.account_equity(db), backup_pct=eff["equity_backup_pct"])
+        if over:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"Vượt ngân sách nếu MỌI phiên lấp đầy thang: "
+                        f"{eff['max_concurrent_sessions']} suất × ${ladder:,.0f}/thang = "
+                        f"${worst:,.0f} > ngân sách ${budget:,.0f} "
+                        f"(equity × {100 - eff['equity_backup_pct']:.0f}%). "
+                        f"Cổng ngân sách của scanner KHÔNG bắt được điều này vì nó cho vay phần "
+                        f"đặt trước nhàn rỗi của phiên lấp <50% (scanner._session_lock), nên nó "
+                        f"chỉ thấy một phần nhỏ. Hạ kss_first_wave_usd hoặc "
+                        f"max_concurrent_sessions, hoặc giảm equity_backup_pct."),
+            )
     return runtime.set_kss_settings(db, values)
 
 

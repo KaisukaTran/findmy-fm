@@ -15,16 +15,36 @@ WHAT ACTUALLY STOPS US, in the order it fires. A cross-check found the first ver
 module calibrated against the SECOND leg:
 
 1. **A consecutive-loss streak.** ``circuit.evaluate`` freezes at
-   ``consecutive_losses >= max_consecutive_losses`` (default 4). N sessions stopping together
-   IS a streak of N, so this fires at N=4 regardless of how little money was lost.
+   ``consecutive_losses >= max_consecutive_losses`` (default 4), and it counts money not at all.
+
+   CORRECTED 2026-09-09 — the sentence that stood here, "N sessions stopping together IS a
+   streak of N, so this fires at N=4", is FALSE, and it is worth saying why because it cost a
+   day. `circuit.evaluate` counts SELL **fills**, not sessions: of the live book's 17 `stopped`
+   sessions, 10 exited via a PROFITABLE `trail_sl` — wins, which RESET the counter. The streak
+   is also sampled once per ~15-minute cycle rather than latched, so an interleaved win erases
+   it before it is ever read (paper reached 4 on 2026-08-22 and did not freeze: a +$0.03 exit
+   cleared it 9 minutes later). More concurrent sessions therefore make this rule LESS likely
+   to fire, not more. It has never once fired on live.
+
+   That sentence is what made ``recommend_sessions`` answer "3 sessions" at $200k — a number
+   nobody could act on, which is why this module sat unwired for two weeks.
 2. **The daily loss limit**, ``daily_loss_hard_pct`` (default 5%). Reached later, and measured
    on GROSS realised loss divided by CURRENT mark-to-market equity — both of which make the
    breaker see a bigger number than this model computes.
 3. The deployable-budget reserve, which the prior analysis measured as not existing in practice
    (peak deployment 97.4% of equity). Kept as a check, believed weakly.
 
-Nothing here mutates settings: it returns a recommendation naming the binding constraint, and a
-human decides. Nothing in ``app/`` imports it — that is deliberate.
+Nothing here mutates settings: the SIZING functions return a recommendation naming the binding
+constraint, and a human decides.
+
+UPDATED 2026-09-09. The line that used to sit here — "nothing in ``app/`` imports it, that is
+deliberate" — is no longer true, and the distinction is worth keeping straight. The advice half
+is still advice: `recommend_sessions` / `recommend_first_wave` / `audit_book` are called by
+humans and by studies, never by the app. What `app/routes.py` now imports is the INVARIANT half
+— `ladder_budget_exceeded` — which is a different kind of thing: not "here is a
+good size" but "this configuration cannot be paid for". A recommendation is a matter of taste and
+belongs to the operator; a configuration that commits more than the book holds is arithmetic, and
+refusing it is not a judgement call.
 """
 
 from __future__ import annotations
@@ -69,6 +89,38 @@ def _require_positive(equity: float) -> None:
     """Fail closed. A zero or negative equity read made every configuration look safe."""
     if equity <= 0:
         raise CapitalInputError(f"equity must be positive, got {equity!r}")
+
+
+def ladder_budget_exceeded(
+    *, max_concurrent: int, ladder_cost: float, equity: float, backup_pct: float
+) -> tuple[bool, float, float]:
+    """Would every session filling its ladder cost more than we can deploy?
+
+    Returns ``(exceeded, worst_case_usd, budget_usd)``.
+
+    WHY THIS IS A HARD GATE AND NOT A RECOMMENDATION. `scanner._session_lock` lends out the
+    idle reservation of any session under 50% filled — a deliberate rule, and a good one, but
+    it means the deployable-budget gate sees a fraction of the real commitment. Measured live
+    2026-09-09: ten sessions reserved $2,303 and the gate saw $739, 32%. So that gate never
+    binds and the true ceiling is ``max_concurrent_sessions × ladder``.
+
+    Harmless at a $40 first wave (60 × $234 = $14k of a $150k budget). At $428 the same 60
+    slots commit the entire budget while the gate still reports about a third — so the app
+    opens all 60, a broadly-correlated dip asks every ladder to fill at once, cash runs out,
+    and `_apply_cash_cap` refuses rungs. The ladders die silently at exactly the moment
+    averaging down is what they are for.
+
+    Two numbers that only mean anything relative to each other, with nothing comparing them.
+    This is the comparison.
+
+    Takes ``ladder_cost`` as a NUMBER on purpose. Pricing a ladder needs the DCA spacing and the
+    wave count, and this module must never take a shape parameter — `test_capital_scaling.py`
+    guards that on the public API surface, and it caught the first version of this function.
+    The shape math lives with the strategy, in `kss.service.ladder_cost_for`.
+    """
+    budget = max(0.0, equity) * max(0.0, 100.0 - backup_pct) / 100.0
+    worst = max(0, max_concurrent) * max(0.0, ladder_cost)
+    return worst > budget, worst, budget
 
 
 def ladder_usd(first_wave_usd: float, ladder_ratio: float,

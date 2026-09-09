@@ -70,6 +70,19 @@ def armed_tp_pct(lock_pct: float, gap_pct: float, tp_pct: float) -> float:
     return max(tp_pct, ((1 + lock_pct / 100) * (1 + gap_pct / 100) - 1) * 100)
 
 
+def _plain_trailing_sl(peak: float, avg: float, trail_dist_pct: float, prev_sl: float) -> float:
+    """A CONVENTIONAL chandelier stop: `peak x (1 - trail_dist)`, ratcheted, floored only at the
+    fee floor. **This is NOT what the app does** — `dynamic_exit.compute_sl` snaps the stop DOWN
+    to a wave-grid level `avg(1+d)^k`, where `d` is the DCA ladder spacing (3.2%-10%). That snap
+    is why the live stop sits frozen on its lock floor: the grid is far too coarse for a 7-day
+    hold, so the stop never leaves the floor and the floor does all the work.
+
+    This arm exists to separate two questions the first version of this study conflated: is a
+    trailing exit a bad idea here, or is the grid-snapped implementation a bad trailing exit?
+    """
+    return max(peak * (1 - trail_dist_pct / 100), dx.fee_floor_price(avg), prev_sl)
+
+
 # --- part 2: replay ---------------------------------------------------------------------------
 
 
@@ -82,7 +95,7 @@ def _load(con: sqlite3.Connection, symbol: str, start_ms: int, interval: str) ->
 
 def _simulate(bars: list[tuple], i0: int, *, distance_pct: float, tp_pct: float, sl_pct: float,
               max_waves: int, lock_pct: float, trail_min_pct: float, gap_pct: float,
-              use_trail: bool, deadline_bars: int) -> dict | None:
+              use_trail: bool, deadline_bars: int, grid: bool = True) -> dict | None:
     """One session opened at bars[i0]'s close. Returns its outcome, or None if it never resolves.
 
     The ladder is `entry*(1-d)^k` with weights 1..max_waves, matching `app/backtest.py:_targets`.
@@ -137,8 +150,9 @@ def _simulate(bars: list[tuple], i0: int, *, distance_pct: float, tp_pct: float,
                         "ratcheted": False, "ambiguous": ambiguous, "waves": filled}
             if high >= arm_px:
                 armed, peak = True, arm_px          # arm at the threshold, not at the bar's high
-                sl = dx.compute_sl(peak=peak, avg=avg, distance_pct=distance_pct,
-                                   trail_dist_pct=trail_min_pct, prev_sl=0.0)
+                sl = (dx.compute_sl(peak=peak, avg=avg, distance_pct=distance_pct,
+                                    trail_dist_pct=trail_min_pct, prev_sl=0.0)
+                      if grid else _plain_trailing_sl(peak, avg, trail_min_pct, 0.0))
                 if sl >= arm_px:                    # the guard added 2026-09-06: never arm under it
                     armed, peak, sl = False, 0.0, 0.0
                     continue
@@ -146,8 +160,9 @@ def _simulate(bars: list[tuple], i0: int, *, distance_pct: float, tp_pct: float,
                 continue                            # riding: no fixed TP, no trail — hard SL only
 
         peak = max(peak, high)
-        new_sl = dx.compute_sl(peak=peak, avg=avg, distance_pct=distance_pct,
-                               trail_dist_pct=trail_min_pct, prev_sl=sl)
+        new_sl = (dx.compute_sl(peak=peak, avg=avg, distance_pct=distance_pct,
+                                trail_dist_pct=trail_min_pct, prev_sl=sl)
+                  if grid else _plain_trailing_sl(peak, avg, trail_min_pct, sl))
         if new_sl > sl * 1.0000001:
             ratcheted = True
         sl = new_sl
@@ -229,8 +244,10 @@ def main() -> int:
     print(f"{len(syms)} coin, tu {args.start}, moi {args.spacing} ngay mot lenh vao\n")
 
     configs = [("KHONG trail (chi TP co dinh)", None)] + [
-        (f"trail lock={lock} min={tmin}", (lock, tmin)) for lock, tmin in
-        [(2.0, 3.0), (1.0, 1.5), (0.5, 1.5), (2.0, 1.5), (3.0, 5.0)]]
+        (f"APP  luoi lock={lock} min={tmin}", (lock, tmin, True)) for lock, tmin in
+        [(2.0, 3.0), (3.0, 5.0)]] + [
+        (f"THUAN khong-luoi min={tmin}", (0.0, tmin, False)) for tmin in
+        [1.5, 3.0, 5.0, 8.0]]
     results: dict[str, list[dict]] = {name: [] for name, _ in configs}
 
     for sym in syms:
@@ -243,7 +260,8 @@ def main() -> int:
                     bars, i0, distance_pct=args.distance, tp_pct=args.tp, sl_pct=args.sl,
                     max_waves=args.waves, lock_pct=(cfg[0] if cfg else 2.0),
                     trail_min_pct=(cfg[1] if cfg else 3.0), gap_pct=args.gap,
-                    use_trail=cfg is not None, deadline_bars=deadline_bars)
+                    use_trail=cfg is not None, deadline_bars=deadline_bars,
+                    grid=(cfg[2] if cfg else True))
                 if out:
                     results[name].append(out)
 

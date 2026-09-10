@@ -750,6 +750,11 @@ def get_breaker(db: Session = Depends(get_db)):
             "max_drawdown_pct": settings.max_drawdown_pct,
             "daily_loss_hard_pct": settings.daily_loss_hard_pct,
             "max_consecutive_losses": settings.max_consecutive_losses,
+            "loss_cluster_sec": settings.breaker_loss_cluster_sec,
+            # Which of the two reported counters actually decides. Both are always in the
+            # payload above; naming the deciding one here is the difference between
+            # reporting a SETTING and reporting its EFFECT.
+            "streak_rule": "legacy" if settings.breaker_streak_shadow else "grouped",
         },
     }
 

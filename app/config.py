@@ -366,8 +366,10 @@ class Settings(BaseSettings):
     )
     max_drawdown_pct: float = Field(default=15.0, description="Circuit breaker: freeze auto when equity drawdown %% exceeds this.")
     daily_loss_hard_pct: float = Field(default=5.0, description="Circuit breaker: freeze auto when today's realized loss %% exceeds this.")
-    max_consecutive_losses: int = Field(default=4, description="Circuit breaker: freeze auto after this many losing SELL fills in a row.")
+    max_consecutive_losses: int = Field(default=4, description="Circuit breaker: freeze auto after this many losing exits in a row. What counts as ONE exit depends on breaker_streak_shadow.")
     breaker_cooldown_min: int = Field(default=60, description="Minutes the breaker stays frozen before it may auto-rearm.")
+    breaker_loss_cluster_sec: int = Field(default=300, description="Cửa sổ gom lệnh thoát của bộ đếm chuỗi thua: các phiên dừng lỗ trong khoảng này tính là MỘT tín hiệu. Một nhịp rơi làm bốn phiên chạm stop trong ba giây là một nhịp rơi, không phải bốn chuỗi thua. Đo trên sổ thật: 300s biến chuỗi-4 giả duy nhất trong lịch sử thành 2, mà vẫn giữ nguyên chuỗi-3 thật trải ba ngày. 0 = tắt gom theo thời gian (vẫn gom theo phiên).")
+    breaker_streak_shadow: bool = Field(default=True, description="ĐO KHÔNG CAN THIỆP: bộ đếm chuỗi thua theo NHÓM (gom phiên + cửa sổ thời gian) chỉ được tính và ghi log, còn quy tắc CŨ (đếm từng fill SELL — chặt hơn, hay báo giả) vẫn là cái quyết định đóng băng. Bật=an toàn hơn: không mất lớp bảo vệ nào trong lúc đo, đổi lại một nhịp rơi vài giây VẪN có thể đóng băng oan (tự rã sau breaker_cooldown_min). Chấm điểm bằng các bản ghi audit 'circuit/shadow_divergence'; đủ mẫu thì đặt false để quy tắc mới cầm lái.")
 
     anthropic_api_key: SecretStr = Field(default=SecretStr(""), description="Anthropic API key for LLM features (e.g. the Opus orchestrator). Empty = disabled.")
 

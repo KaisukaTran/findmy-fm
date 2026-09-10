@@ -57,7 +57,7 @@ Usage:
     .venv/Scripts/python.exe scripts/measure_entry_gates.py
         [--symbols BTC,ETH,SOL,...] [--timeframe 1d] [--lookback-days 1000]
         [--warmup-days 365] [--spacing-days 7] [--distance 2.0] [--tp 3.0] [--waves 10]
-        [--wave0-usd 100] [--bootstrap 2000] [--seed 20260831]
+        [--wave0-usd 100] [--bootstrap 2000] [--permutations 5000] [--seed 20260831]
 """
 
 from __future__ import annotations
@@ -67,10 +67,12 @@ import bisect
 import math
 import random
 import sys
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+
+import numpy as np
 
 # Make the project root importable when running as a standalone script.
 ROOT = Path(__file__).resolve().parent.parent
@@ -104,6 +106,9 @@ DEFAULT_LOOKBACK_DAYS = 1000  # ~3y of daily bars: as much decorrelated history 
 DEFAULT_WARMUP_DAYS = 365  # first slice used only as gate history, never as an entry
 DEFAULT_WAVE0_USD = 100.0
 DEFAULT_BOOTSTRAP_ROUNDS = 2000
+# Permutation rounds. 5000 puts the smallest reportable p-value at 1/5001, comfortably below
+# the family-wise threshold six gates need.
+DEFAULT_PERMUTATION_ROUNDS = 5000
 DEFAULT_SEED = 20260831
 
 # Below this many entries on EITHER side, a gate cannot be judged — "a gate that vetoes 3
@@ -188,6 +193,14 @@ class GateResult:
     lift: float  # passed.ppdd − vetoed.ppdd; POSITIVE = the gate vetoed the worse entries
     ci: tuple[float, float] | None
     verdict: str
+    # Within-date permutation p-value for CROSS-SECTIONAL skill, and the same p-value after
+    # Westfall-Young step-down across the whole gate family. None when the gate is unjudgeable
+    # or was excluded from the family. See `cluster_permutation_pvalues`.
+    p_perm: float | None = None
+    p_fwer: float | None = None
+    # Smallest |lift| this sample could have called significant after six looks. A null
+    # verdict means nothing without it.
+    min_lift: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -581,6 +594,109 @@ def cluster_bootstrap_lift_ci(
     return (lo, hi)
 
 
+def cluster_permutation_pvalues(
+    keys: Sequence[tuple[str, int]],
+    outcomes: Mapping[tuple[str, int], EntryOutcome],
+    veto_by_key: Mapping[tuple[str, int], Mapping[str, bool]],
+    gate_names: Sequence[str],
+    *,
+    rounds: int = DEFAULT_PERMUTATION_ROUNDS,
+    seed: int = DEFAULT_SEED,
+    min_n: int = MIN_GROUP_N,
+) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
+    """Permutation p-values for each gate's lift, and the family-wise-corrected versions.
+
+    WHY THIS EXISTS ALONGSIDE THE BOOTSTRAP. The bootstrap answers "how uncertain is this
+    lift"; it does not answer "how often would a gate that knows nothing look this good".
+    Worse, this script reads SIX intervals and asks whether any excludes zero — which is
+    itself multiple testing. With six correlated gates, the chance that at least one interval
+    clears zero by luck is well above the 5% each interval advertises. Reporting six CIs and
+    believing the one that clears is the exact error the design is supposed to be testing for.
+
+    THE NULL. Labels are permuted WITHIN each entry date, so every resample keeps that date's
+    cross-section and its veto count intact and only reassigns WHICH symbols were vetoed. The
+    sharp null is therefore "on a given day, which symbols this gate vetoed is unrelated to
+    how they then did".
+
+    WHAT THAT DELIBERATELY DOES NOT MEASURE. Conditioning on the date removes market timing
+    from the comparison: a gate that vetoes more on bad days earns nothing here, because the
+    good and bad days are never mixed. That is the right null for these six, whose stated job
+    is picking coins rather than picking days — but it means a small p-value is evidence of
+    CROSS-SECTIONAL skill specifically, and the bootstrap CI remains the estimate of the
+    combined effect. Serial overlap between dates needs no block structure here: each date is
+    permuted independently, so correlation ACROSS dates cannot manufacture a low p-value.
+
+    FAMILY-WISE CORRECTION. Westfall-Young step-down max-T, using the SAME permutation draws
+    for every gate so the correction inherits the gates' real correlation instead of assuming
+    independence (Bonferroni over six near-duplicate gates would be far too harsh — four of
+    ours are functions of the same 26 trial outcomes). Gates too thin to judge are left out of
+    the family entirely rather than diluting it.
+
+    READING A NULL RESULT. "No gate beat chance" is only worth something next to the effect
+    that WOULD have been caught, so a third dictionary reports the family-wise detectable
+    lift: the 95th percentile of the step-down max-T null, i.e. the smallest |lift| this
+    sample could have declared significant after paying for six looks. A gate whose true lift
+    is below that number is not absolved by a large p — it is unmeasured, and saying so is
+    the difference between evidence of absence and absence of evidence.
+
+    Returns `({gate: raw p}, {gate: FWER-adjusted p}, {gate: family-wise detectable lift})`,
+    all keyed only by the gates that were judgeable. Deterministic for a given `seed`.
+    """
+    family = [
+        name for name in gate_names
+        if sum(veto_by_key[k][name] for k in keys) >= min_n
+        and sum(not veto_by_key[k][name] for k in keys) >= min_n
+    ]
+    if not family or rounds < 1:
+        return {}, {}, {}
+
+    # Sort by entry date once; `lexsort` below then shuffles only WITHIN each date.
+    order0 = sorted(range(len(keys)), key=lambda j: outcomes[keys[j]].ts)
+    ordered = [keys[j] for j in order0]
+    pnl = np.array([outcomes[k].pnl_usd for k in ordered], dtype=float)
+    cap = np.array([outcomes[k].capital_days for k in ordered], dtype=float)
+    cluster = np.array([outcomes[k].ts for k in ordered], dtype=np.int64)
+    masks = {n: np.array([veto_by_key[k][n] for k in ordered], dtype=bool) for n in family}
+
+    def _lift(p: np.ndarray, c: np.ndarray, veto: np.ndarray) -> float:
+        cv, cp = c[veto].sum(), c[~veto].sum()
+        if cv <= 0 or cp <= 0:
+            return float("nan")
+        return p[~veto].sum() / cp - p[veto].sum() / cv
+
+    observed = {n: abs(_lift(pnl, cap, masks[n])) for n in family}
+    rng = np.random.default_rng(seed)
+    null = {n: np.empty(rounds, dtype=float) for n in family}
+    for b in range(rounds):
+        shuffled = np.lexsort((rng.random(len(ordered)), cluster))
+        p, c = pnl[shuffled], cap[shuffled]
+        for n in family:
+            null[n][b] = abs(_lift(p, c, masks[n]))
+
+    # +1 in numerator and denominator: a permutation p-value may never be reported as 0, and
+    # the observed arrangement is itself one of the arrangements under the null.
+    raw = {
+        n: float((np.nansum(null[n] >= observed[n]) + 1) / (rounds + 1))
+        for n in family
+    }
+
+    # Step-down: test the largest observed statistic against the max over ALL gates, the next
+    # against the max over the gates still in play, and so on. Monotonicity is enforced at the
+    # end so an adjusted p can never fall below one already reported for a stronger gate.
+    ranked = sorted(family, key=lambda n: observed[n], reverse=True)
+    running = np.zeros(rounds, dtype=float)
+    adjusted: dict[str, float] = {}
+    detectable: dict[str, float] = {}
+    prev = 0.0
+    for n in reversed(ranked):  # weakest first, accumulating the max as we climb
+        running = np.fmax(running, null[n])
+        adjusted[n] = float((np.nansum(running >= observed[n]) + 1) / (rounds + 1))
+        detectable[n] = float(np.nanpercentile(running, 95.0))
+    for n in ranked:  # strongest first, enforcing non-decreasing adjusted p
+        prev = adjusted[n] = max(adjusted[n], prev)
+    return raw, adjusted, detectable
+
+
 def verdict(
     passed_n: int,
     vetoed_n: int,
@@ -620,6 +736,7 @@ def measure(
     wave0_notional_usd: float = DEFAULT_WAVE0_USD,
     pessimistic_intrabar: bool = False,
     bootstrap_rounds: int = DEFAULT_BOOTSTRAP_ROUNDS,
+    permutation_rounds: int = DEFAULT_PERMUTATION_ROUNDS,
     seed: int = DEFAULT_SEED,
 ) -> tuple[list[GateResult], GroupStats]:
     """Roll entries across every symbol, ask every gate what it would have said, and split
@@ -687,6 +804,15 @@ def measure(
             "consensus": snap.consensus,
         }
 
+    # Permutation p-values for the six real gates, corrected across the family as a set. The
+    # two STACK rows are deliberately left out: they are deterministic functions of the same
+    # six labels, so admitting them would count the same evidence twice in the max-T step.
+    keys = list(outcomes)
+    p_raw, p_adj, p_min = cluster_permutation_pvalues(
+        keys, outcomes, veto_by_key, GATE_NAMES,
+        rounds=permutation_rounds, seed=seed,
+    )
+
     def _score(name: str, ships_on: bool, is_vetoed) -> GateResult:
         vetoed = [o for key, o in outcomes.items() if is_vetoed(key)]
         passed = [o for key, o in outcomes.items() if not is_vetoed(key)]
@@ -695,7 +821,9 @@ def measure(
                                        block=block)
         lift = p_stats.profit_per_dollar_day - v_stats.profit_per_dollar_day
         return GateResult(name=name, ships_on=ships_on, vetoed=v_stats, passed=p_stats,
-                          lift=lift, ci=ci, verdict=verdict(p_stats.n, v_stats.n, lift, ci))
+                          lift=lift, ci=ci, verdict=verdict(p_stats.n, v_stats.n, lift, ci),
+                          p_perm=p_raw.get(name), p_fwer=p_adj.get(name),
+                          min_lift=p_min.get(name))
 
     results = [
         _score(name, GATE_SHIPS_ON[name], lambda key, _n=name: veto_by_key[key][_n])
@@ -717,12 +845,12 @@ def measure(
 _HEADER = (
     f"{'gate':<18}{'ships':>6}{'veto_n':>8}{'pass_n':>8}"
     f"{'veto_$/d-day':>14}{'pass_$/d-day':>14}{'lift':>12}"
-    f"{'95% CI (cluster bootstrap)':>30}  verdict"
+    f"{'95% CI (cluster bootstrap)':>30}{'p_perm':>9}{'p_fwer':>9}{'min_lift':>11}  verdict"
 )
 _ROW = (
     "{name:<18}{ships:>6}{vn:>8d}{pn:>8d}"
     "{vppd:>14.6f}{pppd:>14.6f}{lift:>+12.6f}"
-    "{ci:>30}  {verdict}"
+    "{ci:>30}{pp:>9}{pf:>9}{ml:>11}  {verdict}"
 )
 _DETAIL_HEADER = (
     f"{'gate':<18}{'group':>8}{'n':>7}{'stop%':>8}{'win%':>8}{'E%':>9}"
@@ -753,7 +881,11 @@ def format_report(results: Sequence[GateResult], baseline: GroupStats, title: st
             name=r.name, ships="on" if r.ships_on else "off",
             vn=r.vetoed.n, pn=r.passed.n,
             vppd=r.vetoed.profit_per_dollar_day, pppd=r.passed.profit_per_dollar_day,
-            lift=r.lift, ci=ci, verdict=r.verdict,
+            lift=r.lift, ci=ci,
+            pp=f"{r.p_perm:.4f}" if r.p_perm is not None else "-",
+            pf=f"{r.p_fwer:.4f}" if r.p_fwer is not None else "-",
+            ml=f"{r.min_lift:.6f}" if r.min_lift is not None else "-",
+            verdict=r.verdict,
         ))
     lines.append("")
     lines.append(_DETAIL_HEADER)
@@ -769,6 +901,16 @@ def format_report(results: Sequence[GateResult], baseline: GroupStats, title: st
     # ASCII only: this prints to a Windows console on cp1252, where a U+2212 minus sign dies.
     lines.append("lift = pass_$/d-day - veto_$/d-day; POSITIVE means the gate vetoed the "
                  "WORSE entries (it earns its keep).")
+    lines.append("p_perm  = within-date permutation, CROSS-SECTIONAL skill only (a gate that "
+                 "vetoes on bad DAYS earns nothing here).")
+    lines.append("p_fwer  = the same p after Westfall-Young step-down across all six gates. "
+                 "Reading six CIs and believing the one that")
+    lines.append("          clears zero is itself multiple testing; this is the column that "
+                 "answers 'did ANY gate beat chance'.")
+    lines.append("min_lift= the smallest |lift| this sample could have called significant "
+                 "after paying for six looks. A gate whose")
+    lines.append("          true lift is below it is UNMEASURED, not exonerated - compare it "
+                 "to the baseline $/dollar-day above.")
     return "\n".join(lines)
 
 
@@ -816,6 +958,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--waves", type=int, default=settings.scan_max_waves)
     p.add_argument("--wave0-usd", type=float, default=DEFAULT_WAVE0_USD)
     p.add_argument("--bootstrap", type=int, default=DEFAULT_BOOTSTRAP_ROUNDS)
+    p.add_argument("--permutations", type=int, default=DEFAULT_PERMUTATION_ROUNDS)
     p.add_argument("--seed", type=int, default=DEFAULT_SEED)
     return p.parse_args(argv)
 
@@ -851,7 +994,8 @@ def main(argv: list[str] | None = None) -> None:
             distance_pct=args.distance, tp_pct=args.tp, max_waves=args.waves,
             lookback_bars=lookback_bars, warmup_bars=warmup_bars, spacing_days=spacing,
             wave0_notional_usd=args.wave0_usd, pessimistic_intrabar=pessimistic,
-            bootstrap_rounds=args.bootstrap, seed=args.seed,
+            bootstrap_rounds=args.bootstrap, permutation_rounds=args.permutations,
+            seed=args.seed,
         )
         bound = "PESSIMISTIC (high-then-low)" if pessimistic else "OPTIMISTIC (low-then-high)"
         print()

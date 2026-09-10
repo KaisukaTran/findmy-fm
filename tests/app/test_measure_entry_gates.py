@@ -43,6 +43,7 @@ from scripts.measure_entry_gates import (
     btc_window_at,
     causal_window,
     cluster_bootstrap_lift_ci,
+    cluster_permutation_pvalues,
     consensus_gate_vetoes,
     entry_outcome,
     gate_snapshot,
@@ -455,3 +456,144 @@ def test_cli_is_read_only_market_data_in_table_out():
     src = open(m.__file__, encoding="utf-8").read()
     assert "SessionLocal" not in src
     assert ".commit()" not in src
+
+
+# ---------------------------------------------------------------------------
+# Within-date permutation + family-wise correction
+# ---------------------------------------------------------------------------
+
+
+def _perm_fixture(labels_by_day, pnl_by_day, *, gate="g"):
+    """Build (keys, outcomes, veto_by_key) from {day: [bool,...]} and {day: [pnl,...]}.
+
+    Every entry ties up one capital-day, so profit-per-dollar-day is just the mean pnl and
+    the arithmetic in each test stays readable.
+    """
+    keys, outcomes, veto = [], {}, {}
+    for day, flags in labels_by_day.items():
+        for j, flag in enumerate(flags):
+            key = (f"S{j}", day)
+            keys.append(key)
+            outcomes[key] = _outcome(day, pnl_by_day[day][j], 1.0, symbol=f"S{j}")
+            veto[key] = {gate: flag}
+    return keys, outcomes, veto
+
+
+def test_permutation_detects_a_gate_that_really_sorts_within_the_day():
+    """Vetoed entries lose and passed entries win, on every single date."""
+    days = range(40)
+    labels = {d: [True] * 3 + [False] * 3 for d in days}
+    pnls = {d: [-5.0, -4.0, -6.0, 5.0, 4.0, 6.0] for d in days}
+    keys, outcomes, veto = _perm_fixture(labels, pnls)
+    raw, adj, _ = cluster_permutation_pvalues(keys, outcomes, veto, ("g",), rounds=500, min_n=5)
+    assert raw["g"] < 0.01
+    assert adj["g"] < 0.01  # a single-gate family cannot be diluted
+
+
+def test_permutation_gives_a_gate_that_sorts_nothing_an_unremarkable_p():
+    """Same outcome for everyone: no arrangement of labels can beat any other."""
+    days = range(40)
+    labels = {d: [True] * 3 + [False] * 3 for d in days}
+    pnls = {d: [1.0] * 6 for d in days}
+    keys, outcomes, veto = _perm_fixture(labels, pnls)
+    raw, _, _ = cluster_permutation_pvalues(keys, outcomes, veto, ("g",), rounds=200, min_n=5)
+    assert raw["g"] == 1.0
+
+
+def test_permutation_gives_no_credit_for_market_TIMING():
+    """The documented blind spot, asserted rather than left to the docstring.
+
+    This gate is perfect at picking DAYS — it vetoes every entry on losing days and none on
+    winning days — and useless at picking coins. Conditioning on the date is exactly what
+    removes that skill from the comparison, so the p-value must be uninformative even though
+    the raw lift is large and positive.
+    """
+    labels, pnls = {}, {}
+    for d in range(40):
+        bad = d % 2 == 0
+        labels[d] = [bad] * 6
+        pnls[d] = [-5.0] * 6 if bad else [5.0] * 6
+    keys, outcomes, veto = _perm_fixture(labels, pnls)
+    raw, _, _ = cluster_permutation_pvalues(keys, outcomes, veto, ("g",), rounds=200, min_n=5)
+    assert raw["g"] == 1.0  # every within-date permutation reproduces the observed split
+
+
+def test_family_wise_p_is_never_below_the_raw_p_and_is_monotone():
+    """Six gates, one of them mildly lucky. The correction must charge for the other five."""
+    rng = random.Random(4242)
+    names = tuple(f"g{i}" for i in range(6))
+    keys, outcomes, veto = [], {}, {}
+    for day in range(30):
+        for j in range(8):
+            key = (f"S{j}", day)
+            keys.append(key)
+            outcomes[key] = _outcome(day, rng.gauss(0.0, 3.0), 1.0, symbol=f"S{j}")
+            veto[key] = {n: rng.random() < 0.4 for n in names}
+    raw, adj, _ = cluster_permutation_pvalues(keys, outcomes, veto, names, rounds=400, min_n=5)
+    assert set(raw) == set(names)
+    for n in names:
+        assert adj[n] >= raw[n] - 1e-12
+    ordered = sorted(names, key=lambda n: raw[n])
+    assert all(adj[a] <= adj[b] + 1e-12 for a, b in zip(ordered, ordered[1:], strict=False))
+
+
+def test_permutation_excludes_a_gate_too_thin_to_judge():
+    """A gate that vetoes three entries out of hundreds must not dilute the family."""
+    names = ("fat", "thin")
+    keys, outcomes, veto = [], {}, {}
+    for day in range(30):
+        for j in range(8):
+            key = (f"S{j}", day)
+            keys.append(key)
+            outcomes[key] = _outcome(day, float(j), 1.0, symbol=f"S{j}")
+            veto[key] = {"fat": j < 4, "thin": day == 0 and j == 0}
+    raw, adj, _ = cluster_permutation_pvalues(keys, outcomes, veto, names, rounds=200, min_n=30)
+    assert "fat" in raw and "thin" not in raw
+    assert "thin" not in adj
+
+
+def test_permutation_is_deterministic_for_a_seed():
+    rng = random.Random(11)
+    keys, outcomes, veto = [], {}, {}
+    for day in range(25):
+        for j in range(6):
+            key = (f"S{j}", day)
+            keys.append(key)
+            outcomes[key] = _outcome(day, rng.gauss(0.0, 2.0), 1.0, symbol=f"S{j}")
+            veto[key] = {"g": j < 3}
+    a, _, _ = cluster_permutation_pvalues(keys, outcomes, veto, ("g",), rounds=300, seed=99, min_n=5)
+    b, _, _ = cluster_permutation_pvalues(keys, outcomes, veto, ("g",), rounds=300, seed=99, min_n=5)
+    c, _, _ = cluster_permutation_pvalues(keys, outcomes, veto, ("g",), rounds=300, seed=100, min_n=5)
+    assert a == b
+    assert a != c or a["g"] == 1.0
+
+
+def test_permutation_p_can_never_be_reported_as_zero():
+    """The observed arrangement is one of the arrangements under the null."""
+    days = range(30)
+    labels = {d: [True] * 4 + [False] * 4 for d in days}
+    pnls = {d: [-100.0] * 4 + [100.0] * 4 for d in days}
+    keys, outcomes, veto = _perm_fixture(labels, pnls)
+    raw, _, _ = cluster_permutation_pvalues(keys, outcomes, veto, ("g",), rounds=100, min_n=5)
+    assert raw["g"] >= 1.0 / 101.0
+    assert raw["g"] > 0.0
+
+
+def test_detectable_lift_is_reported_so_a_null_can_be_read():
+    """A null verdict is meaningless without the effect that would have been caught."""
+    rng = random.Random(808)
+    names = ("a", "b", "c")
+    keys, outcomes, veto = [], {}, {}
+    for day in range(30):
+        for j in range(8):
+            key = (f"S{j}", day)
+            keys.append(key)
+            outcomes[key] = _outcome(day, rng.gauss(0.0, 3.0), 1.0, symbol=f"S{j}")
+            veto[key] = {n: rng.random() < 0.4 for n in names}
+    _, adj, detectable = cluster_permutation_pvalues(keys, outcomes, veto, names,
+                                                     rounds=400, min_n=5)
+    assert set(detectable) == set(names)
+    assert all(v > 0 for v in detectable.values())
+    # The family-wise bar can only get harder as more gates are folded into the max.
+    ordered = sorted(names, key=lambda n: adj[n])
+    assert detectable[ordered[0]] >= detectable[ordered[-1]] - 1e-12

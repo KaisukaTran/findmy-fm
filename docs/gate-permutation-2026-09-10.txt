@@ -1,0 +1,155 @@
+Fetching 1d candles, 1000d: UNI, ADA, XRP, SOL, ICP, DOGE, BCH, LINK, ARB, FIL, ZRO, ZEC, XPL, TUT, TRUMP, PROM, PEPE, PENGU, NEAR, MSTRB, LTC, HEMI, FET, ETH, ENA, DASH, CRCLB, BTC, AAVE, CAKE, ASTER, SNDKB, ATOM, TON, GRAM, JUP, DOT, VIRTUAL, OP, HBAR, ZEN, POL, ETC, SUI, COTI, BNB, CHIP, NFP, WLD, RAY, SHIB, SEI, INJ, AVAX, BONK, PENDLE, IOST, SOXLB, MUB, TAO, FORM, ZKC, STRK, AERO, MORPHO, TIA, SOPH, ETHFI, ORCA, SOLV
+  UNI: 1000 bars
+  ADA: 1000 bars
+  XRP: 1000 bars
+  SOL: 1000 bars
+  ICP: 1000 bars
+  DOGE: 1000 bars
+  BCH: 1000 bars
+  LINK: 1000 bars
+  ARB: 1000 bars
+  FIL: 1000 bars
+  ZRO: 813 bars
+  ZEC: 1000 bars
+  XPL: 351 bars
+  TUT: 533 bars
+  TRUMP: 600 bars
+  PROM: 1000 bars
+  PEPE: 1000 bars
+  PENGU: 633 bars
+  NEAR: 1000 bars
+  MSTRB: 80 bars
+  LTC: 1000 bars
+  HEMI: 353 bars
+  FET: 1000 bars
+  ETH: 1000 bars
+  ENA: 892 bars
+  DASH: 1000 bars
+  CRCLB: 92 bars
+  BTC: 1000 bars
+  AAVE: 1000 bars
+  CAKE: 1000 bars
+  ASTER: 340 bars
+  SNDKB: 92 bars
+  ATOM: 1000 bars
+  TON: 692 bars
+  GRAM: 71 bars
+  JUP: 954 bars
+  DOT: 1000 bars
+  VIRTUAL: 518 bars
+  OP: 1000 bars
+  HBAR: 1000 bars
+  ZEN: 1000 bars
+  POL: 728 bars
+  ETC: 1000 bars
+  SUI: 1000 bars
+  COTI: 1000 bars
+  BNB: 1000 bars
+  CHIP: 143 bars
+  NFP: 927 bars
+  WLD: 1000 bars
+  RAY: 1000 bars
+  SHIB: 1000 bars
+  SEI: 1000 bars
+  INJ: 1000 bars
+  AVAX: 1000 bars
+  BONK: 1000 bars
+  PENDLE: 1000 bars
+  IOST: 1000 bars
+  SOXLB: 66 bars
+  MUB: 92 bars
+  TAO: 883 bars
+  FORM: 541 bars
+  ZKC: 361 bars
+  STRK: 934 bars
+  AERO: 56 bars
+  MORPHO: 343 bars
+  TIA: 1000 bars
+  SOPH: 471 bars
+  ETHFI: 907 bars
+  ORCA: 644 bars
+  SOLV: 602 bars
+
+params: distance=2.0% tp=3.0% waves=10 spacing=7.0d warmup=365 bars lookback=365 bars sl=8.0% deadline=30d cost=0.30% effective_tp=3.24%
+
+intra-bar bound: OPTIMISTIC (low-then-high)
+====================================================================================================================================================
+baseline (no selection at all): n=4505  $/dollar-day=+0.008565  stop=2.0%  win=98.0%  E=+2.715%
+
+gate               ships  veto_n  pass_n  veto_$/d-day  pass_$/d-day        lift    95% CI (cluster bootstrap)   p_perm   p_fwer   min_lift  verdict
+----------------------------------------------------------------------------------------------------------------------------------------------------
+downtrend             on    1308    3197      0.008401      0.008630   +0.000229        [-0.004483, +0.005099]   0.8704   0.9886   0.002582  noise
+falling_knife         on    1448    3057      0.004523      0.010024   +0.005500        [-0.007500, +0.021140]   0.2675   0.9314   0.010282  noise
+rel_strength         off    2184    2321      0.006679      0.009950   +0.003271        [-0.006429, +0.016696]   0.6149   0.9886   0.005440  noise
+mae_quartile         off     952    3553      0.006243      0.009352   +0.003109        [-0.000371, +0.006121]   0.1612   0.9886   0.004183  noise
+backtest_evidence     on    1020    3485      0.004973      0.009462   +0.004489        [-0.009624, +0.018547]   0.6961   0.9886   0.006450  noise
+consensus             on     554    3951      0.004557      0.009098   +0.004540        [-0.009134, +0.020856]   0.9622   0.9886   0.010282  noise
+STACK (as shipped)    on    2905    1600      0.008329      0.008889   +0.000560        [-0.007667, +0.010879]        -        -          -  noise
+STACK (all six)      off    3697     808      0.008687      0.008140   -0.000547        [-0.006887, +0.008443]        -        -          -  noise
+
+gate                 group      n   stop%    win%       E%     pnl_usd    cap_days
+----------------------------------------------------------------------------------
+downtrend           vetoed   1308     2.5    97.5   +2.656    13989.77   1665325.2
+                    passed   3197     1.8    98.2   +2.740    36375.70   4215011.6
+falling_knife       vetoed   1448     3.0    97.0   +2.598     7052.75   1559240.5
+                    passed   3057     1.5    98.5   +2.771    43312.73   4321096.3
+rel_strength        vetoed   2184     2.8    97.2   +2.621    16625.06   2489313.0
+                    passed   2321     1.2    98.8   +2.804    33740.42   3391023.8
+mae_quartile        vetoed    952     2.5    97.5   +2.657     9289.74   1488058.2
+                    passed   3553     1.9    98.1   +2.731    41075.74   4392278.7
+backtest_evidence   vetoed   1020     3.9    96.1   +2.499     5839.57   1174344.1
+                    passed   3485     1.4    98.6   +2.779    44525.91   4705992.8
+consensus           vetoed    554     4.5    95.5   +2.433     3143.84    689853.5
+                    passed   3951     1.6    98.4   +2.755    47221.64   5190483.3
+STACK (as shipped)  vetoed   2905     2.5    97.5   +2.661    28309.13   3398928.7
+                    passed   1600     1.1    98.9   +2.814    22056.35   2481408.2
+STACK (all six)     vetoed   3697     2.2    97.8   +2.694    39669.99   4566439.6
+                    passed    808     1.1    98.9   +2.815    10695.49   1313897.2
+
+lift = pass_$/d-day - veto_$/d-day; POSITIVE means the gate vetoed the WORSE entries (it earns its keep).
+p_perm  = within-date permutation, CROSS-SECTIONAL skill only (a gate that vetoes on bad DAYS earns nothing here).
+p_fwer  = the same p after Westfall-Young step-down across all six gates. Reading six CIs and believing the one that
+          clears zero is itself multiple testing; this is the column that answers 'did ANY gate beat chance'.
+min_lift= the smallest |lift| this sample could have called significant after paying for six looks. A gate whose
+          true lift is below it is UNMEASURED, not exonerated - compare it to the baseline $/dollar-day above.
+
+intra-bar bound: PESSIMISTIC (high-then-low)
+====================================================================================================================================================
+baseline (no selection at all): n=4499  $/dollar-day=-0.004144  stop=7.2%  win=92.7%  E=+2.123%
+
+gate               ships  veto_n  pass_n  veto_$/d-day  pass_$/d-day        lift    95% CI (cluster bootstrap)   p_perm   p_fwer   min_lift  verdict
+----------------------------------------------------------------------------------------------------------------------------------------------------
+downtrend             on    1308    3191     -0.007882     -0.002749   +0.005133        [-0.001377, +0.011009]   0.1644   0.1816   0.005679  noise
+falling_knife         on    1448    3051     -0.004408     -0.004064   +0.000344        [-0.005187, +0.006239]   0.6381   0.9550   0.001450  noise
+rel_strength         off    2183    2316     -0.004431     -0.003918   +0.000512        [-0.003515, +0.005110]   0.6911   0.9550   0.001996  noise
+mae_quartile         off     951    3548     -0.003262     -0.004334   -0.001072        [-0.003521, +0.001428]   0.2733   0.9550   0.002300  noise
+backtest_evidence     on    2521    1978     -0.003738     -0.004529   -0.000792        [-0.005394, +0.003687]   0.5605   0.9550   0.002129  noise
+consensus             on     552    3947     -0.005189     -0.004047   +0.001142        [-0.003734, +0.006336]   0.8732   0.9550   0.004648  noise
+STACK (as shipped)    on    3552     947     -0.004962     -0.002102   +0.002860        [-0.000942, +0.006824]        -        -          -  noise
+STACK (all six)      off    3991     508     -0.004481     -0.002266   +0.002216        [-0.001133, +0.006200]        -        -          -  noise
+
+gate                 group      n   stop%    win%       E%     pnl_usd    cap_days
+----------------------------------------------------------------------------------
+downtrend           vetoed   1308     9.6    90.3   +1.853   -31264.25   3966509.7
+                    passed   3191     6.3    93.7   +2.234   -29191.93  10620687.4
+falling_knife       vetoed   1448     5.9    94.1   +2.272   -14981.95   3398428.7
+                    passed   3051     7.9    92.1   +2.053   -45474.22  11188768.4
+rel_strength        vetoed   2183     7.1    92.9   +2.142   -28525.34   6438395.8
+                    passed   2316     7.4    92.5   +2.106   -31930.84   8148801.2
+mae_quartile        vetoed    951     6.0    93.9   +2.262    -8408.12   2577718.1
+                    passed   3548     7.6    92.4   +2.086   -52048.05  12009479.0
+backtest_evidence   vetoed   2521     6.4    93.5   +2.214   -26499.08   7089803.6
+                    passed   1978     8.3    91.7   +2.008   -33957.10   7497393.4
+consensus           vetoed    552     6.5    93.5   +2.207    -6471.71   1247192.5
+                    passed   3947     7.3    92.6   +2.112   -53984.46  13340004.5
+STACK (as shipped)  vetoed   3552     7.4    92.6   +2.108   -51692.37  10417705.0
+                    passed    947     6.8    93.2   +2.180    -8763.80   4169492.0
+STACK (all six)     vetoed   3991     7.3    92.6   +2.115   -55429.59  12368653.3
+                    passed    508     6.7    93.3   +2.188    -5026.58   2218543.7
+
+lift = pass_$/d-day - veto_$/d-day; POSITIVE means the gate vetoed the WORSE entries (it earns its keep).
+p_perm  = within-date permutation, CROSS-SECTIONAL skill only (a gate that vetoes on bad DAYS earns nothing here).
+p_fwer  = the same p after Westfall-Young step-down across all six gates. Reading six CIs and believing the one that
+          clears zero is itself multiple testing; this is the column that answers 'did ANY gate beat chance'.
+min_lift= the smallest |lift| this sample could have called significant after paying for six looks. A gate whose
+          true lift is below it is UNMEASURED, not exonerated - compare it to the baseline $/dollar-day above.

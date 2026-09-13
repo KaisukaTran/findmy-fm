@@ -427,6 +427,14 @@ def approve_order(db: Session, order_id: int, reviewer: str | None = None) -> Fi
 
     try:
         fill = _execute(db, order)
+    except ExitUnsellable:
+        # Nothing on the venue to sell, ever — re-queuing would only re-run the same refusal
+        # every guard tick. The book was reconciled inside _size_exit_to_venue; the row keeps
+        # its reject_reason from there.
+        order.status = REJECTED
+        order.reviewer = reviewer
+        db.commit()
+        raise
     except Exception:
         # An order that could not execute must go back to the QUEUE, not sit at APPROVED:
         # sync_resting_orders only ever places PENDING rows, so a rung stranded at APPROVED
@@ -571,6 +579,25 @@ def _live_execute(db: Session, order: PendingOrder) -> Fill:
                 f"live BUY notional {notional:.2f} exceeds cap "
                 f"{settings.live_max_order_notional:.2f}"
             )
+
+    # A risk exit (sl / trailing / trail_sl / deadline) is a MARKET SELL for the whole position
+    # — and under the resting model the SAME position is already promised to the session's
+    # resting take-profit, which LOCKS the coins on the venue. Sent as-is the exit is refused
+    # with -2010 insufficient balance, the guard retries it every 90 s, and the session stays
+    # ACTIVE (so `sync_resting_tp` never retires the TP that is in the way): a deadlock. Live,
+    # 2026-09-12: orders 197 / 264 / 311 refused 1,874 / 636 / 165 times over three days while
+    # PUMP drifted from −1.8% to −18%. The take-profit comes off the book FIRST, then the exit
+    # is sized to what the venue actually holds (a testnet reset had left the wallet short of
+    # the booked quantity, which is the other way the same order is refused forever).
+    if (
+        resting_model_active()
+        and order.side == "SELL"
+        and order.order_type == "MARKET"
+        and _is_risk_exit(order.source_ref)
+    ):
+        if str(order.source_ref).startswith("pyramid:"):
+            _retire_sibling_tp(db, order)
+        _size_exit_to_venue(db, order)
 
     pair = live_provider().pair(order.symbol)
     # An entry must actually fill. A post-only BUY at the market is rejected outright (-2010),
@@ -907,6 +934,101 @@ def _book_delta(db: Session, order: PendingOrder, res: dict) -> bool:
 
 
 # --- live resting-maker model (live-readiness 1.5) ----------------------
+
+
+class ExitUnsellable(ValueError):
+    """The venue holds NONE of the asset a risk exit wants to sell, free or locked: there is no
+    order that could ever fill, so retrying every 90 s is not an exit — it is a log full of
+    -2010. Raised after the book has been reconciled to the venue; ``approve_order`` keeps the
+    order REJECTED instead of re-queuing it."""
+
+
+def _is_risk_exit(source_ref: str | None) -> bool:
+    """A MARKET SELL that realises risk already taken: ``pyramid:{id}:<kind>`` with any kind
+    but ``tp`` (``:tp`` is the resting exit itself), or an ``orphan:*`` sweep of inventory no
+    session covers."""
+    ref = str(source_ref or "")
+    if ref.startswith("orphan:"):
+        return True
+    parts = ref.split(":")
+    return len(parts) == 3 and parts[0] == "pyramid" and parts[2] != "tp"
+
+
+def _retire_sibling_tp(db: Session, exit_order: PendingOrder) -> None:
+    """Take the session's resting take-profit off the book before its market exit goes out.
+
+    The cancel books whatever the TP had already filled (``_cancel_resting``), and the row is
+    retired the way ``sync_resting_tp`` retires a dead session's TP, so the next pass cannot
+    re-place it in front of the exit. A refused cancel does NOT hold the exit: the row is
+    retired anyway (its link is kept, so ``sync_resting_orders`` keeps trying the cancel) and
+    the exit is then sized to what the venue reports as free.
+    """
+    sid = str(exit_order.source_ref).split(":")[1]
+    rows = (
+        db.query(PendingOrder)
+        .filter(
+            PendingOrder.status == PENDING,
+            PendingOrder.side == "SELL",
+            PendingOrder.source_ref == f"pyramid:{sid}:tp",
+            PendingOrder.exchange_order_id.isnot(None),
+        )
+        .all()
+    )
+    for tp in rows:
+        if not _cancel_resting(db, tp):
+            logger.warning(
+                "order %s: resting TP %s could not be cancelled before the exit — "
+                "placing the exit against the venue's free balance", exit_order.id, tp.id,
+            )
+        tp.status = REJECTED
+        tp.reviewer = "resting-tp"
+        tp.reject_reason = "resting-tp: superseded by market exit"
+        tp.decided_at = utcnow()
+        audit.log(db, "orders", "tp_retired_for_exit", entity=f"order:{tp.id}",
+                  symbol=tp.symbol, exit_order=exit_order.id)
+    if rows:
+        db.flush()
+
+
+def _size_exit_to_venue(db: Session, order: PendingOrder) -> None:
+    """Shrink a MARKET SELL exit to the venue's free balance when the book holds more than the
+    wallet does. A read failure keeps the booked size (today's behaviour). Free but locked
+    elsewhere is raised so the guard retries once the lock clears. Held NOWHERE on the venue
+    (a testnet reset ate the coins; live 2026-09-13: 8,022 PUMP the book still carried after the
+    real 18,446 were sold) is a book/venue mismatch no order can fix — the position is written
+    off with a loud audit row and the order is rejected for good via ``ExitUnsellable``."""
+    from app import execution
+
+    got = execution.fetch_asset_balance(order.symbol)
+    if got is None:
+        return
+    free, locked = got
+    if free >= order.quantity - 1e-9:
+        return
+    audit.log(db, "orders", "exit_qty_clamped", entity=f"order:{order.id}", symbol=order.symbol,
+              requested=round(order.quantity, 8), venue_free=round(free, 8),
+              venue_locked=round(locked, 8))
+    if free > 0:
+        logger.info("order %s: exit sized to the venue's free %s %s (book %s)",
+                    order.id, free, order.symbol, order.quantity)
+        order.quantity = free
+        return
+    if locked > 0:
+        raise ValueError(
+            f"order {order.id}: no free {order.symbol} to sell — {locked:g} locked in open "
+            f"orders (book {order.quantity:g}); retrying"
+        )
+    pos = db.query(Position).filter(Position.symbol == order.symbol).first()
+    audit.log(db, "orders", "phantom_inventory_writeoff", entity=f"order:{order.id}",
+              symbol=order.symbol, book_qty=round(order.quantity, 8),
+              position_qty=round(pos.quantity, 8) if pos else None,
+              position_cost=round(pos.total_cost, 6) if pos else None)
+    if pos is not None:
+        pos.quantity = 0.0
+        pos.total_cost = 0.0
+    order.reject_reason = "venue holds none of this asset — phantom inventory written off"
+    raise ExitUnsellable(f"order {order.id}: venue holds no {order.symbol} at all (book "
+                         f"{order.quantity:g}) — written off, not retried")
 
 
 def is_entry_wave(order: PendingOrder) -> bool:

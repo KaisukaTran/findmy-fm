@@ -751,6 +751,30 @@ def fetch_account_balance(quote: str) -> float:
     return free + used
 
 
+def fetch_asset_balance(asset: str) -> tuple[float, float] | None:
+    """The venue's ``(free, locked)`` balance of *asset*, or None when it cannot be read. Fails
+    SOFT on purpose: the one caller sizes a risk EXIT with it, and an exit must never be held
+    back by a balance read — None means "place the booked size, as before". ``locked`` is what
+    open orders hold; it tells a caller whether a zero ``free`` is "coins tied up elsewhere"
+    (retry) or "the venue holds none" (nothing to sell). Same authenticated client as
+    ``place_live_order``; never logs the key/secret."""
+    try:
+        ex = _client()
+        with _client_lock:
+            bal = ex.fetch_balance()
+        row = bal.get(asset) or {}
+        return float(row.get("free") or 0.0), float(row.get("used") or 0.0)
+    except Exception as exc:
+        logger.warning("fetch_asset_balance(%s) failed — exit keeps its booked size: %s", asset, exc)
+        return None
+
+
+def fetch_free_balance(asset: str) -> float | None:
+    """``fetch_asset_balance``'s free leg alone."""
+    got = fetch_asset_balance(asset)
+    return None if got is None else got[0]
+
+
 # --- 1.2: exchange-filter compliance (pure; live placement rounds through this) ---------
 
 

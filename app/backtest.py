@@ -83,6 +83,7 @@ def simulate_kss(
     *,
     pessimistic_intrabar: bool = False,
     wave0_notional_usd: float = 100.0,
+    tp_step_pct: float = 0.0,
 ) -> SimResult:
     """
     Simulate one pyramid entered at candle index `start` with the SAME exits the live
@@ -129,7 +130,15 @@ def simulate_kss(
     # Wave 0 always fills at the entry close (no gap for the entry bar itself).
     fill_prices = [entry] + [targets[i] for i in range(1, max_waves)]
     filled = 1  # wave 0 fills at entry
-    tp_threshold_factor = 1 + tp_pct / 100
+    # `tp_step_pct` mirrors the live `kss_tp_step_per_rung_pct`: the take-profit climbs by this
+    # much for every filled DCA rung beyond the entry (k waves filled = k-1 rungs). 0 keeps the
+    # flat target — byte-identical to before this parameter existed.
+    def eff_tp(k: int) -> float:
+        return tp_pct + tp_step_pct * max(0, k - 1)
+
+    def tp_factor(k: int) -> float:
+        return 1 + eff_tp(k) / 100
+
     sl_threshold_factor = 1 - sl_pct / 100
     mae_pct = 0.0  # deepest unrealized dip vs the running avg (≤ 0), tracked until exit
 
@@ -202,9 +211,9 @@ def simulate_kss(
                 dd = (bar["low"] - pre_avg) / pre_avg * 100.0
                 if dd < mae_pct:
                     mae_pct = dd
-                if bar["high"] >= pre_avg * tp_threshold_factor:
+                if bar["high"] >= pre_avg * tp_factor(filled):
                     return SimResult(True, round(days, 2), filled, False,
-                                     round(tp_pct - cost_pct, 4), mae_pct=round(mae_pct, 4),
+                                     round(eff_tp(filled) - cost_pct, 4), mae_pct=round(mae_pct, 4),
                                      capital_days=close_capital(j),
                                      exit_capital=round(deployed_capital, 6))
 
@@ -252,8 +261,9 @@ def simulate_kss(
                                  capital_days=close_capital(j),
                                  exit_capital=round(deployed_capital, 6))
 
-            if bar["high"] >= avg * tp_threshold_factor:
-                return SimResult(True, round(days, 2), filled, False, round(tp_pct - cost_pct, 4),
+            if bar["high"] >= avg * tp_factor(filled):
+                return SimResult(True, round(days, 2), filled, False,
+                                 round(eff_tp(filled) - cost_pct, 4),
                                  mae_pct=round(mae_pct, 4),
                                  capital_days=close_capital(j),
                                  exit_capital=round(deployed_capital, 6))

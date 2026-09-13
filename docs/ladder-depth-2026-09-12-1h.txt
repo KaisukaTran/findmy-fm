@@ -1,0 +1,111 @@
+ladder_depth_study  interval=1h symbols=63 every=168 bars wave0=$75 cost=0.30% seed=7
+
+A_current_3w_sl8_7d  distance 2.0% waves 3 tp 3.0% (+0.0/rung) sl 8.0% horizon 7d   [OPTIMISTIC]   (2s)
+  n= 8,325  + 22 still OPEN at data end (mean -1.2%, carrying -121$, worst -31$, 0 with all 10 rungs)
+  tp  79.4%  sl  16.0%  horizon   4.6% (mean -1.5%)
+  mean +0.745%/trial = -1.30 $/trial   sum wins +40,434$  sum losses -51,268$   net -10,834$
+  mean win +6.02$   mean loss -31.78$   loss p50/p95/p99 -36/-36/-36$   WORST -36$ = 6 mean wins
+  share of $loss from >=8 rungs -0%   capital-days/trial 423   %/$-day -0.3080
+  waves at exit: {1: 2894, 2: 1832, 3: 3599}
+    2024: n= 3197 mean -2.66$ sum -8,513$ worst -36$ sl 19.3% horizon 4.7%
+    2025: n= 3279 mean +0.18$ sum +601$ worst -36$ sl 13.1% horizon 2.9%
+    2026: n= 1849 mean -1.58$ sum -2,922$ worst -36$ sl 15.4% horizon 7.3%
+
+A_current_3w_sl8_7d  distance 2.0% waves 3 tp 3.0% (+0.0/rung) sl 8.0% horizon 7d   [PESSIMISTIC]   (2s)
+  n= 8,325  + 22 still OPEN at data end (mean -1.2%, carrying -121$, worst -31$, 0 with all 10 rungs)
+  tp  78.6%  sl  16.8%  horizon   4.7% (mean -1.6%)
+  mean +0.656%/trial = -1.69 $/trial   sum wins +39,581$  sum losses -53,680$   net -14,100$
+  mean win +5.96$   mean loss -31.91$   loss p50/p95/p99 -36/-36/-36$   WORST -36$ = 6 mean wins
+  share of $loss from >=8 rungs -0%   capital-days/trial 433   %/$-day -0.3910
+  waves at exit: {1: 2936, 2: 1767, 3: 3622}
+    2024: n= 3197 mean -3.26$ sum -10,414$ worst -36$ sl 20.5% horizon 4.8%
+    2025: n= 3279 mean -0.17$ sum -541$ worst -36$ sl 13.8% horizon 2.9%
+    2026: n= 1849 mean -1.70$ sum -3,144$ worst -36$ sl 15.6% horizon 7.4%
+
+B_deep_flat_365d  distance 2.0% waves 10 tp 5.0% (+0.0/rung) sl 50.0% horizon 365d   [OPTIMISTIC]   (3s)
+  n= 8,142  + 205 still OPEN at data end (mean -13.2%, carrying -97,833$, worst -1,752$, 112 with all 10 rungs)
+  tp  97.9%  sl   2.1%  horizon   0.0% (mean +0.0%)
+  mean +3.538%/trial = +5.58 $/trial   sum wins +361,965$  sum losses -316,529$   net +45,436$
+  mean win +45.42$   mean loss -1840.29$   loss p50/p95/p99 -1840/-1840/-1840$   WORST -1,840$ = 40 mean wins
+  share of $loss from >=8 rungs 100%   capital-days/trial 14,080   %/$-day +0.0396
+  waves at exit: {1: 2011, 2: 1524, 3: 941, 4: 818, 5: 626, 6: 455, 7: 321, 8: 242, 9: 192, 10: 1012}
+    2024: n= 3197 mean +19.75$ sum +63,132$ worst -1,840$ sl 1.7% horizon 0.0%
+    2025: n= 3275 mean -10.76$ sum -35,239$ worst -1,840$ sl 2.7% horizon 0.0%
+    2026: n= 1670 mean +10.51$ sum +17,543$ worst -1,840$ sl 1.7% horizon 0.0%
+
+B_deep_flat_365d  distance 2.0% waves 10 tp 5.0% (+0.0/rung) sl 50.0% horizon 365d   [PESSIMISTIC]   (5s)
+  n= 8,142  + 205 still OPEN at data end (mean -13.2%, carrying -97,833$, worst -1,752$, 112 with all 10 rungs)
+  tp  97.9%  sl   2.1%  horizon   0.0% (mean +0.0%)
+  mean +3.538%/trial = +5.86 $/trial   sum wins +364,232$  sum losses -316,529$   net +47,703$
+  mean win +45.70$   mean loss -1840.29$   loss p50/p95/p99 -1840/-1840/-1840$   WORST -1,840$ = 40 mean wins
+  share of $loss from >=8 rungs 100%   capital-days/trial 14,715   %/$-day +0.0398
+  waves at exit: {1: 2023, 2: 1518, 3: 931, 4: 814, 5: 617, 6: 454, 7: 321, 8: 240, 9: 194, 10: 1030}
+    2024: n= 3197 mean +17.25$ sum +55,152$ worst -1,840$ sl 1.9% horizon 0.0%
+    2025: n= 3275 mean -7.66$ sum -25,075$ worst -1,840$ sl 2.5% horizon 0.0%
+    2026: n= 1670 mean +10.55$ sum +17,626$ worst -1,840$ sl 1.7% horizon 0.0%
+
+C_deep_step_365d  distance 2.0% waves 10 tp 5.0% (+0.5/rung) sl 50.0% horizon 365d   [OPTIMISTIC]   (6s)
+  n= 8,050  + 297 still OPEN at data end (mean -13.8%, carrying -148,777$, worst -1,812$, 181 with all 10 rungs)
+  tp  96.1%  sl   3.9%  horizon   0.0% (mean +0.0%)
+  mean +4.046%/trial = +9.20 $/trial   sum wins +648,247$  sum losses -574,169$   net +74,078$
+  mean win +83.78$   mean loss -1840.29$   loss p50/p95/p99 -1840/-1840/-1840$   WORST -1,840$ = 22 mean wins
+  share of $loss from >=8 rungs 100%   capital-days/trial 26,183   %/$-day +0.0352
+  waves at exit: {1: 2011, 2: 1441, 3: 853, 4: 697, 5: 556, 6: 423, 7: 322, 8: 221, 9: 189, 10: 1337}
+    2024: n= 3197 mean +37.18$ sum +118,871$ worst -1,840$ sl 3.2% horizon 0.0%
+    2025: n= 3269 mean -25.10$ sum -82,040$ worst -1,840$ sl 5.0% horizon 0.0%
+    2026: n= 1584 mean +23.51$ sum +37,247$ worst -1,840$ sl 2.8% horizon 0.0%
+
+C_deep_step_365d  distance 2.0% waves 10 tp 5.0% (+0.5/rung) sl 50.0% horizon 365d   [PESSIMISTIC]   (8s)
+  n= 8,050  + 297 still OPEN at data end (mean -13.8%, carrying -148,777$, worst -1,812$, 181 with all 10 rungs)
+  tp  96.2%  sl   3.9%  horizon   0.0% (mean +0.0%)
+  mean +4.061%/trial = +9.86 $/trial   sum wins +649,861$  sum losses -570,488$   net +79,373$
+  mean win +83.96$   mean loss -1840.29$   loss p50/p95/p99 -1840/-1840/-1840$   WORST -1,840$ = 22 mean wins
+  share of $loss from >=8 rungs 100%   capital-days/trial 26,294   %/$-day +0.0375
+  waves at exit: {1: 2023, 2: 1436, 3: 847, 4: 695, 5: 558, 6: 420, 7: 319, 8: 220, 9: 189, 10: 1343}
+    2024: n= 3197 mean +36.81$ sum +117,694$ worst -1,840$ sl 3.3% horizon 0.0%
+    2025: n= 3269 mean -23.12$ sum -75,568$ worst -1,840$ sl 4.9% horizon 0.0%
+    2026: n= 1584 mean +23.51$ sum +37,247$ worst -1,840$ sl 2.8% horizon 0.0%
+
+D_deep_step_7d  distance 2.0% waves 10 tp 5.0% (+0.5/rung) sl 50.0% horizon 7d   [OPTIMISTIC]   (8s)
+  n= 8,298  + 49 still OPEN at data end (mean -0.2%, carrying -136$, worst -66$, 0 with all 10 rungs)
+  tp  70.8%  sl   0.5%  horizon  28.8% (mean -2.5%)
+  mean +3.089%/trial = -4.88 $/trial   sum wins +284,353$  sum losses -324,822$   net -40,469$
+  mean win +42.17$   mean loss -208.89$   loss p50/p95/p99 -70/-842/-1840$   WORST -1,840$ = 44 mean wins
+  share of $loss from >=8 rungs 96%   capital-days/trial 3,563   %/$-day -0.1369
+  waves at exit: {1: 2059, 2: 1485, 3: 908, 4: 798, 5: 628, 6: 511, 7: 391, 8: 297, 9: 233, 10: 988}
+    2024: n= 3197 mean +7.47$ sum +23,890$ worst -1,242$ sl 0.0% horizon 27.5%
+    2025: n= 3279 mean -12.12$ sum -39,755$ worst -1,840$ sl 1.2% horizon 22.8%
+    2026: n= 1822 mean -13.50$ sum -24,604$ worst -1,010$ sl 0.0% horizon 41.7%
+
+D_deep_step_7d  distance 2.0% waves 10 tp 5.0% (+0.5/rung) sl 50.0% horizon 7d   [PESSIMISTIC]   (9s)
+  n= 8,298  + 49 still OPEN at data end (mean -0.2%, carrying -136$, worst -66$, 0 with all 10 rungs)
+  tp  70.7%  sl   0.4%  horizon  28.9% (mean -2.5%)
+  mean +3.098%/trial = -4.36 $/trial   sum wins +283,554$  sum losses -319,720$   net -36,167$
+  mean win +42.06$   mean loss -205.48$   loss p50/p95/p99 -69/-821/-1840$   WORST -1,840$ = 44 mean wins
+  share of $loss from >=8 rungs 96%   capital-days/trial 3,597   %/$-day -0.1212
+  waves at exit: {1: 2071, 2: 1480, 3: 902, 4: 796, 5: 630, 6: 508, 7: 390, 8: 297, 9: 233, 10: 991}
+    2024: n= 3197 mean +6.79$ sum +21,720$ worst -1,242$ sl 0.0% horizon 27.8%
+    2025: n= 3279 mean -10.15$ sum -33,283$ worst -1,840$ sl 1.1% horizon 22.8%
+    2026: n= 1822 mean -13.50$ sum -24,604$ worst -1,010$ sl 0.0% horizon 41.7%
+
+E_deep_step_d4_365d  distance 4.0% waves 10 tp 5.0% (+0.5/rung) sl 50.0% horizon 365d   [OPTIMISTIC]   (10s)
+  n= 8,122  + 225 still OPEN at data end (mean -9.9%, carrying -65,093$, worst -1,517$, 81 with all 10 rungs)
+  tp  98.5%  sl   1.5%  horizon   0.0% (mean +0.0%)
+  mean +4.782%/trial = +15.60 $/trial   sum wins +324,254$  sum losses -197,522$   net +126,732$
+  mean win +40.53$   mean loss -1632.41$   loss p50/p95/p99 -1632/-1632/-1632$   WORST -1,632$ = 40 mean wins
+  share of $loss from >=8 rungs 100%   capital-days/trial 10,673   %/$-day +0.1462
+  waves at exit: {1: 3333, 2: 1610, 3: 1025, 4: 589, 5: 369, 6: 234, 7: 186, 8: 165, 9: 104, 10: 507}
+    2024: n= 3197 mean +30.42$ sum +97,247$ worst -1,632$ sl 1.0% horizon 0.0%
+    2025: n= 3272 mean -4.07$ sum -13,330$ worst -1,632$ sl 2.2% horizon 0.0%
+    2026: n= 1653 mean +25.90$ sum +42,815$ worst -1,632$ sl 1.0% horizon 0.0%
+
+E_deep_step_d4_365d  distance 4.0% waves 10 tp 5.0% (+0.5/rung) sl 50.0% horizon 365d   [PESSIMISTIC]   (12s)
+  n= 8,122  + 225 still OPEN at data end (mean -9.9%, carrying -65,093$, worst -1,517$, 81 with all 10 rungs)
+  tp  98.5%  sl   1.5%  horizon   0.0% (mean +0.0%)
+  mean +4.803%/trial = +16.59 $/trial   sum wins +329,029$  sum losses -194,257$   net +134,771$
+  mean win +41.11$   mean loss -1632.41$   loss p50/p95/p99 -1632/-1632/-1632$   WORST -1,632$ = 40 mean wins
+  share of $loss from >=8 rungs 100%   capital-days/trial 11,075   %/$-day +0.1498
+  waves at exit: {1: 3340, 2: 1603, 3: 1020, 4: 582, 5: 363, 6: 230, 7: 190, 8: 168, 9: 106, 10: 520}
+    2024: n= 3197 mean +29.57$ sum +94,518$ worst -1,632$ sl 1.1% horizon 0.0%
+    2025: n= 3272 mean -0.74$ sum -2,416$ worst -1,632$ sl 2.0% horizon 0.0%
+    2026: n= 1653 mean +25.81$ sum +42,669$ worst -1,632$ sl 1.0% horizon 0.0%

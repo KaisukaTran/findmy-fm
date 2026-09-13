@@ -864,6 +864,7 @@ document.addEventListener("submit", async (e) => {
       entry_momentum_gate: f.get("entry_momentum_gate") === "1",
       max_avg_mae_pct: num(f.get("max_avg_mae_pct")),
       kss_dynamic_tp_enabled: f.get("kss_dynamic_tp_enabled") === "1",
+      kss_tp_step_per_rung_pct: num(f.get("kss_tp_step_per_rung_pct")),
       kss_tp_gap_pct: num(f.get("kss_tp_gap_pct")),
       kss_exit_fee_mult: num(f.get("kss_exit_fee_mult")),
       kss_trail_atr_mult: num(f.get("kss_trail_atr_mult")),

@@ -83,6 +83,15 @@ def _to_pyramid(row: KssSession) -> PyramidSession:
         )
         for w in sorted(row.waves, key=lambda x: x.wave_num)
     ]
+    # Take-profit climbs with the ladder: +step% per FILLED DCA rung beyond the entry wave
+    # (base 5, step 0.5, rung 8 filled → 9% above the average). DERIVED here, on every load,
+    # from the untouched `row.tp_pct` — a stored bump would be applied again on every replay
+    # of the same fill, and `_save_state` deliberately never writes tp_pct back. Both exits
+    # read it from `py.tp_pct`: the frozen `check_tp` (paper) and `sync_resting_tp`'s
+    # `estimated_tp_price` (live), which re-places the resting order when it moves.
+    rungs_filled = sum(1 for w in py.waves if w.wave_num >= 1 and w.status == WAVE_FILLED)
+    if rungs_filled and settings.kss_tp_step_per_rung_pct > 0:
+        py.tp_pct = row.tp_pct + settings.kss_tp_step_per_rung_pct * rungs_filled
     return py
 
 
@@ -2832,6 +2841,8 @@ def preview(
 
     NOTE: intentionally simpler than the live geometric waves (see kss-spec skill).
     """
+    from app.config import settings
+
     qty_per_wave = isolated_fund / max_waves / entry_price
     waves = []
     cum_qty = 0.0
@@ -2849,7 +2860,10 @@ def preview(
                 "cumulative_qty": round(cum_qty, 8),
                 "cumulative_cost": round(cum_cost, 4),
                 "avg_price_after": round(avg_after, 8),
-                "tp_price_after": round(avg_after * (1 + tp_pct / 100), 8) if avg_after > 0 else 0.0,
+                # Same per-rung TP step `_to_pyramid` applies (wave n = n rungs beyond entry).
+                "tp_price_after": round(
+                    avg_after * (1 + (tp_pct + settings.kss_tp_step_per_rung_pct * n) / 100), 8
+                ) if avg_after > 0 else 0.0,
             }
         )
     final_wave_price = entry_price * (1 - distance_pct / 100 * (max_waves - 1))

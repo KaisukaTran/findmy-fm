@@ -97,6 +97,7 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "pyramid_up_lock_pct": float,
     # Dynamic trailing TP/SL (docs/kss-dynamic-tp-plan.md) — all runtime-tunable, OFF by default
     "kss_dynamic_tp_enabled": _to_bool,
+    "kss_tp_step_per_rung_pct": float,  # TP climbs per filled DCA rung (derived, row untouched)
     "kss_tp_gap_pct": float,
     "kss_exit_fee_mult": float,
     "kss_trail_atr_mult": float,

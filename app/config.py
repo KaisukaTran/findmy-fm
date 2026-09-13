@@ -343,6 +343,7 @@ class Settings(BaseSettings):
 
     # --- Dynamic trailing TP/SL (docs/kss-dynamic-tp-plan.md) — service-layer, OFF by default ---
     kss_dynamic_tp_enabled: bool = Field(default=False, description="Master toggle for the dynamic trailing channel: once a session clears avg*(1+distance%%) it cancels its DCA ladder and rides a volatility-aware trailing SL with a floating TP, instead of the fixed tp_pct. OFF = today's behaviour unchanged.")
+    kss_tp_step_per_rung_pct: float = Field(default=0.0, description="Take-profit rises by this many %% for EVERY filled DCA rung beyond the entry wave (derived at load, never written to the session row). Base 5%% + 0.5/rung: rung 8 filled -> TP 9%% above the average. 0 = off.")
     kss_tp_gap_pct: float = Field(default=5.0, description="Spike-grab TP ceiling: this %% above the ratcheted SL. A high value effectively disables the spike-grab so the trailing SL is the sole exit (pure chandelier).")
     kss_exit_fee_mult: float = Field(default=3.0, description="Fee-safe floor multiplier: both the dynamic TP and SL are floored at avg*(1 + this x round_trip_cost%%), so NO automatic trailing exit ever books a loss — not even a fee loss. >=1; 3 = comfortably above round-trip cost.")
     kss_trail_atr_mult: float = Field(default=1.0, description="Dynamic trailing-stop distance = this x the coin's daily ATR%% (volatility-aware: rides the coin's normal range, exits only on a genuine reversal).")

@@ -511,6 +511,7 @@ class KssSettingsBody(BaseModel):
     max_avg_mae_pct: float | None = Field(None, ge=0, le=100)  # absolute avg_mae drawdown gate (0=off)
     # Dynamic trailing TP/SL (docs/kss-dynamic-tp-plan.md)
     kss_dynamic_tp_enabled: bool | None = None
+    kss_tp_step_per_rung_pct: float | None = Field(None, ge=0, le=10)
     kss_tp_gap_pct: float | None = Field(None, ge=0, le=100)
     kss_exit_fee_mult: float | None = Field(None, ge=1, le=20)
     kss_trail_atr_mult: float | None = Field(None, ge=0, le=10)

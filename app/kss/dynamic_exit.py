@@ -30,13 +30,11 @@ ARM_LOCK_MARGIN_PCT = 0.5
 
 
 def price_precision(reference_price: float) -> int:
-    """Decimal places for SL/TP, mirroring ``pyramid._calculate_price_precision`` so the dynamic
-    levels round exactly like wave prices (BTC-like → 2, ETH-like → 4, small alts → 6)."""
-    if reference_price >= 10_000:
-        return 2
-    if reference_price >= 100:
-        return 4
-    return 6
+    """Decimal places for SL/TP — the one shared rule (``app.kss.precision``), so the dynamic
+    levels round exactly like wave prices."""
+    from app.kss.precision import price_precision as _shared
+
+    return _shared(reference_price)
 
 
 def fee_floor_price(avg: float) -> float:

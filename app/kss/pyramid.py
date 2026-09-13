@@ -162,13 +162,11 @@ class PyramidSession:
             logger.warning(f"Failed to load exchange info for {self.symbol}: {e}")
 
     def _calculate_price_precision(self) -> int:
-        """Calculate price precision based on entry price magnitude."""
-        if self.entry_price >= 10000:
-            return 2  # BTC-like
-        elif self.entry_price >= 100:
-            return 4  # ETH-like
-        else:
-            return 6  # Small altcoins
+        """Calculate price precision based on entry price magnitude — the shared rule in
+        ``app.kss.precision`` (a flat 6 below $100 turned PEPE's 3.47e-06 into 3e-06)."""
+        from app.kss.precision import price_precision
+
+        return price_precision(self.entry_price)
 
     @property
     def pip_size(self) -> float:

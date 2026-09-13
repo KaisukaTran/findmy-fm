@@ -29,15 +29,11 @@ MAX_ADDS_CAP = 3
 
 
 def price_precision(reference_price: float) -> int:
-    """Decimal places for trigger/avg prices, mirroring
-    ``pyramid._calculate_price_precision`` / ``dynamic_exit.price_precision``
-    (BTC-like → 2, ETH-like → 4, small alts → 6) so Pyramid-UP prices round
-    exactly like the rest of the KSS engine."""
-    if reference_price >= 10_000:
-        return 2
-    if reference_price >= 100:
-        return 4
-    return 6
+    """Decimal places for trigger/avg prices — the one shared rule (``app.kss.precision``),
+    so Pyramid-UP prices round exactly like the rest of the KSS engine."""
+    from app.kss.precision import price_precision as _shared
+
+    return _shared(reference_price)
 
 
 def _round_qty(raw_qty: float, step_size: float, min_qty: float) -> float:

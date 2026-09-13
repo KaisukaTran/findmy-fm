@@ -215,6 +215,18 @@
         <option value="1" {% if k.maker_orders %}selected{% endif %}>Bật</option>
         <option value="0" {% if not k.maker_orders %}selected{% endif %}>Tắt</option>
       </select></label>
+    <label title="CHỈ PAPER: lệnh LIMIT khớp khi nến 1 phút CHẠM giá (như sàn khớp lệnh nằm sẵn), thay vì khi mẫu giá 15 phút tình cờ nằm dưới limit. Khớp đúng giá limit, không trượt, phí maker; mô phỏng post-only. TP phiên nằm dưới dạng LIMIT (sync_resting_tp) thay vì bán market ở lần kiểm 15 phút.">Paper khớp theo chạm nến 1m <span class="varname">paper_fill_touch_1m</span>
+      <select name="paper_fill_touch_1m" class="select-inline">
+        <option value="1" {% if k.paper_fill_touch_1m %}selected{% endif %}>Bật</option>
+        <option value="0" {% if not k.paper_fill_touch_1m %}selected{% endif %}>Tắt</option>
+      </select></label>
+    <label title="Mô hình chạm: nến phải XUYÊN QUA limit (vượt hẳn) mới tính khớp — trừ hao vị trí trong hàng đợi. Tắt: chạm đúng giá là khớp.">Phải xuyên qua limit <span class="varname">paper_fill_needs_trade_through</span>
+      <select name="paper_fill_needs_trade_through" class="select-inline">
+        <option value="1" {% if k.paper_fill_needs_trade_through %}selected{% endif %}>Bật</option>
+        <option value="0" {% if not k.paper_fill_needs_trade_through %}selected{% endif %}>Tắt</option>
+      </select></label>
+    <label title="Phí maker % cho lệnh LIMIT khớp giả lập theo mô hình chạm (Binance spot VIP0: maker = taker = 0,1%).">Phí maker % <span class="varname">maker_fee_pct</span>
+      <input name="maker_fee_pct" type="number" step="0.01" min="0" max="1" value="{{ '%.2f'|format(k.maker_fee_pct) }}"></label>
     <label title="Hủy lệnh maker đang chờ nếu chưa khớp sau số giây này. 0 = chờ vô hạn (đúng kiểu DCA).">Timeout khớp lệnh (giây) <span class="varname">order_fill_timeout_sec</span>
       <input name="order_fill_timeout_sec" type="number" step="1" min="0" value="{{ k.order_fill_timeout_sec }}"></label>
     <label title="Định tuyến lệnh thật sang TESTNET của sàn (testnet.binance.vision) thay vì sản xuất — để kiểm thử đường live trước khi dùng key thật.">Dùng TESTNET <span class="varname">live_use_testnet</span>

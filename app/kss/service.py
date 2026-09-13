@@ -1330,7 +1330,7 @@ def _handle_tp_triggered(db: Session, row: KssSession, result: dict) -> None:
     # 1.5 live maker: the exit rests on the exchange and follows avg (sync_resting_tp), so a
     # fill that trips the TP must NOT also queue a market sell. Keep the session ACTIVE — the
     # resting order completes it when the venue fills it.
-    if orders.resting_model_active():
+    if orders.tp_rests():  # live resting model, or the paper touch model
         row.status = SESSION_ACTIVE
         audit.log(db, "kss", "tp_resting", entity=f"kss:{row.id}", symbol=row.symbol)
         return
@@ -2119,7 +2119,7 @@ def manage_open_sessions(db: Session) -> list[int]:
             py = _to_pyramid(row)
             # 1.5 live maker: the exit already rests on the exchange (sync_resting_tp), so
             # triggering a market TP here would sell the same inventory twice.
-            res = None if orders.resting_model_active() else py.check_tp(price)
+            res = None if orders.tp_rests() else py.check_tp(price)
             if res and not _tp_clears_cost(db, row.symbol, price):
                 # K-2 defer: market hit the session TP but it would realize below true cost+fees.
                 py.status = PyramidSessionStatus.ACTIVE
@@ -2228,10 +2228,12 @@ def sync_resting_tp(db: Session) -> dict:
 
     This only maintains the *queue*: `orders.sync_resting_orders` does the placing, and a TP
     whose session is no longer ACTIVE is rejected here, which is what takes it off the book.
-    No-op unless `orders.resting_model_active()`. Returns counts for the cycle summary.
+    No-op unless `orders.tp_rests()` — the live resting model, or the paper touch model
+    (where the queued LIMIT row is filled by a 1-minute candle touch instead of the venue).
+    Returns counts for the cycle summary.
     """
     out = {"queued": 0, "replaced": 0, "dropped": 0}
-    if not orders.resting_model_active():
+    if not orders.tp_rests():
         return out
 
     live_sessions: set[int] = set()
@@ -2435,7 +2437,7 @@ def run_position_guard(db: Session) -> dict:
     # while the breaker is frozen, exactly when a losing streak makes the exit most needed.
     from sqlalchemy import or_
 
-    resting = orders.resting_model_active()
+    resting = orders.tp_rests()  # a standing LIMIT take-profit (venue or paper touch model)
     for o in (db.query(PendingOrder)
               .filter(PendingOrder.status == PENDING, PendingOrder.side == "SELL",
                       or_(PendingOrder.source_ref.like("pyramid:%"),

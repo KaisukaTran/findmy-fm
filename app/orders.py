@@ -310,6 +310,79 @@ def auto_approve_by_policy(db: Session) -> list[int]:
     return approved
 
 
+def touch_model_active() -> bool:
+    """Paper AND ``paper_fill_touch_1m``: resting LIMITs are filled by 1-minute candle touches
+    (see ``auto_fill_due_orders``). Never on live — the venue fills there."""
+    from app import execution
+
+    return bool(settings.paper_fill_touch_1m) and not execution.live_enabled()
+
+
+def tp_rests() -> bool:
+    """The session take-profit is a standing LIMIT row maintained by ``sync_resting_tp`` —
+    on the venue (live resting model) or in the paper book (touch model) — so the 15-minute
+    check must NOT also sell it at market."""
+    return resting_model_active() or touch_model_active()
+
+
+def _touch_candles(limit_orders: list[PendingOrder]) -> dict[str, list]:
+    """1-minute candles per symbol, reaching back to the OLDEST queued limit (capped)."""
+    if not limit_orders:
+        return {}
+    from app import scanner
+
+    now_ms = int(utcnow().replace(tzinfo=timezone.utc).timestamp() * 1000)
+    oldest = min(_created_ms(o) for o in limit_orders)
+    need = int((now_ms - oldest) / 60_000) + 2
+    limit = max(5, min(240, need))
+    try:
+        results, _ = scanner._prefetch_candles(
+            settings.data_exchange, sorted({o.symbol for o in limit_orders}), "1m", limit)
+    except Exception:
+        logger.warning("touch model: 1m candle fetch failed — falling back to the price sample",
+                       exc_info=True)
+        return {}
+    return {sym: candles for sym, (candles, _hit) in results.items() if candles}
+
+
+def _created_ms(order: PendingOrder) -> int:
+    ts = order.created_at or utcnow()
+    return int(ts.replace(tzinfo=timezone.utc).timestamp() * 1000)
+
+
+def _touch_fill_price(order: PendingOrder, candles: list) -> float | None:
+    """The price a resting LIMIT would have filled at, from the 1-minute candles since it was
+    queued — or None if no candle reached it.
+
+    Mirrors the venue: the order is only ON the book once a candle opens on the passive side
+    of the limit (a post-only BUY below the market is rejected and re-placed later — so a rung
+    queued while the market already sits under it waits for the market to come back above and
+    dip again). Once resting, the first candle that trades through the limit fills it: at the
+    limit, or at the candle's open when the bar gapped past it (the venue's price improvement,
+    same rule as the backtest's B4). Strict "through" vs exact touch is the
+    ``paper_fill_needs_trade_through`` knob — an exact touch on the venue often leaves you in
+    the queue behind size that got there first.
+    """
+    since = _created_ms(order) - 60_000  # include the candle the order was queued inside
+    limit = order.price
+    strict = bool(settings.paper_fill_needs_trade_through)
+    placed = False
+    for c in candles:
+        if c["ts"] < since:
+            continue
+        if order.side == "BUY":
+            if not placed:
+                placed = c["open"] > limit
+            if placed and (c["low"] < limit if strict else c["low"] <= limit):
+                return min(limit, c["open"])
+        else:
+            if not placed:
+                placed = c["open"] < limit
+            if placed and (c["high"] > limit if strict else c["high"] >= limit):
+                return max(limit, c["open"])
+    return None
+
+
 def session_still_going(db: Session, source_ref: str | None) -> bool:
     """False when a `pyramid:N:*` row belongs to a KSS session that has ended (or vanished).
 
@@ -374,6 +447,13 @@ def auto_fill_due_orders(db: Session) -> list[int]:
     if not pend:
         return []
     prices = get_current_prices(list({o.symbol for o in pend}))
+    # Paper touch model: a LIMIT is filled by the 1-minute candle that touched it, not by the
+    # price sample this cycle happens to take. Without this, paper missed every touch that
+    # bounced back inside the 15-minute cycle — the ladder under-filled and fast take-profits
+    # were lost, on exactly the mechanism the deep-ladder experiment measures.
+    touches: dict[str, list] = {}
+    if touch_model_active():
+        touches = _touch_candles([o for o in pend if o.order_type == "LIMIT" and o.price > 0])
     approved: list[int] = []
     for o in pend:
         # Exit SELLs reduce risk — never let a (possibly stale) veto trap them; only a
@@ -383,14 +463,31 @@ def auto_fill_due_orders(db: Session) -> list[int]:
         price = prices.get(o.symbol)
         if price is None:
             continue
-        due = (
-            o.order_type == "MARKET"
-            or (o.side == "BUY" and o.price > 0 and price <= o.price)
-            or (o.side == "SELL" and o.price > 0 and price >= o.price)
-        )
+        fill_price: float | None = None
+        if o.order_type == "LIMIT" and o.price > 0 and o.symbol in touches:
+            fill_price = _touch_fill_price(o, touches[o.symbol])
+            due = fill_price is not None
+            # A candle feed with a gap must never hold a rung the market is already past:
+            # the sampled price is still a valid (later) touch — fill at the marketable price.
+            if not due and ((o.side == "BUY" and price <= o.price)
+                            or (o.side == "SELL" and price >= o.price)):
+                fill_price = min(o.price, price) if o.side == "BUY" else max(o.price, price)
+                due = True
+        else:
+            due = (
+                o.order_type == "MARKET"
+                or (o.side == "BUY" and o.price > 0 and price <= o.price)
+                or (o.side == "SELL" and o.price > 0 and price >= o.price)
+            )
         if due:
             try:
-                approve_order(db, o.id, reviewer="auto-trader")
+                if fill_price is None:
+                    approve_order(db, o.id, reviewer="auto-trader")
+                else:
+                    approve_order(db, o.id, reviewer="auto-trader", fill_price=fill_price)
+                    audit.log(db, "orders", "paper_touch_fill", entity=f"order:{o.id}",
+                              symbol=o.symbol, side=o.side, limit=o.price,
+                              fill=round(fill_price, 10))
             except Exception as exc:
                 # Insufficient cash, no price, or a venue rejection (ccxt raises InvalidOrder,
                 # NOT ValueError — that gap let one -1013 order kill the whole scheduler
@@ -402,11 +499,15 @@ def auto_fill_due_orders(db: Session) -> list[int]:
     return approved
 
 
-def approve_order(db: Session, order_id: int, reviewer: str | None = None) -> Fill:
+def approve_order(
+    db: Session, order_id: int, reviewer: str | None = None, *, fill_price: float | None = None,
+) -> Fill:
     """Approve and paper-execute a pending order; fire KSS fill hook if applicable.
 
     Auto reviewers are blocked when the circuit-breaker freeze is active.
     Human reviewer 'dashboard' is never blocked.
+    ``fill_price`` (paper touch model only): the price a 1-minute candle handed this LIMIT —
+    the simulated fill takes it as-is (maker fee, no slippage). Ignored on the live path.
     """
     from app.circuit import AUTO_REVIEWERS  # lazy — circuit imports portfolio which is fine
     order = _get_pending(db, order_id)
@@ -426,7 +527,7 @@ def approve_order(db: Session, order_id: int, reviewer: str | None = None) -> Fi
     db.flush()
 
     try:
-        fill = _execute(db, order)
+        fill = _execute(db, order, fill_price=fill_price)
     except ExitUnsellable:
         # Nothing on the venue to sell, ever — re-queuing would only re-run the same refusal
         # every guard tick. The book was reconciled inside _size_exit_to_venue; the row keeps
@@ -473,7 +574,7 @@ def approve_order(db: Session, order_id: int, reviewer: str | None = None) -> Fi
 # --- execution dispatch (paper by default; live only when explicitly on) ---
 
 
-def _execute(db: Session, order: PendingOrder) -> Fill:
+def _execute(db: Session, order: PendingOrder, *, fill_price: float | None = None) -> Fill:
     """Route an approved order to live placement when go-live is active, else paper.
 
     Paper is the default everywhere — live runs ONLY when `execution.live_enabled()`
@@ -483,7 +584,7 @@ def _execute(db: Session, order: PendingOrder) -> Fill:
 
     if execution.live_enabled():
         return _live_execute(db, order)
-    return _paper_execute(db, order)
+    return _paper_execute(db, order, fill_price=fill_price)
 
 
 def _live_execute(db: Session, order: PendingOrder) -> Fill:
@@ -1305,29 +1406,37 @@ def sync_resting_orders(db: Session) -> dict:
 # --- paper execution ----------------------------------------------------
 
 
-def _paper_execute(db: Session, order: PendingOrder) -> Fill:
+def _paper_execute(db: Session, order: PendingOrder, *, fill_price: float | None = None) -> Fill:
     """Simulate a fill with slippage + taker fee and update the position.
 
     A LIMIT order fills at the **marketable** price a real exchange would give — never worse
     than the live market: a BUY at ``min(limit, market)`` (so a DCA rung the market has gapped
     BELOW is bought at the current market, not at the now-too-high limit = no overpay), a SELL
     at ``max(limit, market)``. A MARKET order fills at the live price. Offline (no market
-    price) falls back to the limit, preserving legacy/offline-test behaviour."""
-    mkt = get_current_prices([order.symbol]).get(order.symbol) or 0.0
-    if order.price > 0:  # LIMIT — marketable fill, never worse than market
-        if mkt > 0:
-            ref_price = min(order.price, mkt) if order.side == "BUY" else max(order.price, mkt)
-        else:
-            ref_price = order.price  # offline fallback = the limit
-    else:  # MARKET
-        ref_price = mkt
-    if ref_price <= 0:
-        raise ValueError(f"No price available to execute {order.symbol}")
+    price) falls back to the limit, preserving legacy/offline-test behaviour.
 
-    slip = settings.slippage_pct / 100.0
-    effective = ref_price * (1 + slip) if order.side == "BUY" else ref_price * (1 - slip)
+    ``fill_price`` (touch model, see ``auto_fill_due_orders``): a resting LIMIT the venue would
+    have filled at exactly this price — no slippage (a maker never crosses the spread) and the
+    maker fee."""
+    if fill_price is not None and fill_price > 0:
+        ref_price = effective = fill_price
+        fee_pct = settings.maker_fee_pct
+    else:
+        mkt = get_current_prices([order.symbol]).get(order.symbol) or 0.0
+        if order.price > 0:  # LIMIT — marketable fill, never worse than market
+            if mkt > 0:
+                ref_price = min(order.price, mkt) if order.side == "BUY" else max(order.price, mkt)
+            else:
+                ref_price = order.price  # offline fallback = the limit
+        else:  # MARKET
+            ref_price = mkt
+        if ref_price <= 0:
+            raise ValueError(f"No price available to execute {order.symbol}")
+        slip = settings.slippage_pct / 100.0
+        effective = ref_price * (1 + slip) if order.side == "BUY" else ref_price * (1 - slip)
+        fee_pct = settings.taker_fee_pct
     notional = effective * order.quantity
-    fee = notional * settings.taker_fee_pct / 100.0
+    fee = notional * fee_pct / 100.0
     slippage_cost = abs(effective - ref_price) * order.quantity
 
     realized = _update_position(db, order.symbol, order.side, order.quantity, effective, fee)

@@ -127,6 +127,9 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     # Live-readiness knobs (1.9) — LIVE only, inert on paper. maker/testnet are bool (use
     # _to_bool, not bool, so a restored "0" stays False); timeout is seconds (0 = wait forever).
     "maker_orders": _to_bool,
+    "paper_fill_touch_1m": _to_bool,  # paper: LIMITs fill on 1m candle touches (venue-like)
+    "paper_fill_needs_trade_through": _to_bool,
+    "maker_fee_pct": float,
     "order_fill_timeout_sec": int,
     "live_use_testnet": _to_bool,
     # 2026-09-03 hang hardening: socket timeout applied to every ccxt client (execution._client

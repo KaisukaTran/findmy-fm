@@ -538,6 +538,9 @@ class KssSettingsBody(BaseModel):
     pyramid_up_lock_pct: float | None = Field(None, ge=0, le=100)
     # Live-readiness knobs (1.9) — LIVE only, inert on paper.
     maker_orders: bool | None = None
+    paper_fill_touch_1m: bool | None = None
+    paper_fill_needs_trade_through: bool | None = None
+    maker_fee_pct: float | None = Field(None, ge=0, le=1)
     order_fill_timeout_sec: int | None = Field(None, ge=0)
     live_use_testnet: bool | None = None
     # 2026-09-03 hang hardening: socket timeout (seconds) for every ccxt client.

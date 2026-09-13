@@ -909,6 +909,9 @@ document.addEventListener("submit", async (e) => {
     const f = new FormData(form);
     await api("POST", "/api/kss-settings", {
       maker_orders: f.get("maker_orders") === "1",
+      paper_fill_touch_1m: f.get("paper_fill_touch_1m") === "1",
+      paper_fill_needs_trade_through: f.get("paper_fill_needs_trade_through") === "1",
+      maker_fee_pct: num(f.get("maker_fee_pct")),
       order_fill_timeout_sec: num(f.get("order_fill_timeout_sec")),
       live_use_testnet: f.get("live_use_testnet") === "1",
     });

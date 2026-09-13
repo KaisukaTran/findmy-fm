@@ -407,6 +407,22 @@ def _guard_once() -> None:
                 except Exception:
                     logger.exception("position-guard reconcile rollback also failed")
             service.run_position_guard(db)
+            # Paper touch model: the 1-minute candles that fill a resting rung or take-profit
+            # arrive between 15-minute cycles, so the fill check runs on the guard's cadence
+            # too — otherwise a touch is booked up to 15 minutes late, at the wrong avg for
+            # the next rung's target. Paper-only (touch_model_active), same gates as run_cycle.
+            from app import runtime  # lazy, as elsewhere in this module
+
+            if orders.touch_model_active() and settings.auto_trade and not runtime.is_frozen(db):
+                try:
+                    orders.auto_fill_due_orders(db)
+                    db.commit()
+                except Exception:
+                    logger.exception("position-guard paper touch-fill failed")
+                    try:
+                        db.rollback()
+                    except Exception:
+                        logger.exception("position-guard touch-fill rollback also failed")
             _last_guard_at = utcnow().isoformat()
     finally:
         db.close()

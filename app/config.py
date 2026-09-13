@@ -180,6 +180,9 @@ class Settings(BaseSettings):
     # --- Paper execution simulation ---
     taker_fee_pct: float = Field(default=0.1, description="Taker fee % applied per fill.")
     slippage_pct: float = Field(default=0.05, description="Simulated slippage % on market fills.")
+    maker_fee_pct: float = Field(default=0.1, description="Maker fee %% on a simulated LIMIT fill under the paper touch model (Binance spot VIP0: maker = taker = 0.1%%).")
+    paper_fill_touch_1m: bool = Field(default=False, description="PAPER only: a queued LIMIT fills when a 1-minute candle TOUCHES it, the way the venue fills a resting order — not when the 15-minute price sample happens to sit below it. LIMIT fills take the limit price, no slippage, maker fee; post-only is simulated (a rung queued below the market waits for a candle that opens above it). Session take-profits rest as LIMIT rows (sync_resting_tp) instead of a market sell on the 15-minute check.")
+    paper_fill_needs_trade_through: bool = Field(default=True, description="Touch model: the candle must trade THROUGH the limit (strictly beyond it) to count as a fill — a queue-position haircut. Off: an exact touch fills.")
     binance_max_fee_pct: float = Field(
         default=0.1,
         description="Binance's highest standard spot taker fee %. The take-profit floor is "

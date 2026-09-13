@@ -120,12 +120,25 @@ def test_a_rung_queued_below_the_market_waits_for_the_market_to_come_back_above(
            candles={"SOL": [_c(9, 8.7, 8.8, 8.6), _c(8, 8.8, 8.9, 8.7), _c(1, 8.8, 8.9, 8.7)]})
     rung = _rung(db, price=9.0, minutes_ago=10)
 
-    # Nothing rests yet — but the sampled price IS under the limit, and the venue-side outcome
-    # of "rejected, re-placed next cycle, market still under it" is a marketable fill at the
-    # market, which is what the sampled-price fallback books.
-    assert orders.auto_fill_due_orders(db) == [rung.id]
-    (fill,) = _fills(db)
-    assert fill.price == 8.8
+    # The sampled price IS under the limit — the old rule booked a marketable fill here. On the
+    # venue the post-only order is rejected and re-queued; nothing fills until the market comes
+    # back above the limit and dips through it again (next test).
+    assert orders.auto_fill_due_orders(db) == []
+    assert _fills(db) == []
+    db.refresh(rung)
+    assert rung.status == PENDING
+
+
+def test_a_take_profit_under_the_market_is_not_a_fill(db, monkeypatch):
+    """Paper PEPE 2026-09-13: entry mispriced 13% under the market, so the TP sat under the
+    market too and the sampled-price fallback "filled" it there for a profit no venue pays."""
+    _paper(monkeypatch, prices={"SOL": 11.0},
+           candles={"SOL": [_c(3, 11.0, 11.1, 10.9), _c(1, 11.0, 11.1, 10.9)]})
+    tp = _rung(db, side="SELL", price=10.5, ref="pyramid:1:tp", minutes_ago=5)
+
+    assert orders.auto_fill_due_orders(db) == []
+    db.refresh(tp)
+    assert tp.status == PENDING
 
 
 def test_resting_then_dip_fills_after_the_market_recovered(db, monkeypatch):

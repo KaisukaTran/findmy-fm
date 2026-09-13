@@ -465,14 +465,15 @@ def auto_fill_due_orders(db: Session) -> list[int]:
             continue
         fill_price: float | None = None
         if o.order_type == "LIMIT" and o.price > 0 and o.symbol in touches:
+            # The candles decide, and ONLY the candles: a limit the market is already past
+            # is NOT a fill — on the venue that post-only order is rejected and re-queued,
+            # and it fills only after the market comes back to the passive side and touches
+            # it again. The old sampled-price rule booked exactly that as a marketable fill
+            # (paper PEPE, 2026-09-13: a take-profit queued 10% under the market "filled" at
+            # the market for a +$10 that no venue would have paid). The sampled price is only
+            # consulted when there are no candles at all (the `else` branch).
             fill_price = _touch_fill_price(o, touches[o.symbol])
             due = fill_price is not None
-            # A candle feed with a gap must never hold a rung the market is already past:
-            # the sampled price is still a valid (later) touch — fill at the marketable price.
-            if not due and ((o.side == "BUY" and price <= o.price)
-                            or (o.side == "SELL" and price >= o.price)):
-                fill_price = min(o.price, price) if o.side == "BUY" else max(o.price, price)
-                due = True
         else:
             due = (
                 o.order_type == "MARKET"

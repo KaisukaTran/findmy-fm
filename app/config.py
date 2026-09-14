@@ -357,6 +357,9 @@ class Settings(BaseSettings):
     kss_exit_check_sec: int = Field(default=90, description="Interval (seconds) of the lightweight position-guard loop that checks OPEN-session exits using cached tickers, decoupled from the 30-min full scan. Lower = smaller gap window, more ticker calls. Should be > price_cache_ttl is NOT required — the guard forces a fresh price.")
     kss_crash_drop_pct: float = Field(default=12.0, description="Crash-detect: if a guard check sees price drop more than this %% since the last observation AND price is at/below the SL, exit at market immediately (caps further bleed on a gap). 0 = off.")
     kss_live_stop_orders: bool = Field(default=False, description="CHỈ LIVE — CHƯA DỰNG (not implemented): bật cờ này không đặt lệnh STOP-MARKET nào trên sàn. app/kss/service.py:_maintain_live_stop hiện là stub, luôn return ngay khi được gọi. Bảo vệ gap giá hôm nay là vòng guard ~90s (kss_exit_check_sec) cộng crash-detect (kss_crash_drop_pct), KHÔNG phải một lệnh nằm sẵn trên sàn. API từ chối bật knob này (400) cho tới khi _maintain_live_stop được xây thật và kiểm chứng trên sàn thật.")
+
+    # --- Take-profit then trail v2 (docs/tp-then-trail-2026-09-14.md) — service-layer, OFF by default ---
+    kss_trail_after_tp_pct: float = Field(default=0.0, description="Chạm TP thì KHÔNG bán: vũ trang trailing stop có sàn = giá TP, stop bám đỉnh cách %% này, bán market khi giá chạm stop. Kết cục chỉ có thể là giá TP hoặc cao hơn. 0 = tắt (bán ngay ở TP như cũ).")
     max_sessions_per_symbol: int = Field(
         default=1,
         description="Cap concurrent ACTIVE KSS sessions per symbol. 1 (K-1) keeps one owner "

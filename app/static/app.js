@@ -874,6 +874,7 @@ document.addEventListener("submit", async (e) => {
       kss_exit_check_sec: num(f.get("kss_exit_check_sec")),
       kss_crash_drop_pct: num(f.get("kss_crash_drop_pct")),
       kss_live_stop_orders: f.get("kss_live_stop_orders") === "1",
+      kss_trail_after_tp_pct: num(f.get("kss_trail_after_tp_pct")),
       rel_strength_enabled: f.get("rel_strength_enabled") === "1",
       rel_strength_lookback_bars: num(f.get("rel_strength_lookback_bars")),
       rel_strength_margin_pct: num(f.get("rel_strength_margin_pct")),

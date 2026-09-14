@@ -522,6 +522,7 @@ class KssSettingsBody(BaseModel):
     kss_exit_check_sec: int | None = Field(None, ge=5, le=3600)
     kss_crash_drop_pct: float | None = Field(None, ge=0, le=100)
     kss_live_stop_orders: bool | None = None
+    kss_trail_after_tp_pct: float | None = Field(None, ge=0, le=20)
     # Entry-evaluation v2 (docs/regime-mae-plan.md)
     rel_strength_enabled: bool | None = None
     rel_strength_lookback_bars: int | None = Field(None, ge=1, le=90)

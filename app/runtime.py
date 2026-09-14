@@ -108,6 +108,8 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "kss_exit_check_sec": int,
     "kss_crash_drop_pct": float,
     "kss_live_stop_orders": _to_bool,
+    # Take-profit then trail v2 (docs/tp-then-trail-2026-09-14.md) — OFF by default
+    "kss_trail_after_tp_pct": float,
     "tp_fee_coverage": float,  # TP adds this × round-trip fee (1.2 = +120% of fees)
     "grok_scanner_fail_mode": str,  # S5: "open" | "closed"
     "grok_scanner_batch_max": int,  # how many candidates Grok reviews per scan (cover them all)

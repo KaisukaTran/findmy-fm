@@ -114,6 +114,8 @@
     </select></label>
   <label title="TP tăng thêm % này cho MỖI rung DCA đã khớp (không tính rung vào lệnh). VD TP 5% + 0,5%/rung → khớp rung 8 thì TP = 9% trên giá TB. Tính lúc nạp phiên, không ghi đè TP gốc của phiên. 0 = tắt.">TP +%/rung khớp <span class="varname">kss_tp_step_per_rung_pct</span>
     <input name="kss_tp_step_per_rung_pct" type="number" step="0.1" min="0" max="10" value="{{ '%.1f'|format(k.kss_tp_step_per_rung_pct) }}"></label>
+  <label title="Chạm TP thì KHÔNG bán: vũ trang trailing stop có sàn = giá TP, stop bám đỉnh cách % này, bán market khi giá chạm stop. Kết cục chỉ có thể là giá TP hoặc cao hơn. 0 = tắt (bán ngay ở TP như cũ).">TP rồi trail % <span class="varname">kss_trail_after_tp_pct</span>
+    <input name="kss_trail_after_tp_pct" type="number" step="0.1" min="0" max="20" value="{{ '%.1f'|format(k.kss_trail_after_tp_pct) }}"></label>
   <label title="TP nổi cách SL đã ratchet bao nhiêu %. Giá trị lớn → gần như chỉ còn trailing-SL (chandelier).">TP cách SL % <span class="varname">kss_tp_gap_pct</span>
     <input name="kss_tp_gap_pct" type="number" step="0.1" min="0" value="{{ '%.1f'|format(k.kss_tp_gap_pct) }}"></label>
   <label title="Hệ số sàn-phí: CẢ TP lẫn SL không bao giờ dưới avg×(1+ hệ_số×phí_khứ_hồi) → không exit tự động nào lỗ, kể cả phí. ≥1; 3 = thoải mái trên phí.">Sàn phí (×phí khứ hồi) <span class="varname">kss_exit_fee_mult</span>

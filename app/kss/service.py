@@ -2116,6 +2116,14 @@ def manage_open_sessions(db: Session) -> list[int]:
                 if row.status != SESSION_ACTIVE:
                     triggered.append(row.id)
                 continue
+            if row.tp_trail_floor > 0:
+                # An armed v2 take-profit-then-trail session belongs ENTIRELY to the 90s guard
+                # (docs/tp-then-trail-2026-09-14.md): it ratchets the stop and sells at market
+                # there. Suppressing only the TP branch here would leave `check_stop` below
+                # running on the SAME `peak_price` v2 ratchets — so a legacy `trailing_pct` set
+                # back above 0 would exit off v2's high-water mark, below v2's floor, on the
+                # slow cycle. One owner per session.
+                continue
             py = _to_pyramid(row)
             # 1.5 live maker: the exit already rests on the exchange (sync_resting_tp), so
             # triggering a market TP here would sell the same inventory twice.
@@ -2194,6 +2202,85 @@ def _k2_floor_price(db: Session, symbol: str) -> float:
     return pos.avg_entry_price * (1 + costengine.min_profit_pct() / 100.0)
 
 
+def _trail_after_tp(db: Session, row: KssSession, price: float) -> bool:
+    """Take-profit then trail v2 (docs/tp-then-trail-2026-09-14.md): once price reaches the
+    session's take-profit target, do NOT sell — arm a trailing stop whose FLOOR is that target,
+    ratchet the stop up behind the peak, and sell at market only when price falls back to the
+    stop. The trade can therefore only end at the target or above.
+
+    Deliberately separate from the v1 Ride & Trail dynamic channel (``trail_active`` /
+    ``_evaluate_dynamic_exit``): this never sets ``trail_active``, so it can't wake v1's code
+    paths (``_evaluate_dynamic_exit``, ``sync_resting_tp``'s target bump, the watchdog guards).
+    Armed ⇔ ``row.tp_trail_floor > 0``. Reuses ``trail_sl_price``/``peak_price`` for its own
+    ratchet once armed.
+
+    Returns True when it OWNED this tick (armed / ratcheted / exited) — the caller must not run
+    any other exit branch for this session this tick. False leaves the session exactly where it
+    was (the knob is off, this is a pyramid_up session, nothing is filled, the session isn't
+    ACTIVE, or price hasn't reached the target yet).
+
+    Live note: under the resting model, arming retires the venue's resting LIMIT take-profit the
+    same way ``sync_resting_tp``'s stale-row sweep does (REJECTED + reason, ``exchange_order_id``
+    left in place so ``sync_resting_orders`` cancels it on the venue next pass — see
+    ``orders._retire_sibling_tp`` for the sibling pattern). The eventual exit is a MARKET sell
+    queued by the guard loop like every other risk exit; a venue-side STOP order for the trail
+    itself is a later step (``_maintain_live_stop`` stub)."""
+    from app.config import settings
+
+    pct = settings.kss_trail_after_tp_pct
+    if pct <= 0 and row.tp_trail_floor > 0 and row.status == SESSION_ACTIVE:
+        # The knob was switched off while this session was armed. Every other exit path skips an
+        # armed session (this one owns it), so leaving the flag set would strand the position with
+        # NO exit at all — the 2026-09-09 shape where a profit-taking preference silently disarmed
+        # a floor. Disarm instead: the fixed take-profit is re-queued by `sync_resting_tp` and the
+        # hard-SL net resumes on the very next tick.
+        row.tp_trail_floor = 0.0
+        row.trail_sl_price = 0.0
+        audit.log(db, "scheduler", "tp_trail_disarmed", entity=f"kss:{row.id}", symbol=row.symbol,
+                  price=round(price, 8), reason="knob off")
+        return False
+    if (pct <= 0 or row.strategy_mode == "pyramid_up"
+            or row.total_filled_qty <= 0 or row.status != SESSION_ACTIVE):
+        return False
+
+    if row.tp_trail_floor <= 0:
+        # Not armed yet: arm once price clears both the session's own TP target and the K-2
+        # floor, and the arming price itself clears true cost (the same guard a triggered TP
+        # or a resting exit gets — arming must not lock in a channel whose floor is a loss).
+        target = max(_to_pyramid(row).estimated_tp_price, _k2_floor_price(db, row.symbol))
+        if price < target or not _tp_clears_cost(db, row.symbol, price):
+            return False
+        row.tp_trail_floor = target
+        row.trail_sl_price = target
+        row.peak_price = price
+        audit.log(db, "scheduler", "tp_trail_armed", entity=f"kss:{row.id}", symbol=row.symbol,
+                  price=round(price, 8), floor=round(target, 8), trail_pct=pct)
+        for tp in (
+            db.query(PendingOrder)
+            .filter(PendingOrder.source_ref == f"pyramid:{row.id}:tp",
+                    PendingOrder.order_type == "LIMIT",
+                    PendingOrder.status == models.PENDING)
+            .all()
+        ):
+            tp.status = models.REJECTED
+            tp.reviewer = "tp-trail"
+            tp.reject_reason = "resting-tp: superseded by trail-after-tp"
+            tp.decided_at = utcnow()
+        return True
+
+    # Armed: ratchet the stop up behind the peak, never down, never below the floor.
+    peak = max(row.peak_price or 0.0, price)
+    stop = max(row.tp_trail_floor, peak * (1 - pct / 100.0), row.trail_sl_price or 0.0)
+    row.peak_price = peak
+    row.trail_sl_price = stop
+    if price <= stop:
+        _queue_dynamic_exit(db, row, "tp", price)
+        audit.log(db, "scheduler", "tp_trail_exit", entity=f"kss:{row.id}", symbol=row.symbol,
+                  price=round(price, 8), stop=round(stop, 8),
+                  floor=round(row.tp_trail_floor, 8), peak=round(peak, 8))
+    return True
+
+
 def _resting_tp_rows(db: Session) -> list[PendingOrder]:
     """Every queued RESTING (maker LIMIT) take-profit order (one per session at most).
 
@@ -2238,6 +2325,12 @@ def sync_resting_tp(db: Session) -> dict:
 
     live_sessions: set[int] = set()
     for row in db.query(KssSession).filter(KssSession.status == SESSION_ACTIVE).all():
+        if row.tp_trail_floor > 0:
+            # v2 take-profit-then-trail is armed: its exit is the guard's market sell at the
+            # ratcheted stop, never a re-queued resting LIMIT take-profit. Skip entirely (not
+            # added to live_sessions either) so the stale-row sweep below sweeps any leftover
+            # TP row for it.
+            continue
         py = _to_pyramid(row)
         qty = py.total_filled_qty
         # Quantise DOWN to the venue's LOT_SIZE step before this quantity is ever written to
@@ -2413,7 +2506,13 @@ def run_position_guard(db: Session) -> dict:
             # `kss_dynamic_tp_enabled` is a profit-taking preference; the hard SL is the disaster
             # floor, and a preference must never be able to disarm the floor. pyramid_up arms at
             # BE+ independently of the toggle, so it keeps the channel either way.
-            if row.trail_active and (dyn or row.strategy_mode == "pyramid_up"):
+            if _trail_after_tp(db, row, price):
+                # v2 take-profit-then-trail owns this session this tick (armed / ratcheted /
+                # exited) — it never sets trail_active, so it must be checked FIRST or an
+                # armed-v2 session with total_filled_qty > 0 would otherwise fall to the
+                # hard-SL branch below and get double-managed.
+                pass
+            elif row.trail_active and (dyn or row.strategy_mode == "pyramid_up"):
                 # Armed: the dynamic Ride&Trail channel owns this session (crash-detect + trail/exit).
                 if not _crash_exit(db, row, price):
                     _evaluate_dynamic_exit(db, row, price)  # channel: exit or ratchet
@@ -2800,6 +2899,7 @@ def list_sessions(
         d["trail_active"] = bool(r.trail_active)
         d["trail_sl_price"] = r.trail_sl_price
         d["trail_dist_pct"] = r.trail_dist_pct
+        d["tp_trail_floor"] = r.tp_trail_floor
         out.append(d)
     return out
 

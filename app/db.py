@@ -50,6 +50,8 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     # here is the "legacy row" marker PyramidSession.pip_size falls back on; giving it a
     # default would erase that signal for every pre-existing session on migration.
     ("kss_sessions", "first_wave_usd", "FLOAT"),
+    # Take-profit then trail v2 (docs/tp-then-trail-2026-09-14.md).
+    ("kss_sessions", "tp_trail_floor", "FLOAT NOT NULL DEFAULT 0.0"),
 ]
 
 

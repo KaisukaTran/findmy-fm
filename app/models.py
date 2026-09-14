@@ -230,6 +230,12 @@ class KssSession(Base):
     trail_active: Mapped[bool] = mapped_column(nullable=False, default=False)
     trail_sl_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     trail_dist_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    # Take-profit then trail v2 (docs/tp-then-trail-2026-09-14.md): floor price once the v2
+    # trail-after-tp channel has armed (0 = not armed). Distinct from trail_active/v1's dynamic
+    # Ride&Trail channel on purpose — arming v2 must NOT wake v1 code paths (_evaluate_dynamic_exit,
+    # sync_resting_tp's target bump, the watchdog guards). v2 reuses trail_sl_price/peak_price for
+    # its own ratchet once armed.
+    tp_trail_floor: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
     status: Mapped[str] = mapped_column(String(16), nullable=False, default=SESSION_PENDING)
     # Regime router (docs/pyramid-up-plan.md): 'dca_down' (existing buy-the-dip ladder, frozen

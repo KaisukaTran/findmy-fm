@@ -1,0 +1,720 @@
+{
+ "1d": {
+  "meta": {
+   "interval": "1d",
+   "coins_eligible": 388,
+   "coins_sampled": 388,
+   "every_bars": 7,
+   "min_years": 2.0,
+   "wave0": 17.0,
+   "cost_pct": 0.3,
+   "cfg": [
+    4.0,
+    30,
+    5.0,
+    0.0,
+    3650.0,
+    0.5
+   ],
+   "seed": 7
+  },
+  "OPTIMISTIC": {
+   "n_trials": 86404,
+   "n_tp": 85769,
+   "tp_share_pct": 99.27,
+   "sum_tp_usd": 976674.15,
+   "days_overall": {
+    "n": 85769,
+    "p50": 2.0,
+    "p75": 4.0,
+    "p90": 9.0,
+    "p95": 16.0,
+    "p99": 51.0,
+    "max": 979.0
+   },
+   "days_by_depth": {
+    "1": {
+     "n": 34113,
+     "p50": 1.0,
+     "p75": 2.0,
+     "p90": 4.0,
+     "p95": 6.0,
+     "p99": 12.0,
+     "max": 152.0
+    },
+    "2-3": {
+     "n": 34488,
+     "p50": 2.0,
+     "p75": 4.0,
+     "p90": 7.0,
+     "p95": 11.0,
+     "p99": 20.0,
+     "max": 272.0
+    },
+    "4-6": {
+     "n": 11516,
+     "p50": 3.0,
+     "p75": 9.0,
+     "p90": 16.0,
+     "p95": 23.0,
+     "p99": 44.0,
+     "max": 310.0
+    },
+    "7-10": {
+     "n": 3437,
+     "p50": 9.0,
+     "p75": 19.0,
+     "p90": 33.0,
+     "p95": 45.0,
+     "p99": 84.0,
+     "max": 189.0
+    },
+    "11-15": {
+     "n": 1401,
+     "p50": 21.0,
+     "p75": 39.0,
+     "p90": 61.0,
+     "p95": 88.0,
+     "p99": 170.0,
+     "max": 250.0
+    },
+    "16-30": {
+     "n": 814,
+     "p50": 36.0,
+     "p75": 81.0,
+     "p90": 176.0,
+     "p95": 255.0,
+     "p99": 703.0,
+     "max": 979.0
+    }
+   },
+   "cutoffs": [
+    {
+     "cutoff_days": 14,
+     "n_cut": 4959,
+     "share_of_tp_trials_pct": 5.78,
+     "share_of_tp_dollars_pct": 41.49,
+     "mean_waves_of_cut": 8.46
+    },
+    {
+     "cutoff_days": 30,
+     "n_cut": 1825,
+     "share_of_tp_trials_pct": 2.13,
+     "share_of_tp_dollars_pct": 27.25,
+     "mean_waves_of_cut": 11.76
+    },
+    {
+     "cutoff_days": 45,
+     "n_cut": 1012,
+     "share_of_tp_trials_pct": 1.18,
+     "share_of_tp_dollars_pct": 20.4,
+     "mean_waves_of_cut": 13.75
+    },
+    {
+     "cutoff_days": 60,
+     "n_cut": 633,
+     "share_of_tp_trials_pct": 0.74,
+     "share_of_tp_dollars_pct": 15.49,
+     "mean_waves_of_cut": 15.12
+    },
+    {
+     "cutoff_days": 90,
+     "n_cut": 340,
+     "share_of_tp_trials_pct": 0.4,
+     "share_of_tp_dollars_pct": 10.51,
+     "mean_waves_of_cut": 17.05
+    },
+    {
+     "cutoff_days": 120,
+     "n_cut": 186,
+     "share_of_tp_trials_pct": 0.22,
+     "share_of_tp_dollars_pct": 7.46,
+     "mean_waves_of_cut": 19.85
+    },
+    {
+     "cutoff_days": 180,
+     "n_cut": 112,
+     "share_of_tp_trials_pct": 0.13,
+     "share_of_tp_dollars_pct": 4.79,
+     "mean_waves_of_cut": 20.36
+    },
+    {
+     "cutoff_days": 365,
+     "n_cut": 24,
+     "share_of_tp_trials_pct": 0.03,
+     "share_of_tp_dollars_pct": 1.77,
+     "mean_waves_of_cut": 30.0
+    }
+   ],
+   "open_at_data_end": {
+    "n": 635,
+    "share_of_all_trials_pct": 0.73,
+    "mean_mae_pct": -16.07,
+    "mean_pnl_pct": -12.39
+   },
+   "wait_curve": [
+    {
+     "days": 14,
+     "cum_share_of_all_trials_pct": 93.53
+    },
+    {
+     "days": 30,
+     "cum_share_of_all_trials_pct": 97.15
+    },
+    {
+     "days": 45,
+     "cum_share_of_all_trials_pct": 98.09
+    },
+    {
+     "days": 60,
+     "cum_share_of_all_trials_pct": 98.53
+    },
+    {
+     "days": 90,
+     "cum_share_of_all_trials_pct": 98.87
+    },
+    {
+     "days": 120,
+     "cum_share_of_all_trials_pct": 99.05
+    },
+    {
+     "days": 180,
+     "cum_share_of_all_trials_pct": 99.14
+    },
+    {
+     "days": 365,
+     "cum_share_of_all_trials_pct": 99.24
+    }
+   ]
+  },
+  "PESSIMISTIC": {
+   "n_trials": 86404,
+   "n_tp": 85497,
+   "tp_share_pct": 98.95,
+   "sum_tp_usd": 1628926.45,
+   "days_overall": {
+    "n": 85497,
+    "p50": 2.0,
+    "p75": 6.0,
+    "p90": 14.0,
+    "p95": 25.0,
+    "p99": 78.0,
+    "max": 1072.0
+   },
+   "days_by_depth": {
+    "1": {
+     "n": 41866,
+     "p50": 1.0,
+     "p75": 2.0,
+     "p90": 4.0,
+     "p95": 5.0,
+     "p99": 11.0,
+     "max": 152.0
+    },
+    "2-3": {
+     "n": 23440,
+     "p50": 3.0,
+     "p75": 6.0,
+     "p90": 9.0,
+     "p95": 13.0,
+     "p99": 24.0,
+     "max": 272.0
+    },
+    "4-6": {
+     "n": 10521,
+     "p50": 7.0,
+     "p75": 11.0,
+     "p90": 19.0,
+     "p95": 26.0,
+     "p99": 50.0,
+     "max": 310.0
+    },
+    "7-10": {
+     "n": 5005,
+     "p50": 13.0,
+     "p75": 22.0,
+     "p90": 35.0,
+     "p95": 48.0,
+     "p99": 80.0,
+     "max": 189.0
+    },
+    "11-15": {
+     "n": 2734,
+     "p50": 21.0,
+     "p75": 38.0,
+     "p90": 59.0,
+     "p95": 77.0,
+     "p99": 134.0,
+     "max": 250.0
+    },
+    "16-30": {
+     "n": 1931,
+     "p50": 45.0,
+     "p75": 90.0,
+     "p90": 180.0,
+     "p95": 244.0,
+     "p99": 688.0,
+     "max": 1072.0
+    }
+   },
+   "cutoffs": [
+    {
+     "cutoff_days": 14,
+     "n_cut": 8483,
+     "share_of_tp_trials_pct": 9.92,
+     "share_of_tp_dollars_pct": 61.68,
+     "mean_waves_of_cut": 10.45
+    },
+    {
+     "cutoff_days": 30,
+     "n_cut": 3313,
+     "share_of_tp_trials_pct": 3.87,
+     "share_of_tp_dollars_pct": 40.94,
+     "mean_waves_of_cut": 14.16
+    },
+    {
+     "cutoff_days": 45,
+     "n_cut": 2007,
+     "share_of_tp_trials_pct": 2.35,
+     "share_of_tp_dollars_pct": 32.01,
+     "mean_waves_of_cut": 16.33
+    },
+    {
+     "cutoff_days": 60,
+     "n_cut": 1300,
+     "share_of_tp_trials_pct": 1.52,
+     "share_of_tp_dollars_pct": 25.22,
+     "mean_waves_of_cut": 18.1
+    },
+    {
+     "cutoff_days": 90,
+     "n_cut": 668,
+     "share_of_tp_trials_pct": 0.78,
+     "share_of_tp_dollars_pct": 16.81,
+     "mean_waves_of_cut": 20.93
+    },
+    {
+     "cutoff_days": 120,
+     "n_cut": 402,
+     "share_of_tp_trials_pct": 0.47,
+     "share_of_tp_dollars_pct": 12.09,
+     "mean_waves_of_cut": 23.42
+    },
+    {
+     "cutoff_days": 180,
+     "n_cut": 230,
+     "share_of_tp_trials_pct": 0.27,
+     "share_of_tp_dollars_pct": 7.39,
+     "mean_waves_of_cut": 24.14
+    },
+    {
+     "cutoff_days": 365,
+     "n_cut": 56,
+     "share_of_tp_trials_pct": 0.07,
+     "share_of_tp_dollars_pct": 2.48,
+     "mean_waves_of_cut": 30.0
+    }
+   ],
+   "open_at_data_end": {
+    "n": 907,
+    "share_of_all_trials_pct": 1.05,
+    "mean_mae_pct": -29.54,
+    "mean_pnl_pct": -23.4
+   },
+   "wait_curve": [
+    {
+     "days": 14,
+     "cum_share_of_all_trials_pct": 89.13
+    },
+    {
+     "days": 30,
+     "cum_share_of_all_trials_pct": 95.12
+    },
+    {
+     "days": 45,
+     "cum_share_of_all_trials_pct": 96.63
+    },
+    {
+     "days": 60,
+     "cum_share_of_all_trials_pct": 97.45
+    },
+    {
+     "days": 90,
+     "cum_share_of_all_trials_pct": 98.18
+    },
+    {
+     "days": 120,
+     "cum_share_of_all_trials_pct": 98.49
+    },
+    {
+     "days": 180,
+     "cum_share_of_all_trials_pct": 98.68
+    },
+    {
+     "days": 365,
+     "cum_share_of_all_trials_pct": 98.89
+    }
+   ]
+  },
+  "runtime_s": 2.1
+ },
+ "1h": {
+  "meta": {
+   "interval": "1h",
+   "coins_eligible": 98,
+   "coins_sampled": 98,
+   "every_bars": 168,
+   "min_years": 1.0,
+   "wave0": 17.0,
+   "cost_pct": 0.3,
+   "cfg": [
+    4.0,
+    30,
+    5.0,
+    0.0,
+    3650.0,
+    0.5
+   ],
+   "seed": 7
+  },
+  "OPTIMISTIC": {
+   "n_trials": 10997,
+   "n_tp": 10728,
+   "tp_share_pct": 97.55,
+   "sum_tp_usd": 209508.12,
+   "days_overall": {
+    "n": 10728,
+    "p50": 2.04,
+    "p75": 6.46,
+    "p90": 14.58,
+    "p95": 24.75,
+    "p99": 64.42,
+    "max": 238.12
+   },
+   "days_by_depth": {
+    "1": {
+     "n": 4435,
+     "p50": 0.79,
+     "p75": 1.79,
+     "p90": 3.62,
+     "p95": 7.25,
+     "p99": 22.29,
+     "max": 94.88
+    },
+    "2-3": {
+     "n": 3460,
+     "p50": 2.42,
+     "p75": 4.88,
+     "p90": 8.75,
+     "p95": 12.67,
+     "p99": 27.04,
+     "max": 110.67
+    },
+    "4-6": {
+     "n": 1560,
+     "p50": 6.67,
+     "p75": 10.67,
+     "p90": 17.5,
+     "p95": 23.67,
+     "p99": 39.62,
+     "max": 116.96
+    },
+    "7-10": {
+     "n": 701,
+     "p50": 11.17,
+     "p75": 18.71,
+     "p90": 29.88,
+     "p95": 42.5,
+     "p99": 67.71,
+     "max": 187.67
+    },
+    "11-15": {
+     "n": 340,
+     "p50": 25.0,
+     "p75": 36.71,
+     "p90": 53.67,
+     "p95": 69.29,
+     "p99": 98.33,
+     "max": 124.08
+    },
+    "16-30": {
+     "n": 232,
+     "p50": 27.25,
+     "p75": 71.46,
+     "p90": 111.46,
+     "p95": 172.83,
+     "p99": 228.54,
+     "max": 238.12
+    }
+   },
+   "cutoffs": [
+    {
+     "cutoff_days": 14,
+     "n_cut": 1130,
+     "share_of_tp_trials_pct": 10.53,
+     "share_of_tp_dollars_pct": 49.25,
+     "mean_waves_of_cut": 9.08
+    },
+    {
+     "cutoff_days": 30,
+     "n_cut": 386,
+     "share_of_tp_trials_pct": 3.6,
+     "share_of_tp_dollars_pct": 27.97,
+     "mean_waves_of_cut": 12.13
+    },
+    {
+     "cutoff_days": 45,
+     "n_cut": 225,
+     "share_of_tp_trials_pct": 2.1,
+     "share_of_tp_dollars_pct": 21.21,
+     "mean_waves_of_cut": 14.0
+    },
+    {
+     "cutoff_days": 60,
+     "n_cut": 125,
+     "share_of_tp_trials_pct": 1.17,
+     "share_of_tp_dollars_pct": 14.44,
+     "mean_waves_of_cut": 15.62
+    },
+    {
+     "cutoff_days": 90,
+     "n_cut": 53,
+     "share_of_tp_trials_pct": 0.49,
+     "share_of_tp_dollars_pct": 8.89,
+     "mean_waves_of_cut": 19.49
+    },
+    {
+     "cutoff_days": 120,
+     "n_cut": 21,
+     "share_of_tp_trials_pct": 0.2,
+     "share_of_tp_dollars_pct": 4.91,
+     "mean_waves_of_cut": 24.05
+    },
+    {
+     "cutoff_days": 180,
+     "n_cut": 8,
+     "share_of_tp_trials_pct": 0.07,
+     "share_of_tp_dollars_pct": 2.05,
+     "mean_waves_of_cut": 24.88
+    },
+    {
+     "cutoff_days": 365,
+     "n_cut": 0,
+     "share_of_tp_trials_pct": 0.0,
+     "share_of_tp_dollars_pct": 0.0,
+     "mean_waves_of_cut": 0.0
+    }
+   ],
+   "open_at_data_end": {
+    "n": 269,
+    "share_of_all_trials_pct": 2.45,
+    "mean_mae_pct": -15.72,
+    "mean_pnl_pct": -11.63
+   },
+   "wait_curve": [
+    {
+     "days": 14,
+     "cum_share_of_all_trials_pct": 87.28
+    },
+    {
+     "days": 30,
+     "cum_share_of_all_trials_pct": 94.04
+    },
+    {
+     "days": 45,
+     "cum_share_of_all_trials_pct": 95.51
+    },
+    {
+     "days": 60,
+     "cum_share_of_all_trials_pct": 96.42
+    },
+    {
+     "days": 90,
+     "cum_share_of_all_trials_pct": 97.07
+    },
+    {
+     "days": 120,
+     "cum_share_of_all_trials_pct": 97.36
+    },
+    {
+     "days": 180,
+     "cum_share_of_all_trials_pct": 97.48
+    },
+    {
+     "days": 365,
+     "cum_share_of_all_trials_pct": 97.55
+    }
+   ]
+  },
+  "PESSIMISTIC": {
+   "n_trials": 10997,
+   "n_tp": 10726,
+   "tp_share_pct": 97.54,
+   "sum_tp_usd": 204938.8,
+   "days_overall": {
+    "n": 10726,
+    "p50": 2.08,
+    "p75": 6.62,
+    "p90": 14.92,
+    "p95": 25.46,
+    "p99": 65.5,
+    "max": 238.12
+   },
+   "days_by_depth": {
+    "1": {
+     "n": 4447,
+     "p50": 0.79,
+     "p75": 1.79,
+     "p90": 3.62,
+     "p95": 7.21,
+     "p99": 22.29,
+     "max": 94.88
+    },
+    "2-3": {
+     "n": 3435,
+     "p50": 2.46,
+     "p75": 4.92,
+     "p90": 8.83,
+     "p95": 12.79,
+     "p99": 27.04,
+     "max": 110.67
+    },
+    "4-6": {
+     "n": 1542,
+     "p50": 6.79,
+     "p75": 10.75,
+     "p90": 17.62,
+     "p95": 23.71,
+     "p99": 40.21,
+     "max": 116.96
+    },
+    "7-10": {
+     "n": 727,
+     "p50": 11.21,
+     "p75": 18.79,
+     "p90": 29.88,
+     "p95": 41.79,
+     "p99": 67.71,
+     "max": 187.67
+    },
+    "11-15": {
+     "n": 347,
+     "p50": 25.17,
+     "p75": 38.75,
+     "p90": 53.67,
+     "p95": 68.25,
+     "p99": 98.33,
+     "max": 124.08
+    },
+    "16-30": {
+     "n": 228,
+     "p50": 31.29,
+     "p75": 78.58,
+     "p90": 113.83,
+     "p95": 175.33,
+     "p99": 228.54,
+     "max": 238.12
+    }
+   },
+   "cutoffs": [
+    {
+     "cutoff_days": 14,
+     "n_cut": 1156,
+     "share_of_tp_trials_pct": 10.78,
+     "share_of_tp_dollars_pct": 50.85,
+     "mean_waves_of_cut": 9.09
+    },
+    {
+     "cutoff_days": 30,
+     "n_cut": 401,
+     "share_of_tp_trials_pct": 3.74,
+     "share_of_tp_dollars_pct": 30.34,
+     "mean_waves_of_cut": 12.29
+    },
+    {
+     "cutoff_days": 45,
+     "n_cut": 235,
+     "share_of_tp_trials_pct": 2.19,
+     "share_of_tp_dollars_pct": 23.02,
+     "mean_waves_of_cut": 14.17
+    },
+    {
+     "cutoff_days": 60,
+     "n_cut": 129,
+     "share_of_tp_trials_pct": 1.2,
+     "share_of_tp_dollars_pct": 15.85,
+     "mean_waves_of_cut": 15.95
+    },
+    {
+     "cutoff_days": 90,
+     "n_cut": 55,
+     "share_of_tp_trials_pct": 0.51,
+     "share_of_tp_dollars_pct": 9.62,
+     "mean_waves_of_cut": 19.73
+    },
+    {
+     "cutoff_days": 120,
+     "n_cut": 23,
+     "share_of_tp_trials_pct": 0.21,
+     "share_of_tp_dollars_pct": 5.56,
+     "mean_waves_of_cut": 24.22
+    },
+    {
+     "cutoff_days": 180,
+     "n_cut": 9,
+     "share_of_tp_trials_pct": 0.08,
+     "share_of_tp_dollars_pct": 2.44,
+     "mean_waves_of_cut": 25.44
+    },
+    {
+     "cutoff_days": 365,
+     "n_cut": 0,
+     "share_of_tp_trials_pct": 0.0,
+     "share_of_tp_dollars_pct": 0.0,
+     "mean_waves_of_cut": 0.0
+    }
+   ],
+   "open_at_data_end": {
+    "n": 271,
+    "share_of_all_trials_pct": 2.46,
+    "mean_mae_pct": -16.63,
+    "mean_pnl_pct": -11.97
+   },
+   "wait_curve": [
+    {
+     "days": 14,
+     "cum_share_of_all_trials_pct": 87.02
+    },
+    {
+     "days": 30,
+     "cum_share_of_all_trials_pct": 93.89
+    },
+    {
+     "days": 45,
+     "cum_share_of_all_trials_pct": 95.4
+    },
+    {
+     "days": 60,
+     "cum_share_of_all_trials_pct": 96.36
+    },
+    {
+     "days": 90,
+     "cum_share_of_all_trials_pct": 97.04
+    },
+    {
+     "days": 120,
+     "cum_share_of_all_trials_pct": 97.33
+    },
+    {
+     "days": 180,
+     "cum_share_of_all_trials_pct": 97.45
+    },
+    {
+     "days": 365,
+     "cum_share_of_all_trials_pct": 97.54
+    }
+   ]
+  },
+  "runtime_s": 3.4
+ }
+}

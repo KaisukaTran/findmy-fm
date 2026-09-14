@@ -49,6 +49,11 @@ class SimResult:
     # so profit must be measured against capital actually tied up over time, not per session.
     exit_capital: float = 0.0  # capital (USD) deployed at the moment the trial ended — multiply
     # by pnl_pct/100 to turn a realized % into realized dollars.
+    armed_exit_pct: float | None = None  # set only when `trail_after_tp_pct` armed a trailing
+    # stop and the trade later exited through it: the GROSS pnl captured above the TP floor, in
+    # percentage points ((exit_price/avg - 1)*100 - eff_tp) — cost-independent by construction,
+    # since cost applies equally whether the trade exited at the flat TP or above it. 0 means the
+    # trail gave back everything down to the floor; None means the trade never armed at all.
 
 
 def _targets(entry: float, distance_pct: float, max_waves: int) -> list[float]:
@@ -84,6 +89,7 @@ def simulate_kss(
     pessimistic_intrabar: bool = False,
     wave0_notional_usd: float = 100.0,
     tp_step_pct: float = 0.0,
+    trail_after_tp_pct: float = 0.0,
 ) -> SimResult:
     """
     Simulate one pyramid entered at candle index `start` with the SAME exits the live
@@ -120,6 +126,18 @@ def simulate_kss(
     NO effect on `pnl_pct`/`tp_hit`/etc. (those stay ratio-based, as before this field existed)
     and both new fields scale linearly with it, so a caller may rescale after the fact instead
     of re-simulating.
+
+    `trail_after_tp_pct` (Ride & Trail v2, default 0.0 = off = byte-identical to before this
+    parameter existed): when the take-profit target is reached, do NOT sell — instead ARM a
+    trailing stop floored at that TP price, so the trade can only end at the TP price or higher.
+    Once armed, `peak` tracks the highest high seen since arming and the stop is
+    `max(floor, peak * (1 - trail_after_tp_pct/100))`; the trade exits the first bar whose low
+    reaches that stop, at the stop price (never below it, even on a crash bar). The bar that
+    arms the trail never exits on that same bar (not even at the deadline). While armed, the SL
+    check no longer applies (the floor already prevents exits below the TP price) but the
+    deadline still does, realizing at the bar's close as it always has. `SimResult.armed_exit_pct`
+    reports the extra gross % captured above the floor when the trade closes through the trail;
+    None if it never armed.
     """
     entry = candles[start]["close"]
     entry_ts = candles[start]["ts"]
@@ -170,6 +188,14 @@ def simulate_kss(
     deployed_capital = wave_cost(0)  # wave 0 deploys at entry — "counts from entry"
     prev_ts = entry_ts
 
+    # Ride & Trail v2 state (see `trail_after_tp_pct` in the docstring). Never touched, and
+    # never read, when trail_after_tp_pct <= 0 — the TP branches below return immediately
+    # exactly as they always have, so `armed` stays False for the life of the trial.
+    armed = False
+    floor = 0.0
+    peak = 0.0
+    eff_tp_at_arm = 0.0
+
     def close_capital(idx: int) -> float:
         """capital_days as of an exit inside candles[idx]: the already-closed integral plus
         this bar's own duration held at the CURRENT `deployed_capital`."""
@@ -203,6 +229,10 @@ def simulate_kss(
         capital_days_acc += deployed_capital * (bar["ts"] - prev_ts) / _MS_PER_DAY
         prev_ts = bar["ts"]
 
+        # True the bar that ARMS the trail never exits on itself (not even at the deadline
+        # below) — reset every iteration, set at most once per bar, right where arming happens.
+        just_armed = False
+
         if pessimistic_intrabar:
             # Pessimistic: assume this bar's HIGH happened BEFORE any fill, so take-profit must
             # clear the PRE-fill (higher, harder) average — no free same-candle DCA benefit.
@@ -211,16 +241,27 @@ def simulate_kss(
                 dd = (bar["low"] - pre_avg) / pre_avg * 100.0
                 if dd < mae_pct:
                     mae_pct = dd
-                if bar["high"] >= pre_avg * tp_factor(filled):
-                    return SimResult(True, round(days, 2), filled, False,
-                                     round(eff_tp(filled) - cost_pct, 4), mae_pct=round(mae_pct, 4),
-                                     capital_days=close_capital(j),
-                                     exit_capital=round(deployed_capital, 6))
+                if not armed and bar["high"] >= pre_avg * tp_factor(filled):
+                    if trail_after_tp_pct <= 0:
+                        return SimResult(True, round(days, 2), filled, False,
+                                         round(eff_tp(filled) - cost_pct, 4), mae_pct=round(mae_pct, 4),
+                                         capital_days=close_capital(j),
+                                         exit_capital=round(deployed_capital, 6))
+                    armed = True
+                    just_armed = True
+                    floor = pre_avg * tp_factor(filled)
+                    peak = bar["high"]
+                    eff_tp_at_arm = eff_tp(filled)
 
         # Fill deeper waves whose target the bar traded through.
         # B4: when the bar opens below the target (gap-down), the limit order
         # fills at the open price (cheaper), not at the target — use _fill_price.
-        while filled < max_waves and bar["low"] <= targets[filled]:
+        # Once the trail is armed the stop sits ABOVE the average, so a bar that reaches a rung
+        # target (below the average) has already gone through the stop: the position is sold
+        # and the ladder is cancelled before any rung could fill. Filling here would buy the
+        # bottom of the same bar the trail sold near the top of — an impossible order of events
+        # that inflated the first run of the study (+307%/trial on daily bars).
+        while not armed and filled < max_waves and bar["low"] <= targets[filled]:
             fill_prices[filled] = _fill_price(targets[filled], bar_open)
             deployed_capital += wave_cost(filled)
             filled += 1
@@ -236,15 +277,28 @@ def simulate_kss(
                 mae_pct = dd
 
         if pessimistic_intrabar:
-            # Stop-loss tested AFTER this bar's fills (post-fill average) — the mirror of the
-            # pre-fill take-profit check above; deadline stays last, also post-fill.
-            if sl_pct > 0 and bar["low"] <= avg * sl_threshold_factor:
-                return SimResult(False, None, filled, False, round(-sl_pct - cost_pct, 4),
-                                 stopped=True, mae_pct=round(mae_pct, 4),
-                                 capital_days=close_capital(j),
-                                 exit_capital=round(deployed_capital, 6))
+            if armed and not just_armed:
+                # Trail check BEFORE updating peak with this bar's high (low first) — the
+                # pessimistic-bound convention for the trail.
+                stop = max(floor, peak * (1 - trail_after_tp_pct / 100))
+                if bar["low"] <= stop:
+                    gross_pct = (stop / avg - 1) * 100
+                    return SimResult(True, round(days, 2), filled, False,
+                                     round(gross_pct - cost_pct, 4), mae_pct=round(mae_pct, 4),
+                                     capital_days=close_capital(j),
+                                     exit_capital=round(deployed_capital, 6),
+                                     armed_exit_pct=round(gross_pct - eff_tp_at_arm, 4))
+                peak = max(peak, bar["high"])
+            elif not armed:
+                # Stop-loss tested AFTER this bar's fills (post-fill average) — the mirror of
+                # the pre-fill take-profit check above.
+                if sl_pct > 0 and bar["low"] <= avg * sl_threshold_factor:
+                    return SimResult(False, None, filled, False, round(-sl_pct - cost_pct, 4),
+                                     stopped=True, mae_pct=round(mae_pct, 4),
+                                     capital_days=close_capital(j),
+                                     exit_capital=round(deployed_capital, 6))
 
-            if days >= deadline_days:
+            if not just_armed and days >= deadline_days:
                 last = bar["close"]
                 return SimResult(False, None, filled, True,
                                  round((last - avg) / avg * 100 - cost_pct, 4),
@@ -252,23 +306,42 @@ def simulate_kss(
                                  capital_days=close_capital(j),
                                  exit_capital=round(deployed_capital, 6))
         else:
-            # Default (byte-identical to before capital_days/pessimistic_intrabar existed):
-            # hard stop-loss first, then take-profit, both against the post-fill average — the
-            # OPTIMISTIC ordering (low-then-high within the bar).
-            if sl_pct > 0 and bar["low"] <= avg * sl_threshold_factor:
-                return SimResult(False, None, filled, False, round(-sl_pct - cost_pct, 4),
-                                 stopped=True, mae_pct=round(mae_pct, 4),
-                                 capital_days=close_capital(j),
-                                 exit_capital=round(deployed_capital, 6))
+            if armed and not just_armed:
+                # Trail check AFTER updating peak with this bar's high (high first) — the
+                # optimistic-bound convention for the trail.
+                peak = max(peak, bar["high"])
+                stop = max(floor, peak * (1 - trail_after_tp_pct / 100))
+                if bar["low"] <= stop:
+                    gross_pct = (stop / avg - 1) * 100
+                    return SimResult(True, round(days, 2), filled, False,
+                                     round(gross_pct - cost_pct, 4), mae_pct=round(mae_pct, 4),
+                                     capital_days=close_capital(j),
+                                     exit_capital=round(deployed_capital, 6),
+                                     armed_exit_pct=round(gross_pct - eff_tp_at_arm, 4))
+            elif not armed:
+                # Default (byte-identical to before capital_days/pessimistic_intrabar existed):
+                # hard stop-loss first, then take-profit, both against the post-fill average —
+                # the OPTIMISTIC ordering (low-then-high within the bar).
+                if sl_pct > 0 and bar["low"] <= avg * sl_threshold_factor:
+                    return SimResult(False, None, filled, False, round(-sl_pct - cost_pct, 4),
+                                     stopped=True, mae_pct=round(mae_pct, 4),
+                                     capital_days=close_capital(j),
+                                     exit_capital=round(deployed_capital, 6))
 
-            if bar["high"] >= avg * tp_factor(filled):
-                return SimResult(True, round(days, 2), filled, False,
-                                 round(eff_tp(filled) - cost_pct, 4),
-                                 mae_pct=round(mae_pct, 4),
-                                 capital_days=close_capital(j),
-                                 exit_capital=round(deployed_capital, 6))
+                if bar["high"] >= avg * tp_factor(filled):
+                    if trail_after_tp_pct <= 0:
+                        return SimResult(True, round(days, 2), filled, False,
+                                         round(eff_tp(filled) - cost_pct, 4),
+                                         mae_pct=round(mae_pct, 4),
+                                         capital_days=close_capital(j),
+                                         exit_capital=round(deployed_capital, 6))
+                    armed = True
+                    just_armed = True
+                    floor = avg * tp_factor(filled)
+                    peak = bar["high"]
+                    eff_tp_at_arm = eff_tp(filled)
 
-            if days >= deadline_days:
+            if not just_armed and days >= deadline_days:
                 last = bar["close"]
                 return SimResult(False, None, filled, True,
                                  round((last - avg) / avg * 100 - cost_pct, 4),

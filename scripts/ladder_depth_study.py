@@ -57,11 +57,16 @@ CONFIGS: dict[str, tuple[float, int, float, float, float, float]] = {
 
 def _one_symbol(job: tuple) -> list[dict]:
     """All trials for one symbol × one config × one bound. Runs in a worker process."""
-    sym, bars, name, cfg, pessimistic, every, wave0, cost = job
+    sym, bars, name, cfg, pessimistic, every, wave0, cost, *rest = job
+    # Optional 9th element: the set of bar indices this symbol may ENTER on (a point-in-time
+    # liquidity rank, see ladder_grid_study --top). None = every bar on the schedule.
+    allowed = rest[0] if rest else None
     distance, waves, tp, sl, deadline, step = cfg
     candles = to_candles(bars)
     out = []
     for i in range(24, len(candles) - 1, every):
+        if allowed is not None and i not in allowed:
+            continue
         r = simulate_kss(
             candles, i, distance_pct=distance, max_waves=waves, tp_pct=tp,
             deadline_days=deadline, sl_pct=sl, cost_pct=cost,

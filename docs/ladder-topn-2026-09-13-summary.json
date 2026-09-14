@@ -1,0 +1,776 @@
+{
+  "1d": {
+    "10": {
+      "coins": 77,
+      "n_60_0_30_opt": 2786,
+      "n_60_0_30_pess": 2786,
+      "infinite_open_share_pct_opt": 1.74,
+      "infinite_open_share_pct_pess": 1.96,
+      "infinite_mae_min_opt": -63.1952,
+      "infinite_mae_min_pess": -99.9998,
+      "infinite_waves_p99_opt": 17,
+      "infinite_waves_p99_pess": 26,
+      "infinite_days_to_tp_p99_opt": 94.0,
+      "infinite_days_to_tp_p99_pess": 122.0,
+      "configs": {
+        "10:50:3650": {
+          "mtm_opt": 64.73,
+          "mtm_pess": 52.5,
+          "mean_usd_pess": 10.121,
+          "n_opt": 2755,
+          "n_pess": 2749,
+          "mean_usd_opt": 18.5609
+        },
+        "20:0:14": {
+          "mtm_opt": 86.48,
+          "mtm_pess": 65.64,
+          "mean_usd_pess": 14.5142,
+          "n_opt": 2792,
+          "n_pess": 2792,
+          "mean_usd_opt": 22.2293
+        },
+        "30:0:30": {
+          "mtm_opt": 83.38,
+          "mtm_pess": 64.13,
+          "mean_usd_pess": 20.7974,
+          "n_opt": 2786,
+          "n_pess": 2786,
+          "mean_usd_opt": 28.8583
+        },
+        "60:0:30": {
+          "mtm_opt": 84.41,
+          "mtm_pess": 61.56,
+          "mean_usd_pess": 18.7991,
+          "n_opt": 2786,
+          "n_pess": 2786,
+          "mean_usd_opt": 31.7106
+        },
+        "60:0:3650": {
+          "mtm_opt": 90.62,
+          "mtm_pess": 64.73,
+          "mean_usd_pess": 102.6276,
+          "n_opt": 2760,
+          "n_pess": 2754,
+          "mean_usd_opt": 67.8071
+        }
+      }
+    },
+    "20": {
+      "coins": 149,
+      "n_60_0_30_opt": 5453,
+      "n_60_0_30_pess": 5451,
+      "infinite_open_share_pct_opt": 1.44,
+      "infinite_open_share_pct_pess": 1.66,
+      "infinite_mae_min_opt": -97.9668,
+      "infinite_mae_min_pess": -99.9998,
+      "infinite_waves_p99_opt": 16,
+      "infinite_waves_p99_pess": 27,
+      "infinite_days_to_tp_p99_opt": 75.0,
+      "infinite_days_to_tp_p99_pess": 103.0,
+      "configs": {
+        "10:50:3650": {
+          "mtm_opt": 67.5,
+          "mtm_pess": 52.47,
+          "mean_usd_pess": 8.4642,
+          "n_opt": 5401,
+          "n_pess": 5392,
+          "mean_usd_opt": 19.8543
+        },
+        "20:0:14": {
+          "mtm_opt": 86.31,
+          "mtm_pess": 67.78,
+          "mean_usd_pess": 16.4014,
+          "n_opt": 5462,
+          "n_pess": 5460,
+          "mean_usd_opt": 22.5319
+        },
+        "30:0:30": {
+          "mtm_opt": 85.44,
+          "mtm_pess": 69.19,
+          "mean_usd_pess": 27.8434,
+          "n_opt": 5453,
+          "n_pess": 5451,
+          "mean_usd_opt": 30.7135
+        },
+        "60:0:30": {
+          "mtm_opt": 86.36,
+          "mtm_pess": 68.42,
+          "mean_usd_pess": 28.934,
+          "n_opt": 5453,
+          "n_pess": 5451,
+          "mean_usd_opt": 33.6305
+        },
+        "60:0:3650": {
+          "mtm_opt": 82.02,
+          "mtm_pess": 67.14,
+          "mean_usd_pess": 105.5195,
+          "n_opt": 5407,
+          "n_pess": 5395,
+          "mean_usd_opt": 64.1076
+        }
+      }
+    },
+    "30": {
+      "coins": 207,
+      "n_60_0_30_opt": 8062,
+      "n_60_0_30_pess": 8056,
+      "infinite_open_share_pct_opt": 1.25,
+      "infinite_open_share_pct_pess": 1.5,
+      "infinite_mae_min_opt": -97.9668,
+      "infinite_mae_min_pess": -99.9998,
+      "infinite_waves_p99_opt": 16,
+      "infinite_waves_p99_pess": 27,
+      "infinite_days_to_tp_p99_opt": 63.0,
+      "infinite_days_to_tp_p99_pess": 98.0,
+      "configs": {
+        "10:50:3650": {
+          "mtm_opt": 68.19,
+          "mtm_pess": 52.94,
+          "mean_usd_pess": 8.013,
+          "n_opt": 8002,
+          "n_pess": 7989,
+          "mean_usd_opt": 19.1439
+        },
+        "20:0:14": {
+          "mtm_opt": 87.52,
+          "mtm_pess": 68.66,
+          "mean_usd_pess": 17.0751,
+          "n_opt": 8075,
+          "n_pess": 8072,
+          "mean_usd_opt": 23.1977
+        },
+        "30:0:30": {
+          "mtm_opt": 86.93,
+          "mtm_pess": 70.36,
+          "mean_usd_pess": 29.2307,
+          "n_opt": 8062,
+          "n_pess": 8056,
+          "mean_usd_opt": 31.699
+        },
+        "60:0:30": {
+          "mtm_opt": 88.25,
+          "mtm_pess": 70.56,
+          "mean_usd_pess": 31.997,
+          "n_opt": 8062,
+          "n_pess": 8056,
+          "mean_usd_opt": 36.4868
+        },
+        "60:0:3650": {
+          "mtm_opt": 85.32,
+          "mtm_pess": 68.07,
+          "mean_usd_pess": 105.7999,
+          "n_opt": 8008,
+          "n_pess": 7987,
+          "mean_usd_opt": 64.158
+        }
+      }
+    },
+    "50": {
+      "coins": 273,
+      "n_60_0_30_opt": 13172,
+      "n_60_0_30_pess": 13164,
+      "infinite_open_share_pct_opt": 0.98,
+      "infinite_open_share_pct_pess": 1.22,
+      "infinite_mae_min_opt": -97.9668,
+      "infinite_mae_min_pess": -99.9998,
+      "infinite_waves_p99_opt": 16,
+      "infinite_waves_p99_pess": 27,
+      "infinite_days_to_tp_p99_opt": 59.0,
+      "infinite_days_to_tp_p99_pess": 98.0,
+      "configs": {
+        "10:50:3650": {
+          "mtm_opt": 69.31,
+          "mtm_pess": 52.73,
+          "mean_usd_pess": 7.5013,
+          "n_opt": 13097,
+          "n_pess": 13079,
+          "mean_usd_opt": 19.9648
+        },
+        "20:0:14": {
+          "mtm_opt": 86.71,
+          "mtm_pess": 65.14,
+          "mean_usd_pess": 14.6238,
+          "n_opt": 13190,
+          "n_pess": 13185,
+          "mean_usd_opt": 23.4695
+        },
+        "30:0:30": {
+          "mtm_opt": 86.1,
+          "mtm_pess": 68.77,
+          "mean_usd_pess": 28.0016,
+          "n_opt": 13172,
+          "n_pess": 13164,
+          "mean_usd_opt": 31.597
+        },
+        "60:0:30": {
+          "mtm_opt": 87.64,
+          "mtm_pess": 69.11,
+          "mean_usd_pess": 30.8954,
+          "n_opt": 13172,
+          "n_pess": 13164,
+          "mean_usd_opt": 37.049
+        },
+        "60:0:3650": {
+          "mtm_opt": 87.23,
+          "mtm_pess": 68.81,
+          "mean_usd_pess": 107.7382,
+          "n_opt": 13101,
+          "n_pess": 13068,
+          "mean_usd_opt": 63.2359
+        }
+      }
+    },
+    "100": {
+      "coins": 350,
+      "n_60_0_30_opt": 25675,
+      "n_60_0_30_pess": 25655,
+      "infinite_open_share_pct_opt": 0.75,
+      "infinite_open_share_pct_pess": 0.99,
+      "infinite_mae_min_opt": -99.903,
+      "infinite_mae_min_pess": -99.9998,
+      "infinite_waves_p99_opt": 16,
+      "infinite_waves_p99_pess": 27,
+      "infinite_days_to_tp_p99_opt": 55.0,
+      "infinite_days_to_tp_p99_pess": 99.0,
+      "configs": {
+        "10:50:3650": {
+          "mtm_opt": 69.44,
+          "mtm_pess": 52.57,
+          "mean_usd_pess": 6.605,
+          "n_opt": 25581,
+          "n_pess": 25546,
+          "mean_usd_opt": 19.0656
+        },
+        "20:0:14": {
+          "mtm_opt": 87.41,
+          "mtm_pess": 65.23,
+          "mean_usd_pess": 14.9427,
+          "n_opt": 25713,
+          "n_pess": 25702,
+          "mean_usd_opt": 23.5141
+        },
+        "30:0:30": {
+          "mtm_opt": 86.36,
+          "mtm_pess": 69.34,
+          "mean_usd_pess": 29.5499,
+          "n_opt": 25675,
+          "n_pess": 25655,
+          "mean_usd_opt": 30.5647
+        },
+        "60:0:30": {
+          "mtm_opt": 87.91,
+          "mtm_pess": 69.88,
+          "mean_usd_pess": 33.6546,
+          "n_opt": 25675,
+          "n_pess": 25655,
+          "mean_usd_opt": 35.7238
+        },
+        "60:0:3650": {
+          "mtm_opt": 90.51,
+          "mtm_pess": 73.18,
+          "mean_usd_pess": 113.0883,
+          "n_opt": 25589,
+          "n_pess": 25526,
+          "mean_usd_opt": 62.9835
+        }
+      }
+    },
+    "200": {
+      "coins": 386,
+      "n_60_0_30_opt": 50309,
+      "n_60_0_30_pess": 50276,
+      "infinite_open_share_pct_opt": 0.61,
+      "infinite_open_share_pct_pess": 0.86,
+      "infinite_mae_min_opt": -99.903,
+      "infinite_mae_min_pess": -99.9998,
+      "infinite_waves_p99_opt": 16,
+      "infinite_waves_p99_pess": 27,
+      "infinite_days_to_tp_p99_opt": 52.0,
+      "infinite_days_to_tp_p99_pess": 93.0,
+      "configs": {
+        "10:50:3650": {
+          "mtm_opt": 71.21,
+          "mtm_pess": 53.72,
+          "mean_usd_pess": 7.5274,
+          "n_opt": 50184,
+          "n_pess": 50121,
+          "mean_usd_opt": 19.3617
+        },
+        "20:0:14": {
+          "mtm_opt": 87.07,
+          "mtm_pess": 65.06,
+          "mean_usd_pess": 14.5269,
+          "n_opt": 50368,
+          "n_pess": 50347,
+          "mean_usd_opt": 23.4548
+        },
+        "30:0:30": {
+          "mtm_opt": 86.53,
+          "mtm_pess": 70.43,
+          "mean_usd_pess": 30.3048,
+          "n_opt": 50309,
+          "n_pess": 50275,
+          "mean_usd_opt": 30.518
+        },
+        "60:0:30": {
+          "mtm_opt": 88.0,
+          "mtm_pess": 72.29,
+          "mean_usd_pess": 35.8823,
+          "n_opt": 50309,
+          "n_pess": 50276,
+          "mean_usd_opt": 35.1545
+        },
+        "60:0:3650": {
+          "mtm_opt": 84.51,
+          "mtm_pess": 71.04,
+          "mean_usd_pess": 108.3774,
+          "n_opt": 50178,
+          "n_pess": 50054,
+          "mean_usd_opt": 59.7113
+        }
+      }
+    },
+    "all": {
+      "coins": 388,
+      "n_60_0_30_opt": 86029,
+      "n_60_0_30_pess": 85949,
+      "infinite_open_share_pct_opt": 0.71,
+      "infinite_open_share_pct_pess": 0.97,
+      "infinite_mae_min_opt": -99.9846,
+      "infinite_mae_min_pess": -99.9998,
+      "infinite_waves_p99_opt": 16,
+      "infinite_waves_p99_pess": 26,
+      "infinite_days_to_tp_p99_opt": 51.0,
+      "infinite_days_to_tp_p99_pess": 81.0,
+      "configs": {
+        "10:50:3650": {
+          "mtm_opt": 68.83,
+          "mtm_pess": 53.46,
+          "mean_usd_pess": 7.6182,
+          "n_opt": 85783,
+          "n_pess": 85649,
+          "mean_usd_opt": 17.8641
+        },
+        "20:0:14": {
+          "mtm_opt": 86.95,
+          "mtm_pess": 66.08,
+          "mean_usd_pess": 15.1562,
+          "n_opt": 86140,
+          "n_pess": 86092,
+          "mean_usd_opt": 22.7841
+        },
+        "30:0:30": {
+          "mtm_opt": 86.16,
+          "mtm_pess": 71.26,
+          "mean_usd_pess": 32.3135,
+          "n_opt": 86029,
+          "n_pess": 85948,
+          "mean_usd_opt": 30.9458
+        },
+        "60:0:30": {
+          "mtm_opt": 87.69,
+          "mtm_pess": 73.01,
+          "mean_usd_pess": 39.1053,
+          "n_opt": 86029,
+          "n_pess": 85949,
+          "mean_usd_opt": 35.9912
+        },
+        "60:0:3650": {
+          "mtm_opt": 84.89,
+          "mtm_pess": 73.43,
+          "mean_usd_pess": 103.6679,
+          "n_opt": 85787,
+          "n_pess": 85564,
+          "mean_usd_opt": 60.3452
+        }
+      }
+    }
+  },
+  "1h": {
+    "10": {
+      "coins": 41,
+      "n_60_0_30_opt": 1252,
+      "n_60_0_30_pess": 1252,
+      "infinite_open_share_pct_opt": 4.46,
+      "infinite_open_share_pct_pess": 4.46,
+      "infinite_mae_min_opt": -60.2706,
+      "infinite_mae_min_pess": -82.8234,
+      "infinite_waves_p99_opt": 22,
+      "infinite_waves_p99_pess": 22,
+      "infinite_days_to_tp_p99_opt": 80.38,
+      "infinite_days_to_tp_p99_pess": 80.38,
+      "configs": {
+        "10:50:3650": {
+          "mtm_opt": 50.44,
+          "mtm_pess": 50.68,
+          "mean_usd_pess": 15.9597,
+          "n_opt": 1213,
+          "n_pess": 1213,
+          "mean_usd_opt": 15.6077
+        },
+        "20:0:14": {
+          "mtm_opt": 81.95,
+          "mtm_pess": 81.78,
+          "mean_usd_pess": 24.9615,
+          "n_opt": 1260,
+          "n_pess": 1260,
+          "mean_usd_opt": 24.9851
+        },
+        "30:0:30": {
+          "mtm_opt": 80.01,
+          "mtm_pess": 79.82,
+          "mean_usd_pess": 36.176,
+          "n_opt": 1252,
+          "n_pess": 1252,
+          "mean_usd_opt": 36.239
+        },
+        "60:0:30": {
+          "mtm_opt": 81.13,
+          "mtm_pess": 80.95,
+          "mean_usd_pess": 39.7475,
+          "n_opt": 1252,
+          "n_pess": 1252,
+          "mean_usd_opt": 39.8105
+        },
+        "60:0:3650": {
+          "mtm_opt": 79.12,
+          "mtm_pess": 79.24,
+          "mean_usd_pess": 86.1171,
+          "n_opt": 1221,
+          "n_pess": 1221,
+          "mean_usd_opt": 85.4998
+        }
+      }
+    },
+    "20": {
+      "coins": 70,
+      "n_60_0_30_opt": 2468,
+      "n_60_0_30_pess": 2468,
+      "infinite_open_share_pct_opt": 3.59,
+      "infinite_open_share_pct_pess": 3.59,
+      "infinite_mae_min_opt": -63.2155,
+      "infinite_mae_min_pess": -82.8234,
+      "infinite_waves_p99_opt": 24,
+      "infinite_waves_p99_pess": 24,
+      "infinite_days_to_tp_p99_opt": 74.75,
+      "infinite_days_to_tp_p99_pess": 74.75,
+      "configs": {
+        "10:50:3650": {
+          "mtm_opt": 50.8,
+          "mtm_pess": 50.71,
+          "mean_usd_pess": 12.7871,
+          "n_opt": 2408,
+          "n_pess": 2408,
+          "mean_usd_opt": 12.9185
+        },
+        "20:0:14": {
+          "mtm_opt": 79.06,
+          "mtm_pess": 78.98,
+          "mean_usd_pess": 25.1778,
+          "n_opt": 2480,
+          "n_pess": 2480,
+          "mean_usd_opt": 24.9169
+        },
+        "30:0:30": {
+          "mtm_opt": 78.52,
+          "mtm_pess": 78.27,
+          "mean_usd_pess": 38.7147,
+          "n_opt": 2468,
+          "n_pess": 2468,
+          "mean_usd_opt": 38.5157
+        },
+        "60:0:30": {
+          "mtm_opt": 79.62,
+          "mtm_pess": 79.36,
+          "mean_usd_pess": 42.3387,
+          "n_opt": 2468,
+          "n_pess": 2468,
+          "mean_usd_opt": 42.1396
+        },
+        "60:0:3650": {
+          "mtm_opt": 76.29,
+          "mtm_pess": 76.61,
+          "mean_usd_pess": 97.8213,
+          "n_opt": 2417,
+          "n_pess": 2417,
+          "mean_usd_opt": 96.0713
+        }
+      }
+    },
+    "30": {
+      "coins": 87,
+      "n_60_0_30_opt": 3646,
+      "n_60_0_30_pess": 3645,
+      "infinite_open_share_pct_opt": 3.03,
+      "infinite_open_share_pct_pess": 3.06,
+      "infinite_mae_min_opt": -96.5379,
+      "infinite_mae_min_pess": -96.5379,
+      "infinite_waves_p99_opt": 29,
+      "infinite_waves_p99_pess": 29,
+      "infinite_days_to_tp_p99_opt": 69.83,
+      "infinite_days_to_tp_p99_pess": 69.83,
+      "configs": {
+        "10:50:3650": {
+          "mtm_opt": 50.16,
+          "mtm_pess": 50.61,
+          "mean_usd_pess": 9.5723,
+          "n_opt": 3578,
+          "n_pess": 3577,
+          "mean_usd_opt": 8.5183
+        },
+        "20:0:14": {
+          "mtm_opt": 76.85,
+          "mtm_pess": 76.17,
+          "mean_usd_pess": 25.2398,
+          "n_opt": 3662,
+          "n_pess": 3662,
+          "mean_usd_opt": 25.4763
+        },
+        "30:0:30": {
+          "mtm_opt": 79.8,
+          "mtm_pess": 78.75,
+          "mean_usd_pess": 43.69,
+          "n_opt": 3646,
+          "n_pess": 3645,
+          "mean_usd_opt": 45.0655
+        },
+        "60:0:30": {
+          "mtm_opt": 82.08,
+          "mtm_pess": 81.01,
+          "mean_usd_pess": 52.5977,
+          "n_opt": 3646,
+          "n_pess": 3645,
+          "mean_usd_opt": 54.6633
+        },
+        "60:0:3650": {
+          "mtm_opt": 70.45,
+          "mtm_pess": 70.03,
+          "mean_usd_pess": 106.1657,
+          "n_opt": 3581,
+          "n_pess": 3580,
+          "mean_usd_opt": 107.2099
+        }
+      }
+    },
+    "50": {
+      "coins": 94,
+      "n_60_0_30_opt": 6070,
+      "n_60_0_30_pess": 6069,
+      "infinite_open_share_pct_opt": 2.48,
+      "infinite_open_share_pct_pess": 2.51,
+      "infinite_mae_min_opt": -96.5379,
+      "infinite_mae_min_pess": -97.5791,
+      "infinite_waves_p99_opt": 27,
+      "infinite_waves_p99_pess": 26,
+      "infinite_days_to_tp_p99_opt": 69.83,
+      "infinite_days_to_tp_p99_pess": 71.83,
+      "configs": {
+        "10:50:3650": {
+          "mtm_opt": 51.65,
+          "mtm_pess": 51.85,
+          "mean_usd_pess": 10.1665,
+          "n_opt": 5984,
+          "n_pess": 5983,
+          "mean_usd_opt": 9.6386
+        },
+        "20:0:14": {
+          "mtm_opt": 78.2,
+          "mtm_pess": 76.57,
+          "mean_usd_pess": 25.7135,
+          "n_opt": 6090,
+          "n_pess": 6090,
+          "mean_usd_opt": 26.9336
+        },
+        "30:0:30": {
+          "mtm_opt": 79.86,
+          "mtm_pess": 76.41,
+          "mean_usd_pess": 40.679,
+          "n_opt": 6070,
+          "n_pess": 6069,
+          "mean_usd_opt": 45.2153
+        },
+        "60:0:30": {
+          "mtm_opt": 82.25,
+          "mtm_pess": 78.9,
+          "mean_usd_pess": 49.7543,
+          "n_opt": 6070,
+          "n_pess": 6069,
+          "mean_usd_opt": 55.3862
+        },
+        "60:0:3650": {
+          "mtm_opt": 72.39,
+          "mtm_pess": 69.43,
+          "mean_usd_pess": 103.4506,
+          "n_opt": 5986,
+          "n_pess": 5984,
+          "mean_usd_opt": 104.5013
+        }
+      }
+    },
+    "100": {
+      "coins": 98,
+      "n_60_0_30_opt": 9951,
+      "n_60_0_30_pess": 9950,
+      "infinite_open_share_pct_opt": 2.36,
+      "infinite_open_share_pct_pess": 2.38,
+      "infinite_mae_min_opt": -99.9031,
+      "infinite_mae_min_pess": -99.9746,
+      "infinite_waves_p99_opt": 29,
+      "infinite_waves_p99_pess": 26,
+      "infinite_days_to_tp_p99_opt": 69.83,
+      "infinite_days_to_tp_p99_pess": 71.46,
+      "configs": {
+        "10:50:3650": {
+          "mtm_opt": 50.78,
+          "mtm_pess": 51.82,
+          "mean_usd_pess": 10.2489,
+          "n_opt": 9832,
+          "n_pess": 9831,
+          "mean_usd_opt": 8.5493
+        },
+        "20:0:14": {
+          "mtm_opt": 76.9,
+          "mtm_pess": 75.06,
+          "mean_usd_pess": 23.7613,
+          "n_opt": 9985,
+          "n_pess": 9985,
+          "mean_usd_opt": 25.6823
+        },
+        "30:0:30": {
+          "mtm_opt": 80.51,
+          "mtm_pess": 77.19,
+          "mean_usd_pess": 42.6893,
+          "n_opt": 9951,
+          "n_pess": 9950,
+          "mean_usd_opt": 48.534
+        },
+        "60:0:30": {
+          "mtm_opt": 84.23,
+          "mtm_pess": 80.99,
+          "mean_usd_pess": 58.0699,
+          "n_opt": 9951,
+          "n_pess": 9950,
+          "mean_usd_opt": 66.9206
+        },
+        "60:0:3650": {
+          "mtm_opt": 75.84,
+          "mtm_pess": 73.27,
+          "mean_usd_pess": 109.6168,
+          "n_opt": 9835,
+          "n_pess": 9833,
+          "mean_usd_opt": 114.6277
+        }
+      }
+    },
+    "200": {
+      "coins": 98,
+      "n_60_0_30_opt": 10363,
+      "n_60_0_30_pess": 10362,
+      "infinite_open_share_pct_opt": 2.51,
+      "infinite_open_share_pct_pess": 2.53,
+      "infinite_mae_min_opt": -99.9031,
+      "infinite_mae_min_pess": -99.9746,
+      "infinite_waves_p99_opt": 28,
+      "infinite_waves_p99_pess": 26,
+      "infinite_days_to_tp_p99_opt": 68.25,
+      "infinite_days_to_tp_p99_pess": 69.83,
+      "configs": {
+        "10:50:3650": {
+          "mtm_opt": 51.33,
+          "mtm_pess": 52.37,
+          "mean_usd_pess": 11.1537,
+          "n_opt": 10239,
+          "n_pess": 10238,
+          "mean_usd_opt": 9.4724
+        },
+        "20:0:14": {
+          "mtm_opt": 76.53,
+          "mtm_pess": 74.69,
+          "mean_usd_pess": 23.2824,
+          "n_opt": 10404,
+          "n_pess": 10404,
+          "mean_usd_opt": 25.2209
+        },
+        "30:0:30": {
+          "mtm_opt": 80.22,
+          "mtm_pess": 76.98,
+          "mean_usd_pess": 42.1429,
+          "n_opt": 10363,
+          "n_pess": 10362,
+          "mean_usd_opt": 47.8075
+        },
+        "60:0:30": {
+          "mtm_opt": 83.9,
+          "mtm_pess": 80.72,
+          "mean_usd_pess": 56.912,
+          "n_opt": 10363,
+          "n_pess": 10362,
+          "mean_usd_opt": 65.463
+        },
+        "60:0:3650": {
+          "mtm_opt": 75.97,
+          "mtm_pess": 73.44,
+          "mean_usd_pess": 107.2985,
+          "n_opt": 10243,
+          "n_pess": 10241,
+          "mean_usd_opt": 112.163
+        }
+      }
+    },
+    "all": {
+      "coins": 98,
+      "n_60_0_30_opt": 10853,
+      "n_60_0_30_pess": 10852,
+      "infinite_open_share_pct_opt": 2.4,
+      "infinite_open_share_pct_pess": 2.42,
+      "infinite_mae_min_opt": -99.9031,
+      "infinite_mae_min_pess": -99.9746,
+      "infinite_waves_p99_opt": 27,
+      "infinite_waves_p99_pess": 25,
+      "infinite_days_to_tp_p99_opt": 65.58,
+      "infinite_days_to_tp_p99_pess": 67.58,
+      "configs": {
+        "10:50:3650": {
+          "mtm_opt": 52.41,
+          "mtm_pess": 53.51,
+          "mean_usd_pess": 12.4573,
+          "n_opt": 10729,
+          "n_pess": 10728,
+          "mean_usd_opt": 10.7161
+        },
+        "20:0:14": {
+          "mtm_opt": 77.55,
+          "mtm_pess": 75.83,
+          "mean_usd_pess": 24.4289,
+          "n_opt": 10894,
+          "n_pess": 10894,
+          "mean_usd_opt": 26.1861
+        },
+        "30:0:30": {
+          "mtm_opt": 80.81,
+          "mtm_pess": 77.73,
+          "mean_usd_pess": 42.7849,
+          "n_opt": 10853,
+          "n_pess": 10852,
+          "mean_usd_opt": 48.055
+        },
+        "60:0:30": {
+          "mtm_opt": 84.33,
+          "mtm_pess": 81.3,
+          "mean_usd_pess": 57.1327,
+          "n_opt": 10853,
+          "n_pess": 10852,
+          "mean_usd_opt": 65.1589
+        },
+        "60:0:3650": {
+          "mtm_opt": 76.43,
+          "mtm_pess": 73.98,
+          "mean_usd_pess": 105.3149,
+          "n_opt": 10733,
+          "n_pess": 10731,
+          "mean_usd_opt": 109.801
+        }
+      }
+    }
+  }
+}

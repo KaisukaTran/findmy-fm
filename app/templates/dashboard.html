@@ -46,6 +46,7 @@
           <button class="tab" data-tab="savings" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">◆</span><span>Tích trữ</span></button>
           <button class="tab" data-tab="strategy" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">⚙</span><span>Chiến lược</span></button>
           <button class="tab" data-tab="logs" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">☰</span><span>Nhật ký</span></button>
+          <button class="tab" data-tab="diagrams" role="tab" aria-selected="false"><span class="nav-ico" aria-hidden="true">⧉</span><span>Sơ đồ</span></button>
         </nav>
       </aside>
       <div class="content">
@@ -187,6 +188,35 @@
                hx-trigger="tab-shown from:closest [data-tab-panel], load"
                hx-swap="innerHTML"><span class="htmx-indicator loading-row">Đang tải…</span></div>
         </div>
+      </div>
+    </div>
+
+    <!-- TAB: Sơ đồ (how the app works). archify viewers, served by app/diagrams.py into a
+         sandboxed iframe (they carry inline scripts the dashboard CSP would refuse). The links
+         switch the frame through target= with no JS; app.js only loads the first diagram when
+         the tab is first revealed (each file is ~800 KB) and highlights the active row. -->
+    <div data-tab-panel="diagrams">
+      <div class="panel mt-16">
+        <h2>Sơ đồ cách app hoạt động</h2>
+        <div class="scroll">
+          <table class="tbl diagram-list">
+            <thead><tr><th>Sơ đồ</th><th>Trả lời câu hỏi</th></tr></thead>
+            <tbody>
+              {% for key, meta in diagrams.items() %}
+              <tr>
+                <td><a href="/diagrams/{{ key }}?theme=dark" target="diagram-frame" data-diagram="{{ key }}"
+                       class="diagram-link{% if loop.first %} active{% endif %}">{{ meta[0] }}</a></td>
+                <td class="muted">{{ meta[1] }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <iframe name="diagram-frame" id="diagram-frame" class="diagram-frame" title="Sơ đồ kiến trúc"
+                sandbox="allow-scripts allow-downloads" allow="fullscreen"
+                data-src="/diagrams/{{ diagrams | first }}?theme=dark"></iframe>
+        <p class="muted mb-4">Kéo để di chuyển, cuộn để phóng to; thanh công cụ trong sơ đồ có tìm kiếm, đổi sáng/tối và xuất PNG/SVG.
+          Nguồn: <code>docs/architecture/*.json</code>, dựng bằng archify.</p>
       </div>
     </div>
       </div><!-- /.content -->

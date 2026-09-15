@@ -1,0 +1,52 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Một vòng Scheduler",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "scan-cycle", "label": "Vòng quét 15 phút", "focus": ["timer", "prefetch", "manage", "scan", "breaker", "fill"], "note": "Thứ tự trong run_cycle: giữ phiên cũ trước, rồi mới quét mở phiên mới." },
+      { "id": "guard-loop", "label": "Guard 90 giây", "focus": ["guard-timer", "reconcile", "exits", "queue", "fill"], "note": "Vòng nhanh chỉ lo thoát lệnh và khớp chạm nến; không bao giờ bị cầu dao chặn." },
+      { "id": "order-queue", "label": "Hàng chờ lệnh", "focus": ["scan", "exits", "queue", "fill"], "note": "Cả hai vòng chỉ xếp lệnh vào hàng chờ; khớp lệnh luôn đi qua approve_order." }
+    ]
+  },
+  "lanes": [
+    { "id": "cycle", "label": "Vòng quét 15'" },
+    { "id": "orders", "label": "Hàng chờ lệnh" },
+    { "id": "guard", "label": "Guard 90s" }
+  ],
+  "phases": [
+    { "id": "prepare", "label": "Chuẩn bị", "fromCol": 0, "toCol": 1 },
+    { "id": "sessions", "label": "Giữ + mở phiên", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "execute", "label": "Rủi ro + khớp", "fromCol": 4, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["timer", "prefetch", "manage", "scan", "breaker", "fill"],
+  "nodes": [
+    { "id": "timer", "lane": "cycle", "col": 0, "type": "backend", "label": "Hẹn giờ 15'", "sublabel": "khoá :8801", "width": 132 },
+    { "id": "prefetch", "lane": "cycle", "col": 1, "type": "cloud", "label": "Tải nến trước", "sublabel": "ngoài _work_lock", "width": 132 },
+    { "id": "manage", "lane": "cycle", "col": 2, "type": "backend", "label": "Giữ phiên cũ", "sublabel": "hạn chót · trail", "width": 132 },
+    { "id": "scan", "lane": "cycle", "col": 3, "type": "backend", "label": "Scanner", "sublabel": "cổng lọc · consensus", "width": 132 },
+    { "id": "breaker", "lane": "cycle", "col": 4, "type": "security", "label": "Cầu dao", "sublabel": "circuit.evaluate", "width": 132 },
+    { "id": "queue", "lane": "orders", "col": 3, "type": "messagebus", "label": "Hàng chờ duyệt", "sublabel": "pending_orders", "width": 132 },
+    { "id": "fill", "lane": "orders", "col": 5, "type": "backend", "label": "Khớp lệnh", "sublabel": "approve_order", "width": 132 },
+    { "id": "guard-timer", "lane": "guard", "col": 0, "type": "backend", "label": "Hẹn giờ 90s", "sublabel": "kss_exit_check_sec", "width": 132 },
+    { "id": "reconcile", "lane": "guard", "col": 2, "type": "backend", "label": "Đối soát sàn", "sublabel": "mỗi 60s, live", "width": 132 },
+    { "id": "exits", "lane": "guard", "col": 3, "type": "security", "label": "Kiểm thoát", "sublabel": "run_position_guard", "width": 132 }
+  ],
+  "edges": [
+    { "id": "tick", "from": "timer", "to": "prefetch" },
+    { "id": "lock", "from": "prefetch", "to": "manage" },
+    { "id": "then-scan", "from": "manage", "to": "scan" },
+    { "id": "evaluate", "from": "scan", "to": "breaker" },
+    { "id": "auto-fill", "from": "breaker", "to": "fill", "label": "chặn MUA nếu đóng băng", "variant": "security" },
+    { "id": "open-session", "from": "scan", "to": "queue", "label": "rung 0", "variant": "emphasis" },
+    { "id": "due", "from": "queue", "to": "fill", "label": "đến hạn", "variant": "emphasis" },
+    { "id": "guard-tick", "from": "guard-timer", "to": "reconcile" },
+    { "id": "check-exit", "from": "reconcile", "to": "exits" },
+    { "id": "exit-order", "from": "exits", "to": "queue", "label": "lệnh thoát", "variant": "security" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Vòng 15 phút (run_cycle)", "items": ["Đối soát → hạn chót → quản phiên → orphan", "Scanner → cầu dao → sync TP → khớp → tự duyệt", "Ghi sổ, digest Telegram, heartbeat"] },
+    { "dot": "emerald", "title": "Guard 90 giây", "items": ["Chung _work_lock với vòng 15', không chạy chồng", "Paper: khớp lệnh chạm nến 1m ngay trong guard", "Lệnh thoát không bao giờ bị cầu dao chặn"] }
+  ]
+}

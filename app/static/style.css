@@ -557,3 +557,13 @@ button { white-space: nowrap; }
 .w-90  { flex: 0 0 90%; }
 .w-95  { flex: 0 0 95%; }
 .w-100 { flex: 0 0 100%; }
+
+/* "Sơ đồ" tab: archify viewer in a sandboxed iframe (see app/diagrams.py). */
+.diagram-list td:first-child { width: 1%; }
+.diagram-link { color: var(--fg); text-decoration: none; }
+.diagram-link:hover { color: var(--accent); }
+.diagram-link.active { color: var(--accent); font-weight: 600; }
+.diagram-frame {
+  display: block; width: 100%; height: calc(100vh - 170px); min-height: 620px;
+  margin: 12px 0 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg);
+}

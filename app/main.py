@@ -22,6 +22,7 @@ from app import __version__
 from app.clock import utcnow
 from app.config import settings
 from app.db import init_db
+from app.diagrams import router as diagrams_router
 from app.kss.routes import router as kss_router
 from app.routes import api_router, ui_router
 from app.security import install_security
@@ -113,6 +114,7 @@ def create_app() -> FastAPI:
     app.include_router(api_router)
     app.include_router(kss_router)
     app.include_router(ui_router)
+    app.include_router(diagrams_router)
     return app
 
 

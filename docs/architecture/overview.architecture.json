@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "FINDMY-FM — kiến trúc tổng thể",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "trade-path", "label": "Đường đi của một lệnh", "focus": ["scheduler", "scanner", "kss", "queue", "execution", "binance"], "note": "Từ vòng quét tới lệnh trên sàn: mọi lệnh đều qua hàng chờ duyệt." },
+      { "id": "risk-cage", "label": "Lồng rủi ro", "focus": ["queue", "breaker", "db"], "note": "Cầu dao đọc lỗ từ sổ và chỉ chặn lệnh MUA mới; lệnh thoát không bao giờ bị chặn." },
+      { "id": "operator", "label": "Người vận hành", "focus": ["kai", "web", "db", "scheduler"], "note": "Dashboard đọc sổ và đổi knob runtime; knob lưu trong runtime_config." }
+    ]
+  },
+  "components": [
+    { "id": "binance", "type": "external", "label": "Binance", "sublabel": "REST ccxt + WS", "pos": [1140, 100], "size": [160, 64] },
+    { "id": "data", "type": "backend", "label": "Dữ liệu thị trường", "sublabel": "providers + candle_cache", "pos": [480, 100], "size": [160, 64] },
+    { "id": "scheduler", "type": "backend", "label": "Scheduler", "sublabel": "quét 15' · guard 90s", "pos": [260, 280], "size": [160, 64] },
+    { "id": "scanner", "type": "backend", "label": "Scanner", "sublabel": "cổng lọc + consensus", "pos": [480, 280], "size": [160, 64] },
+    { "id": "kss", "type": "backend", "label": "KSS service", "sublabel": "gọi pyramid.py", "pos": [700, 280], "size": [160, 64] },
+    { "id": "queue", "type": "security", "label": "Hàng chờ duyệt", "sublabel": "pending_orders", "pos": [920, 280], "size": [160, 64] },
+    { "id": "execution", "type": "backend", "label": "Execution", "sublabel": "paper chạm nến 1m", "pos": [1140, 280], "size": [160, 64] },
+    { "id": "kai", "type": "external", "label": "Kai", "sublabel": "trình duyệt", "pos": [40, 460], "size": [160, 64] },
+    { "id": "web", "type": "frontend", "label": "Dashboard + API", "sublabel": "HTMX /partials · /api", "pos": [260, 460], "size": [160, 64] },
+    { "id": "db", "type": "database", "label": "SQLite", "sublabel": "data/findmy.db", "pos": [700, 460], "size": [160, 64] },
+    { "id": "breaker", "type": "security", "label": "Cầu dao", "sublabel": "drawdown · lỗ ngày", "pos": [920, 460], "size": [160, 64] },
+    { "id": "telegram", "type": "external", "label": "Telegram", "sublabel": "[PAPER] cảnh báo", "pos": [1140, 460], "size": [160, 64] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Tiến trình uvicorn :8001", "wraps": ["data", "scheduler", "scanner", "kss", "queue", "execution", "web", "db", "breaker"] },
+    { "kind": "security-group", "label": "Lồng rủi ro", "wraps": ["queue", "breaker"] }
+  ],
+  "connections": [
+    { "id": "market-data", "from": "binance", "to": "data", "label": "nến + giá" },
+    { "id": "candles", "from": "data", "to": "scanner", "label": "nến", "labelDy": 24 },
+    { "id": "cycle", "from": "scheduler", "to": "scanner", "label": "mỗi 15'", "variant": "emphasis" },
+    { "id": "open-session", "from": "scanner", "to": "kss", "label": "mở phiên", "variant": "emphasis" },
+    { "id": "queue-order", "from": "kss", "to": "queue", "label": "xếp lệnh", "variant": "emphasis" },
+    { "id": "approve", "from": "queue", "to": "execution", "label": "duyệt", "variant": "emphasis" },
+    { "id": "venue-order", "from": "execution", "to": "binance", "label": "chỉ live", "variant": "dashed" },
+    { "id": "operator-ui", "from": "kai", "to": "web", "label": "HTTP" },
+    { "id": "knobs", "from": "web", "to": "scheduler", "label": "knob" },
+    { "id": "ledger", "from": "kss", "to": "db", "label": "ghi sổ", "labelDy": 24 },
+    { "id": "read-ledger", "from": "web", "to": "db", "label": "đọc sổ" },
+    { "id": "loss-feed", "from": "db", "to": "breaker", "label": "P&L" },
+    { "id": "freeze", "from": "breaker", "to": "queue", "label": "chặn MUA", "variant": "security" },
+    { "id": "alerts", "from": "execution", "to": "telegram", "label": "báo khớp", "variant": "dashed", "labelDy": 24 }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "Luồng chính", "items": ["Scheduler 15' gọi Scanner, Scanner mở phiên KSS", "KSS xếp rung + TP vào hàng chờ duyệt", "Execution khớp paper theo nến 1m, hoặc gửi sàn khi live"] },
+    { "dot": "rose", "title": "Bất biến", "items": ["Không đường nào đặt lệnh mà bỏ qua hàng chờ", "Lệnh thoát (SELL) không bao giờ bị cầu dao chặn", "Công thức pyramid.py khoá, cấm sửa (vẫn chạy)"] },
+    { "dot": "cyan", "title": "Trạng thái", "items": ["Mọi trạng thái nằm trong SQLite, restart an toàn", "Knob runtime lưu ở runtime_config (kss:*)", "Khoá 127.0.0.1:8801 cấm chạy hai scheduler"] }
+  ]
+}

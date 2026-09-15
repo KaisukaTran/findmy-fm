@@ -1,0 +1,48 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Scanner chọn coin mở phiên",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "data", "label": "Dữ liệu", "focus": ["universe", "candles"], "note": "Vũ trụ lấy từ watchlist và coin đủ volume, nến lấy qua candle_cache." },
+      { "id": "scoring", "label": "Chấm điểm", "focus": ["backtest", "consensus"], "note": "Backtest ước lượng tỉ lệ thắng; các agent bỏ phiếu rồi decide() so ngưỡng." },
+      { "id": "gates", "label": "Cổng chặn", "focus": ["pregate", "vetoes", "caps", "open"], "note": "Cổng rẻ chạy trước khi tải nến; veto và trần chạy sau khi đã chấm điểm." }
+    ]
+  },
+  "lanes": [
+    { "id": "data", "label": "Dữ liệu" },
+    { "id": "score", "label": "Chấm điểm" },
+    { "id": "gates", "label": "Cổng chặn", "variant": "exception" },
+    { "id": "open", "label": "Mở phiên" }
+  ],
+  "phases": [
+    { "id": "select", "label": "Chọn vũ trụ", "fromCol": 0, "toCol": 2 },
+    { "id": "rank", "label": "Chấm điểm", "fromCol": 3, "toCol": 4, "variant": "emphasis" },
+    { "id": "admit", "label": "Cho vào", "fromCol": 5, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["universe", "pregate", "candles", "backtest", "consensus", "vetoes", "caps", "open"],
+  "nodes": [
+    { "id": "universe", "lane": "data", "col": 0, "type": "cloud", "label": "Vũ trụ coin", "sublabel": "watchlist ∪ volume", "width": 132 },
+    { "id": "pregate", "lane": "gates", "col": 1, "type": "security", "label": "Cổng rẻ", "sublabel": "cooldown · cap coin", "width": 132 },
+    { "id": "candles", "lane": "data", "col": 2, "type": "database", "label": "Tải nến", "sublabel": "candle_cache", "width": 132 },
+    { "id": "backtest", "lane": "score", "col": 3, "type": "backend", "label": "Backtest", "sublabel": "tỉ lệ thắng", "width": 132 },
+    { "id": "consensus", "lane": "score", "col": 4, "type": "backend", "label": "Consensus", "sublabel": "agent + decide()", "width": 132 },
+    { "id": "vetoes", "lane": "gates", "col": 4, "type": "security", "label": "Veto vào lệnh", "sublabel": "downtrend · MAE", "width": 132 },
+    { "id": "caps", "lane": "gates", "col": 5, "type": "security", "label": "Trần mở", "sublabel": "40 phiên · ngân sách", "width": 132 },
+    { "id": "open", "lane": "open", "col": 5, "type": "backend", "label": "_open_session", "sublabel": "tạo + xếp rung 0", "width": 132 }
+  ],
+  "edges": [
+    { "id": "symbols", "from": "universe", "to": "pregate" },
+    { "id": "unblocked", "from": "pregate", "to": "candles", "label": "chưa bị chặn" },
+    { "id": "history", "from": "candles", "to": "backtest", "label": "≥30 nến" },
+    { "id": "votes", "from": "backtest", "to": "consensus" },
+    { "id": "trade", "from": "consensus", "to": "vetoes", "label": "trade", "variant": "emphasis" },
+    { "id": "survivors", "from": "vetoes", "to": "caps" },
+    { "id": "admit", "from": "caps", "to": "open", "label": "còn chỗ", "variant": "emphasis" }
+  ],
+  "cards": [
+    { "dot": "rose", "title": "Cổng chặn theo thứ tự", "items": ["Trước nến: cooldown, SELL đang chạy, chuỗi thua, cap/coin", "Sau chấm điểm: downtrend, dao rơi, MAE, sức mạnh vs BTC", "Bỏ 25% ứng viên có drawdown tệ nhất"] },
+    { "dot": "cyan", "title": "Trước khi mở", "items": ["Cầu dao đóng băng thì không mở phiên nào", "Trần: phiên/coin, phiên/lượt quét, tổng phiên, ngân sách", "Lý do bỏ qua được lưu cho từng coin"] }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Vòng đời một phiên KSS",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "happy-path", "label": "Đường thắng", "focus": ["pending", "active", "dca", "target", "armed", "completed"], "note": "Mở phiên, DCA theo thang, chạm đích rồi trail; lệnh bán không bao giờ dưới đích." },
+      { "id": "ladder-loop", "label": "Vòng thang DCA", "focus": ["dca", "next-rung"], "note": "Mỗi rung khớp làm giá vốn TB giảm và đích TP được tính lại." },
+      { "id": "early-exit", "label": "Kết thúc sớm", "focus": ["next-rung", "stopped"], "note": "Phiên đang chờ rung có thể bị dừng tay hoặc hết hạn 60 ngày." }
+    ]
+  },
+  "lanes": [
+    { "id": "main", "label": "Đường chính" },
+    { "id": "ladder", "label": "Chờ rung" },
+    { "id": "trail", "label": "Trail sau TP" },
+    { "id": "terminal", "label": "Kết thúc sớm" }
+  ],
+  "states": [
+    { "id": "pending", "type": "start", "label": "PENDING", "sublabel": "create_session", "lane": "main", "col": 0, "step": "01" },
+    { "id": "active", "type": "active", "label": "ACTIVE", "sublabel": "xếp rung 0", "lane": "main", "col": 1, "step": "02" },
+    { "id": "dca", "type": "active", "label": "Đang DCA", "sublabel": "tính giá TB", "lane": "main", "col": 2, "step": "03" },
+    { "id": "target", "type": "decision", "label": "Chạm đích TP", "sublabel": "kiểm K-2", "lane": "main", "col": 3, "step": "04" },
+    { "id": "completed", "type": "success", "label": "COMPLETED", "sublabel": "bán ≥ đích", "lane": "main", "col": 4, "step": "05" },
+    { "id": "next-rung", "type": "waiting", "label": "Chờ rung kế", "sublabel": "−4%/rung, ≤30", "lane": "ladder", "col": 0 },
+    { "id": "armed", "type": "active", "label": "Trail vũ trang", "sublabel": "sàn = đích TP", "lane": "trail", "col": 1 },
+    { "id": "stopped", "type": "failure", "label": "STOPPED", "sublabel": "tay · 60 ngày", "lane": "terminal", "col": 0 }
+  ],
+  "transitions": [
+    { "id": "start", "from": "pending", "to": "active" },
+    { "id": "wave0-filled", "from": "active", "to": "dca" },
+    { "id": "reach-target", "from": "dca", "to": "target", "variant": "emphasis" },
+    { "id": "flat-tp", "from": "target", "to": "completed", "variant": "emphasis", "route": "straight" },
+    { "id": "k2-defer", "from": "target", "to": "dca", "label": "K-2 hoãn", "variant": "security", "route": "top-channel" },
+    { "id": "price-drop", "from": "dca", "to": "next-rung" },
+    { "id": "rung-filled", "from": "next-rung", "to": "dca" },
+    { "id": "arm-trail", "from": "target", "to": "armed", "variant": "emphasis" },
+    { "id": "trail-exit", "from": "armed", "to": "completed", "variant": "emphasis" },
+    { "id": "stop-early", "from": "next-rung", "to": "stopped", "variant": "security" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "Công thức thang (pyramid.py, khoá)", "items": ["Giá rung n = giá vào × (1 − 4%)ⁿ", "Khối lượng rung n = (n+1) × pip", "Đích TP = giá TB × (1 + TP% + 0,5%/rung + phí)"] },
+    { "dot": "cyan", "title": "Chạm đích TP", "items": ["Trail = 0: lệnh TP nằm sẵn khớp, xong", "Trail 3%: vũ trang, sàn = đích, bán khi lùi 3% từ đỉnh", "K-2: dưới giá vốn thật + phí thì hoãn, quay lại DCA"] },
+    { "dot": "rose", "title": "Kết thúc sớm", "items": ["Dừng tay: huỷ rung đang chờ", "Hết hạn 60 ngày: bán market nếu còn giữ coin", "Cắt lỗ SL hiện TẮT (sl_pct = 0)"] }
+  ]
+}

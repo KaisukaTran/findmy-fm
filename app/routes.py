@@ -32,6 +32,7 @@ from app import (
     circuit,
     costengine,
     costs,
+    diagrams,
     execution,
     hyperopt,
     ml,
@@ -1039,7 +1040,8 @@ def dashboard(request: Request):
     else:
         mode = {"label": "LIVE · REAL", "cls": "breaker-frozen", "env": "real"}
     return templates.TemplateResponse(
-        "dashboard.html", {"request": request, "mode": mode, "asset_v": _asset_version()}
+        "dashboard.html",
+        {"request": request, "mode": mode, "asset_v": _asset_version(), "diagrams": diagrams.DIAGRAMS},
     )
 
 

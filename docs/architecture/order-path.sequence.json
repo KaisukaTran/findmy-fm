@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Một lệnh từ tín hiệu tới chốt lời (paper)",
+    "quality_profile": "showcase",
+    "viewBox": [1040, 880],
+    "column_fit": "spread",
+    "views": [
+      { "id": "open", "label": "Mở phiên", "focus": ["scanner", "kss", "queue", "exec", "db"], "note": "Scanner mở phiên, rung 0 được tự duyệt và khớp ngay." },
+      { "id": "ladder", "label": "Rung khớp", "focus": ["guard", "queue", "exec", "kss"], "note": "Guard 90s phát lại nến 1m; lệnh LIMIT chỉ khớp khi nến chạm giá." },
+      { "id": "take-profit", "label": "Chốt lời", "focus": ["guard", "exec", "kss", "db", "telegram"], "note": "TP khớp thì phiên COMPLETED và Telegram báo." }
+    ]
+  },
+  "participants": [
+    { "id": "scanner", "type": "backend", "label": "Scanner", "sublabel": "vòng 15'" },
+    { "id": "kss", "type": "backend", "label": "KSS service", "sublabel": "phiên + thang" },
+    { "id": "queue", "type": "messagebus", "label": "Hàng chờ", "sublabel": "pending_orders" },
+    { "id": "guard", "type": "backend", "label": "Guard 90s", "sublabel": "auto_fill_due" },
+    { "id": "exec", "type": "security", "label": "approve_order", "sublabel": "cổng khớp duy nhất" },
+    { "id": "db", "type": "database", "label": "SQLite", "sublabel": "fills · positions" },
+    { "id": "telegram", "type": "external", "label": "Telegram", "sublabel": "[PAPER]" }
+  ],
+  "segments": [
+    { "from": 150, "to": 330, "label": "Mở phiên" },
+    { "from": 348, "to": 580, "label": "Rung khớp" },
+    { "from": 598, "to": 800, "label": "Chốt lời" }
+  ],
+  "messages": [
+    { "from": "scanner", "to": "kss", "y": 180, "label": "create + start_session", "variant": "emphasis" },
+    { "from": "kss", "to": "queue", "y": 222, "label": "xếp rung 0 (BUY)", "variant": "emphasis" },
+    { "from": "scanner", "to": "exec", "y": 264, "label": "tự duyệt rung 0", "variant": "emphasis" },
+    { "from": "exec", "to": "db", "y": 306, "label": "Fill + Position", "variant": "default" },
+    { "from": "exec", "to": "kss", "y": 378, "label": "handle_fill_event", "variant": "emphasis" },
+    { "from": "kss", "to": "queue", "y": 420, "label": "rung kế + TP nằm sẵn", "variant": "default" },
+    { "from": "guard", "to": "queue", "y": 462, "label": "nến 1m chạm giá?", "variant": "dashed" },
+    { "from": "guard", "to": "exec", "y": 504, "label": "duyệt ở giá chạm", "variant": "emphasis" },
+    { "from": "exec", "to": "db", "y": 546, "label": "Fill phí maker", "variant": "default" },
+    { "from": "guard", "to": "exec", "y": 628, "label": "nến 1m chạm TP", "variant": "emphasis" },
+    { "from": "exec", "to": "kss", "y": 670, "label": "fill :tp", "variant": "emphasis" },
+    { "from": "kss", "to": "db", "y": 712, "label": "phiên COMPLETED", "variant": "default" },
+    { "from": "exec", "to": "telegram", "y": 754, "label": "báo TP (nếu bật push)", "variant": "dashed" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Một cổng khớp", "items": ["Mọi fill đi qua approve_order → _execute", "Cầu dao chỉ chặn BUY; SELL luôn qua", "Duyệt tay trên dashboard cũng dùng đúng cổng này"] },
+    { "dot": "emerald", "title": "Paper khớp thế nào", "items": ["LIMIT khớp khi một nến 1m chạm giá, phí maker", "Không chạm thì lệnh nằm chờ, không khớp ảo", "Live maker: sàn giữ lệnh, reconcile ghi fill"] },
+    { "dot": "orange", "title": "Khi trail đang bật", "items": ["Guard thấy giá ≥ đích: vũ trang, huỷ TP nằm sẵn", "Giá lùi 3% từ đỉnh thì xếp lệnh bán market", "Mức stop không bao giờ dưới đích TP"] }
+  ]
+}

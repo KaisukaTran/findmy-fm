@@ -698,6 +698,19 @@ document.addEventListener("DOMContentLoaded", () => {
 // though our own writes use replaceState (which does not itself fire this).
 window.addEventListener("hashchange", () => showTab(_tabFromHash()));
 
+// "Sơ đồ" tab: the diagram iframe gets its src only when the tab is first revealed — each archify
+// viewer is ~800 KB and most visits never open this tab. The row links switch the frame on their
+// own (target="diagram-frame"); this just keeps the active row highlighted.
+document.addEventListener("tab-shown", (e) => {
+  const frame = e.target && e.target.querySelector ? e.target.querySelector("#diagram-frame") : null;
+  if (frame && !frame.getAttribute("src")) frame.setAttribute("src", frame.dataset.src);
+});
+document.addEventListener("click", (e) => {
+  const link = e.target.closest("[data-diagram]");
+  if (!link) return;
+  document.querySelectorAll("[data-diagram]").forEach((a) => a.classList.toggle("active", a === link));
+});
+
 // Close the ladder modal when clicking the dark backdrop (outside the box).
 document.addEventListener("click", (e) => {
   const m = document.getElementById("ladder-modal");

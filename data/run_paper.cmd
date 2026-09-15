@@ -6,6 +6,15 @@ REM worktree left (D:\FINDMY on branch `live`, .env = LIVE_TRADING/live.db/lock 
 REM the "paper" task start a SECOND LIVE instance on port 8000 which stole the scheduler lock
 REM from the real live app on 8001. The env below is now explicit, so this launcher can only
 REM ever be paper no matter what .env says. Do not remove these lines.
+REM
+REM 2026-09-15: testnet retired. .env now IS paper and the :8001 app (watchdog + FINDMY-Live-Restart)
+REM runs the paper book data/findmy.db. Launching this too would put a SECOND process on the same
+REM book, so it refuses while :8001 answers. Restart paper with: Start-ScheduledTask FINDMY-Live-Restart
+powershell -NoProfile -Command "try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 http://127.0.0.1:8001/health | Out-Null; exit 1 } catch { exit 0 }"
+if errorlevel 1 (
+  echo REFUSED: :8001 already runs the paper book. Use Start-ScheduledTask FINDMY-Live-Restart instead.
+  exit /b 1
+)
 set "DATABASE_URL=sqlite:///./data/findmy.db"
 set "SCHEDULER_LOCK_PORT=8801"
 set "LIVE_TRADING=false"

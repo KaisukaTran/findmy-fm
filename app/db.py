@@ -52,6 +52,8 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("kss_sessions", "first_wave_usd", "FLOAT"),
     # Take-profit then trail v2 (docs/tp-then-trail-2026-09-14.md).
     ("kss_sessions", "tp_trail_floor", "FLOAT NOT NULL DEFAULT 0.0"),
+    # Live-native resting stop (task 1.10): cancel+replace counter for _maintain_live_stop.
+    ("kss_sessions", "stop_replaces", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 

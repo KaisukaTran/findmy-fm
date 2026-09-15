@@ -236,6 +236,11 @@ class KssSession(Base):
     # sync_resting_tp's target bump, the watchdog guards). v2 reuses trail_sl_price/peak_price for
     # its own ratchet once armed.
     tp_trail_floor: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    # Live-native resting stop (task 1.10, docs/live-readiness-plan.md): cancel+replace count
+    # for `_maintain_live_stop`'s STOP_LOSS_LIMIT ratchet, capped by `kss_stop_max_replaces` so
+    # a whipsawing price cannot burn Binance's unfilled-order-count quota (a cancel never
+    # refunds it) into a -1015.
+    stop_replaces: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     status: Mapped[str] = mapped_column(String(16), nullable=False, default=SESSION_PENDING)
     # Regime router (docs/pyramid-up-plan.md): 'dca_down' (existing buy-the-dip ladder, frozen

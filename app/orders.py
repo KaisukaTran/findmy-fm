@@ -439,6 +439,12 @@ def auto_fill_due_orders(db: Session) -> list[int]:
             # An order already resting on the exchange (1.5) is the venue's to fill —
             # approving it here would place a SECOND order for the same rung.
             PendingOrder.exchange_order_id.is_(None),
+            # A resting STOP_LOSS_LIMIT (task 1.10, app.kss.service._maintain_live_stop) sits
+            # BELOW the market by construction — this query's own SELL-due rule (`mkt >=
+            # o.price`) is therefore true on almost every tick, which would auto-approve it as
+            # a MARKET sell of the whole position the instant it ever lost its exchange link
+            # (a cancel mid-replace, a bug). Never let this path touch one.
+            PendingOrder.order_type != "STOP",
         )
         .all()
     )
@@ -1057,13 +1063,19 @@ def _is_risk_exit(source_ref: str | None) -> bool:
 
 
 def _retire_sibling_tp(db: Session, exit_order: PendingOrder) -> None:
-    """Take the session's resting take-profit off the book before its market exit goes out.
+    """Take the session's resting exit(s) off the book before its market exit goes out.
 
-    The cancel books whatever the TP had already filled (``_cancel_resting``), and the row is
-    retired the way ``sync_resting_tp`` retires a dead session's TP, so the next pass cannot
-    re-place it in front of the exit. A refused cancel does NOT hold the exit: the row is
-    retired anyway (its link is kept, so ``sync_resting_orders`` keeps trying the cancel) and
-    the exit is then sized to what the venue reports as free.
+    Covers both a resting take-profit LIMIT (``pyramid:{sid}:tp``) and a resting
+    STOP_LOSS_LIMIT (``pyramid:{sid}:stop`` — task 1.10, ``app.kss.service._maintain_live_
+    stop``): either one LOCKS the position's coins on the venue exactly the same way, so a
+    MARKET risk exit sent as-is is refused with -2010 until whichever is resting comes off
+    the book first.
+
+    The cancel books whatever had already filled (``_cancel_resting``), and the row is retired
+    the way ``sync_resting_tp`` retires a dead session's TP, so the next pass cannot re-place
+    it in front of the exit. A refused cancel does NOT hold the exit: the row is retired anyway
+    (its link is kept, so ``sync_resting_orders``/the next ``_maintain_live_stop`` tick keeps
+    trying the cancel) and the exit is then sized to what the venue reports as free.
     """
     sid = str(exit_order.source_ref).split(":")[1]
     rows = (
@@ -1071,23 +1083,26 @@ def _retire_sibling_tp(db: Session, exit_order: PendingOrder) -> None:
         .filter(
             PendingOrder.status == PENDING,
             PendingOrder.side == "SELL",
-            PendingOrder.source_ref == f"pyramid:{sid}:tp",
+            PendingOrder.source_ref.in_([f"pyramid:{sid}:tp", f"pyramid:{sid}:stop"]),
             PendingOrder.exchange_order_id.isnot(None),
         )
         .all()
     )
-    for tp in rows:
-        if not _cancel_resting(db, tp):
+    for sibling in rows:
+        kind = "stop" if str(sibling.source_ref).endswith(":stop") else "tp"
+        if not _cancel_resting(db, sibling):
             logger.warning(
-                "order %s: resting TP %s could not be cancelled before the exit — "
-                "placing the exit against the venue's free balance", exit_order.id, tp.id,
+                "order %s: resting %s %s could not be cancelled before the exit — "
+                "placing the exit against the venue's free balance",
+                exit_order.id, kind, sibling.id,
             )
-        tp.status = REJECTED
-        tp.reviewer = "resting-tp"
-        tp.reject_reason = "resting-tp: superseded by market exit"
-        tp.decided_at = utcnow()
-        audit.log(db, "orders", "tp_retired_for_exit", entity=f"order:{tp.id}",
-                  symbol=tp.symbol, exit_order=exit_order.id)
+        sibling.status = REJECTED
+        sibling.reviewer = "resting-tp" if kind == "tp" else "resting-stop"
+        sibling.reject_reason = f"resting-{kind}: superseded by market exit"
+        sibling.decided_at = utcnow()
+        audit.log(db, "orders",
+                  "tp_retired_for_exit" if kind == "tp" else "stop_retired_for_exit",
+                  entity=f"order:{sibling.id}", symbol=sibling.symbol, exit_order=exit_order.id)
     if rows:
         db.flush()
 

@@ -894,6 +894,10 @@ def handle_fill_event(
     source_ref formats:
       pyramid:{id}:wave:{n}  -> wave fill -> maybe queue next wave / trigger TP
       pyramid:{id}:tp        -> TP sell filled -> session COMPLETED
+      pyramid:{id}:stop      -> live-native resting stop filled -> session COMPLETED (a v2
+                                take-profit-then-trail stop can only fire at/above the TP
+                                target, so this is a PROFITABLE exit — same branch as tp,
+                                see app.kss.service._maintain_live_stop)
     """
     parts = source_ref.split(":")
     if len(parts) < 3 or parts[0] != "pyramid":
@@ -903,9 +907,13 @@ def handle_fill_event(
     if row is None:
         return None
 
-    # TP sell. Under the resting model an ACTIVE session has its exit AND its unfilled DCA
-    # rungs on the book at once, so two things matter here that did not under the legacy model.
-    if parts[2] == "tp":
+    # TP sell, or the live-native resting stop's fill (task 1.10) — both end the session the
+    # SAME way (never a re-entry cooldown; that is only for a risk exit below). Under the
+    # resting model an ACTIVE session has its exit AND its unfilled DCA rungs on the book at
+    # once, so two things matter here that did not under the legacy model.
+    if parts[2] in {"tp", "stop"}:
+        label = "TP" if parts[2] == "tp" else "stop"
+        reason_kind = "take-profit" if parts[2] == "tp" else "stop"
         # A PARTIAL fill does not end anything. A resting maker exit in a thin book fills in
         # pieces routinely, and completing on the first piece abandoned the rest of the
         # position with no managed exit at all.
@@ -914,8 +922,8 @@ def handle_fill_event(
             row.total_filled_qty = remaining
             row.total_cost = max(row.total_cost - filled_qty * row.avg_price, 0.0)
             db.commit()
-            return {"action": "partial_tp",
-                    "message": f"Session {session_id}: TP filled {filled_qty:g}, {remaining:g} still held"}
+            return {"action": f"partial_{parts[2]}",
+                    "message": f"Session {session_id}: {label} filled {filled_qty:g}, {remaining:g} still held"}
         if remaining > 1e-9:
             # A sliver the venue itself will not accept. It is written off here rather than
             # carried, because carrying it is what produced order 118 (FIL session 35, live):
@@ -931,9 +939,9 @@ def handle_fill_event(
         # into a position with no session, no ladder and no take-profit — the orphan pattern
         # behind much of our realised loss. (The risk-exit branch below needs this too; an
         # earlier version of this comment claimed otherwise and was wrong.)
-        _cancel_pending_waves(db, session_id, "take-profit filled (ladder cancelled)")
+        _cancel_pending_waves(db, session_id, f"{reason_kind} filled (ladder cancelled)")
         db.commit()
-        return {"action": "completed", "message": f"Session {session_id} completed (TP filled)"}
+        return {"action": "completed", "message": f"Session {session_id} completed ({label} filled)"}
 
     # Stop-loss / trailing-stop sells terminate the session as STOPPED. ("trail_sl" is the dynamic
     # trailing exit — previously missing here, so a dynamic trail set NO re-entry cooldown.)
@@ -2222,9 +2230,12 @@ def _trail_after_tp(db: Session, row: KssSession, price: float) -> bool:
     Live note: under the resting model, arming retires the venue's resting LIMIT take-profit the
     same way ``sync_resting_tp``'s stale-row sweep does (REJECTED + reason, ``exchange_order_id``
     left in place so ``sync_resting_orders`` cancels it on the venue next pass — see
-    ``orders._retire_sibling_tp`` for the sibling pattern). The eventual exit is a MARKET sell
-    queued by the guard loop like every other risk exit; a venue-side STOP order for the trail
-    itself is a later step (``_maintain_live_stop`` stub)."""
+    ``orders._retire_sibling_tp`` for the sibling pattern). The eventual exit is still a MARKET
+    sell queued by the guard loop like every other risk exit — that fallback is unchanged — but
+    every ratchet also calls ``_maintain_live_stop`` (task 1.10) to keep a venue-side
+    STOP_LOSS_LIMIT resting at the current stop, so the venue itself executes the breach in
+    microseconds when the knob is on; a failed/off/paper stop just leaves the MARKET fallback
+    as the only defence, exactly like today."""
     from app.config import settings
 
     pct = settings.kss_trail_after_tp_pct
@@ -2278,6 +2289,13 @@ def _trail_after_tp(db: Session, row: KssSession, price: float) -> bool:
         audit.log(db, "scheduler", "tp_trail_exit", entity=f"kss:{row.id}", symbol=row.symbol,
                   price=round(price, 8), stop=round(stop, 8),
                   floor=round(row.tp_trail_floor, 8), peak=round(peak, 8))
+        return True
+    # Not exiting this tick — only now is it worth keeping the venue-side stop in step with the
+    # ratchet. Maintaining it BEFORE the exit check would place (or cancel-and-replace) a stop on
+    # the very tick the market sell is queued, and `_retire_sibling_tp` would immediately cancel
+    # it again: a cancel does NOT refund Binance's unfilled-order count, so that is pure budget
+    # burned on an order that never had a chance to work.
+    _maintain_live_stop(db, row, price)
     return True
 
 
@@ -2454,21 +2472,151 @@ def _crash_exit(db: Session, row: KssSession, price: float) -> bool:
     return False
 
 
+def _live_stop_row(db: Session, session_id: int) -> PendingOrder | None:
+    """The session's current resting live stop, if any (one row max — see ``_maintain_live_
+    stop``). Ordered defensively: an unexpected duplicate PENDING row (there should never be
+    one) resolves to the newest rather than raising."""
+    return (
+        db.query(PendingOrder)
+        .filter(
+            PendingOrder.source == "kss",
+            PendingOrder.order_type == "STOP",
+            PendingOrder.source_ref == f"pyramid:{session_id}:stop",
+            PendingOrder.status == models.PENDING,
+        )
+        .order_by(PendingOrder.id.desc())
+        .first()
+    )
+
+
 def _maintain_live_stop(db: Session, row: KssSession, price: float) -> None:
-    """STUB — not implemented. LIVE-only (§10.2): intended to keep a resting STOP-MARKET on the
-    exchange at the current ``trail_sl_price`` for server-side (ms) gap protection. INERT on paper /
-    when disabled / without live keys — the actual exchange placement is gated off until live trading
-    is enabled (it must be validated against a real exchange before it ships). The paper-side defence
-    in the meantime is the guard loop (§10.1) + crash-detect. The API rejects enabling
-    ``kss_live_stop_orders`` (see routes.set_kss_settings) precisely because this function is a stub."""
+    """LIVE only (task 1.10 / §10.2): keep a STOP_LOSS_LIMIT SELL resting on the exchange at
+    the session's current ``trail_sl_price``, so the venue executes the stop in microseconds
+    instead of the ~90s guard detecting the breach after the fact and sending a MARKET sell
+    (measured 2026-09-14: those filled 0.09-0.34% BELOW the intended stop).
+
+    One row per armed session: ``source="kss"`` (``_book_delta`` only fires the KSS fill hook
+    for that source), ``source_ref=f"pyramid:{row.id}:stop"``, ``order_type="STOP"`` — a value
+    no other path matches, so it is naturally invisible to ``orders.sync_resting_orders``
+    (both queries there key on ``order_type == "LIMIT"``) and is explicitly excluded from
+    ``orders.auto_fill_due_orders`` (a stop's trigger price sits BELOW the market by
+    construction, which would otherwise read as "due" on almost every tick). It IS reconciled
+    by ``orders.reconcile_live_orders`` for free — that function only filters on
+    ``exchange_order_id``/status — and its fill is routed to a PROFITABLE session completion by
+    ``handle_fill_event``'s ``"stop"`` branch.
+
+    Gate: OFF unless the knob, live trading, and live keys are all on, the session is ACTIVE,
+    holds inventory, and has a positive stop. Paper and disabled-live short-circuit on the very
+    first ``and`` term without ever importing/calling ``execution`` — zero venue calls.
+
+    Never raises: any venue error (placement, cancel, or an unexpected bug in this function
+    itself) is logged and audited as ``live_stop_failed``; the ~90s guard's own MARKET fallback
+    is what actually protects the position when this optimisation fails.
+    """
+    from app import execution
     from app.config import settings
 
-    if not (settings.kss_live_stop_orders and settings.live_trading and row.trail_sl_price > 0):
+    if not (
+        settings.kss_live_stop_orders
+        and settings.live_trading
+        and execution.live_enabled()
+        and row.trail_sl_price > 0
+        and row.total_filled_qty > 0
+        and row.status == SESSION_ACTIVE
+    ):
         return
-    # Live activation: place/replace a STOP_MARKET at row.trail_sl_price via app.execution and book the
-    # fill through orders.reconcile_live_orders. Deliberately a no-op here (live automation is OFF) so
-    # paper and disabled-live never touch the exchange. Wire + validate when going live.
-    return
+
+    try:
+        py = _to_pyramid(row)
+        qty = _floor_to_step(row.total_filled_qty, py._step_size)
+        if qty < py._min_qty:
+            return  # nothing step-legal to protect — never gate/shrink an exit to fit
+
+        existing = _live_stop_row(db, row.id)
+
+        if existing is not None:
+            threshold = existing.price * (1 + settings.kss_stop_ratchet_step_pct / 100.0)
+            if row.trail_sl_price < threshold:
+                return  # not enough of a move yet — leave the resting stop alone
+            if row.stop_replaces >= settings.kss_stop_max_replaces:
+                capped_before = (
+                    db.query(AuditLog)
+                    .filter(AuditLog.action == "live_stop_replace_capped",
+                            AuditLog.entity == f"kss:{row.id}")
+                    .first()
+                )
+                if capped_before is None:
+                    audit.log(db, "scheduler", "live_stop_replace_capped",
+                              entity=f"kss:{row.id}", symbol=row.symbol,
+                              replaces=row.stop_replaces, cap=settings.kss_stop_max_replaces)
+                return  # keep the resting stop — it still protects
+
+        # A ratchet is an optimisation, NEVER an exit: it must yield to the same order-count/
+        # rate budget a real BUY would, unlike the exit path this function is not on.
+        if execution.rate_hold_active():
+            audit.log(db, "scheduler", "live_stop_deferred", entity=f"kss:{row.id}",
+                      symbol=row.symbol, reason="rate hold active")
+            return
+        try:
+            execution.assert_order_budget_available()
+        except Exception as exc:
+            audit.log(db, "scheduler", "live_stop_deferred", entity=f"kss:{row.id}",
+                      symbol=row.symbol, reason=str(exc))
+            return
+
+        old_price = existing.price if existing is not None else None
+        if existing is not None:
+            if not orders._cancel_resting(db, existing):
+                return  # refused: the old stop still protects — never run two live stops
+            if existing.status == models.PENDING:
+                existing.status = models.REJECTED
+                existing.reviewer = "live-stop"
+                existing.reject_reason = "resting-stop: replaced (ratchet)"
+                existing.decided_at = utcnow()
+            db.flush()
+            # The cancel raced the venue: a fill it booked along the way may have already
+            # completed the session (handle_fill_event's "stop" branch) — placing a fresh stop
+            # for a flat/ended session would orphan a live order nothing manages any more.
+            if row.status != SESSION_ACTIVE or row.total_filled_qty <= 0:
+                return
+
+        from app.data.providers import live_provider
+        from app.kss.precision import price_precision
+
+        pair = live_provider().pair(row.symbol)
+        stop_price = row.trail_sl_price
+        limit_price = round(
+            stop_price * (1 - settings.kss_stop_limit_slip_pct / 100.0),
+            price_precision(stop_price),
+        )
+        res = execution.place_live_stop_order(pair, qty, stop_price, limit_price)
+        if not res.get("raw_id"):
+            raise RuntimeError(f"live stop placement rejected: {res.get('status')}")
+
+        status = str(res.get("status") or "").lower()
+        new_order = PendingOrder(
+            symbol=row.symbol, side="SELL", order_type="STOP", quantity=qty,
+            price=stop_price, source="kss", source_ref=f"pyramid:{row.id}:stop",
+            status=models.PENDING, exchange_order_id=str(res["raw_id"]),
+            exchange_status=(
+                None if status in orders._TERMINAL_EXCHANGE_STATUS else (status or None)
+            ),
+        )
+        db.add(new_order)
+        db.flush()
+
+        if old_price is not None:
+            row.stop_replaces += 1
+            audit.log(db, "scheduler", "live_stop_replaced", entity=f"kss:{row.id}",
+                      symbol=row.symbol, old_stop=round(old_price, 8),
+                      new_stop=round(stop_price, 8), replaces_so_far=row.stop_replaces)
+        else:
+            audit.log(db, "scheduler", "live_stop_placed", entity=f"kss:{row.id}",
+                      symbol=row.symbol, stop=round(stop_price, 8),
+                      limit=round(limit_price, 8), qty=round(qty, 8))
+    except Exception:
+        logger.exception("live stop maintenance failed for session %s (%s)", row.id, row.symbol)
+        audit.log(db, "scheduler", "live_stop_failed", entity=f"kss:{row.id}", symbol=row.symbol)
 
 
 def run_position_guard(db: Session) -> dict:

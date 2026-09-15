@@ -108,6 +108,9 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "kss_exit_check_sec": int,
     "kss_crash_drop_pct": float,
     "kss_live_stop_orders": _to_bool,
+    "kss_stop_ratchet_step_pct": float,  # min % improvement in trail_sl_price before cancel+replace
+    "kss_stop_limit_slip_pct": float,    # STOP_LOSS_LIMIT: limit sits this % below the stop trigger
+    "kss_stop_max_replaces": int,        # cap on cancel+replace cycles per session (keeps old stop after)
     # Take-profit then trail v2 (docs/tp-then-trail-2026-09-14.md) — OFF by default
     "kss_trail_after_tp_pct": float,
     "tp_fee_coverage": float,  # TP adds this × round-trip fee (1.2 = +120% of fees)

@@ -136,6 +136,8 @@ def health():
     last_cycle_at = st["last_cycle_at"]
     # .get(): an older/partial test double for scheduler.status() may not carry this key yet.
     last_guard_at = st.get("last_guard_at")
+    # decoupled from the exit check itself — surfaced the same way as guard_seconds_ago so an
+    # operator/watchdog can see reconcile is still happening, just less often.
     last_cycle_seconds_ago = _seconds_ago(last_cycle_at)
     guard_seconds_ago = _seconds_ago(last_guard_at)
     cycle_stall_after = max(3 * settings.scan_interval_min * 60, 900)
@@ -522,6 +524,9 @@ class KssSettingsBody(BaseModel):
     kss_exit_check_sec: int | None = Field(None, ge=5, le=3600)
     kss_crash_drop_pct: float | None = Field(None, ge=0, le=100)
     kss_live_stop_orders: bool | None = None
+    kss_stop_ratchet_step_pct: float | None = Field(None, ge=0.05, le=10)
+    kss_stop_limit_slip_pct: float | None = Field(None, ge=0.0, le=5)
+    kss_stop_max_replaces: int | None = Field(None, ge=0, le=500)
     kss_trail_after_tp_pct: float | None = Field(None, ge=0, le=20)
     # Entry-evaluation v2 (docs/regime-mae-plan.md)
     rel_strength_enabled: bool | None = None
@@ -588,18 +593,6 @@ def set_kss_settings(body: KssSettingsBody, db: Session = Depends(get_db)):
                     f"{costengine.expectancy_ceiling_pct(tp):.2f}% (= scan_tp {tp:.2f}% − chi phí "
                     f"vòng {costengine.round_trip_cost_pct():.2f}%) → không coin nào qua được cửa, "
                     f"scanner sẽ skip 100% universe. Hạ min_expectancy_pct hoặc nâng scan_tp_pct."),
-        )
-    # kss_live_stop_orders is CHƯA DỰNG: app/kss/service.py:_maintain_live_stop passes every gate
-    # and then hits a bare `return` (a documented stub). The knob is harmless off, but flipping it
-    # on would tell the operator a resting exchange-side stop exists when it does not — reject the
-    # request outright rather than silently accept a promise nothing implements.
-    if values.get("kss_live_stop_orders"):
-        raise HTTPException(
-            status_code=400,
-            detail=("kss_live_stop_orders CHƯA DỰNG: bật cờ này không đặt lệnh STOP-MARKET nào "
-                    "trên sàn — app/kss/service.py:_maintain_live_stop hiện là stub (trả về ngay "
-                    "khi được gọi). Bảo vệ gap giá hôm nay là vòng guard ~90s + crash-detect. Phải "
-                    "xây _maintain_live_stop thật và kiểm chứng trên sàn trước khi bật knob này."),
         )
     # Cross-field guard: if EVERY session filled its ladder, could the book pay for it?
     # `scanner._session_lock` lends out the idle reservation of any session under 50% filled, so

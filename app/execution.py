@@ -535,6 +535,91 @@ def place_live_order(
     }
 
 
+def place_live_stop_order(
+    pair: str, quantity: float, stop_price: float, limit_price: float,
+    client_order_id: str | None = None,
+) -> dict:
+    """Place a REAL STOP_LOSS_LIMIT SELL on ``settings.live_exchange`` (task 1.10 / §10.2 — a
+    resting venue-side stop instead of the ~90s guard detecting a breach and sending a MARKET
+    sell after the fact). Returns the same normalised shape ``place_live_order`` does
+    (``price``/``quantity``/``fee``/``fee_base``/``raw_id``/``status``).
+
+    Modelled closely on ``place_live_order``: the same filter rounding (``_market_filters`` +
+    ``round_to_filters``), the same SELL ``selfTradePreventionMode`` (a resting stop is a maker
+    order that can meet one of our own takers — see ``SELF_TRADE_PREVENTION``'s note), the same
+    rate/order-count/weight gates and ``record_order_placed()`` accounting. Always a SELL, so
+    every gate below runs exactly as ``place_live_order`` already does for a SELL (``urgent=
+    True``) — the POLICY decision of whether a ratchet is even worth attempting belongs to the
+    caller (``app.kss.service._maintain_live_stop``, which consults the non-urgent
+    ``assert_order_budget_available()`` BEFORE calling this), never to this placement call
+    itself.
+
+    Raises on any exchange error — the caller must not fall back to a simulated fill. Never
+    logs the secret.
+    """
+    ex = _client()
+    params: dict = {"stopPrice": stop_price}
+    if settings.live_exchange == "binance":
+        params["selfTradePreventionMode"] = SELF_TRADE_PREVENTION["SELL"]
+    if client_order_id:
+        params["clientOrderId"] = client_order_id
+
+    qty, limit_px, stop_px = quantity, limit_price, stop_price
+    try:
+        filters = _market_filters(ex, pair)
+    except Exception:  # market metadata unavailable — place unrounded rather than block
+        filters = {}
+    if filters:
+        try:
+            # round_to_filters rounds the LIMIT leg (qty down to stepSize, price to tickSize)
+            # and enforces minQty/minNotional off it — the stop leg sits within slip% of the
+            # same price, so the limit-side check is the meaningful one.
+            limit_px, qty = round_to_filters(limit_px, qty, filters)
+            tick = float(filters.get("tickSize") or 0.0)
+            if tick > 0:
+                stop_px = _quantize(stop_px, tick, ROUND_HALF_UP)
+        except ValueError:
+            # A stop is a risk-reducing order — never gated by our own filter pre-check; the
+            # venue is the right place to refuse it (never-gate-exits).
+            logger.warning("live stop %s: filters reject qty %s — sending unrounded (exits are "
+                           "never blocked)", pair, qty)
+    params["stopPrice"] = stop_px
+
+    # Always a SELL: identical urgency to place_live_order's own SELL path.
+    assert_not_rate_limited(urgent=True)
+    assert_order_budget_available(urgent=True)
+    assert_weight_budget_available(urgent=True)
+    try:
+        with _client_lock:
+            order = ex.create_order(pair, "STOP_LOSS_LIMIT", "sell", qty, limit_px, params)
+        record_order_placed()
+        _note_weight_usage(ex)
+        _mark_credentials_ok()
+    except Exception as exc:
+        note_rate_error(exc, retry_after_seconds(exc, ex))
+        note_credential_error(exc)
+        raise
+
+    status = order.get("status")
+    filled = float(order.get("filled") or 0.0)
+    if str(status).lower() == "closed" and filled > 0:
+        record_order_filled()
+    avg = float(order.get("average") or 0.0)
+    if avg <= 0 and filled > 0:
+        avg = float(order.get("price") or limit_px or 0.0)
+    quote = pair.partition("/")[2]
+    fee = fee_cost(order, quote)
+    fee_base = booked_fee_base(order, pair.partition("/")[0], filled, "SELL")
+    logger.info(
+        "LIVE stop placed: SELL %s %s stop=%s limit=%s status=%s (exch id %s)",
+        qty, pair, stop_px, limit_px, status, order.get("id"),
+    )
+    return {
+        "price": avg, "quantity": filled, "fee": fee, "fee_base": fee_base,
+        "raw_id": order.get("id"), "status": status, "filled_at_ms": _venue_fill_ms(order),
+    }
+
+
 def cancel_live_order(pair: str, order_id: str) -> None:
     """Cancel a resting exchange order (live-readiness 1.5 cancel+replace).
 

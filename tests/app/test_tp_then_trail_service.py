@@ -380,3 +380,24 @@ def test_the_slow_cycle_never_exits_an_armed_session_off_its_own_peak(db, monkey
     assert not [o for o in db.query(PendingOrder).all()
                 if str(o.source_ref).endswith((":trailing", ":sl"))], "no legacy exit may be queued"
     assert row.tp_trail_floor == floor
+
+
+def test_no_venue_stop_is_placed_on_the_tick_that_exits(db, monkeypatch):
+    """A cancel does not refund Binance's unfilled-order count, so placing a venue stop on the
+    very tick the market exit is queued (where `_retire_sibling_tp` cancels it moments later)
+    burns budget on an order that never had a chance to work."""
+    row = _session(db)
+    monkeypatch.setattr(settings, "kss_trail_after_tp_pct", 3.0)
+    calls: list[float] = []
+    monkeypatch.setattr(service, "_maintain_live_stop",
+                        lambda db_, r, p: calls.append(p))
+
+    service._trail_after_tp(db, row, 130.0)   # arm
+    service._trail_after_tp(db, row, 131.0)   # ratchet, no exit → stop maintained
+    maintained_before_exit = len(calls)
+    service._trail_after_tp(db, row, 100.0)   # far below the stop → exit
+
+    assert maintained_before_exit >= 1, "a ratchet tick must keep the venue stop in step"
+    assert len(calls) == maintained_before_exit, "the exit tick must not touch the venue stop"
+    assert [o for o in db.query(PendingOrder).all()
+            if str(o.source_ref).endswith(":tp") and o.order_type == "MARKET"]

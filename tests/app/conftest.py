@@ -106,6 +106,23 @@ def _no_live_probe_by_default(monkeypatch):
     monkeypatch.setattr(execution, "fetch_order_by_client_id", lambda *a, **kw: None)
 
 
+@pytest.fixture(autouse=True)
+def _reset_guard_reconcile_clock():
+    """`app.scheduler._last_reconcile_at` (kss_reconcile_interval_sec cadence split) is a
+    module-level timestamp that GATES behaviour — unlike `_last_guard_at`, which every test
+    that cares about resets itself before asserting. Without this reset, one test's
+    `_guard_once()` call would stamp `_last_reconcile_at` to "now", and any test running
+    within `kss_reconcile_interval_sec` seconds afterwards (the whole suite, in practice)
+    would see the interval as not-yet-elapsed and silently skip reconcile it expected to run.
+    Reset to None before AND after each test so leakage can never cross a test boundary in
+    either direction."""
+    from app import scheduler
+
+    scheduler._last_reconcile_at = None
+    yield
+    scheduler._last_reconcile_at = None
+
+
 @pytest.fixture
 def db():
     """A DB session bound to the temporary test database."""

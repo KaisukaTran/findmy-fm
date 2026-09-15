@@ -872,6 +872,7 @@ document.addEventListener("submit", async (e) => {
       kss_trail_arm_pct: num(f.get("kss_trail_arm_pct")),
       kss_trail_lock_pct: num(f.get("kss_trail_lock_pct")),
       kss_exit_check_sec: num(f.get("kss_exit_check_sec")),
+      kss_reconcile_interval_sec: num(f.get("kss_reconcile_interval_sec")),
       kss_crash_drop_pct: num(f.get("kss_crash_drop_pct")),
       kss_live_stop_orders: f.get("kss_live_stop_orders") === "1",
       kss_stop_ratchet_step_pct: num(f.get("kss_stop_ratchet_step_pct")),

@@ -136,10 +136,13 @@ def health():
     last_cycle_at = st["last_cycle_at"]
     # .get(): an older/partial test double for scheduler.status() may not carry this key yet.
     last_guard_at = st.get("last_guard_at")
+    # kss_reconcile_interval_sec split: the guard's reconcile pass now has its own cadence,
     # decoupled from the exit check itself — surfaced the same way as guard_seconds_ago so an
     # operator/watchdog can see reconcile is still happening, just less often.
+    last_reconcile_at = st.get("last_reconcile_at")
     last_cycle_seconds_ago = _seconds_ago(last_cycle_at)
     guard_seconds_ago = _seconds_ago(last_guard_at)
+    reconcile_seconds_ago = _seconds_ago(last_reconcile_at)
     cycle_stall_after = max(3 * settings.scan_interval_min * 60, 900)
     guard_stall_after = max(10 * settings.kss_exit_check_sec, 600)
     cycle_stalled = last_cycle_seconds_ago is not None and last_cycle_seconds_ago > cycle_stall_after
@@ -150,6 +153,7 @@ def health():
         "last_cycle_at": last_cycle_at,
         "last_cycle_seconds_ago": last_cycle_seconds_ago,
         "guard_seconds_ago": guard_seconds_ago,
+        "reconcile_seconds_ago": reconcile_seconds_ago,
         "stalled": bool(cycle_stalled or guard_stalled),
         "credentials_ok": execution.credentials_ok(),
     }
@@ -522,6 +526,7 @@ class KssSettingsBody(BaseModel):
     kss_trail_arm_tp_frac: float | None = Field(None, ge=0, le=1)
     kss_trail_lock_pct: float | None = Field(None, ge=0, le=100)
     kss_exit_check_sec: int | None = Field(None, ge=5, le=3600)
+    kss_reconcile_interval_sec: int | None = Field(None, ge=0, le=3600)
     kss_crash_drop_pct: float | None = Field(None, ge=0, le=100)
     kss_live_stop_orders: bool | None = None
     kss_stop_ratchet_step_pct: float | None = Field(None, ge=0.05, le=10)

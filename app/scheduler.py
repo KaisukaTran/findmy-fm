@@ -43,6 +43,12 @@ _last_summary: dict = {}
 # report `stalled`, so an OUTSIDE watchdog (data/ensure_live.ps1) can detect a wedged process
 # (e.g. a hung ccxt socket call) and restart it even though the app itself never crashed.
 _last_guard_at: str | None = None
+# The guard's reconcile pass now runs on its OWN cadence (`kss_reconcile_interval_sec`),
+# decoupled from `kss_exit_check_sec` (the guard tick itself): the exit check is free (prices
+# come from the live WS feed cache) but reconcile costs exchange weight, so it is throttled
+# independently — see `_reconcile_due` / `_guard_once` below. Same "stamp on completed attempt"
+# style as `_last_guard_at`; `/health` reports it as `reconcile_seconds_ago`.
+_last_reconcile_at: str | None = None
 
 # The 90s guard's own reconcile pass fetches every tracked order SERIALLY (one weight-4 call
 # each) ahead of the hard-SL check, under `_work_lock` — so a large tracked-order count adds
@@ -92,6 +98,7 @@ def status() -> dict:
         "interval_min": settings.scan_interval_min,
         "last_cycle_at": _last_cycle_at,
         "last_guard_at": _last_guard_at,
+        "last_reconcile_at": _last_reconcile_at,
         "last_summary": _last_summary,
     }
 
@@ -373,8 +380,28 @@ def _guard_reconcile_backlog(db: Session) -> int:
     )
 
 
+def _reconcile_due() -> bool:
+    """Whether the guard's reconcile pass should run on THIS tick, per
+    `settings.kss_reconcile_interval_sec` — separate from `kss_exit_check_sec`, which only
+    gates how often `_guard_once` itself is called. The exit check is free (prices come from
+    the live WS feed cache); reconcile costs exchange weight, so it gets its own, coarser
+    cadence within the same guard tick. 0 = every tick (the pre-split behaviour: reconcile and
+    the exit check always shared one cadence). Never having reconciled yet (`_last_reconcile_at
+    is None`) always counts as due, so a fresh process's first tick reconciles immediately."""
+    interval = settings.kss_reconcile_interval_sec
+    if interval <= 0 or _last_reconcile_at is None:
+        return True
+    from datetime import datetime
+
+    try:
+        elapsed = (utcnow() - datetime.fromisoformat(_last_reconcile_at)).total_seconds()
+    except ValueError:
+        return True  # a corrupt stamp must not wedge reconcile off forever
+    return elapsed >= interval
+
+
 def _guard_once() -> None:
-    global _last_guard_at
+    global _last_guard_at, _last_reconcile_at
     db = SessionLocal()
     try:
         with _work_lock:  # serialize with the 30-min cycle
@@ -383,29 +410,34 @@ def _guard_once() -> None:
             # stale while rungs fill on the venue between run_cycle's own reconcile calls.
             # Self-gates on live_enabled() (paper no-ops) and is idempotent, so calling it here
             # on top of run_cycle's call is safe. At ~9 tracked orders this is ~36 weight per
-            # 90s (fetch_order is weight 4) — bounded below by GUARD_RECONCILE_MAX_ORDERS so a
-            # larger backlog cannot add tens of seconds of SERIAL fetch_order latency ahead of
-            # the hard-SL check this guard exists to run fast; run_cycle's own reconcile (every
-            # scan_interval_min) still covers everything regardless. Any exception is swallowed
-            # AND rolled back: a flush/commit-level failure (e.g. "database is locked") leaves
-            # the session needing a rollback, and without one `run_position_guard`'s first query
-            # would raise PendingRollbackError and kill the entire 90s exit tick — repeatedly.
-            try:
-                backlog = _guard_reconcile_backlog(db)
-                if backlog > GUARD_RECONCILE_MAX_ORDERS:
-                    logger.warning(
-                        "position-guard reconcile skipped this tick — %d tracked orders exceeds "
-                        "GUARD_RECONCILE_MAX_ORDERS (%d); run_cycle's reconcile still covers "
-                        "everything", backlog, GUARD_RECONCILE_MAX_ORDERS,
-                    )
-                else:
-                    orders.reconcile_live_orders(db)
-            except Exception:
-                logger.exception("position-guard reconcile failed")
+            # reconcile pass (fetch_order is weight 4) — bounded below by
+            # GUARD_RECONCILE_MAX_ORDERS so a larger backlog cannot add tens of seconds of
+            # SERIAL fetch_order latency ahead of the hard-SL check this guard exists to run
+            # fast, AND throttled by `_reconcile_due()`/`kss_reconcile_interval_sec` so a short
+            # `kss_exit_check_sec` does not multiply exchange weight — run_cycle's own reconcile
+            # (every scan_interval_min) still covers everything regardless of either skip. Any
+            # exception is swallowed AND rolled back: a flush/commit-level failure (e.g.
+            # "database is locked") leaves the session needing a rollback, and without one
+            # `run_position_guard`'s first query would raise PendingRollbackError and kill the
+            # entire exit tick — repeatedly.
+            if _reconcile_due():
                 try:
-                    db.rollback()
+                    backlog = _guard_reconcile_backlog(db)
+                    if backlog > GUARD_RECONCILE_MAX_ORDERS:
+                        logger.warning(
+                            "position-guard reconcile skipped this tick — %d tracked orders "
+                            "exceeds GUARD_RECONCILE_MAX_ORDERS (%d); run_cycle's reconcile "
+                            "still covers everything", backlog, GUARD_RECONCILE_MAX_ORDERS,
+                        )
+                    else:
+                        orders.reconcile_live_orders(db)
+                    _last_reconcile_at = utcnow().isoformat()
                 except Exception:
-                    logger.exception("position-guard reconcile rollback also failed")
+                    logger.exception("position-guard reconcile failed")
+                    try:
+                        db.rollback()
+                    except Exception:
+                        logger.exception("position-guard reconcile rollback also failed")
             service.run_position_guard(db)
             # Paper touch model: the 1-minute candles that fill a resting rung or take-profit
             # arrive between 15-minute cycles, so the fill check runs on the guard's cadence

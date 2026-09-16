@@ -63,6 +63,8 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "max_sessions_per_symbol": int,  # K-1: 1 = one ladder per coin (no blended cost basis)
     "max_deployed_pct": float,
     "equity_backup_pct": float,
+    "ladder_coverage_pct": float,  # % of each full ladder the budget pre-books (100 = all of it)
+    "deep_ladder_lock_rungs": int,  # a ladder this deep locks its whole reserve (0 = off)
     "cash_floor_usd": float,  # hard floor: account cash may never drop below this (0 = never <0)
     "loss_streak_block_k": int,
     "loss_streak_window_days": int,

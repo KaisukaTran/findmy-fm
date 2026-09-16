@@ -92,11 +92,26 @@ def _require_positive(equity: float) -> None:
 
 
 def ladder_budget_exceeded(
-    *, max_concurrent: int, ladder_cost: float, equity: float, backup_pct: float
+    *, max_concurrent: int, ladder_cost: float, equity: float, backup_pct: float,
+    coverage_pct: float = 100.0,
 ) -> tuple[bool, float, float]:
     """Would every session filling its ladder cost more than we can deploy?
 
     Returns ``(exceeded, worst_case_usd, budget_usd)``.
+
+    ``coverage_pct`` is how much of each ladder the book PRE-BOOKS (100 = all of it, the original
+    rule). Kai 2026-09-16 set it to 30 on paper: a full 30-rung ladder needs a −69% move and the
+    book's deepest fill in the whole 30-rung era is 4 rungs, so demanding every slot pre-book all
+    30 rungs priced the session cap at 40 while 98.5% of the reserved money was never touched.
+    Covering 30% funds each session to about rung 13 (−40%) and frees the rest to open sessions.
+
+    What makes the uncovered tail safe is NOT this number but ``deep_ladder_lock_rungs``: a
+    session that actually reaches rung K locks its whole remaining ladder in ``_session_lock``,
+    so the freed budget is reclaimed — and new opens stop — exactly when ladders start needing
+    the cash. Coverage below 100 without that rule is just an unfunded promise.
+
+    Out-of-range coverage clamps to 100: a 0 would make every configuration payable, and a gate
+    that can be silently disabled by a bad value is not a gate.
 
     WHY THIS IS A HARD GATE AND NOT A RECOMMENDATION. `scanner._session_lock` lends out the
     idle reservation of any session under 50% filled — a deliberate rule, and a good one, but
@@ -119,7 +134,8 @@ def ladder_budget_exceeded(
     The shape math lives with the strategy, in `kss.service.ladder_cost_for`.
     """
     budget = max(0.0, equity) * max(0.0, 100.0 - backup_pct) / 100.0
-    worst = max(0, max_concurrent) * max(0.0, ladder_cost)
+    coverage = coverage_pct / 100.0 if 0.0 < coverage_pct <= 100.0 else 1.0
+    worst = max(0, max_concurrent) * max(0.0, ladder_cost) * coverage
     return worst > budget, worst, budget
 
 

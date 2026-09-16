@@ -483,6 +483,8 @@ class KssSettingsBody(BaseModel):
     max_sessions_per_symbol: int | None = Field(None, ge=0, le=20)
     max_deployed_pct: float | None = Field(None, gt=0, le=100)
     equity_backup_pct: float | None = Field(None, ge=0, le=90)
+    ladder_coverage_pct: float | None = Field(None, gt=0, le=100)  # % of each ladder pre-booked
+    deep_ladder_lock_rungs: int | None = Field(None, ge=0)  # rungs that lock the whole reserve
     cash_floor_usd: float | None = Field(None, ge=0)  # hard cash floor (0 = never negative)
     loss_streak_block_k: int | None = Field(None, ge=1, le=20)
     loss_streak_window_days: int | None = Field(None, ge=1, le=365)
@@ -611,18 +613,20 @@ def set_kss_settings(body: KssSettingsBody, db: Session = Depends(get_db)):
     # freeze every unrelated edit.
     from app import risk  # lazy: risk -> portfolio -> models; avoid an import cycle at load
     _budget_fields = ("kss_first_wave_usd", "max_concurrent_sessions", "scan_distance_pct",
-                      "scan_max_waves", "equity_backup_pct")
+                      "scan_max_waves", "equity_backup_pct", "ladder_coverage_pct")
     if any(f in values for f in _budget_fields):
         eff = {f: values.get(f, getattr(settings, f)) for f in _budget_fields}
         ladder = kss_service.ladder_cost_for(
             eff["kss_first_wave_usd"], eff["scan_distance_pct"], eff["scan_max_waves"])
         over, worst, budget = capital.ladder_budget_exceeded(
             max_concurrent=eff["max_concurrent_sessions"], ladder_cost=ladder,
-            equity=risk.account_equity(db), backup_pct=eff["equity_backup_pct"])
+            equity=risk.account_equity(db), backup_pct=eff["equity_backup_pct"],
+            coverage_pct=eff["ladder_coverage_pct"])
         if over:
             raise HTTPException(
                 status_code=400,
-                detail=(f"Vượt ngân sách nếu MỌI phiên lấp đầy thang: "
+                detail=(f"Vượt ngân sách nếu MỌI phiên lấp đầy thang "
+                        f"(đặt trước {eff['ladder_coverage_pct']:.0f}%/thang): "
                         f"{eff['max_concurrent_sessions']} suất × ${ladder:,.0f}/thang = "
                         f"${worst:,.0f} > ngân sách ${budget:,.0f} "
                         f"(equity × {100 - eff['equity_backup_pct']:.0f}%). "

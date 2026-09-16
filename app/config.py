@@ -289,6 +289,18 @@ class Settings(BaseSettings):
     max_new_sessions_per_scan: int = Field(default=5, ge=0, description="Cap on NEW KSS sessions opened in a single scan (0 = no limit). Ramps exposure gradually instead of opening the whole concurrent budget at once; within the cap the highest win-rate-lower-bound / most-tried candidates open first.")
     max_deployed_pct: float = Field(default=50.0, description="(legacy) Cap total isolated funds as %% of equity. The KSS open-gate now uses equity_backup_pct instead.")
     equity_backup_pct: float = Field(default=25.0, description="Reserve %% of LIVE equity the bot never deploys (backup). KSS open-gate budget = (100 − this)%% × equity.")
+    ladder_coverage_pct: float = Field(
+        default=100.0, gt=0, le=100.0,
+        description="%% of a session's FULL ladder that must be pre-bookable within the budget "
+        "(100 = every slot pre-books its whole 30-rung ladder, which is what pinned the session "
+        "cap at 40 while 99%% of the cash sat idle). 30 funds every session to ~rung 13 (−40%%) "
+        "and frees the rest to open more sessions; deeper fills are covered by "
+        "deep_ladder_lock_rungs reclaiming the budget as ladders actually go deep.")
+    deep_ladder_lock_rungs: int = Field(
+        default=0, ge=0,
+        description="A session that has filled this many rungs locks its WHOLE remaining ladder "
+        "against the deployable budget, so new opens stop while running ladders still need cash. "
+        "0 = off (the older 'locks in full once >=50%% of the reserve is spent' rule alone).")
     scan_min_notional: float = Field(default=10.0, description="Skip dust micro-trades below this USD notional/wave.")
 
     # --- Loss-streak block: skip re-trading a pair on a recent losing streak ---

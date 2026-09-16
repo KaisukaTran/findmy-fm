@@ -1239,11 +1239,23 @@ def _session_lock(s: KssSession) -> float:
     Lend-the-idle-reservation rule (user spec): while a session has filled < 50% of its
     planned ladder it locks only the cash actually deployed (``total_cost``) — the idle
     reservation is freed for new sessions; once it crosses 50% filled it locks its full
-    reservation (``isolated_fund``), committed to finishing the averaging-down plan."""
+    reservation (``isolated_fund``), committed to finishing the averaging-down plan.
+
+    DEPTH TRIGGER (``deep_ladder_lock_rungs``, Kai 2026-09-16). Money spent is a poor proxy for
+    depth on a 30-rung ladder: rung 13 of 30 is only ~30% of the reserve, so the 50%-of-money
+    rule first fires around rung 18 (−50% price). That is far too late to be the guarantee
+    behind ``ladder_coverage_pct``, which deliberately pre-books a fraction of each ladder. A
+    session that has actually filled K rungs therefore locks its WHOLE reservation regardless of
+    how little it has spent — new opens stop while the ladders already in trouble still have
+    their remaining rungs funded. Never weaker than the money rule: either trigger locks in
+    full."""
     reserved = s.isolated_fund or 0.0
     used = s.total_cost or 0.0
     if reserved <= 0:
         return used
+    deep_k = settings.deep_ladder_lock_rungs
+    if deep_k > 0 and (s.current_wave or 0) >= deep_k:
+        return reserved
     return used if used < 0.5 * reserved else reserved
 
 
@@ -1264,6 +1276,11 @@ def _can_open(db: Session, new_need: float) -> tuple[bool, str]:
     equity = risk.account_equity(db)
     budget = equity * (100 - settings.equity_backup_pct) / 100
     locked = sum(_session_lock(s) for s in active)
+    # Pre-book only `ladder_coverage_pct` of the candidate's full ladder (100 = all of it, the
+    # original rule). The uncovered tail is not a gift: `_session_lock`'s depth trigger takes the
+    # budget back, in full, as soon as a ladder actually reaches `deep_ladder_lock_rungs`.
+    cov = settings.ladder_coverage_pct
+    new_need = new_need * (cov / 100.0 if 0.0 < cov <= 100.0 else 1.0)
     if locked + new_need > budget:
         return False, f"vượt ngân sách triển khai (giữ {settings.equity_backup_pct:.0f}% dự phòng)"
     # Min-notional guard is unchanged from the legacy gate: it asks whether the per-session fund

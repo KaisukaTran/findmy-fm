@@ -926,6 +926,7 @@ document.addEventListener("submit", async (e) => {
       capital_scale_enabled: f.get("capital_scale_enabled") === "1",
       capital_scale_deadband_pct: num(f.get("capital_scale_deadband_pct")),
       first_wave_pct: num(f.get("first_wave_pct")),
+      first_wave_max_usd: num(f.get("first_wave_max_usd")),
       cash_floor_pct: num(f.get("cash_floor_pct")),
       max_session_deploy_pct: num(f.get("max_session_deploy_pct")),
       live_max_order_notional_pct: num(f.get("live_max_order_notional_pct")),

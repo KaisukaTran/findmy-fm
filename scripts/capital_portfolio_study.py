@@ -155,6 +155,7 @@ class Config:
     # which differs from the app only by that smoothing.
     wave0_pct: float = 0.0
     wave0_floor: float = 10.0
+    wave0_cap: float = 0.0   # mirrors app first_wave_max_usd: >0 caps the %-sized wave in dollars
 
     warmup: int = 24
     max_sessions: int = 80
@@ -595,7 +596,10 @@ def run_portfolio(series: dict[str, list[dict]], cfg: Config,
                 break
             if cfg.wave0_pct > 0:
                 eq_now = equity_curve[-1]["equity"] if equity_curve else cfg.capital
-                w0 = max(cfg.wave0_floor, cfg.wave0_pct / 100.0 * eq_now)
+                w0 = cfg.wave0_pct / 100.0 * eq_now
+                if cfg.wave0_cap > 0:
+                    w0 = min(w0, cfg.wave0_cap)
+                w0 = max(cfg.wave0_floor, w0)
                 need = cfg.coverage_pct / 100.0 * full_ladder_cost(
                     cfg.distance_pct, cfg.max_waves, w0)
             else:

@@ -527,6 +527,7 @@ class KssSettingsBody(BaseModel):
     capital_scale_enabled: bool | None = None
     capital_scale_deadband_pct: float | None = Field(None, ge=0, le=100)
     first_wave_pct: float | None = Field(None, ge=0)
+    first_wave_max_usd: float | None = Field(None, ge=0)
     cash_floor_pct: float | None = Field(None, ge=0)
     max_session_deploy_pct: float | None = Field(None, ge=0)
     live_max_order_notional_pct: float | None = Field(None, ge=0)

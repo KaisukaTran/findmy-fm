@@ -49,7 +49,7 @@ like unexplained variance.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sqlalchemy.orm import Session
 
@@ -74,6 +74,7 @@ class Scaled:
     absolute: float
     floored: bool
     enabled: bool
+    capped: bool = False  # True when first_wave_max_usd bound a %-sized wave (see first_wave_usd)
 
 
 def resolve(*, absolute: float, pct: float, equity: float, floor: float = 0.0,
@@ -184,6 +185,15 @@ def first_wave_usd(db: Session) -> Scaled:
     scaled = _resolve_lazy(db, absolute=settings.kss_first_wave_usd, pct=settings.first_wave_pct,
                             floor=settings.scan_min_notional)
     _audit_floored(db, "first_wave_usd", scaled)
+    # Dollar ceiling (Kai, 2026-09-21): past it, profit opens NEW sessions instead of growing each
+    # one. A %-sized wave keeps the book at a fixed session count forever (the budget gate and the
+    # ladder cost both scale with equity, so equity cancels out — ~17 sessions at 10 rungs @7%);
+    # capping the wave lets the count grow once equity passes cap / pct. Only a %-resolved wave is
+    # capped: with scaling off the absolute knob is already a fixed dollar figure. The exchange
+    # floor still wins over a cap set below it.
+    cap = settings.first_wave_max_usd
+    if scaled.enabled and cap > 0 and scaled.value > cap:
+        scaled = replace(scaled, value=max(cap, settings.scan_min_notional), capped=True)
     return scaled
 
 

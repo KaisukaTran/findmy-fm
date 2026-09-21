@@ -215,9 +215,12 @@
   <div class="muted fs-11 settings-note-full">
     {% if not scale.first_wave.enabled %}→ <b>${{ scale.first_wave.absolute | money }}</b> (đang dùng số USD tuyệt đối ở trên — bật công tắc tổng để chuyển sang %)
     {% elif scale.first_wave.floored %}→ <b class="warn-text">${{ scale.first_wave.value | money }} (SÀN TỐI THIỂU)</b> — {{ '%.3f'|format(scale.first_wave.pct) }}% × ${{ scale.first_wave.equity | money }} = ${{ (scale.first_wave.equity * scale.first_wave.pct / 100) | money }}, dưới sàn scan_min_notional nên bị ghim
-    {% else %}→ <b class="pos">${{ scale.first_wave.value | money }} hôm nay</b> ({{ '%.3f'|format(scale.first_wave.pct) }}% × ${{ scale.first_wave.equity | money }} vốn quy đổi)
+    {% elif scale.first_wave.capped %}→ <b class="warn-text">${{ scale.first_wave.value | money }} (CHẠM TRẦN)</b> — {{ '%.3f'|format(scale.first_wave.pct) }}% × ${{ scale.first_wave.equity | money }} = ${{ (scale.first_wave.equity * scale.first_wave.pct / 100) | money }}, vượt trần first_wave_max_usd nên lãi thêm đi vào phiên MỚI thay vì phiên to hơn
+    {% else %}→ <b class="pos">${{ scale.first_wave.value | money }} hôm nay</b> ({{ '%.3f'|format(scale.first_wave.pct) }}% × ${{ scale.first_wave.equity | money }} vốn quy đổi){% if k.first_wave_max_usd > 0 %} — chạm trần ${{ k.first_wave_max_usd | money }} khi vốn đạt ${{ (k.first_wave_max_usd * 100 / scale.first_wave.pct) | money }}{% endif %}
     {% endif %}
   </div>
+  <label title="Trần đô-la cho lệnh đầu tính theo % vốn. 0 = không trần. Không có trần thì số phiên cố định dù vốn tăng (ngân sách và giá thang cùng tăng theo vốn); có trần thì khi vốn vượt (trần ÷ %), lãi thêm đi vào việc mở phiên mới thay vì làm phiên to hơn. Chỉ có tác dụng khi công tắc co giãn theo vốn đang bật.">Trần lệnh đầu (USD) <span class="varname">first_wave_max_usd</span>
+    <input name="first_wave_max_usd" type="number" step="1" min="0" value="{{ '%.2f'|format(k.first_wave_max_usd) }}"></label>
   <label title="`cash_floor_usd` (Sàn tiền mặt, ở trên) tính theo % vốn quy đổi thay vì số cố định. 0 = luôn dùng số USD tuyệt đối. Không có sàn cứng riêng — 0% là câu trả lời hợp lệ (không chặn mua vì lý do tiền mặt).">Sàn tiền mặt (% vốn) <span class="varname">cash_floor_pct</span>
     <input name="cash_floor_pct" type="number" step="0.5" min="0" value="{{ '%.1f'|format(k.cash_floor_pct) }}"></label>
   <div class="muted fs-11 settings-note-full">

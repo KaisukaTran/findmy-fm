@@ -119,6 +119,16 @@ class Settings(BaseSettings):
         "capital_scale_enabled is on (0 = always use the absolute knob). Chosen so that at the "
         "live equity this was added at ($200,000) the resolved value equals today's $28 exactly.",
     )
+    first_wave_max_usd: float = Field(
+        default=0.0,
+        ge=0,
+        description="Dollar ceiling on the %%-of-equity first wave (0 = no ceiling). A pure "
+        "percentage keeps the session COUNT fixed as equity grows (budget and ladder cost both "
+        "scale with equity); a ceiling makes profit past `first_wave_max_usd / first_wave_pct` "
+        "open new sessions instead of growing each one. Only applies while capital_scale_enabled "
+        "is on. Measured at $7k, 10 rungs @7%%, 0.4%%: a $40 ceiling raised peak concurrent "
+        "sessions 21 -> 54 and cut median drawdown 33%% -> 27%%.",
+    )
     cash_floor_pct: float = Field(
         default=20.0,
         ge=0,

@@ -143,6 +143,7 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "capital_scale_enabled": _to_bool,
     "capital_scale_deadband_pct": float,
     "first_wave_pct": float,
+    "first_wave_max_usd": float,
     "cash_floor_pct": float,
     "max_session_deploy_pct": float,
     "live_max_order_notional_pct": float,

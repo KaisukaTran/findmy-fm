@@ -26,7 +26,7 @@ import inspect
 
 import pytest
 
-from app import capital
+from app import capital, capital_scale
 
 # The live configuration these numbers were measured against (2026-08-30).
 LIVE = {"ladder_ratio": 5.841, "stop_fraction": 0.083, "daily_loss_limit": 0.05,
@@ -208,17 +208,23 @@ def test_no_public_function_decides_the_shape_of_the_strategy():
     literal slipped through, and moving the logic into a sibling module bypassed it completely
     (`inspect.getsource` reads one file). Names and signatures are what a caller can actually
     reach, so that is what this checks.
+
+    Covers `app.capital_scale` too (added with that module, 2026-09-21): it is the same kind
+    of sizing-advice surface — percentage-of-equity instead of `recommend_*` — and the ban on
+    a shape parameter applies to it for exactly the same reason.
     """
-    for name in dir(capital):
-        if name.startswith("_"):
-            continue
-        obj = getattr(capital, name)
-        if not callable(obj) or not hasattr(obj, "__code__"):
-            continue
-        assert not any(s in name.lower() for s in _SHAPE), f"{name} names a shape parameter"
-        for param in inspect.signature(obj).parameters:
-            assert not any(s in param.lower() for s in _SHAPE), \
-                f"{name}({param}=...) takes a shape parameter"
+    for module in (capital, capital_scale):
+        for name in dir(module):
+            if name.startswith("_"):
+                continue
+            obj = getattr(module, name)
+            if not callable(obj) or not hasattr(obj, "__code__"):
+                continue
+            assert not any(s in name.lower() for s in _SHAPE), \
+                f"{module.__name__}.{name} names a shape parameter"
+            for param in inspect.signature(obj).parameters:
+                assert not any(s in param.lower() for s in _SHAPE), \
+                    f"{module.__name__}.{name}({param}=...) takes a shape parameter"
 
 
 def test_the_module_cannot_reach_anything_it_could_mutate():

@@ -86,6 +86,70 @@ class Settings(BaseSettings):
         "`account_equity` constant. Off (default), or paper, or the fetch fails -> falls back to "
         "`account_equity` unchanged. Never affects paper.",
     )
+
+    # --- Capital scaling (Phase 1 of the resolve-at-read-time plan; app/capital_scale.py) ---
+    # A static dollar knob sized for one equity level silently blocks or under-deploys at
+    # another. These percentages are resolved against `portfolio.equity()` at READ time by
+    # app/capital_scale.py — nothing calls that module yet (this is Phase 1: land the knobs
+    # and the pure math with zero behaviour change; wiring is Phase 2). Master switch OFF.
+    capital_scale_enabled: bool = Field(
+        default=False,
+        description="Master switch for percentage-of-equity capital sizing. Off (default) = "
+        "every absolute dollar knob below (kss_first_wave_usd, cash_floor_usd, "
+        "max_session_deploy_usd, live_max_order_notional, autoapprove_max_notional) is used "
+        "unchanged, exactly like before this feature existed. On = app.capital_scale's helpers "
+        "resolve each one from its *_pct knob against anchored equity instead — callers still "
+        "decide whether to use the resolved value; this switch alone changes nothing until "
+        "something calls those helpers.",
+    )
+    capital_scale_deadband_pct: float = Field(
+        default=10.0,
+        ge=0,
+        le=100,
+        description="How far live equity must drift from the stored anchor (up or down) before "
+        "app.capital_scale.anchored_equity() moves the anchor. Open-position mark-to-market "
+        "moves `portfolio.equity()` on every price tick; without this deadband a percentage "
+        "knob would resize on every read, so two sessions opened a minute apart would be sized "
+        "differently for no reason. The anchor only updates once drift reaches this threshold.",
+    )
+    first_wave_pct: float = Field(
+        default=0.014,
+        ge=0,
+        description="`kss_first_wave_usd` as a %% of anchored equity, used only when "
+        "capital_scale_enabled is on (0 = always use the absolute knob). Chosen so that at the "
+        "live equity this was added at ($200,000) the resolved value equals today's $28 exactly.",
+    )
+    cash_floor_pct: float = Field(
+        default=20.0,
+        ge=0,
+        description="`cash_floor_usd` as a %% of anchored equity, used only when "
+        "capital_scale_enabled is on (0 = always use the absolute knob). Chosen so that at the "
+        "live equity this was added at ($200,000) the resolved value equals today's $40,000 "
+        "exactly.",
+    )
+    max_session_deploy_pct: float = Field(
+        default=0.0,
+        ge=0,
+        description="`max_session_deploy_usd` as a %% of anchored equity, used only when "
+        "capital_scale_enabled is on. 0 = off, same meaning as `max_session_deploy_usd = 0` "
+        "(no cap) — the pair stays a matched off/off at today's equity.",
+    )
+    live_max_order_notional_pct: float = Field(
+        default=0.25,
+        ge=0,
+        description="`live_max_order_notional` as a %% of anchored equity, used only when "
+        "capital_scale_enabled is on (0 = always use the absolute knob). Chosen so that at the "
+        "live equity this was added at ($200,000) the resolved value equals today's $500 "
+        "exactly.",
+    )
+    autoapprove_max_notional_pct: float = Field(
+        default=2.5,
+        ge=0,
+        description="`autoapprove_max_notional` as a %% of anchored equity, used only when "
+        "capital_scale_enabled is on (0 = always use the absolute knob). Chosen so that at the "
+        "live equity this was added at ($200,000) the resolved value equals today's $5,000 "
+        "exactly.",
+    )
     # --- Live-readiness knobs (additive; inert until the live maker/async path is built) ---
     maker_orders: bool = Field(
         default=False,

@@ -41,6 +41,11 @@ KEY_CONSENSUS_WEIGHTS = "consensus_weights"  # S4: JSON dict of agent weights
 KEY_GROK_FAIL_MODE = "grok_scanner_fail_mode"  # S5: "open" | "closed"
 KEY_LIVE_TRADING = "live_trading"  # Phase 6: real-money master switch (default off)
 KEY_AUTO_TRADE = "auto_trade"  # explicit operator override; wins over full_auto's cascade (see sync_from_db)
+# Capital-scale anchor (app/capital_scale.py) — bookkeeping, NOT a settings field, and
+# deliberately NOT a "kss:"-prefixed key: it is written by anchored_equity() itself (the one
+# write that module is allowed to make), never by a dashboard edit, so it does not belong in
+# KSS_SETTING_FIELDS / sync_from_db's settings-restore loop.
+KEY_CAPITAL_SCALE_ANCHOR = "capital_scale_anchor"
 
 def _to_bool(v: object) -> bool:
     """Bool-aware cast for the string-valued KV store. ``bool('0')`` is True (non-empty
@@ -132,6 +137,15 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "autotune_tp_atr_mult": float,   # stage 2: TP as a multiple of daily ATR%
     "autotune_dca_atr_mult": float,  # stage 2: DCA step as a multiple of daily ATR%
     "kss_first_wave_usd": float,
+    # Capital scaling (Phase 1, app/capital_scale.py) — resolve-at-read-time percentages.
+    # Nothing calls the resolution helpers yet; these knobs are wired but inert.
+    "capital_scale_enabled": _to_bool,
+    "capital_scale_deadband_pct": float,
+    "first_wave_pct": float,
+    "cash_floor_pct": float,
+    "max_session_deploy_pct": float,
+    "live_max_order_notional_pct": float,
+    "autoapprove_max_notional_pct": float,
     # Live-readiness knobs (1.9) — LIVE only, inert on paper. maker/testnet are bool (use
     # _to_bool, not bool, so a restored "0" stays False); timeout is seconds (0 = wait forever).
     "maker_orders": _to_bool,

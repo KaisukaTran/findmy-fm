@@ -209,10 +209,16 @@ def _pending_wave_notional(db: Session, session_id: int) -> float:
 def _session_deploy_headroom(db: Session, session_id: int, deployed_cost: float) -> float:
     """USD still deployable on this session before hitting ``max_session_deploy_usd``
     (filled cost + pending waves). Returns +inf when the cap is off (0) — the wall for going
-    live: a session can never deploy more than the cap no matter how many waves it queues."""
-    from app.config import settings
+    live: a session can never deploy more than the cap no matter how many waves it queues.
 
-    cap = settings.max_session_deploy_usd
+    Unlike ``first_wave_usd``, this cap is NOT frozen on the session row — it is re-read live
+    on every headroom check, the same as ``settings.max_session_deploy_usd`` always was, so
+    resolving it through ``capital_scale`` here changes only WHAT number a live re-read sees,
+    never whether an already-open session gets re-sized retroactively.
+    """
+    from app import capital_scale
+
+    cap = capital_scale.session_deploy_cap_usd(db).value
     if cap <= 0:
         return float("inf")
     committed = (deployed_cost or 0.0) + _pending_wave_notional(db, session_id)
@@ -491,7 +497,7 @@ def projected_first_wave_cost(
 
 def create_session(db: Session, **params: Any) -> KssSession:
     """Validate params (via PyramidSession) and persist a PENDING session."""
-    from app import costengine
+    from app import capital_scale, costengine
     from app.config import settings
 
     note = params.pop("note", None)
@@ -509,7 +515,11 @@ def create_session(db: Session, **params: Any) -> KssSession:
     # reserved ONCE, against the pip_size in effect right now — a later edit to the global
     # must never re-price this session's remaining rungs (ETC#5). setdefault: a caller may
     # already have supplied one explicitly (none currently do, but this keeps the door open).
-    params.setdefault("first_wave_usd", settings.kss_first_wave_usd)
+    # Capital scaling (Phase 2, app/capital_scale.py): resolved ONCE here too, at open, for the
+    # same ETC#5 reason — a later equity move (or the anchor drifting) must never re-price a
+    # session that already committed its ladder. Off (default) returns kss_first_wave_usd
+    # unchanged.
+    params.setdefault("first_wave_usd", capital_scale.first_wave_usd(db).value)
     PyramidSession(**params)  # raises ValueError on invalid params (strategy fields only)
     row = KssSession(status=SESSION_PENDING, note=note, deadline_days=deadline_days, **params)
     db.add(row)
@@ -603,7 +613,7 @@ def create_pyramid_up_session(
     pyramid-up analogues (step_pct / total wave count) purely for display continuity — they are
     not read by any pyramid-up code path.
     """
-    from app import costengine
+    from app import capital_scale, costengine
     from app.config import settings
     from app.market import get_exchange_info
 
@@ -619,10 +629,13 @@ def create_pyramid_up_session(
     # the ladder fresh at start time against this isolated_fund.
     # max_session_deploy_usd must bound the ladder HERE: the base wave is a MARKET buy that never
     # passes _session_deploy_headroom (unlike every later rung), so an uncapped scan_fund deploys
-    # in one shot (GIGGLE #11: $486 base on a $1k book).
+    # in one shot (GIGGLE #11: $486 base on a $1k book). Resolved through capital_scale ONCE, at
+    # open, for the same reason as isolated_fund itself — this bound is baked into the row below
+    # and must never move under an already-open session.
     target_fund = settings.scan_fund
-    if settings.max_session_deploy_usd > 0:
-        target_fund = min(target_fund, settings.max_session_deploy_usd)
+    deploy_cap = capital_scale.session_deploy_cap_usd(db).value
+    if deploy_cap > 0:
+        target_fund = min(target_fund, deploy_cap)
     ladder = pyramid_up.build_ladder(
         entry=entry_price, target_fund=target_fund, max_adds=knobs["max_adds"],
         step_pct=knobs["step_pct"], size_ratio=knobs["size_ratio"],
@@ -647,8 +660,9 @@ def create_pyramid_up_session(
         strategy_mode="pyramid_up",
         # P1 Fix 2: same snapshot as create_session, for consistency — pyramid_up's own ladder
         # math (pyramid_up.build_ladder above) never reads this column, but a session should
-        # never carry a NULL "legacy" marker it wasn't actually legacy for.
-        first_wave_usd=settings.kss_first_wave_usd,
+        # never carry a NULL "legacy" marker it wasn't actually legacy for. Capital scaling
+        # (Phase 2): same resolve-once-at-open call as create_session.
+        first_wave_usd=capital_scale.first_wave_usd(db).value,
         note=note,
     )
     db.add(row)
@@ -1469,11 +1483,15 @@ def queue_next_wave(db: Session, session_id: int, amount_usd: float | None = Non
     cost = next_wave.quantity * next_wave.target_price
     headroom = _session_deploy_headroom(db, session_id, py.total_cost)
     if cost > headroom:
-        from app.config import settings
+        from app import capital_scale
 
+        # Quote the cap actually enforced above (capital_scale-resolved), not the raw setting —
+        # a control that reports the SETTING instead of the EFFECT is the exact failure mode
+        # this project has paid for before.
+        cap = capital_scale.session_deploy_cap_usd(db).value
         raise ValueError(
             f"Sóng {next_wave_num} (${cost:,.0f}) vượt trần triển khai/session "
-            f"(${settings.max_session_deploy_usd:,.0f}; còn ${headroom:,.0f}). "
+            f"(${cap:,.0f}; còn ${headroom:,.0f}). "
             "Tăng max_session_deploy_usd hoặc bỏ session này."
         )
     if cost > py.remaining_fund:

@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 
 from app import (
     capital,
+    capital_scale,
     charts,
     circuit,
     costengine,
@@ -232,24 +233,26 @@ def auto_process(db: Session = Depends(get_db)):
     return {"auto_approved": orders.auto_approve_by_policy(db)}
 
 
-def _autoapprove_state() -> dict:
+def _autoapprove_state(db: Session) -> dict:
     return {
         "enabled": settings.autoapprove_enabled,
-        "max_notional": settings.autoapprove_max_notional,
+        # Display the EFFECT, not the setting: when capital_scale is on this is the resolved
+        # ceiling actually enforced by orders.auto_approve_by_policy, not the raw knob.
+        "max_notional": capital_scale.autoapprove_notional_cap_usd(db).value,
         "sources": settings.autoapprove_sources,
     }
 
 
 @api_router.get("/api/autoapprove")
-def autoapprove_state():
-    return _autoapprove_state()
+def autoapprove_state(db: Session = Depends(get_db)):
+    return _autoapprove_state(db)
 
 
 @api_router.post("/api/autoapprove", dependencies=[Depends(require_api_key)])
 def set_autoapprove(body: AutoApproveBody, db: Session = Depends(get_db)):
     """Update the auto-approval rule. Persisted in runtime_config so it survives restarts."""
     runtime.set_autoapprove(db, enabled=body.enabled, max_notional=body.max_notional)
-    return _autoapprove_state()
+    return _autoapprove_state(db)
 
 
 class AutoTradeBody(BaseModel):
@@ -410,7 +413,9 @@ def get_live_trading(db: Session = Depends(get_db)):
         "live_use_testnet": settings.live_use_testnet,
         "live_keys": execution.live_key_present(),
         "exchange": settings.live_exchange,
-        "max_notional": settings.live_max_order_notional,
+        # Display-only field (never posted back) — show the EFFECT enforced by orders.py, not
+        # the raw setting.
+        "max_notional": capital_scale.live_order_notional_cap_usd(db).value,
         "frozen": runtime.is_frozen(db),
         "confirm_phrase": _LIVE_CONFIRM_PHRASE,
     }
@@ -516,6 +521,15 @@ class KssSettingsBody(BaseModel):
     autotune_tp_atr_mult: float | None = Field(None, gt=0, le=5)
     autotune_dca_atr_mult: float | None = Field(None, gt=0, le=5)
     kss_first_wave_usd: float | None = Field(None, ge=0)
+    # Capital scaling (Phase 1, app/capital_scale.py) — resolve-at-read-time percentages.
+    # Wired into the registry now; nothing calls the resolution helpers yet (Phase 2).
+    capital_scale_enabled: bool | None = None
+    capital_scale_deadband_pct: float | None = Field(None, ge=0, le=100)
+    first_wave_pct: float | None = Field(None, ge=0)
+    cash_floor_pct: float | None = Field(None, ge=0)
+    max_session_deploy_pct: float | None = Field(None, ge=0)
+    live_max_order_notional_pct: float | None = Field(None, ge=0)
+    autoapprove_max_notional_pct: float | None = Field(None, ge=0)
     entry_momentum_gate: bool | None = None  # veto open when ST down & MACDh<0
     max_avg_mae_pct: float | None = Field(None, ge=0, le=100)  # absolute avg_mae drawdown gate (0=off)
     # Dynamic trailing TP/SL (docs/kss-dynamic-tp-plan.md)
@@ -1125,6 +1139,9 @@ def partial_pending(request: Request, page: int = 1, db: Session = Depends(get_d
     offset = (page - 1) * 20
     pend = orders.list_pending(db, limit=20, offset=offset)
     prices = portfolio.get_current_prices(list({o.symbol for o in pend})) if pend else {}
+    # Resolved once per request, not once per row — the same effective ceiling
+    # orders.auto_approve_by_policy would apply to every row below.
+    autoapprove_cap = capital_scale.autoapprove_notional_cap_usd(db).value
     rows = []
     for o in pend:
         d = o.to_dict()
@@ -1134,7 +1151,7 @@ def partial_pending(request: Request, page: int = 1, db: Session = Depends(get_d
         d["notional"] = o.quantity * ref
         # eligible to auto-clear by size+source; "due" = its limit price is reached now.
         d["auto"] = (o.source in settings.autoapprove_sources
-                     and ref > 0 and d["notional"] <= settings.autoapprove_max_notional)
+                     and ref > 0 and d["notional"] <= autoapprove_cap)
         d["due"] = (
             o.order_type == "MARKET"
             or (o.side == "BUY" and o.price > 0 and 0 < mkt <= o.price)
@@ -1147,6 +1164,11 @@ def partial_pending(request: Request, page: int = 1, db: Session = Depends(get_d
             "request": request,
             "rows": rows,
             "aa_enabled": settings.autoapprove_enabled,
+            # NOT wired to capital_scale: this pre-fills an EDITABLE input (app.js
+            # setAutoApproveMax posts it straight back as the new absolute knob) — showing the
+            # scaled effective number here would let an unrelated click on "Set" silently bake
+            # a stale scaled reading in as the new absolute setting. The per-row `auto` eligibility
+            # flag above already shows the true effect; this stays the raw editable value.
             "aa_max": settings.autoapprove_max_notional,
             "aa_sources": ",".join(settings.autoapprove_sources),
             "page": page,

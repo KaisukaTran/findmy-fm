@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app import audit, runtime
+from app import audit, capital_scale, runtime
 from app.clock import utcnow
 from app.config import settings
 from app.market import get_current_prices
@@ -142,7 +142,8 @@ def _apply_cash_cap(db: Session, order: PendingOrder) -> None:
     real fill differs slightly, but the exchange independently rejects an over-balance order."""
     if order.side != "BUY":
         return
-    free = _free_cash(db) - settings.cash_floor_usd
+    cash_floor = capital_scale.cash_floor_usd(db).value
+    free = _free_cash(db) - cash_floor
     ref = order.price if order.price > 0 else (get_current_prices([order.symbol]).get(order.symbol) or 0.0)
     if ref <= 0:
         return  # let _execute raise the explicit "no price" error
@@ -154,7 +155,7 @@ def _apply_cash_cap(db: Session, order: PendingOrder) -> None:
         return  # full order fits within cash
     if affordable <= 0 or affordable * ref < settings.scan_min_notional:
         raise InsufficientCashError(
-            f"thiếu tiền mặt: còn ${free:.2f} (giữ Cash ≥ ${settings.cash_floor_usd:.0f}) — "
+            f"thiếu tiền mặt: còn ${free:.2f} (giữ Cash ≥ ${cash_floor:.0f}) — "
             f"không đủ mua {order.symbol}; lệnh bị giữ lại."
         )
     requested = order.quantity
@@ -276,6 +277,9 @@ def auto_approve_by_policy(db: Session) -> list[int]:
     if not pend:
         return []
     market = get_current_prices(list({o.symbol for o in pend}))
+    # Resolved once per policy pass (not once per order) — same reasoning as batching the price
+    # fetch above: every order in this pass is judged against the SAME ceiling.
+    notional_cap = capital_scale.autoapprove_notional_cap_usd(db).value
     approved: list[int] = []
     for o in pend:
         # Exit SELLs reduce risk — never let a (possibly stale) veto trap them; only a
@@ -288,7 +292,7 @@ def auto_approve_by_policy(db: Session) -> list[int]:
             continue
         ref_price = o.price if o.price > 0 else (market.get(o.symbol) or 0.0)
         notional = o.quantity * ref_price
-        if ref_price <= 0 or notional > settings.autoapprove_max_notional:
+        if ref_price <= 0 or notional > notional_cap:
             continue
         # Respect the LIMIT price — never auto-approve a wave whose target isn't reached.
         # (A KSS dip-buy must wait for the actual dip; approving it early defeats the DCA
@@ -682,10 +686,11 @@ def _live_execute(db: Session, order: PendingOrder) -> Fill:
         if runtime.is_frozen(db):
             raise ValueError("circuit-breaker frozen — live BUY blocked")
         notional = ref_price * order.quantity
-        if notional > settings.live_max_order_notional:
+        notional_cap = capital_scale.live_order_notional_cap_usd(db).value
+        if notional > notional_cap:
             raise ValueError(
                 f"live BUY notional {notional:.2f} exceeds cap "
-                f"{settings.live_max_order_notional:.2f}"
+                f"{notional_cap:.2f}"
             )
 
     # A risk exit (sl / trailing / trail_sl / deadline) is a MARKET SELL for the whole position
@@ -1232,10 +1237,11 @@ def _place_resting(db: Session, order: PendingOrder) -> bool:
         if order.auto_veto or runtime.is_frozen(db):
             return False
         notional = order.price * order.quantity
-        if notional > settings.live_max_order_notional:
+        notional_cap = capital_scale.live_order_notional_cap_usd(db).value
+        if notional > notional_cap:
             logger.info(
                 "resting: order %s notional %.2f exceeds cap %.2f — not placed",
-                order.id, notional, settings.live_max_order_notional,
+                order.id, notional, notional_cap,
             )
             return False
         try:

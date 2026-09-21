@@ -7,7 +7,9 @@ invoked here; only the pure parser and the market-side cache/gating logic are ex
 import pytest
 
 import app.market as market
+from app.config import settings
 from app.data.ws_feed import parse_mini_ticker
+from app.main import ws_feed_should_start
 
 
 @pytest.fixture(autouse=True)
@@ -124,3 +126,57 @@ def test_note_ws_prices_warms_cache_for_non_forced_reads(monkeypatch):
 
     assert prices["BTC"] == 65000.0
     assert spy.calls == 0
+
+
+# ---------------------------------------------------------------------------
+# app.main.ws_feed_should_start — the lifespan gate, paper_ws_prices (task 1.11)
+# ---------------------------------------------------------------------------
+
+
+def test_paper_default_does_not_start_the_feed(monkeypatch):
+    """The key paper-unchanged guarantee for the lifespan gate itself: paper_ws_prices defaults
+    to False, so a paper process never starts the WS feed — today's behaviour, byte-identical."""
+    monkeypatch.setattr(settings, "live_trading", False)
+    monkeypatch.setattr(settings, "paper_ws_prices", False)
+    monkeypatch.setattr(settings, "live_ws_prices", True)
+    monkeypatch.setattr(settings, "live_exchange", "binance")
+
+    assert ws_feed_should_start() is False
+
+
+def test_paper_ws_prices_true_starts_the_feed_on_paper(monkeypatch):
+    """The other half of task 1.11: opting in on paper (still live_trading=False) must start
+    the feed, so the fast-exit loop has a price source to read."""
+    monkeypatch.setattr(settings, "live_trading", False)
+    monkeypatch.setattr(settings, "paper_ws_prices", True)
+    monkeypatch.setattr(settings, "live_ws_prices", True)
+    monkeypatch.setattr(settings, "live_exchange", "binance")
+
+    assert ws_feed_should_start() is True
+
+
+def test_live_trading_still_starts_the_feed_regardless_of_paper_ws_prices(monkeypatch):
+    monkeypatch.setattr(settings, "live_trading", True)
+    monkeypatch.setattr(settings, "paper_ws_prices", False)
+    monkeypatch.setattr(settings, "live_ws_prices", True)
+    monkeypatch.setattr(settings, "live_exchange", "binance")
+
+    assert ws_feed_should_start() is True
+
+
+def test_live_ws_prices_off_wins_over_paper_ws_prices(monkeypatch):
+    monkeypatch.setattr(settings, "live_trading", False)
+    monkeypatch.setattr(settings, "paper_ws_prices", True)
+    monkeypatch.setattr(settings, "live_ws_prices", False)
+    monkeypatch.setattr(settings, "live_exchange", "binance")
+
+    assert ws_feed_should_start() is False
+
+
+def test_non_binance_exchange_never_starts_the_feed(monkeypatch):
+    monkeypatch.setattr(settings, "live_trading", True)
+    monkeypatch.setattr(settings, "paper_ws_prices", True)
+    monkeypatch.setattr(settings, "live_ws_prices", True)
+    monkeypatch.setattr(settings, "live_exchange", "kraken")
+
+    assert ws_feed_should_start() is False

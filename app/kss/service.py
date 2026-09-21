@@ -2689,6 +2689,54 @@ def _maintain_live_stop(db: Session, row: KssSession, price: float) -> None:
         audit.log(db, "scheduler", "live_stop_failed", entity=f"kss:{row.id}", symbol=row.symbol)
 
 
+def _force_fill_queued_exits(db: Session) -> None:
+    """Fill EVERY queued KSS exit SELL NOW, freeze-immune. reviewer="guard" is a non-AUTO reviewer,
+    so a circuit-breaker freeze never blocks a protective exit — this also rescues SL/deadline
+    SELLs the 30-min cycle queued but could not fill during a freeze (auto_fill_due_orders no-ops
+    while frozen). Exits reduce risk and are never gated (the never-gate-exits rule).
+
+    Shared by `run_position_guard` (the 90s guard) and `run_fast_exit` (the WS-fed fast loop) —
+    identical force-fill behaviour either way, one place to keep it correct.
+
+    A4: `orphan:%` (queued by manage_orphan_positions) is included too — those are MARKET
+    sweeps of leftover position quantity, and without this rescue they sit PENDING forever
+    while the breaker is frozen, exactly when a losing streak makes the exit most needed."""
+    from sqlalchemy import or_
+
+    from app.models import PENDING, PendingOrder
+
+    resting = orders.tp_rests()  # a standing LIMIT take-profit (venue or paper touch model)
+    for o in (db.query(PendingOrder)
+              .filter(PendingOrder.status == PENDING, PendingOrder.side == "SELL",
+                      or_(PendingOrder.source_ref.like("pyramid:%"),
+                          PendingOrder.source_ref.like("orphan:%")))
+              .all()):
+        ref = str(o.source_ref or "")
+        # 1.5: a pyramid take-profit is a STANDING limit exit sitting on the exchange, not a
+        # protective one. Force-filling it here would pull it off the book and re-place it —
+        # churn at best, an orphaned live order at worst — and it is not what this guard is for.
+        # Risk exits (sl / trailing / deadline / crash) are MARKET and still fill immediately.
+        # `orphan:tp` is a MARKET sweep with no resting leg — key the skip on the `pyramid:`
+        # prefix, not the `:tp` suffix alone, or an orphan TP would be wrongly left to rot.
+        # `pyramid:{id}:tp` is ALSO the ref a MARKET dynamic-TP exit uses (_queue_dynamic_exit /
+        # check_tp) — the discriminator must be order_type, not the ref shape alone, or this
+        # skip swallows that MARKET exit too (it never rests, so nothing else force-fills it —
+        # a session ends TP_TRIGGERED holding inventory with no exit anywhere).
+        if resting and o.order_type == "LIMIT" and ref.startswith("pyramid:") and ref.endswith(":tp"):
+            continue
+        try:
+            orders.approve_order(db, o.id, reviewer="guard")
+        except Exception:  # a fill error must not kill the guard
+            logger.exception("position-guard fill failed for order %s", o.id)
+
+    # 1.5: a session this guard just closed can still have rungs or its take-profit resting on
+    # the exchange. Take them off the book NOW — waiting for the 30-min cycle would leave live
+    # orders behind a position that no longer exists.
+    if resting:
+        sync_resting_tp(db)
+        orders.sync_resting_orders(db)
+
+
 def run_position_guard(db: Session) -> dict:
     """Fast, lightweight exit guard (§10.1) — decoupled from the 30-min scan. With a FRESH ticker it
     (a) runs crash-detect + the dynamic channel on ARMED (trailing) sessions, (b) runs a fast
@@ -2697,7 +2745,6 @@ def run_position_guard(db: Session) -> dict:
     queued KSS exit SELL immediately, freeze-immune. Cheap: tickers only, no universe/backtest/Grok."""
     from app.config import settings
     from app.market import get_current_prices
-    from app.models import PENDING, PendingOrder
 
     # Guard every ACTIVE session that holds inventory — armed ones need the dynamic channel, the
     # rest need the hard-SL net. (The hard SL is always-on safety, independent of the dynamic-TP
@@ -2745,46 +2792,68 @@ def run_position_guard(db: Session) -> dict:
             if row.status != before and row.status != SESSION_ACTIVE:
                 exited.append(row.id)
         db.commit()
-    # Fill EVERY queued KSS exit SELL NOW, freeze-immune. reviewer="guard" is a non-AUTO reviewer,
-    # so a circuit-breaker freeze never blocks a protective exit — this also rescues SL/deadline
-    # SELLs the 30-min cycle queued but could not fill during a freeze (auto_fill_due_orders no-ops
-    # while frozen). Exits reduce risk and are never gated (the never-gate-exits rule).
-    # A4: `orphan:%` (queued by manage_orphan_positions) is included too — those are MARKET
-    # sweeps of leftover position quantity, and without this rescue they sit PENDING forever
-    # while the breaker is frozen, exactly when a losing streak makes the exit most needed.
-    from sqlalchemy import or_
-
-    resting = orders.tp_rests()  # a standing LIMIT take-profit (venue or paper touch model)
-    for o in (db.query(PendingOrder)
-              .filter(PendingOrder.status == PENDING, PendingOrder.side == "SELL",
-                      or_(PendingOrder.source_ref.like("pyramid:%"),
-                          PendingOrder.source_ref.like("orphan:%")))
-              .all()):
-        ref = str(o.source_ref or "")
-        # 1.5: a pyramid take-profit is a STANDING limit exit sitting on the exchange, not a
-        # protective one. Force-filling it here would pull it off the book and re-place it —
-        # churn at best, an orphaned live order at worst — and it is not what this guard is for.
-        # Risk exits (sl / trailing / deadline / crash) are MARKET and still fill immediately.
-        # `orphan:tp` is a MARKET sweep with no resting leg — key the skip on the `pyramid:`
-        # prefix, not the `:tp` suffix alone, or an orphan TP would be wrongly left to rot.
-        # `pyramid:{id}:tp` is ALSO the ref a MARKET dynamic-TP exit uses (_queue_dynamic_exit /
-        # check_tp) — the discriminator must be order_type, not the ref shape alone, or this
-        # skip swallows that MARKET exit too (it never rests, so nothing else force-fills it —
-        # a session ends TP_TRIGGERED holding inventory with no exit anywhere).
-        if resting and o.order_type == "LIMIT" and ref.startswith("pyramid:") and ref.endswith(":tp"):
-            continue
-        try:
-            orders.approve_order(db, o.id, reviewer="guard")
-        except Exception:  # a fill error must not kill the guard
-            logger.exception("position-guard fill failed for order %s", o.id)
-
-    # 1.5: a session this guard just closed can still have rungs or its take-profit resting on
-    # the exchange. Take them off the book NOW — waiting for the 30-min cycle would leave live
-    # orders behind a position that no longer exists.
-    if resting:
-        sync_resting_tp(db)
-        orders.sync_resting_orders(db)
+    _force_fill_queued_exits(db)
     return {"checked": len(active), "exited": exited}
+
+
+def run_fast_exit(db: Session) -> dict:
+    """Fast take-profit loop (docs/plan/live-readiness-plan.md task 1.11): while the WS price
+    feed is registered and fresh, re-check every ACTIVE ``dca_down`` session that is ARMED
+    (``tp_trail_floor > 0``) or already in profit (``price >= avg_price``) against the EXISTING
+    ``_trail_after_tp`` — so a rising price arms/ratchets/exits without waiting for the 90s
+    ``kss_exit_check_sec`` guard. Losing, unarmed sessions are left entirely to the 90s guard
+    (their hard SL, crash-detect, and the v1 dynamic channel all stay there too) — this loop can
+    only make an exit happen EARLIER, never later.
+
+    Structurally incapable of a REST call: prices come only from ``market.cached_prices`` (reads
+    the already-warm TTL cache, never touches the network), and the whole function is a no-op
+    unless ``market.ws_feed_fresh()``. A down/stale WS feed just means this tick does nothing —
+    the 90s guard still covers every session exactly as today, the never-gate-exits rule intact.
+
+    Deliberately does NOT touch ``_guard_last_price`` (crash-detect's own last-seen-price map,
+    written only by the 90s guard) — crash-detect itself never runs here, so there is nothing
+    for this loop to feed it, and doing so would let a sub-second WS tick corrupt the 90s guard's
+    drop-since-last-observation math with a much shorter window than it was built for.
+
+    Returns ``{"evaluated", "armed", "exited", "skipped_reason"}``. ``skipped_reason`` is set
+    (and every count left at 0) when the WHOLE tick is skipped (no WS feed / stale); ``None``
+    when it actually ran."""
+    from app.market import cached_prices, ws_feed_fresh
+
+    out: dict[str, Any] = {"evaluated": 0, "armed": 0, "exited": 0, "skipped_reason": None}
+    if not ws_feed_fresh():
+        out["skipped_reason"] = "ws feed not registered or stale"
+        return out
+
+    candidates = (
+        db.query(KssSession)
+        .filter(KssSession.status == SESSION_ACTIVE,
+                KssSession.total_filled_qty > 0,
+                KssSession.strategy_mode == "dca_down")
+        .all()
+    )
+    if not candidates:
+        out["skipped_reason"] = "no candidate sessions"
+        return out
+
+    prices = cached_prices(list({s.symbol for s in candidates}))  # NEVER touches the network
+    for row in candidates:
+        price = prices.get(row.symbol)
+        if not price:
+            continue
+        armed_before = row.tp_trail_floor > 0
+        if not (armed_before or price >= row.avg_price):
+            continue  # losing and unarmed — stays on the 90s guard, untouched
+        out["evaluated"] += 1
+        status_before = row.status
+        if _trail_after_tp(db, row, price):
+            if not armed_before and row.tp_trail_floor > 0:
+                out["armed"] += 1
+            if row.status != status_before and row.status != SESSION_ACTIVE:
+                out["exited"] += 1
+    db.commit()
+    _force_fill_queued_exits(db)
+    return out
 
 
 def manage_orphan_positions(db: Session) -> list[str]:

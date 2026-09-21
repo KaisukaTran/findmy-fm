@@ -58,6 +58,24 @@ def note_ws_prices(prices: dict[str, float]) -> None:
     _price_cache_ts = time.time()
 
 
+def cached_prices(symbols: list[str]) -> dict[str, float]:
+    """Return ONLY prices already warm in the TTL cache for ``symbols`` — NEVER touches the
+    network, not even on a miss. A symbol with no cached price is simply absent from the
+    result. For the fast exit loop (app.kss.service.run_fast_exit), which must be structurally
+    incapable of making a REST call: reading `_price_cache` directly is the only way to
+    guarantee that regardless of any future change to this module's fallback logic."""
+    if not symbols:
+        return {}
+    return {s: _price_cache[s] for s in symbols if s in _price_cache}
+
+
+def ws_feed_fresh() -> bool:
+    """True when a WS price feed is registered (live, or paper with `paper_ws_prices`) AND has
+    produced a message within `settings.ws_stale_sec`. False, never raises, when no feed is
+    registered — the paper default with the knob off."""
+    return _ws_feed is not None and _ws_feed.is_fresh(settings.ws_stale_sec)
+
+
 def get_current_prices(symbols: list[str], force: bool = False) -> dict[str, float]:
     """Return {symbol: usd_price} for the given base symbols, using a TTL cache.
 

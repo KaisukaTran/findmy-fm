@@ -340,6 +340,14 @@ class Settings(BaseSettings):
         "seconds the socket is treated as down and get_current_prices(force=True) falls back "
         "to a REST fetch.",
     )
+    paper_ws_prices: bool = Field(
+        default=False,
+        description="Paper only: also start the public Binance WS price feed (the same stream "
+        "live uses) so the fast take-profit loop (kss_fast_exit_sec) has a price source it can "
+        "read without ever calling REST. Off by default = today's behaviour (paper never starts "
+        "the feed; a forced price read still goes straight to REST). Read once at process start "
+        "(app.main lifespan) — toggling this on the dashboard needs a RESTART to take effect.",
+    )
 
     # --- Scanner / multi-agent decision layer ---
     watchlist: list[str] = Field(
@@ -485,6 +493,19 @@ class Settings(BaseSettings):
     kss_trail_arm_tp_frac: float = Field(default=0.0, description="Ride & Trail: arm at a FRACTION of the session's own take-profit instead of the flat kss_trail_arm_pct (0 = off, flat behaviour). The flat threshold is a trap once autotune fits tp_pct per coin: both the arm threshold and the resting take-profit are anchored to the same average, so their race is decided by the two percentages alone and never changes. Measured live 2026-09-06: four of six open sessions had tp_pct below the 5%% arm threshold, so their trailing exit could NEVER arm and the resting TP filled first every time (25 of 29 exits). 0.6 means arm once the session is 60%% of the way to its take-profit, which guarantees the trail gets a window before the fixed exit is reachable. Effective arm %% = min(kss_trail_arm_pct, this x tp_pct).")
     kss_trail_lock_pct: float = Field(default=2.0, description="Ride & Trail: once armed, the trailing SL never locks LESS than this %% profit (floor = max(fee_floor, avg*(1+this%%))) — so a wide ATR trail can't pin the stop back at break-even. Should be < kss_trail_arm_pct (the gap is the room given at arming).")
     kss_exit_check_sec: int = Field(default=90, description="Interval (seconds) of the lightweight position-guard loop that checks OPEN-session exits using cached tickers, decoupled from the 30-min full scan. Lower = smaller gap window, more ticker calls. Should be > price_cache_ttl is NOT required — the guard forces a fresh price.")
+    kss_fast_exit_sec: float = Field(
+        default=0.0, ge=0,
+        description="Interval (seconds) of the fast take-profit loop: while the WS price feed "
+        "is registered and fresh, re-checks every ACTIVE dca_down session that is ARMED "
+        "(tp_trail_floor > 0) or already in profit (price >= avg_price) against "
+        "_trail_after_tp, so a rising price arms/ratchets/exits without waiting for the 90s "
+        "kss_exit_check_sec guard. 0 = off (today's behaviour). Floored at 1s. Reads ONLY the "
+        "already-warm WS price cache (market.cached_prices) — it never makes a REST call, so a "
+        "down/stale WS feed just makes this loop a no-op and the 90s guard still covers every "
+        "session exactly as today. Losing/unarmed sessions, hard SL, crash-detect and the v1 "
+        "dynamic channel are never touched here — this loop can only make an exit happen "
+        "EARLIER, never later.",
+    )
     kss_reconcile_interval_sec: int = Field(default=60, ge=0, le=3600, description="Minimum seconds between the position-guard's own reconcile_live_orders pass (separate from kss_exit_check_sec, which gates the exit check itself). The default sits BELOW the 90 s exit-check default on purpose: at today's cadence every guard tick still reconciles, so shipping this knob changes nothing — but if the exit check is later shortened to seconds, reconcile stays on its own ~60 s cadence instead of multiplying exchange weight with it. The exit check is free — prices come from the live WS feed cache — but reconcile costs exchange weight (fetch_order = 4 per tracked order), so it is throttled on its own cadence within the same guard tick, and still runs BEFORE the exit check on the ticks where it fires. 0 = reconcile every guard tick (the old behaviour, exit check and reconcile on one cadence).")
     kss_crash_drop_pct: float = Field(default=12.0, description="Crash-detect: if a guard check sees price drop more than this %% since the last observation AND price is at/below the SL, exit at market immediately (caps further bleed on a gap). 0 = off.")
     kss_live_stop_orders: bool = Field(default=False, description="CHỈ LIVE: giữ một lệnh STOP_LOSS_LIMIT SELL nằm sẵn trên sàn tại trail_sl_price của phiên (app/kss/service.py:_maintain_live_stop), để sàn tự khớp stop trong mili-giây thay vì đợi vòng guard ~90s (kss_exit_check_sec) phát hiện rồi mới gửi lệnh MARKET (đo 2026-09-14: lệnh market khớp thấp hơn giá stop định 0,09–0,34%). TẮT mặc định — bật xong vẫn giữ nguyên guard 90s + crash-detect làm lưới dự phòng khi lệnh sàn thất bại/bị từ chối.")

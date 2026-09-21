@@ -46,6 +46,18 @@ logging.Formatter.converter = staticmethod(_local_time)
 _STATIC_DIR = Path(__file__).parent / "static"
 
 
+def ws_feed_should_start() -> bool:
+    """Whether the lifespan below starts the Binance public WS price feed: live always starts
+    it (subject to ``live_ws_prices``); paper only when the operator opted in via
+    ``paper_ws_prices`` (default off = today's behaviour — paper never starts the feed). A pure
+    function of ``settings`` so the gate is testable without booting the app or opening a real
+    socket. Read once at process start — toggling either knob on the dashboard needs a restart
+    to take effect."""
+    return settings.live_ws_prices and settings.live_exchange == "binance" and (
+        settings.live_trading or settings.paper_ws_prices
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
@@ -70,11 +82,14 @@ async def lifespan(app: FastAPI):
     # scheduler would never scan, so the two must boot together.
     if settings.scheduler_enabled or settings.full_auto:
         scheduler.start()
-    if settings.live_trading and settings.live_ws_prices and settings.live_exchange == "binance":
+    if ws_feed_should_start():
         from app.data import ws_feed
 
         ws_feed.start()
-        logging.getLogger("app.main").info("ws_feed: live Binance price stream started")
+        logging.getLogger("app.main").info(
+            "ws_feed: %s Binance price stream started",
+            "live" if settings.live_trading else "paper",
+        )
     from app import notify, notify_discord
     notify.start()
     notify_discord.start()

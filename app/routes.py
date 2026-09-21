@@ -549,6 +549,7 @@ class KssSettingsBody(BaseModel):
     kss_trail_arm_tp_frac: float | None = Field(None, ge=0, le=1)
     kss_trail_lock_pct: float | None = Field(None, ge=0, le=100)
     kss_exit_check_sec: int | None = Field(None, ge=5, le=3600)
+    kss_fast_exit_sec: float | None = Field(None, ge=0, le=3600)
     kss_reconcile_interval_sec: int | None = Field(None, ge=0, le=3600)
     kss_crash_drop_pct: float | None = Field(None, ge=0, le=100)
     kss_live_stop_orders: bool | None = None
@@ -574,6 +575,7 @@ class KssSettingsBody(BaseModel):
     maker_orders: bool | None = None
     paper_fill_touch_1m: bool | None = None
     paper_fill_needs_trade_through: bool | None = None
+    paper_ws_prices: bool | None = None
     maker_fee_pct: float | None = Field(None, ge=0, le=1)
     order_fill_timeout_sec: int | None = Field(None, ge=0)
     live_use_testnet: bool | None = None

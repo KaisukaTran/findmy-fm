@@ -113,6 +113,7 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "kss_trail_arm_tp_frac": float,
     "kss_trail_lock_pct": float,
     "kss_exit_check_sec": int,
+    "kss_fast_exit_sec": float,  # 0 = off; the fast take-profit loop (WS-fed, never REST)
     "kss_reconcile_interval_sec": int,
     "kss_crash_drop_pct": float,
     "kss_live_stop_orders": _to_bool,
@@ -157,6 +158,10 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "maker_orders": _to_bool,
     "paper_fill_touch_1m": _to_bool,  # paper: LIMITs fill on 1m candle touches (venue-like)
     "paper_fill_needs_trade_through": _to_bool,
+    # paper: start the public Binance WS feed too (see kss_fast_exit_sec) — bool cast, not
+    # `bool`, or a restored "False" string would come back True (shipped and caught 2026-09-21).
+    # Read once at process start (app.main lifespan); toggling it needs a restart.
+    "paper_ws_prices": _to_bool,
     "maker_fee_pct": float,
     "order_fill_timeout_sec": int,
     "live_use_testnet": _to_bool,

@@ -32,6 +32,10 @@ logger = logging.getLogger(__name__)
 
 _task: asyncio.Task | None = None
 _guard_task: asyncio.Task | None = None
+# The fast take-profit loop (task 1.11, kss_fast_exit_sec) — off by default (see
+# scheduler.fast_exit_should_run). Same lifecycle as _guard_task: always spun up by start(), a
+# no-op each tick unless the knob and the WS feed both say go.
+_fast_exit_task: asyncio.Task | None = None
 # Serialize the 30-min cycle and the fast position-guard so only one DB writer runs at a time
 # (prevents a guard exit racing manage_open_sessions on the same session → no double-sell).
 _work_lock = threading.Lock()
@@ -500,6 +504,46 @@ async def _guard_loop() -> None:
         await asyncio.sleep(max(settings.kss_exit_check_sec, 5))
 
 
+def fast_exit_should_run() -> bool:
+    """Whether the fast take-profit loop (task 1.11) runs at all. ``kss_fast_exit_sec <= 0`` is
+    the deliberate off switch — today's behaviour, only the 90s guard and the 30-min cycle check
+    exits. `service.run_fast_exit` has its own, independent gate (a fresh WS feed) — this only
+    controls whether the loop bothers to call it."""
+    return settings.kss_fast_exit_sec > 0
+
+
+def _fast_exit_once() -> None:
+    """One fast-exit tick. Skips — no DB session opened, no writes — when ``_work_lock`` is
+    already held by the 30-min cycle or the 90s guard: a second concurrent writer on the same
+    session is the documented double-sell hazard ``_work_lock`` exists to prevent. The next
+    tick, at most ``kss_fast_exit_sec`` later, retries; the 90s guard covers every session
+    regardless of whether this tick ran."""
+    if not _work_lock.acquire(blocking=False):
+        return
+    try:
+        db = SessionLocal()
+        try:
+            service.run_fast_exit(db)
+        finally:
+            db.close()
+    finally:
+        _work_lock.release()
+
+
+async def _fast_exit_loop() -> None:
+    """Fast take-profit loop (task 1.11): while the WS price feed is fresh, re-checks
+    profitable/armed sessions every ``kss_fast_exit_sec`` instead of waiting for the 90s guard.
+    Floored at 1s regardless of the knob's configured value."""
+    logger.info("fast-exit loop started (every %ss)", settings.kss_fast_exit_sec)
+    while True:
+        try:
+            if fast_exit_should_run():
+                await asyncio.to_thread(_fast_exit_once)
+        except Exception:  # a bad tick must not kill the loop
+            logger.exception("fast-exit tick failed")
+        await asyncio.sleep(max(settings.kss_fast_exit_sec, 1.0))
+
+
 def start() -> bool:
     """Start the background loop if not already running. Returns True if started.
 
@@ -521,12 +565,15 @@ def start() -> bool:
     global _guard_task
     if not (_guard_task and not _guard_task.done()):
         _guard_task = asyncio.create_task(_guard_loop())
+    global _fast_exit_task
+    if not (_fast_exit_task and not _fast_exit_task.done()):
+        _fast_exit_task = asyncio.create_task(_fast_exit_loop())
     return True
 
 
 def stop() -> bool:
     """Stop the background loop. Returns True if a running task was cancelled."""
-    global _task, _guard_task
+    global _task, _guard_task, _fast_exit_task
     settings.scheduler_enabled = False
     cancelled = False
     if _task and not _task.done():
@@ -536,6 +583,9 @@ def stop() -> bool:
     if _guard_task and not _guard_task.done():
         _guard_task.cancel()
     _guard_task = None
+    if _fast_exit_task and not _fast_exit_task.done():
+        _fast_exit_task.cancel()
+    _fast_exit_task = None
     _release_singleton_lock()  # free the lock so the same process can restart cleanly
     return cancelled
 

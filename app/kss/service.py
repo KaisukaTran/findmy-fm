@@ -438,6 +438,58 @@ def ladder_cost_for(first_wave_usd: float, distance_pct: float, max_waves: int) 
     )
 
 
+def affordable_max_waves(db: Session, distance_pct: float, configured: int) -> int:
+    """Shorten the ladder to the longest one the account can actually FUND, never lengthen it.
+
+    WHY THIS IS ALLOWED TO TOUCH SHAPE. ``docs/capital-scaling-policy.md`` §1 forbids deriving
+    the strategy's shape from equity, because fitting shape to history is overfitting. §1.1
+    (added 2026-09-21, approved by Kai) carves out this one exception, and it is deliberately
+    narrow: an UPPER BOUND from arithmetic, never a backtest search for the "best" wave count.
+    A 30-rung ladder at a $28 first wave costs $6,186; a $5,000 account simply cannot pay it,
+    and that is a fact about the account, not a pattern found in prices.
+
+    Measured (20 seeds, reserve gate, pessimistic bound, 427 liquid symbols, 2023-08..2026-07),
+    at $5,000: 30 rungs ended below the starting capital on 15% of paths, worst path $4,590;
+    10 rungs on 0% of paths, worst path $11,264, and a HIGHER median. At $200,000 the ranking
+    inverts (30 rungs $396k vs 8 rungs $242k), which is why this only ever bites small accounts.
+
+    ORDER MATTERS: the first wave is resolved FIRST, through ``capital_scale``, and this prices
+    the ladder at that already-shrunken wave. Shrinking the wave is a pure SIZE change (always
+    legal) and measured better than shortening — at $7,000, a $10 wave over 30 rungs beat a $28
+    wave over 20 rungs on both median and ruin rate, because 47% of all profit historically came
+    from rungs 13 and deeper and a smaller wave still reaches them. Only when the wave has
+    already hit ``scan_min_notional`` and the ladder is STILL unaffordable does this shorten it.
+
+    ``min_fundable_ladders = 0`` (the default) disables this entirely — today's behaviour.
+    """
+    from app.config import settings  # lazy, as everywhere else in this module
+
+    n = settings.min_fundable_ladders
+    if n <= 0 or configured <= 1:
+        return configured
+    from app import capital_scale  # lazy: capital_scale → risk → portfolio → models
+
+    equity = capital_scale.anchored_equity(db)
+    budget = equity * (100 - settings.equity_backup_pct) / 100.0
+    per_ladder = budget / n
+    if per_ladder <= 0:
+        return configured
+    first_wave = capital_scale.first_wave_usd(db).value
+    for waves in range(configured, 0, -1):
+        if ladder_cost_for(first_wave, distance_pct, waves) <= per_ladder:
+            if waves < configured:
+                audit.log(db, "capital_scale", "ladder_shortened", entity="scan_max_waves",
+                          configured=configured, allowed=waves, equity=round(equity, 2),
+                          per_ladder=round(per_ladder, 2), first_wave=round(first_wave, 4))
+            return waves
+    # Not even a single wave fits the per-ladder budget. Shortening further is meaningless, so
+    # leave the configured shape alone and let the existing gates (`_can_open`, `_apply_cash_cap`)
+    # refuse the open on their own terms rather than inventing a one-rung strategy here.
+    audit.log(db, "capital_scale", "ladder_unaffordable", entity="scan_max_waves",
+              configured=configured, equity=round(equity, 2), per_ladder=round(per_ladder, 2))
+    return configured
+
+
 def projected_ladder_cost(
     symbol: str,
     entry_price: float,

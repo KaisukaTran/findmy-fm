@@ -150,6 +150,19 @@ class Settings(BaseSettings):
         "live equity this was added at ($200,000) the resolved value equals today's $5,000 "
         "exactly.",
     )
+
+    min_fundable_ladders: int = Field(
+        default=0,
+        ge=0,
+        description="Cap `scan_max_waves` at the longest ladder the account can fund this many "
+        "times over (0 = off, today's behaviour). NEVER lengthens, and never searches a backtest "
+        "for the 'best' wave count — it is an affordability bound, the one narrow exception to "
+        "the shape rule in docs/capital-scaling-policy.md §1.1. The first wave is shrunk FIRST "
+        "(a pure size change, and measured better); this only bites once the wave has hit "
+        "scan_min_notional. Measured value is 4: at $5,000 it picks 8-10 rungs (0%% of paths "
+        "ended below the starting capital, vs 15%% at 30 rungs) and at $200,000 it picks 30, "
+        "leaving a large book untouched.",
+    )
     # --- Live-readiness knobs (additive; inert until the live maker/async path is built) ---
     maker_orders: bool = Field(
         default=False,

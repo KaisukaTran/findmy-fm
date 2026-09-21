@@ -415,15 +415,26 @@ def _effective_params(db: Session, symbol: str) -> tuple[float, float, int]:
     if settings.hyperopt_enabled:
         row = hyperopt.best_params(db, symbol)
         if row is not None:
-            return row.distance_pct, row.tp_pct, row.max_waves
+            return row.distance_pct, row.tp_pct, _affordable(db, row.distance_pct, row.max_waves)
     # Autotune stage 2: levels derived from THIS symbol's realised volatility. Hyperopt tunes
     # a handful of watchlist symbols; this covers the rest, which is most of the universe.
     from app import autotune
 
     fitted = autotune.levels_for(db, symbol)
     if fitted is not None:
-        return fitted["distance_pct"], fitted["tp_pct"], settings.scan_max_waves
-    return settings.scan_distance_pct, settings.scan_tp_pct, settings.scan_max_waves
+        return (fitted["distance_pct"], fitted["tp_pct"],
+                _affordable(db, fitted["distance_pct"], settings.scan_max_waves))
+    return (settings.scan_distance_pct, settings.scan_tp_pct,
+            _affordable(db, settings.scan_distance_pct, settings.scan_max_waves))
+
+
+def _affordable(db: Session, distance_pct: float, waves: int) -> int:
+    """The ladder length the account can fund, capped at the configured one — see
+    ``service.affordable_max_waves``. Applied HERE, in the one place a new session's shape is
+    decided, so the win-rate evaluation downstream judges the ladder that will actually run
+    rather than one the book could never pay for. ``min_fundable_ladders=0`` (default) is a
+    straight pass-through."""
+    return service.affordable_max_waves(db, distance_pct, waves)
 
 
 def prefetch_universe_candles(db: Session) -> int:

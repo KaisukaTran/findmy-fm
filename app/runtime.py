@@ -146,6 +146,7 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "max_session_deploy_pct": float,
     "live_max_order_notional_pct": float,
     "autoapprove_max_notional_pct": float,
+    "min_fundable_ladders": int,
     # Live-readiness knobs (1.9) — LIVE only, inert on paper. maker/testnet are bool (use
     # _to_bool, not bool, so a restored "0" stays False); timeout is seconds (0 = wait forever).
     "maker_orders": _to_bool,

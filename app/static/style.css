@@ -80,7 +80,7 @@ main { padding: 16px 24px; max-width: 1680px; margin: 0 auto; }
   position: sticky; top: 0; z-index: 2; background: var(--panel);
   box-shadow: inset 0 -1px 0 var(--line);
 }
-.pos { color: var(--green); } .neg { color: var(--red); }
+.pos { color: var(--green); } .neg { color: var(--red); } .warn-text { color: var(--warn); }
 .badge { padding: 1px 7px; border-radius: 999px; font-size: 11px; border: 1px solid var(--line); }
 .badge.active { color: var(--green); border-color: var(--green); }
 .badge.pending { color: var(--accent); border-color: var(--accent); }

@@ -860,6 +860,8 @@ document.addEventListener("submit", async (e) => {
       max_sessions_per_symbol: num(f.get("max_sessions_per_symbol")),
       max_deployed_pct: num(f.get("max_deployed_pct")),
       equity_backup_pct: num(f.get("equity_backup_pct")),
+      ladder_coverage_pct: num(f.get("ladder_coverage_pct")),
+      deep_ladder_lock_rungs: num(f.get("deep_ladder_lock_rungs")),
       cash_floor_usd: num(f.get("cash_floor_usd")),
       kss_ladder_reserve_slack_pct: num(f.get("kss_ladder_reserve_slack_pct")),
       kss_partial_last_rung_enabled: f.get("kss_partial_last_rung_enabled") === "1",
@@ -885,6 +887,8 @@ document.addEventListener("submit", async (e) => {
       kss_trail_arm_pct: num(f.get("kss_trail_arm_pct")),
       kss_trail_lock_pct: num(f.get("kss_trail_lock_pct")),
       kss_exit_check_sec: num(f.get("kss_exit_check_sec")),
+      kss_fast_exit_sec: num(f.get("kss_fast_exit_sec")),
+      paper_ws_prices: f.get("paper_ws_prices") === "1",
       kss_reconcile_interval_sec: num(f.get("kss_reconcile_interval_sec")),
       kss_crash_drop_pct: num(f.get("kss_crash_drop_pct")),
       kss_live_stop_orders: f.get("kss_live_stop_orders") === "1",
@@ -919,6 +923,19 @@ document.addEventListener("submit", async (e) => {
       // Learner KHONG tu ghi knob nay (autotune.learn_from_outcomes chi chinh tp_atr_mult),
       // nen noi day tu form la an toan — khong co rui ro ghi de thu may vua hoc.
       autotune_dca_atr_mult: num(f.get("autotune_dca_atr_mult")),
+      capital_scale_enabled: f.get("capital_scale_enabled") === "1",
+      capital_scale_deadband_pct: num(f.get("capital_scale_deadband_pct")),
+      first_wave_pct: num(f.get("first_wave_pct")),
+      cash_floor_pct: num(f.get("cash_floor_pct")),
+      max_session_deploy_pct: num(f.get("max_session_deploy_pct")),
+      live_max_order_notional_pct: num(f.get("live_max_order_notional_pct")),
+      autoapprove_max_notional_pct: num(f.get("autoapprove_max_notional_pct")),
+      min_fundable_ladders: num(f.get("min_fundable_ladders")),
+      crash_alert_enabled: f.get("crash_alert_enabled") === "1",
+      crash_alert_drop_pct: num(f.get("crash_alert_drop_pct")),
+      crash_alert_breadth_pct: num(f.get("crash_alert_breadth_pct")),
+      crash_alert_min_symbols: num(f.get("crash_alert_min_symbols")),
+      crash_alert_cooldown_min: num(f.get("crash_alert_cooldown_min")),
     });
     toast("Đã lưu cấu hình KSS — áp dụng cho phiên mới.", "success");
     refreshTrading(); refreshStatus();

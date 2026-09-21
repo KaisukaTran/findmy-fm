@@ -36,6 +36,7 @@ from app import (
     diagrams,
     execution,
     hyperopt,
+    market,
     ml,
     notify,
     notify_discord,
@@ -1262,11 +1263,40 @@ def partial_kss_settings(request: Request, db: Session = Depends(get_db)):
         "external": settings.ta_external_enabled,
         "external_active": ta_external.enabled(),  # enabled AND taapi key present
     }
+    # The EFFECT of paper_ws_prices/kss_fast_exit_sec, not just the setting (RULE: a control
+    # must report the effect — shipped wrong eight times on this project). registered = a feed
+    # is wired at all (live, or paper with the knob on); fresh = it has produced a message
+    # within ws_stale_sec, i.e. run_fast_exit would actually act right now.
+    ws = {"registered": market._ws_feed is not None, "fresh": market.ws_feed_fresh()}
     cw = runtime.get_consensus_weights(db)
+    # Every percentage-of-equity knob (app/capital_scale.py) is rendered next to the dollar
+    # figure it resolves to TODAY, so an operator never has to mentally multiply a % by an
+    # equity they cannot see (RULE: a control must report the EFFECT, not just the SETTING —
+    # this project has shipped that bug seven times). The helpers are lazy-safe: with
+    # capital_scale_enabled off (the default) none of them touch equity or write the anchor,
+    # so rendering this tab stays free exactly like every other read here.
+    scale = {
+        "first_wave": capital_scale.first_wave_usd(db),
+        "cash_floor": capital_scale.cash_floor_usd(db),
+        "session_deploy": capital_scale.session_deploy_cap_usd(db),
+        "live_notional": capital_scale.live_order_notional_cap_usd(db),
+        "autoapprove": capital_scale.autoapprove_notional_cap_usd(db),
+    }
+    # anchored_equity() itself is NOT lazy-safe (it writes the anchor on its very first call,
+    # regardless of the master switch) — only read it when scaling is actually on, so an
+    # operator who never turned this on never gets a bookkeeping write from opening this tab.
+    anchored_equity = capital_scale.anchored_equity(db) if settings.capital_scale_enabled else None
+    from app import risk  # lazy: risk -> portfolio -> models; avoid an import cycle at load
+    live_equity = risk.account_equity(db)
+    affordable_waves = kss_service.affordable_max_waves(
+        db, settings.scan_distance_pct, settings.scan_max_waves
+    )
     return templates.TemplateResponse(
         "partials/kss_settings.html",
         {"request": request, "k": k, "depth_pct": depth_pct, "gs": grok_scanner, "ta": ta,
-         "cw": cw, "blocked": scanner.loss_reentry_blocklist(db)},
+         "cw": cw, "blocked": scanner.loss_reentry_blocklist(db), "scale": scale,
+         "anchored_equity": anchored_equity, "live_equity": live_equity,
+         "affordable_waves": affordable_waves, "ws": ws},
     )
 
 

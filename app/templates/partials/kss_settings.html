@@ -134,6 +134,14 @@
     <input name="kss_trail_lock_pct" type="number" step="0.5" min="0" value="{{ '%.1f'|format(k.kss_trail_lock_pct) }}"></label>
   <label title="Chu kỳ (giây) vòng guard nhẹ kiểm exit session ĐANG MỞ bằng ticker, tách khỏi scan 30 phút. Nhỏ = cửa sổ gap hẹp hơn.">Guard kiểm exit (giây) <span class="varname">kss_exit_check_sec</span>
     <input name="kss_exit_check_sec" type="number" step="1" min="5" value="{{ k.kss_exit_check_sec }}"></label>
+  <label title="Chu kỳ (giây) vòng LẶP NHANH chốt lời: khi feed giá WS sống và đang tươi, session đã ARM (tp_trail_floor>0) hoặc đang LÃI được kiểm lại ngay ở nhịp này thay vì đợi guard 90s (kss_exit_check_sec) — session đang LỖ vẫn giữ nguyên nhịp 90s. Đọc giá CHỈ từ cache WS đã ấm (không bao giờ gọi REST): feed đứt/cũ thì vòng này tự thành no-op, guard 90s vẫn phủ mọi session như cũ. Cần feed WS đang chạy (LIVE, hoặc PAPER khi bật paper_ws_prices bên dưới). Sàn tối thiểu 1s. 0 = tắt (hành vi cũ).">Chốt lời NHANH (giây) <span class="varname">kss_fast_exit_sec</span>
+    <input name="kss_fast_exit_sec" type="number" step="0.5" min="0" max="3600" value="{{ k.kss_fast_exit_sec }}"></label>
+  <label title="PAPER: cũng khởi động feed giá WS công khai của Binance (đúng stream LIVE dùng) để vòng chốt lời nhanh (kss_fast_exit_sec) có giá mà KHÔNG BAO GIỜ gọi REST. TẮT mặc định = hành vi cũ (paper không bao giờ mở feed). Đọc MỘT LẦN lúc khởi động tiến trình (app.main lifespan) — bật/tắt ở đây cần KHỞI ĐỘNG LẠI app mới có hiệu lực.">Feed giá WS (PAPER) <span class="varname">paper_ws_prices</span>
+    <span class="badge {% if ws.fresh %}active{% elif ws.registered %}hyperopt-on{% else %}full-auto-off{% endif %}" title="Trạng thái THẬT ngay bây giờ (khác với cài đặt bên dưới) — đây là cái quyết định vòng chốt lời nhanh có chạy được hay không.">{% if ws.fresh %}feed đang chạy, giá tươi{% elif ws.registered %}feed đã đăng ký nhưng giá CŨ{% else %}chưa có feed nào đăng ký{% endif %}</span>
+    <select name="paper_ws_prices" class="select-inline">
+      <option value="1" {% if k.paper_ws_prices %}selected{% endif %}>Bật (cần restart)</option>
+      <option value="0" {% if not k.paper_ws_prices %}selected{% endif %}>Tắt</option>
+    </select></label>
   <label title="Chu kỳ tối thiểu (giây) giữa hai lần guard tự đối soát (reconcile_live_orders), TÁCH khỏi kss_exit_check_sec ở trên. Kiểm exit thì MIỄN PHÍ (giá lấy từ cache WS sống), nhưng đối soát tốn weight sàn (fetch_order = 4/lệnh) nên bị giãn nhịp riêng — vẫn chạy TRƯỚC kiểm exit ở những tick nó có chạy. 0 = đối soát mọi tick (hành vi cũ).">Chu kỳ đối soát (giây) <span class="varname">kss_reconcile_interval_sec</span>
     <input name="kss_reconcile_interval_sec" type="number" step="1" min="0" max="3600" value="{{ k.kss_reconcile_interval_sec }}"></label>
   <label title="Crash-detect: nếu một lần guard thấy giá rớt > % này so với lần quan sát trước VÀ giá ≤ SL → bán market NGAY (chặn chảy máu trên gap). 0 = tắt.">Crash-detect % <span class="varname">kss_crash_drop_pct</span>
@@ -189,6 +197,81 @@
     <input name="pyramid_up_max_adds" type="number" step="1" min="0" max="3" value="{{ k.pyramid_up_max_adds }}"></label>
   <label title="Quản trị rủi ro Pyramid-UP: sau mỗi add khớp, SL dời lên break-even-plus = avg×(1+%này) (sàn ở mức hòa phí) — mỗi add là một 'free-roll', rủi ro net không vượt quá rủi ro của sóng gốc.">Khóa lãi sau add % <span class="varname">pyramid_up_lock_pct</span>
     <input name="pyramid_up_lock_pct" type="number" step="0.1" min="0" max="100" value="{{ '%.1f'|format(k.pyramid_up_lock_pct) }}"></label>
+  <h3 class="section-subhead">━ Scale vốn theo % equity (capital scaling) ━</h3>
+  <div class="muted fs-12 settings-note-full">Vốn quy đổi (anchored equity) — cái các % dưới đây tính trên:
+    {% if anchored_equity is not none %}<b>${{ anchored_equity | money }}</b>{% else %}<span>— (đang TẮT, các % dưới đây không có tác dụng)</span>{% endif %}
+    &nbsp;·&nbsp; Vốn thị trường hiện tại (live equity, theo giá): <b>${{ live_equity | money }}</b>.
+    {% if anchored_equity is not none %}Hai số khác nhau là CHỦ Ý: vùng đệm {{ '%.0f'|format(k.capital_scale_deadband_pct) }}% (knob ngay dưới) chặn giá lên/xuống theo từng tick làm cỡ lệnh đổi liên tục.{% endif %}
+  </div>
+  <label title="Công tắc TỔNG cho scale vốn theo %. TẮT (mặc định) = 5 knob USD tuyệt đối bên dưới (giá trị lệnh đầu, sàn tiền mặt, trần deploy/session, trần lệnh live, trần tự duyệt) giữ nguyên, y hệt trước khi tính năng này tồn tại. BẬT = mỗi knob được TÍNH LẠI theo % của vốn quy đổi (anchored equity) mỗi lần dùng, thay vì một số cố định — vốn tăng/giảm thì cỡ lệnh tự theo.">Scale vốn theo % (công tắc tổng) <span class="varname">capital_scale_enabled</span>
+    <select name="capital_scale_enabled" class="select-inline">
+      <option value="1" {% if k.capital_scale_enabled %}selected{% endif %}>Bật</option>
+      <option value="0" {% if not k.capital_scale_enabled %}selected{% endif %}>Tắt</option>
+    </select></label>
+  <label title="Vốn quy đổi (anchored equity) chỉ nhích theo vốn thị trường THẬT khi lệch quá % này so với lần neo trước — chặn giá lên/xuống theo từng tick làm cỡ lệnh đổi liên tục. Chỉ có tác dụng khi bật công tắc tổng ở trên.">Vùng đệm neo vốn % <span class="varname">capital_scale_deadband_pct</span>
+    <input name="capital_scale_deadband_pct" type="number" step="0.5" min="0" max="100" value="{{ '%.1f'|format(k.capital_scale_deadband_pct) }}"></label>
+  <label title="`kss_first_wave_usd` (Giá trị lệnh đầu, ở trên) tính theo % vốn quy đổi thay vì số cố định. 0 = luôn dùng số USD tuyệt đối. Sàn tối thiểu = scan_min_notional (sàn không nhận lệnh vụn hơn mức này).">Giá trị lệnh đầu (% vốn) <span class="varname">first_wave_pct</span>
+    <input name="first_wave_pct" type="number" step="0.001" min="0" value="{{ '%.3f'|format(k.first_wave_pct) }}"></label>
+  <div class="muted fs-11 settings-note-full">
+    {% if not scale.first_wave.enabled %}→ <b>${{ scale.first_wave.absolute | money }}</b> (đang dùng số USD tuyệt đối ở trên — bật công tắc tổng để chuyển sang %)
+    {% elif scale.first_wave.floored %}→ <b class="warn-text">${{ scale.first_wave.value | money }} (SÀN TỐI THIỂU)</b> — {{ '%.3f'|format(scale.first_wave.pct) }}% × ${{ scale.first_wave.equity | money }} = ${{ (scale.first_wave.equity * scale.first_wave.pct / 100) | money }}, dưới sàn scan_min_notional nên bị ghim
+    {% else %}→ <b class="pos">${{ scale.first_wave.value | money }} hôm nay</b> ({{ '%.3f'|format(scale.first_wave.pct) }}% × ${{ scale.first_wave.equity | money }} vốn quy đổi)
+    {% endif %}
+  </div>
+  <label title="`cash_floor_usd` (Sàn tiền mặt, ở trên) tính theo % vốn quy đổi thay vì số cố định. 0 = luôn dùng số USD tuyệt đối. Không có sàn cứng riêng — 0% là câu trả lời hợp lệ (không chặn mua vì lý do tiền mặt).">Sàn tiền mặt (% vốn) <span class="varname">cash_floor_pct</span>
+    <input name="cash_floor_pct" type="number" step="0.5" min="0" value="{{ '%.1f'|format(k.cash_floor_pct) }}"></label>
+  <div class="muted fs-11 settings-note-full">
+    {% if not scale.cash_floor.enabled %}→ <b>${{ scale.cash_floor.absolute | money }}</b> (đang dùng số USD tuyệt đối ở trên — bật công tắc tổng để chuyển sang %)
+    {% elif scale.cash_floor.floored %}→ <b class="warn-text">${{ scale.cash_floor.value | money }} (SÀN TỐI THIỂU)</b> — {{ '%.3f'|format(scale.cash_floor.pct) }}% × ${{ scale.cash_floor.equity | money }} = ${{ (scale.cash_floor.equity * scale.cash_floor.pct / 100) | money }}, dưới sàn nên bị ghim
+    {% else %}→ <b class="pos">${{ scale.cash_floor.value | money }} hôm nay</b> ({{ '%.3f'|format(scale.cash_floor.pct) }}% × ${{ scale.cash_floor.equity | money }} vốn quy đổi)
+    {% endif %}
+  </div>
+  <label title="`max_session_deploy_usd` (Trần deploy/session, ở trên) tính theo % vốn quy đổi thay vì số cố định. 0 = tắt (không trần) — cùng nghĩa với max_session_deploy_usd=0, nên cặp này giữ nguyên trạng thái tắt/tắt ở vốn hiện tại.">Trần deploy/session (% vốn) <span class="varname">max_session_deploy_pct</span>
+    <input name="max_session_deploy_pct" type="number" step="0.1" min="0" value="{{ '%.2f'|format(k.max_session_deploy_pct) }}"></label>
+  <div class="muted fs-11 settings-note-full">
+    {% if not scale.session_deploy.enabled %}→ <b>${{ scale.session_deploy.absolute | money }}</b>{% if scale.session_deploy.absolute <= 0 %} (0 = tắt, không trần){% endif %} (đang dùng số USD tuyệt đối — bật công tắc tổng để chuyển sang %)
+    {% elif scale.session_deploy.floored %}→ <b class="warn-text">${{ scale.session_deploy.value | money }} (SÀN TỐI THIỂU)</b> — {{ '%.3f'|format(scale.session_deploy.pct) }}% × ${{ scale.session_deploy.equity | money }} = ${{ (scale.session_deploy.equity * scale.session_deploy.pct / 100) | money }}
+    {% else %}→ <b class="pos">${{ scale.session_deploy.value | money }} hôm nay</b> ({{ '%.3f'|format(scale.session_deploy.pct) }}% × ${{ scale.session_deploy.equity | money }} vốn quy đổi)
+    {% endif %}
+  </div>
+  <label title="`live_max_order_notional` (trần notional mỗi lệnh MUA live thật) tính theo % vốn quy đổi thay vì số cố định. 0 = luôn dùng số USD tuyệt đối. Sàn tối thiểu = scan_min_notional. Chỉ áp dụng khi live_trading bật.">Trần lệnh live (% vốn) <span class="varname">live_max_order_notional_pct</span>
+    <input name="live_max_order_notional_pct" type="number" step="0.01" min="0" value="{{ '%.3f'|format(k.live_max_order_notional_pct) }}"></label>
+  <div class="muted fs-11 settings-note-full">
+    {% if not scale.live_notional.enabled %}→ <b>${{ scale.live_notional.absolute | money }}</b> (đang dùng số USD tuyệt đối — bật công tắc tổng để chuyển sang %)
+    {% elif scale.live_notional.floored %}→ <b class="warn-text">${{ scale.live_notional.value | money }} (SÀN TỐI THIỂU)</b> — {{ '%.3f'|format(scale.live_notional.pct) }}% × ${{ scale.live_notional.equity | money }} = ${{ (scale.live_notional.equity * scale.live_notional.pct / 100) | money }}, dưới sàn scan_min_notional nên bị ghim
+    {% else %}→ <b class="pos">${{ scale.live_notional.value | money }} hôm nay</b> ({{ '%.3f'|format(scale.live_notional.pct) }}% × ${{ scale.live_notional.equity | money }} vốn quy đổi)
+    {% endif %}
+  </div>
+  <label title="`autoapprove_max_notional` (trần tự duyệt lệnh, sửa nhanh ở tab Chờ duyệt) tính theo % vốn quy đổi thay vì số cố định. 0 = luôn dùng số USD tuyệt đối.">Trần tự duyệt (% vốn) <span class="varname">autoapprove_max_notional_pct</span>
+    <input name="autoapprove_max_notional_pct" type="number" step="0.1" min="0" value="{{ '%.2f'|format(k.autoapprove_max_notional_pct) }}"></label>
+  <div class="muted fs-11 settings-note-full">
+    {% if not scale.autoapprove.enabled %}→ <b>${{ scale.autoapprove.absolute | money }}</b> (đang dùng số USD tuyệt đối — bật công tắc tổng để chuyển sang %)
+    {% elif scale.autoapprove.floored %}→ <b class="warn-text">${{ scale.autoapprove.value | money }} (SÀN TỐI THIỂU)</b> — {{ '%.3f'|format(scale.autoapprove.pct) }}% × ${{ scale.autoapprove.equity | money }} = ${{ (scale.autoapprove.equity * scale.autoapprove.pct / 100) | money }}
+    {% else %}→ <b class="pos">${{ scale.autoapprove.value | money }} hôm nay</b> ({{ '%.3f'|format(scale.autoapprove.pct) }}% × ${{ scale.autoapprove.equity | money }} vốn quy đổi)
+    {% endif %}
+  </div>
+  <label title="Chặn `scan_max_waves` (Số sóng max, ở trên) ở thang DÀI NHẤT tài khoản trả nổi N lần thang đầy — KHÔNG BAO GIỜ kéo dài thêm, chỉ rút ngắn khi vốn không đủ. 0 = tắt, giữ nguyên số sóng đã cấu hình.">Trần thang theo khả năng trả (N lần) <span class="varname">min_fundable_ladders</span>
+    <input name="min_fundable_ladders" type="number" step="1" min="0" value="{{ k.min_fundable_ladders }}"></label>
+  <div class="muted fs-11 settings-note-full">
+    {% if k.min_fundable_ladders <= 0 %}→ tắt — thang giữ nguyên cấu hình <b>{{ k.scan_max_waves }}</b> rung
+    {% elif affordable_waves == k.scan_max_waves %}→ <b class="pos">thang {{ affordable_waves }} rung</b> (bằng đúng cấu hình {{ k.scan_max_waves }} — vốn đủ trả)
+    {% else %}→ <b class="warn-text">thang {{ affordable_waves }} rung</b> (cấu hình {{ k.scan_max_waves }} — bị rút ngắn vì vốn không đủ trả {{ k.min_fundable_ladders }} lần thang đầy)
+    {% endif %}
+  </div>
+  <h3 class="section-subhead">━ Cảnh báo thị trường rơi diện rộng (crash alert) ━</h3>
+  <label title="BẬT gửi cảnh báo Telegram khi phần lớn rổ coin đang quét rơi mạnh cùng lúc. CHỈ CẢNH BÁO — không bao giờ chặn/hoãn/giảm bất kỳ lệnh nào (đo 1.500 lượt mô phỏng: chặn mua khi rơi làm sụt vốn TỆ HƠN, vì mua khi rơi chính là cách thang DCA hồi vốn). Tắt mặc định.">Cảnh báo crash <span class="varname">crash_alert_enabled</span>
+    <select name="crash_alert_enabled" class="select-inline">
+      <option value="1" {% if k.crash_alert_enabled %}selected{% endif %}>Bật</option>
+      <option value="0" {% if not k.crash_alert_enabled %}selected{% endif %}>Tắt</option>
+    </select></label>
+  <label title="Một coin tính là 'đang rơi' khi nến mới nhất giao dịch thấp hơn đỉnh của nến TRƯỚC đó ít nhất % này. Đo trên rổ top-100 theo volume 2023-08→2026-07: ở 20% phiên rơi 2025-10-10 đọc breadth 96%, một ngày đỏ bình thường chỉ 2,5%.">Ngưỡng rơi mỗi coin % <span class="varname">crash_alert_drop_pct</span>
+    <input name="crash_alert_drop_pct" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.crash_alert_drop_pct) }}"></label>
+  <label title="Chỉ cảnh báo khi TỐI THIỂU % này trong số coin đo được đang rơi theo ngưỡng trên. 60% bắn ~7 lần/năm và bắt được cả 2 lần crash thật trong 3 năm đo; 70% sẽ bỏ lỡ lần thứ hai. 0 = tắt.">Ngưỡng breadth (% coin rơi) <span class="varname">crash_alert_breadth_pct</span>
+    <input name="crash_alert_breadth_pct" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.crash_alert_breadth_pct) }}"></label>
+  <label title="Im lặng trừ khi đo được ÍT NHẤT bấy nhiêu coin — breadth tính trên vài coin là nhiễu (một sổ $5.000 chỉ giữ trung bình 2 session, '30% session' hoá ra chỉ là 1 coin).">Số coin tối thiểu để đo <span class="varname">crash_alert_min_symbols</span>
+    <input name="crash_alert_min_symbols" type="number" step="1" min="1" value="{{ k.crash_alert_min_symbols }}"></label>
+  <label title="Khoảng cách tối thiểu (phút) giữa hai lần cảnh báo crash liên tiếp, để một ngày xấu kéo dài không bắn tin mỗi lượt quét.">Cooldown cảnh báo (phút) <span class="varname">crash_alert_cooldown_min</span>
+    <input name="crash_alert_cooldown_min" type="number" step="5" min="0" value="{{ '%.0f'|format(k.crash_alert_cooldown_min) }}"></label>
   <h3 class="section-subhead">━ OPUS God Mode (học &amp; sao chép) ━</h3>
   <label title="Chế độ SAO CHÉP: ưu tiên mở các coin mà engine luật (đang có lãi) vừa chấm 'trade' trong lần quét này; OPUS phải giải thích nếu đi chệch. Chỉ là gợi ý mềm trong prompt, không phải lọc cứng.">Chế độ sao chép <span class="varname">opus_copy_mode</span>
     <select name="opus_copy_mode" class="select-inline">

@@ -1,0 +1,189 @@
+[
+ {
+  "step": 4.0,
+  "wave": 10.0,
+  "sessions": 80,
+  "median": 20422,
+  "worst": 16280,
+  "p10": 18441,
+  "ruin": 0,
+  "dd": 29.4,
+  "opened": 4262
+ },
+ {
+  "step": 4.0,
+  "wave": 20.0,
+  "sessions": 80,
+  "median": 22522,
+  "worst": 15084,
+  "p10": 16561,
+  "ruin": 0,
+  "dd": 34.7,
+  "opened": 3044
+ },
+ {
+  "step": 4.0,
+  "wave": 28.0,
+  "sessions": 80,
+  "median": 25309,
+  "worst": 14476,
+  "p10": 17442,
+  "ruin": 0,
+  "dd": 35.9,
+  "opened": 2582
+ },
+ {
+  "step": 4.0,
+  "wave": 40.0,
+  "sessions": 80,
+  "median": 27708,
+  "worst": 10364,
+  "p10": 13159,
+  "ruin": 0,
+  "dd": 39.2,
+  "opened": 1820
+ },
+ {
+  "step": 5.0,
+  "wave": 10.0,
+  "sessions": 80,
+  "median": 22722,
+  "worst": 18780,
+  "p10": 20370,
+  "ruin": 0,
+  "dd": 23.2,
+  "opened": 4885
+ },
+ {
+  "step": 5.0,
+  "wave": 20.0,
+  "sessions": 80,
+  "median": 26858,
+  "worst": 14996,
+  "p10": 20300,
+  "ruin": 0,
+  "dd": 27.2,
+  "opened": 3598
+ },
+ {
+  "step": 5.0,
+  "wave": 28.0,
+  "sessions": 80,
+  "median": 27364,
+  "worst": 14527,
+  "p10": 17666,
+  "ruin": 0,
+  "dd": 30.7,
+  "opened": 2942
+ },
+ {
+  "step": 5.0,
+  "wave": 40.0,
+  "sessions": 80,
+  "median": 28435,
+  "worst": 11167,
+  "p10": 15914,
+  "ruin": 0,
+  "dd": 34.3,
+  "opened": 2172
+ },
+ {
+  "step": 6.0,
+  "wave": 10.0,
+  "sessions": 80,
+  "median": 21967,
+  "worst": 18492,
+  "p10": 20878,
+  "ruin": 0,
+  "dd": 18.9,
+  "opened": 5080
+ },
+ {
+  "step": 6.0,
+  "wave": 20.0,
+  "sessions": 80,
+  "median": 32009,
+  "worst": 17656,
+  "p10": 25944,
+  "ruin": 0,
+  "dd": 24.6,
+  "opened": 4067
+ },
+ {
+  "step": 6.0,
+  "wave": 28.0,
+  "sessions": 80,
+  "median": 28684,
+  "worst": 15321,
+  "p10": 19722,
+  "ruin": 0,
+  "dd": 28.7,
+  "opened": 2998
+ },
+ {
+  "step": 6.0,
+  "wave": 40.0,
+  "sessions": 80,
+  "median": 35161,
+  "worst": 11018,
+  "p10": 19713,
+  "ruin": 0,
+  "dd": 29.6,
+  "opened": 2700
+ },
+ {
+  "step": 7.0,
+  "wave": 10.0,
+  "sessions": 80,
+  "median": 20964,
+  "worst": 18196,
+  "p10": 19840,
+  "ruin": 0,
+  "dd": 15.0,
+  "opened": 5130
+ },
+ {
+  "step": 7.0,
+  "wave": 20.0,
+  "sessions": 80,
+  "median": 30687,
+  "worst": 22853,
+  "p10": 26543,
+  "ruin": 0,
+  "dd": 21.2,
+  "opened": 4338
+ },
+ {
+  "step": 7.0,
+  "wave": 28.0,
+  "sessions": 80,
+  "median": 33964,
+  "worst": 21505,
+  "p10": 29162,
+  "ruin": 0,
+  "dd": 23.3,
+  "opened": 3660
+ },
+ {
+  "step": 7.0,
+  "wave": 40.0,
+  "sessions": 80,
+  "median": 32490,
+  "worst": 9888,
+  "p10": 20841,
+  "ruin": 0,
+  "dd": 27.6,
+  "opened": 2682
+ },
+ {
+  "step": "base",
+  "wave": 28.0,
+  "sessions": 80,
+  "median": 24885,
+  "worst": 5515,
+  "p10": 11800,
+  "ruin": 5,
+  "dd": 23.7,
+  "opened": 643
+ }
+]

@@ -38,3 +38,6 @@ logs_uvicorn.*
 .claude/skills/harness-plan/
 data/*.bak*
 data/soak_start.json
+# Raw study output (daily equity curves, ~1 MB each) — reproducible from scripts/capital_*.py;
+# curated summaries belong in docs/.
+data/research/studies/

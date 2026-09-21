@@ -1,0 +1,79 @@
+[
+ {
+  "step": 6.0,
+  "wave": 40.0,
+  "sessions": 3,
+  "median": 11188,
+  "worst": 8322,
+  "p10": 9272,
+  "ruin": 0,
+  "dd": 12.0,
+  "opened": 386
+ },
+ {
+  "step": 6.0,
+  "wave": 40.0,
+  "sessions": 5,
+  "median": 14422,
+  "worst": 12033,
+  "p10": 12611,
+  "ruin": 0,
+  "dd": 18.6,
+  "opened": 641
+ },
+ {
+  "step": 6.0,
+  "wave": 40.0,
+  "sessions": 8,
+  "median": 18661,
+  "worst": 13379,
+  "p10": 15725,
+  "ruin": 0,
+  "dd": 16.1,
+  "opened": 930
+ },
+ {
+  "step": 6.0,
+  "wave": 40.0,
+  "sessions": 10,
+  "median": 21741,
+  "worst": 12341,
+  "p10": 14723,
+  "ruin": 0,
+  "dd": 20.2,
+  "opened": 1164
+ },
+ {
+  "step": 6.0,
+  "wave": 40.0,
+  "sessions": 15,
+  "median": 27592,
+  "worst": 20757,
+  "p10": 22687,
+  "ruin": 0,
+  "dd": 22.5,
+  "opened": 1714
+ },
+ {
+  "step": 6.0,
+  "wave": 40.0,
+  "sessions": 20,
+  "median": 28886,
+  "worst": 21000,
+  "p10": 22725,
+  "ruin": 0,
+  "dd": 24.9,
+  "opened": 2044
+ },
+ {
+  "step": 6.0,
+  "wave": 40.0,
+  "sessions": 80,
+  "median": 35161,
+  "worst": 11018,
+  "p10": 19713,
+  "ruin": 0,
+  "dd": 29.6,
+  "opened": 2700
+ }
+]

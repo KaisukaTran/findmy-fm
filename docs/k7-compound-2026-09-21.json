@@ -1,0 +1,74 @@
+[
+ {
+  "label": "co dinh $28, tran 80",
+  "median": 33964,
+  "p10": 29162,
+  "worst": 21505,
+  "ruin": 0,
+  "dd": 23.3,
+  "opened": 3660
+ },
+ {
+  "label": "co dinh $28, tran 20",
+  "median": 25370,
+  "p10": 20562,
+  "worst": 15538,
+  "ruin": 0,
+  "dd": 16.4,
+  "opened": 2315
+ },
+ {
+  "label": "0,4% von, tran 80",
+  "median": 34266,
+  "p10": 21321,
+  "worst": 18638,
+  "ruin": 0,
+  "dd": 33.0,
+  "opened": 1765
+ },
+ {
+  "label": "0,4% von, tran 40",
+  "median": 34266,
+  "p10": 21321,
+  "worst": 18638,
+  "ruin": 0,
+  "dd": 33.0,
+  "opened": 1765
+ },
+ {
+  "label": "0,4% von, tran 20",
+  "median": 27545,
+  "p10": 19288,
+  "worst": 15661,
+  "ruin": 0,
+  "dd": 29.3,
+  "opened": 1698
+ },
+ {
+  "label": "0,4% von, tran 15",
+  "median": 30406,
+  "p10": 21676,
+  "worst": 14442,
+  "ruin": 0,
+  "dd": 29.0,
+  "opened": 1616
+ },
+ {
+  "label": "0,3% von, tran 80",
+  "median": 29517,
+  "p10": 19716,
+  "worst": 17880,
+  "ruin": 0,
+  "dd": 27.8,
+  "opened": 2215
+ },
+ {
+  "label": "0,6% von, tran 80",
+  "median": 22916,
+  "p10": 13960,
+  "worst": 10526,
+  "ruin": 0,
+  "dd": 38.1,
+  "opened": 1150
+ }
+]

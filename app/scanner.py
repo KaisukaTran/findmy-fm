@@ -494,6 +494,16 @@ def prefetch_universe_candles(db: Session) -> int:
         autotune.fit_levels(db, {s: c for s, (c, _hit) in (warmed or {}).items()})
     except Exception:  # never let tuning break the prefetch
         logger.exception("autotune: fitting levels from the prefetch failed")
+
+    # Market-wide crash watch rides the same warmed candles for the same reason autotune does:
+    # the data is already here, so it costs no extra exchange weight. Alert only — it never
+    # touches an order (see app/crash_watch.py for the measurement that killed the halt half).
+    try:
+        from app import crash_watch
+
+        crash_watch.evaluate(db, {s: c for s, (c, _hit) in (warmed or {}).items()})
+    except Exception:  # a missed alert must never break the prefetch
+        logger.exception("crash_watch: evaluating market-wide breadth failed")
     return len(universe)
 
 

@@ -147,6 +147,11 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "live_max_order_notional_pct": float,
     "autoapprove_max_notional_pct": float,
     "min_fundable_ladders": int,
+    "crash_alert_enabled": _to_bool,  # bool() would restore a persisted "False" string as True
+    "crash_alert_drop_pct": float,
+    "crash_alert_breadth_pct": float,
+    "crash_alert_min_symbols": int,
+    "crash_alert_cooldown_min": float,
     # Live-readiness knobs (1.9) — LIVE only, inert on paper. maker/testnet are bool (use
     # _to_bool, not bool, so a restored "0" stays False); timeout is seconds (0 = wait forever).
     "maker_orders": _to_bool,

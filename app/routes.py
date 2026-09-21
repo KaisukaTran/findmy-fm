@@ -531,6 +531,11 @@ class KssSettingsBody(BaseModel):
     live_max_order_notional_pct: float | None = Field(None, ge=0)
     autoapprove_max_notional_pct: float | None = Field(None, ge=0)
     min_fundable_ladders: int | None = Field(None, ge=0)
+    crash_alert_enabled: bool | None = None
+    crash_alert_drop_pct: float | None = Field(None, ge=0, le=100)
+    crash_alert_breadth_pct: float | None = Field(None, ge=0, le=100)
+    crash_alert_min_symbols: int | None = Field(None, ge=1)
+    crash_alert_cooldown_min: float | None = Field(None, ge=0)
     entry_momentum_gate: bool | None = None  # veto open when ST down & MACDh<0
     max_avg_mae_pct: float | None = Field(None, ge=0, le=100)  # absolute avg_mae drawdown gate (0=off)
     # Dynamic trailing TP/SL (docs/kss-dynamic-tp-plan.md)

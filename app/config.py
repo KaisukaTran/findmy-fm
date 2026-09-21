@@ -163,6 +163,47 @@ class Settings(BaseSettings):
         "ended below the starting capital, vs 15%% at 30 rungs) and at $200,000 it picks 30, "
         "leaving a large book untouched.",
     )
+
+    # --- market-wide crash watch (app/crash_watch.py) -----------------------------------
+    # Alert only. The halt-buying half of this feature was measured across 1,500 portfolio
+    # runs and made drawdown WORSE at every capital level, because in a DCA ladder buying the
+    # fall IS the recovery; it was dropped 2026-09-21. Nothing here touches an order.
+    crash_alert_enabled: bool = Field(
+        default=False,
+        description="Send a Telegram alert when most of the scanned universe falls hard in one "
+        "bar. Alert ONLY — never blocks, delays or resizes an order. Off by default so turning "
+        "it on is a deliberate act.",
+    )
+    crash_alert_drop_pct: float = Field(
+        default=20.0,
+        ge=0,
+        le=100,
+        description="A symbol counts as falling when its latest bar trades this %% below the "
+        "PREVIOUS bar's high. Measured on the scanner's own top-100 universe 2023-08..2026-07: "
+        "at 20%% the 2025-10-10 crash read 96%% breadth and an ordinary down day read 2.5%%.",
+    )
+    crash_alert_breadth_pct: float = Field(
+        default=60.0,
+        ge=0,
+        le=100,
+        description="Alert when at least this %% of the measured universe is falling by "
+        "crash_alert_drop_pct. 60 fires ~7x/year and caught both crashes in the 3-year sample "
+        "(2025-10-10 at 96%%, 2026-01-31 at 65%%); 70 would have missed the second. 0 = off.",
+    )
+    crash_alert_min_symbols: int = Field(
+        default=30,
+        ge=1,
+        description="Stay silent unless at least this many symbols could be measured. A breadth "
+        "statistic over a handful of symbols is noise — the session-depth version of this rule "
+        "was abandoned for exactly that reason (a $5,000 book holds a median of 2 sessions).",
+    )
+    crash_alert_cooldown_min: float = Field(
+        default=180.0,
+        ge=0,
+        description="Minimum minutes between crash alerts, so one long bad day does not send a "
+        "message every scan cycle.",
+    )
+
     # --- Live-readiness knobs (additive; inert until the live maker/async path is built) ---
     maker_orders: bool = Field(
         default=False,

@@ -14,31 +14,42 @@
 
 ### 0.1 — Vốn KHÔNG đọc từ sàn. Nạp tiền vào Binance thì luật không thấy.
 
-`risk.account_equity` → `portfolio.equity` → **`settings.account_equity`, một hằng số trong
-`.env`** (`ACCOUNT_EQUITY=2000`). `fetch_balance` **không tồn tại ở bất kỳ đâu trong `app/`** trên
-nhánh này. Commit sửa việc này (`e825dc1`) nằm trên `kss-capital-auto-sizing`, chưa promote.
+`risk.account_equity` → `portfolio.equity` → `risk.capital_anchor` → **`settings.account_equity`,
+một hằng số trong `.env`** (`ACCOUNT_EQUITY=200000` tính tới 2026-09-21). Trên paper
+(`app/risk.py:95-96`) nhánh này trả về hằng số đó **vô điều kiện**; `fetch_balance` chỉ chạy khi
+live **và** `use_exchange_balance=true` (`app/risk.py:105-124`).
 
-**Hệ quả:** nạp $500 vào sàn thì `equity` vẫn là 2000 và luật vẫn trả về đúng con số cũ, mãi mãi.
-**Cho tới khi việc này được sửa, mỗi lần nạp vốn phải TỰ TAY sửa `ACCOUNT_EQUITY` trong
-`D:\FINDMY-live\.env` rồi restart.** Không có bước đó thì mọi thứ dưới đây là số học suông.
+**Hệ quả:** nạp $500 vào sàn thì `equity` không đổi, mãi mãi. **Mỗi lần nạp vốn phải TỰ TAY sửa
+`ACCOUNT_EQUITY` rồi restart.** Không có bước đó thì mọi thứ dưới đây là số học suông.
 
-### 0.2 — Ở cấu hình hiện tại, thêm vốn KHÔNG mở thêm được gì cả.
+Ngược lại — và đây là phần hay bị quên — `equity()` = `mốc vốn + lãi đã chốt + lãi/lỗ chưa chốt`
+(`app/portfolio.py:191-207`), nên **lợi nhuận gộp thì luật thấy ngay, không cần làm gì cả.** Chỉ
+tiền NẠP MỚI là vô hình.
 
-| vốn | session | vốn triển khai | % vốn | ràng buộc |
-|---:|---:|---:|---:|---|
-| $2.000 | 3 | $700,92 | 35,05% | chuỗi thua liên tiếp |
-| $5.000 | 3 | $700,92 | 14,02% | chuỗi thua liên tiếp |
-| $20.000 | 3 | $700,92 | 3,50% | chuỗi thua liên tiếp |
-| $50.000 | 3 | $700,92 | **1,40%** | chuỗi thua liên tiếp |
+### 0.2 — Số suất phiên ĐÃ tự đi theo vốn; các núm ĐÔ-LA thì chưa.
 
-**Vốn triển khai đứng yên ở ~$701 dù có bao nhiêu tiền.** Hai cái phanh khoá cứng nó:
+*(Mục này viết lại 2026-09-21. Bản cũ kết luận "thêm vốn không mở thêm được gì" dựa trên
+`max_session_deploy_usd = 240` và một cổng ngân sách đã bị thay. Cả hai đều không còn đúng.)*
 
-- `max_consecutive_losses = 4` → N tối đa **3**. Vốn không lay chuyển được con số này.
-- `max_session_deploy_usd = 240` → sóng 0 tối đa **$41,09** dù vốn bao nhiêu.
-- → Trần triển khai tuyệt đối: **3 × $240 = $720.**
+Cổng mở phiên hiện tính theo **phần trăm vốn sống**: `equity_backup_pct` (24,8%) và
+`ladder_coverage_pct` (30%) đều nhân với `risk.account_equity(db)` (`app/scanner.py:1276-1283`).
+→ **thêm vốn thì số suất phiên tự tăng, không phải chỉnh gì.**
 
-Muốn quy mô đi theo vốn thì **phải chủ động nới một trong ba núm**, mỗi núm có cái giá riêng
-(§4). Đây là câu trả lời thật cho "nạp vốn hằng tháng thì chỉnh thế nào".
+Cái chưa đi theo vốn là các núm ghi bằng **đô-la tuyệt đối**:
+
+| núm | giá trị đang chạy | hỏng thế nào khi đổi vốn |
+|---|---|---|
+| `kss_first_wave_usd` | $28 | cỡ vị thế đứng yên → ở $5k thì quá lớn, ở $1M thì vô nghĩa |
+| `cash_floor_usd` | $40.000 | **ở vốn dưới $40k, chặn MỌI lệnh mua** (`app/orders.py:145`) |
+| `live_max_order_notional` | $500 | chỉ có trong `.env`, không có trong `runtime_config` |
+| `autoapprove_max_notional` | $5.000 | |
+| `max_session_deploy_usd` | 0 (tắt) | |
+
+**Cách sửa (2026-09-21, `app/capital_scale.py`):** mỗi núm trên có một núm **%** song sinh, giải
+ra đô-la **lúc đọc** chứ không ghi đè giá trị. Mặc định % được chọn sao cho ở vốn $200.000 mọi
+giá trị bằng đúng con số hôm nay ($28 / $40.000 / $500 / $5.000) — bật công tắc
+`capital_scale_enabled` ở mức vốn hiện tại **không đổi một con số nào**. Có test khoá tính chất đó.
+Vùng chết `capital_scale_deadband_pct` (10%) ngăn giá thị trường làm cỡ sóng rung theo từng tick.
 
 ---
 
@@ -65,6 +76,33 @@ và `max_waves` trong danh sách cấm, chuỗi bị tách đôi, và chuyển l
 được giải ra từ **giá trị toàn cục lúc chạy**. Đổi `settings.sl_pct` khi đang có session mở sẽ
 **dịch mức dừng lỗ của toàn bộ sổ ngay lập tức**, và `stop_fraction` trong mọi phép tính dưới đây
 sai theo. Không đổi `sl_pct` khi còn session mở.
+
+### 1.1 — Sửa đổi hẹp 2026-09-21: `scan_max_waves` được phép bị GIỚI HẠN TRÊN theo khả năng chi trả
+
+Kai duyệt 2026-09-21. Đây là **ngoại lệ duy nhất** với luật hình dạng, và nó hẹp có chủ đích.
+
+**Được phép:** rút `scan_max_waves` xuống mức dài nhất mà tài khoản **nuôi nổi
+`min_fundable_ladders` thang ĐẦY cùng lúc**. **Không bao giờ** được kéo dài, và **không bao giờ**
+được chọn bằng cách dò backtest xem số rung nào cho lợi nhuận cao nhất.
+
+**Vì sao đây không phải overfitting:** nó là số học khả năng chi trả, không phải khớp lịch sử.
+Thang 30 rung ở wave $28 tốn **$6.186**; tài khoản $5.000 **không thể** trả. Đo được (20 hạt,
+cổng reserve, biên bi quan, 427 coin thanh khoản, 2023-08→2026-07):
+
+| vốn $5.000 | trung vị | đường tệ nhất | % đường mất vốn |
+|---|---|---|---|
+| 30 rung (thang $6.186) | $18.503 | $4.590 | **15%** |
+| 10 rung (thang $1.212) | $19.067 | $11.264 | **0%** |
+
+Ở $200.000 thì ngược lại (30 rung $396k so với 8 rung $242k), nên quy tắc **không đụng vào** vốn lớn.
+
+**Thứ tự bắt buộc — rút wave TRƯỚC, rút thang SAU.** Thu nhỏ `kss_first_wave_usd` là chỉnh KÍCH
+CỠ, hợp pháp sẵn, và đo ra **tốt hơn**: ở $7.000, wave $10 × 30 rung cho trung vị $30.339 / 0% mất
+vốn, hơn hẳn wave $28 × 20 rung ($29.615 / 5%) và wave $28 × 8 rung ($21.814). Lý do: 47% lợi
+nhuận nằm ở rung 13 trở xuống, wave nhỏ vẫn với tới được, rút thang thì cắt đứt.
+→ Chỉ khi wave đã chạm sàn `scan_min_notional` mà thang vẫn quá đắt thì mới được rút thang.
+
+Số liệu: `docs/brake-universe-2026-09-21.json`, và [[crash-brake-measured-2026-09-21]] trong bộ nhớ.
 
 ---
 
@@ -182,3 +220,8 @@ tiếp ≥ 4 (đóng băng).
 | 2026-08-30 | **Tự đính chính 3:** "thêm $484,80 được thêm 1 session" **sai trong thực tế**. | Đúng dưới phanh 2, nhưng phanh 1 và trần deploy khoá vốn triển khai ở **~$701 bất kể vốn bao nhiêu**. Xem §0.2. |
 | 2026-08-30 | **Tự đính chính 4:** bỏ khẳng định "rủi ro phẳng 3,88% ở mọi mức vốn" và cái bẫy "nếu cột đó trôi là luật hỏng". | Bất biến thật là **chặn trên 4,00%**, chỉ chạm đúng 3,88% khi vốn rơi đúng bội số của bước. Ở $2.002,21 (chính điểm hiệu chỉnh) là 3,874%; ở $20.000 là 3,975%. Cái bẫy đó sẽ báo hỏng mỗi tháng dù luật vẫn đúng. |
 | 2026-08-30 | **Tự đính chính 5:** nguồn "13/16 mã cùng ngày" là **backtest**, không phải sổ của ta. Sổ thật: ngày xấu nhất 5 lệnh, net **dương**. | Xem §2. |
+| 2026-09-21 | **Viết lại §0.1 và §0.2.** Mọi con số trong bản cũ đã lệch: vốn $2.000→**$200.000**, wave $40→**$28**, 6 suất→**80**, `max_session_deploy_usd` 240→**0**, `equity_backup_pct` 25→**24,8**; `ladder_coverage_pct` (ra đời 16/09) không hề được nhắc. | Tài liệu tự nhận là "luật, không phải ghi chép" mà lệch 3 tuần thì tệ hơn không có tài liệu. |
+| 2026-09-21 | **Rút lại kết luận "thêm vốn KHÔNG mở thêm được gì".** Cổng mở phiên nay tính theo % vốn sống, nên số suất ĐÃ tự đi theo vốn. Cái chưa đi theo là 5 núm ghi bằng đô-la tuyệt đối. | Cổng ngân sách cũ (`scan_fund` phẳng so với `account_equity` tĩnh) đã bị thay từ lâu; kết luận cũ chết theo nó. |
+| 2026-09-21 | **Thêm `app/capital_scale.py`:** mỗi núm đô-la có một núm % song sinh, giải lúc ĐỌC, không ghi đè. Mặc định % chọn sao cho ở $200.000 mọi giá trị bằng đúng hôm nay. Vùng chết 10%. | Dự án đã 7 lần dính lỗi "điều khiển báo CÀI ĐẶT thay vì TÁC DỤNG". Ghi đè giá trị thì không phân biệt được người sửa hay máy sửa; giải lúc đọc thì phân biệt được. |
+| 2026-09-21 | **§1.1 — sửa đổi hẹp:** `scan_max_waves` được phép bị GIỚI HẠN TRÊN theo khả năng chi trả (không bao giờ kéo dài, không bao giờ dò backtest). Rút wave TRƯỚC, rút thang SAU. | Thang $6.186 là thứ tài khoản $5.000 không trả nổi — số học, không phải khớp lịch sử. Đo: 30 rung ở $5k = 15% đường mất vốn; 10 rung = 0%. Kai duyệt cùng ngày. |
+| 2026-09-21 | **Bác bỏ "phanh sập hàng loạt".** Kai yêu cầu dừng mua rung khi thị trường sập; đo 4 phiên bản × 3 mức vốn: **tất cả đều làm sụt sâu TỆ HƠN** ($5k: 31%→39–49%) và tốn 27–70% trung vị. | Trong DCA, mua khi giá rơi CHÍNH LÀ cơ chế gỡ lỗ; chặn nó là đóng băng lỗ ở mức cao nhất. Giữ lại phần cảnh báo, bỏ phần dừng mua. |

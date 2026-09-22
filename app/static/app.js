@@ -456,6 +456,20 @@ const actions = {
     toast("Đã ghi nhận lệnh rút.");
     refreshCosts();
   },
+  async recordDeposit() {
+    // Client-side "don't double-click" is a courtesy only — the server is the real guard:
+    // it rejects an identical amount+note recorded again within 10s regardless (a double-click
+    // race can beat any client-side disable; a retried request always hits the server).
+    const amt = num(document.getElementById("dp-amount") && document.getElementById("dp-amount").value);
+    if (amt == null || amt <= 0) { toast("Nhập số tiền nạp dương (USD).", "error"); return; }
+    const noteEl = document.getElementById("dp-note");
+    const note = (noteEl && noteEl.value || "").trim();
+    await api("POST", "/api/deposits", { amount: amt, note: note || null });
+    const a = document.getElementById("dp-amount"); if (a) a.value = "";
+    if (noteEl) noteEl.value = "";
+    toast("Đã ghi nhận nạp tiền.");
+    refreshTrading();
+  },
   async addSavings(mode) {
     const sym = (document.getElementById("sv-symbol")?.value || "").trim();
     const qty = num(document.getElementById("sv-qty")?.value);

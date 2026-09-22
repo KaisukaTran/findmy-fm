@@ -19,10 +19,12 @@ from app.market import get_current_prices
 from app.models import (
     SESSION_ACTIVE,
     AuditLog,
+    Deposit,
     Fill,
     KssSession,
     PendingOrder,
     Position,
+    Withdrawal,
 )
 
 
@@ -234,8 +236,16 @@ def summary_view(db: Session) -> dict:
 
     cash = risk.capital_anchor(db) - total_invested + realized_pnl
     total_equity = cash + total_market_value
-    base = settings.account_equity or 1.0  # % of starting capital for P&L (unadjusted — a
-    # historical baseline for the P&L ratio, not a live cash figure; see docs/capital-scaling)
+    # `realized_pct` is a capital-weighted ROI (profit / total capital ever contributed), NOT a
+    # time-weighted return: it does not account for WHEN each deposit landed relative to the
+    # P&L, only how much was put in. Chosen over a unit-NAV time-weighted return because it is
+    # a one-line change instead of restructuring the fill-by-fill curve with deposit timestamps
+    # woven in — deposits are rare ($500-1,000/month), so the extra precision is not worth the
+    # invasiveness. Leaving deposits OUT of the base (the old behaviour) would have done the
+    # opposite of hiding profit as a deposit: it would OVERSTATE every future % figure, because
+    # profit earned on newly deposited capital gets compared against the original, smaller base
+    # as if it all came from the first dollar in.
+    base = settings.account_equity + risk.total_deposited(db) or 1.0
     eq = total_equity or 1.0
     return {
         "total_trades": int(total_trades),
@@ -401,6 +411,9 @@ def capital_view(db: Session) -> dict:
 
     return {
         "equity": equity,
+        "base_equity": settings.account_equity,  # config constant, unaffected by deposits
+        "total_deposited": risk.total_deposited(db),
+        "capital_anchor": risk.capital_anchor(db),  # base + deposits (- withdrawals on live)
         "backup": backup,
         "budget": budget,
         "deployed": deployed,
@@ -636,38 +649,191 @@ def _period_cutoff(period: str) -> datetime | None:
     return utcnow() - timedelta(hours=hours) if hours else None
 
 
+def _capital_flows(db: Session) -> list[tuple[datetime, float, float | None]]:
+    """Chronological (timestamp, signed USD amount, equity_before) capital-flow events — the
+    same additive decomposition ``risk.capital_anchor`` layers on top of
+    ``settings.account_equity``: deposits always count; a withdrawal counts only where the
+    anchor actually subtracts it (live, ``use_exchange_balance`` off). Empty when the anchor is
+    the real exchange balance (live + ``use_exchange_balance``) — that balance is not
+    decomposable into base + flows (see ``risk.capital_anchor``'s docstring); left unmodeled
+    there rather than compounding its own separate, pre-existing double-count risk.
+
+    ``equity_before`` is the mark-to-market total equity snapshot taken at record time
+    (``Deposit``/``Withdrawal.equity_before`` — see their docstrings); ``None`` for any row
+    inserted before that column existed, or for a withdrawal on a DB that hasn't picked up the
+    ``app/db.py`` ALTER yet.
+    """
+    if settings.live_trading and settings.use_exchange_balance:
+        return []
+    flows: list[tuple[datetime, float, float | None]] = [
+        (d.created_at, d.amount, d.equity_before)
+        for d in db.query(Deposit).all()
+        if d.created_at is not None
+    ]
+    if settings.live_trading:  # use_exchange_balance is False here (handled above)
+        flows += [
+            (w.created_at, -w.amount, w.equity_before)
+            for w in db.query(Withdrawal).all()
+            if w.created_at is not None
+        ]
+    flows.sort(key=lambda f: f[0])
+    return flows
+
+
+def _nav_walk(db: Session) -> tuple[list[dict], float, float]:
+    """Chronological unit-NAV walk over the WHOLE history of realized fills and capital flows
+    (``_capital_flows``), each applied at its OWN timestamp — modeled like a mutual fund: a
+    flow buys/redeems units at the NAV just before it lands, so BY CONSTRUCTION it can never
+    move NAV/unit, only realized P&L can.
+
+    This is what makes drawdown flow-safe at every point in history, not just "right now": a
+    deposit can never look like recovery, a withdrawal can never look like a fresh drawdown.
+    Measured bug this replaces: dividing a real 10% loss by a peak that excluded 12 months of
+    $1,000 deposits read as a 27.14% drawdown — enough to falsely freeze the circuit breaker.
+
+    A flow prices its UNITS off ``equity_before`` (the TRUE mark-to-market equity snapshotted
+    at record time — see ``_capital_flows``) when present, instead of the running ``equity``
+    tracker below, which only ever accumulates REALIZED fills. Without this, a deposit made
+    while a position sits underwater (SL=0 means that loss is almost always unrealized) would
+    price its units at a NAV that doesn't know about the loss yet, diluting it.
+
+    The tracker itself is DELIBERATELY NEVER re-based to ``equity_before`` — an earlier version
+    of this fix did (``equity = equity_before + value``), and an adversarial review caught the
+    consequence: that bakes the position's UNREALIZED P&L into the realized-only tracker, so
+    when the position later closes, its realized P&L is counted a SECOND time (inflating
+    ``max_drawdown_pct``), or a later recovery is never reflected (understating it). The tracker
+    stays exactly what its name says — realized equity + cumulative flow amounts, nothing
+    else — through every event; only the one-off unit count at a flow is priced off the truer
+    number. Every intermediate NAV point (fill or flow alike) is plainly ``tracker / units``;
+    only the FINAL point (built by the caller) is ``true mark-to-market / units`` — the tracker
+    catches back up to the true total on its own, for free, the moment a position's P&L is
+    actually realized.
+
+    Edge case: ``equity_before`` (or the realized-only fallback) at or below zero can't price a
+    NAV by division. Treated as a wipeout, not silently skipped: the point for THIS flow records
+    ``nav=0.0`` (a full loss relative to any positive peak — max_drawdown correctly reads 100%),
+    then NAV is re-seeded to 1.0 with units equal to the post-flow dollar total, so subsequent
+    points measure performance from this recovery instead of carrying a corrupt (zero/negative)
+    unit count forward. (This reset path is a distinct, narrow case — the book was already at or
+    below zero — and does re-base to the true total, since there is no valid realized-only value
+    to preserve through a wipeout.)
+
+    Returns ``(points, equity, units)``: ``points`` is one ``{"t", "equity", "nav"}`` dict per
+    event in chronological order; ``equity``/``units`` are the running totals after the last
+    one. The caller folds in today's mark-to-market point itself (needs ``summary_view``,
+    which would recurse if computed in here).
+    """
+    fills = db.query(Fill).order_by(Fill.executed_at.asc()).all()
+    events: list[tuple[datetime, str, float, float | None]] = [
+        (f.executed_at or utcnow(), "fill", f.realized_pnl, None) for f in fills
+    ]
+    events += [(t, "flow", amount, eq_before) for t, amount, eq_before in _capital_flows(db)]
+    # Tie-break same-instant events flow-before-fill. Timestamps come from the wall clock at
+    # insert time, whose resolution is coarser than a tight test loop (measured: 12 sequential
+    # commits landing on the SAME microsecond value) — real usage is a human recording ~1
+    # deposit a month, so a genuine tie is a clock-resolution artifact, never two real
+    # simultaneous events. Deposit-before-fill on a tie is also the SAFE direction: it can only
+    # ever make drawdown look better (the deposit counts sooner), never hide a real one.
+    events.sort(key=lambda e: (e[0], 0 if e[1] == "flow" else 1))
+
+    equity = settings.account_equity
+    units = settings.account_equity if settings.account_equity > 0 else 1.0
+    points: list[dict] = []
+    for t, kind, value, eq_before in events:
+        if kind == "flow":
+            raw_nav = (eq_before / units) if (eq_before is not None and units) else (
+                (equity / units) if units else 1.0
+            )
+            if raw_nav <= 0:
+                point_nav = 0.0  # full loss relative to any positive peak — see docstring
+                post_flow_equity = (eq_before if eq_before is not None else equity) + value
+                equity = post_flow_equity
+                units = post_flow_equity if post_flow_equity > 0 else 1.0
+            else:
+                units += value / raw_nav  # units priced at the TRUE nav when known
+                equity += value           # tracker: realized-only + this flow — NEVER rebased
+                # The flow's OWN point uses `raw_nav` directly — the one instant its true value
+                # is actually known — rather than the post-update `equity/units`, which can
+                # drift from it once the tracker stops matching true equity: bounded (a mediant
+                # of the prior ratio and raw_nav, so it can only read BETWEEN them) for a
+                # deposit, but an unbounded EXTRAPOLATION beyond both for a withdrawal —
+                # measured, a withdrawal made while a position was underwater inflated a later
+                # `current_drawdown_pct` from a true 10.0% to 11.67% before this line existed.
+                point_nav = raw_nav
+        else:
+            equity += value
+            point_nav = (equity / units) if units else 0.0
+        points.append({"t": t, "equity": equity, "nav": point_nav})
+    return points, equity, units
+
+
 def performance_view(db: Session, period: str = "all") -> dict:
     """
-    Realized-equity curve + win/loss + drawdown + expectancy, derived from fills.
+    Equity curve (dollars) + win/loss + drawdown + expectancy.
 
-    Equity is account_equity + cumulative realized P&L stamped at each fill (a
-    "realized equity" curve), with a final point including current unrealized P&L.
-    Win/loss counts SELL fills by realized P&L sign. When ``period`` restricts the
-    window, the curve starts from the equity *as of* the cutoff (realized before it)
-    so the line is continuous, and win/loss/expectancy reflect only the window.
+    The dollar ``equity_curve`` stamps every realized fill AND every capital flow (a deposit,
+    or a withdrawal where ``risk.capital_anchor`` subtracts it — see ``_capital_flows``) at its
+    own timestamp, ending in a final point with today's mark-to-market unrealized P&L.
+
+    Drawdown (``max_drawdown_pct``/``current_drawdown_pct``) is read off a PARALLEL unit-NAV
+    series (``_nav_walk``) instead of the dollar curve: a flow changes units, never NAV/unit,
+    so it can neither hide a real drawdown nor manufacture a fake one. For ``period="all"``
+    (what the circuit breaker actually reads — ``circuit.metrics`` calls this with no period)
+    the NAV walk spans the FULL history, so the peak is the true all-time high. For a
+    restricted period the peak/drawdown are LOCAL to that window (seeded from whatever NAV the
+    book already had at the cutoff, then tracked only from there forward) — a deliberate choice
+    ported unchanged from the pre-NAV-walk code, which reset its own peak the same way; only
+    win/loss/expectancy are otherwise scoped to the window's own fills.
     """
     all_fills = db.query(Fill).order_by(Fill.executed_at.asc()).all()
     cutoff = _period_cutoff(period)
-    if cutoff is not None:
-        before = [f for f in all_fills if f.executed_at and f.executed_at < cutoff]
-        fills = [f for f in all_fills if not f.executed_at or f.executed_at >= cutoff]
-        realized_before = sum(f.realized_pnl for f in before)
-    else:
-        fills = all_fills
-        realized_before = 0.0
+    fills = (
+        [f for f in all_fills if not f.executed_at or f.executed_at >= cutoff]
+        if cutoff is not None
+        else all_fills
+    )
 
-    base = settings.account_equity + realized_before
-    now_iso = utcnow().isoformat()
-    start_iso = fills[0].executed_at.isoformat() if fills else now_iso
-    curve = [base]
-    times = [start_iso]
+    now = utcnow()
+    walk_points, _run_equity, run_units = _nav_walk(db)
+    summary = summary_view(db)
+    final_equity = summary["total_equity"]
+    final_nav = (final_equity / run_units) if run_units else 0.0
+    walk_points = walk_points + [{"t": now, "equity": final_equity, "nav": final_nav}]
+
+    if cutoff is not None:
+        seed_points = [p for p in walk_points if p["t"] < cutoff]
+        window_points = [p for p in walk_points if p["t"] >= cutoff]
+        last_seed = seed_points[-1] if seed_points else None
+        seed = {
+            # The seed's own timestamp is the first REAL event in the window when there is one
+            # (a flat "value carried in" point at that same instant, just before it) — not the
+            # bare cutoff boundary, which read as a synthetic point nothing actually happened at.
+            "t": window_points[0]["t"] if window_points else cutoff,
+            "equity": last_seed["equity"] if last_seed else settings.account_equity,
+            "nav": last_seed["nav"] if last_seed else 1.0,
+        }
+    else:
+        window_points = walk_points
+        # Earliest of ALL events (fills AND flows) — a deposit can predate the first fill, and
+        # seeding from `all_fills[0]` alone would then put a later-looking seed BEFORE an
+        # earlier-timestamped deposit point once sorted (or, unsorted, an out-of-order first
+        # entry — "time goes backwards" on the chart).
+        seed = {"t": window_points[0]["t"] if window_points else now,
+                "equity": settings.account_equity, "nav": 1.0}
+
+    # Sorted by timestamp (stable — a tie keeps `seed` first, the "value just before" reading):
+    # `window_points` is already chronological, but `seed` computed from the OTHER branch's
+    # cutoff/first fill is not guaranteed to sort first once a flow's own timestamp is considered.
+    curve_points = sorted([seed] + window_points, key=lambda p: p["t"])
+    curve = [p["equity"] for p in curve_points]
+    nav_curve = [p["nav"] for p in curve_points]
+    times = [p["t"].isoformat() for p in curve_points]
+
     realized = 0.0
     wins = losses = 0
     win_sum = loss_sum = 0.0
     for f in fills:
         realized += f.realized_pnl
-        curve.append(base + realized)
-        times.append(f.executed_at.isoformat() if f.executed_at else now_iso)
         if f.side == "SELL":
             if f.realized_pnl > 0:
                 wins += 1
@@ -676,23 +842,18 @@ def performance_view(db: Session, period: str = "all") -> dict:
                 losses += 1
                 loss_sum += f.realized_pnl  # negative
 
-    summary = summary_view(db)
-    final_equity = summary["total_equity"]
-    curve.append(final_equity)
-    times.append(now_iso)
-
     # Two different numbers, and the difference matters. `max_dd` is the WORST dip the curve
     # ever took — a historical statistic that can only grow. `current_dd` is how far below the
     # running peak the account sits RIGHT NOW, and it falls back towards 0 as it recovers.
     # The circuit breaker needs the second: gating on the first means one bad day freezes
     # trading forever, because the reason to stay frozen can never clear.
-    peak = curve[0]
+    peak = nav_curve[0] if nav_curve else 1.0
     max_dd = 0.0
-    for v in curve:
+    for v in nav_curve:
         peak = max(peak, v)
         if peak > 0:
             max_dd = max(max_dd, (peak - v) / peak * 100)
-    current_dd = (peak - curve[-1]) / peak * 100 if peak > 0 and curve else 0.0
+    current_dd = (peak - nav_curve[-1]) / peak * 100 if peak > 0 and nav_curve else 0.0
 
     closed = wins + losses
     gross_loss = -loss_sum  # positive magnitude

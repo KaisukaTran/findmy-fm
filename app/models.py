@@ -504,6 +504,12 @@ class Withdrawal(Base):
     exchange: Mapped[str] = mapped_column(String(20), nullable=False, default="binance")
     note: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    # Mark-to-market TOTAL equity the INSTANT before this withdrawal — mirrors
+    # Deposit.equity_before (see its docstring). Existing table in the running DB: added via
+    # `app/db.py`'s `_ADDED_COLUMNS` ALTER-TABLE migration, not `create_all` (which never
+    # touches an existing table). Nullable, so an existing row (no such column at insert time)
+    # reads back None and `_nav_walk` falls back to the realized-only tracker for it.
+    equity_before: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     def to_dict(self) -> dict:
         return {
@@ -513,6 +519,37 @@ class Withdrawal(Base):
             "vat": self.vat,
             "total_cost": self.fee + self.vat,
             "exchange": self.exchange,
+            "note": self.note,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class Deposit(Base):
+    """A recorded deposit of fresh capital into the account — the mirror-image, append-only
+    fact of ``Withdrawal``. Never mutated after insert; ``risk.capital_anchor`` sums this table
+    on every read, so recording one is the entire "apply" step (docs: owner tops up $500-1,000
+    a month, see the deposits feature notes)."""
+
+    __tablename__ = "deposits"
+    __table_args__ = (Index("ix_deposits_created_at", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    amount: Mapped[float] = mapped_column(Float, nullable=False)  # deposited amount (USD)
+    note: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    # Mark-to-market TOTAL equity (portfolio.summary_view's `total_equity` — includes any
+    # open position's unrealized P&L) the INSTANT before this deposit landed. Nullable: absent
+    # on any row inserted before this column existed. `portfolio._nav_walk` prices this flow's
+    # units off this snapshot when present, falling back to the realized-only running total
+    # otherwise — without it, a deposit made while a position sits underwater (SL=0 means that
+    # loss is almost always unrealized) diluted the drawdown the circuit breaker reads, because
+    # the walk's realized-only tracker never saw the loss at all.
+    equity_before: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "amount": self.amount,
             "note": self.note,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

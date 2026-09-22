@@ -49,7 +49,13 @@ def record_withdrawal(
         raise ValueError("amount must be positive")
     fee = amount * (settings.withdrawal_fee_pct + settings.withdrawal_fee_tolerance_pct) / 100.0
     vat = amount * settings.vat_pct / 100.0
-    w = Withdrawal(amount=float(amount), fee=fee, vat=vat, exchange=exchange, note=note or None)
+    # Snapshot true mark-to-market equity BEFORE this withdrawal — mirrors
+    # app/deposits.py::record_deposit's equity_before (see Deposit.equity_before's docstring).
+    from app import portfolio  # lazy: avoid a portfolio <-> costs import cycle
+
+    equity_before = portfolio.summary_view(db)["total_equity"]
+    w = Withdrawal(amount=float(amount), fee=fee, vat=vat, exchange=exchange, note=note or None,
+                   equity_before=equity_before)
     db.add(w)
     db.commit()
     db.refresh(w)

@@ -144,7 +144,8 @@ def _consecutive_loss_events(db: Session) -> int:
 def metrics(db: Session) -> dict:
     """Return current circuit-breaker metrics."""
     perf = portfolio.performance_view(db)
-    eq = max(portfolio.equity(db), 1e-9)
+    # Net of today's deposits: fresh capital must not dilute a loss taken before it arrived.
+    eq = max(portfolio.equity(db) - risk.deposited_today(db), 1e-9)
     dl = risk.daily_loss(db)
     return {
         # CURRENT drawdown, not the all-time worst. The breaker keeps the freeze while a

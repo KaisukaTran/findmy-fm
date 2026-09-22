@@ -32,7 +32,7 @@ from app.models import (
     PendingOrder,
     Position,
 )
-from app.risk import calculate_order_qty, check_all_risks
+from app.risk import calculate_order_qty, capital_anchor, check_all_risks
 
 logger = logging.getLogger(__name__)
 
@@ -124,11 +124,16 @@ def _note_placement_failure(order: PendingOrder, reason: str) -> None:
 
 
 def _free_cash(db: Session) -> float:
-    """Real free USDT = starting capital + realized PnL − cost of open positions. This is
-    exactly the 'Cash' the portfolio summary shows (portfolio.summary_view)."""
+    """Real free USDT = capital anchor + realized PnL − cost of open positions. This is
+    exactly the 'Cash' the portfolio summary shows (portfolio.summary_view).
+
+    Uses ``risk.capital_anchor(db)``, not the bare ``settings.account_equity`` constant —
+    the constant never accounts for a recorded deposit (or, on live without
+    ``use_exchange_balance``, a withdrawal), so a deposit's cash was unspendable here until
+    this fix (H2, 2026-09-21 cross-check)."""
     invested = float(db.query(func.coalesce(func.sum(Position.total_cost), 0.0)).scalar() or 0.0)
     realized = float(db.query(func.coalesce(func.sum(Fill.realized_pnl), 0.0)).scalar() or 0.0)
-    return settings.account_equity + realized - invested
+    return capital_anchor(db) + realized - invested
 
 
 def _apply_cash_cap(db: Session, order: PendingOrder) -> None:

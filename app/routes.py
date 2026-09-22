@@ -33,6 +33,7 @@ from app import (
     circuit,
     costengine,
     costs,
+    deposits,
     diagrams,
     execution,
     hyperopt,
@@ -968,6 +969,28 @@ def list_withdrawals(limit: int = 50, db: Session = Depends(get_db)):
     return {"rows": [w.to_dict() for w in costs.list_withdrawals(db, limit=limit)]}
 
 
+# --- Deposit endpoints (fresh capital top-ups; app/deposits.py) ---------
+
+
+class DepositBody(BaseModel):
+    amount: float = Field(..., gt=0, le=10_000_000, description="Deposited amount in USD.")
+    note: str | None = Field(None, max_length=200)
+
+
+@api_router.post("/api/deposits", dependencies=[Depends(require_api_key)])
+def create_deposit(body: DepositBody, db: Session = Depends(get_db)):
+    try:
+        d = deposits.record_deposit(db, body.amount, note=body.note)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"deposit": d.to_dict()}
+
+
+@api_router.get("/api/deposits")
+def list_deposits(limit: int = 50, db: Session = Depends(get_db)):
+    return {"rows": [d.to_dict() for d in deposits.list_deposits(db, limit=limit)]}
+
+
 @api_router.get("/api/costs")
 def get_costs(period: str = "month", buckets: int = 12, db: Session = Depends(get_db)):
     return costs.cost_summary(db, period=period, buckets=buckets)
@@ -1126,10 +1149,16 @@ def partial_summary(request: Request, db: Session = Depends(get_db)):
 @ui_router.get("/partials/capital", response_class=HTMLResponse)
 def partial_capital(request: Request, db: Session = Depends(get_db)):
     """Capital-utilisation panel: the equity split (backup/free/resting/deployed) plus
-    a trailing-window realized-yield-per-locked-dollar-day figure."""
+    a trailing-window realized-yield-per-locked-dollar-day figure, and the deposit ledger
+    (base vốn / tổng nạp / vốn neo hiện tại) that feeds risk.capital_anchor."""
     return templates.TemplateResponse(
         "partials/capital.html",
-        {"request": request, "c": portfolio.capital_view(db), "y": portfolio.capital_yield_view(db)},
+        {
+            "request": request,
+            "c": portfolio.capital_view(db),
+            "y": portfolio.capital_yield_view(db),
+            "deposits": [d.to_dict() for d in deposits.list_deposits(db, limit=10)],
+        },
     )
 
 

@@ -1438,21 +1438,24 @@ def _idle_deployable(db: Session) -> float:
     """Free USDT cash available to deploy RIGHT NOW — used by a manual DCA+ to fund a wave
     beyond a session's ``isolated_fund`` reservation (the reservation is a planning cap, not
     real set-aside cash). This is exactly the ``cash`` the portfolio summary shows:
-    ``account_equity − cost of open positions + realized PnL``.
+    ``capital_anchor − cost of open positions + realized PnL``.
 
     It is the REAL free balance, NOT reduced by the ``equity_backup_pct`` reserve: that reserve
     gates the AUTO scanner's new-session opens, whereas a manual DCA+ is the user deliberately
     choosing to deploy their idle cash now. (The old formula subtracted the full cost basis from
     a 75%-of-equity budget, which wrongly returned 0 whenever a lot was already deployed even
-    with real cash sitting idle.)"""
+    with real cash sitting idle.)
+
+    Uses ``risk.capital_anchor(db)``, not the bare ``settings.account_equity`` constant — a
+    recorded deposit was otherwise unspendable here (H2, 2026-09-21 cross-check)."""
     from sqlalchemy import func
 
-    from app.config import settings
+    from app import risk
     from app.models import Fill, Position
 
     invested = sum(p.total_cost for p in db.query(Position).all())
     realized = float(db.query(func.coalesce(func.sum(Fill.realized_pnl), 0.0)).scalar() or 0.0)
-    return max(0.0, settings.account_equity - invested + realized)
+    return max(0.0, risk.capital_anchor(db) - invested + realized)
 
 
 def preview_next_wave(db: Session, session_id: int) -> dict:

@@ -22,7 +22,7 @@ from app import audit, portfolio
 from app.clock import utcnow
 from app.config import settings
 from app.market import get_exchange_info
-from app.models import Fill, Position, Withdrawal
+from app.models import Deposit, Fill, Position, Withdrawal
 
 logger = logging.getLogger(__name__)
 
@@ -76,26 +76,43 @@ def _total_withdrawn(db: Session) -> float:
     return float(total or 0.0)
 
 
+def total_deposited(db: Session) -> float:
+    """Cumulative amount ever recorded as a fresh-capital deposit (``Deposit.amount``).
+
+    Added to the anchor on paper (always) and on live with ``use_exchange_balance`` off — the
+    mirror of ``_total_withdrawn`` above. On live with ``use_exchange_balance`` on, the real
+    exchange balance already includes every deposit that actually happened, so this is not
+    added again there (see ``capital_anchor``'s docstring)."""
+    total = db.query(func.coalesce(func.sum(Deposit.amount), 0.0)).scalar()
+    return float(total or 0.0)
+
+
 def capital_anchor(db: Session) -> float:
     """The capital base every capital-derived size (equity, position caps, ...) is computed
     from — replacing the bare ``settings.account_equity`` constant.
 
-    - Paper (``live_trading=False``): returns ``settings.account_equity`` exactly, always —
-      byte-identical to pre-Phase-0 behaviour. Withdrawals are a real-money/live concept only.
-    - Live, ``use_exchange_balance`` off (default): ``settings.account_equity`` minus
-      cumulative real withdrawals (the constant never accounted for money that actually left
-      the exchange).
+    - Paper (``live_trading=False``): ``settings.account_equity`` plus cumulative recorded
+      deposits — byte-identical to pre-deposit-feature behaviour when nothing has been
+      deposited. Withdrawals remain a real-money/live concept only (unchanged).
+    - Live, ``use_exchange_balance`` off (default): ``settings.account_equity`` plus cumulative
+      deposits minus cumulative real withdrawals (the constant never accounted for money that
+      actually moved on or off the exchange).
     - Live, ``use_exchange_balance`` on: the REAL exchange quote-currency balance (free+used)
-      via ccxt ``fetch_balance()`` — already nets out withdrawals, so none are subtracted again.
+      via ccxt ``fetch_balance()`` — already nets out both deposits and withdrawals, so neither
+      is added/subtracted again here. (This branch has its own separate, pre-existing
+      double-count risk against the ledger tables if an operator ALSO tops up manually recorded
+      deposits while relying on the exchange balance directly — out of scope for this feature;
+      left exactly as it already behaved.)
       Cached for ``_ANCHOR_CACHE_TTL_SEC``. Any fetch failure fails SOFT back to
       ``settings.account_equity`` (unadjusted — the exchange is unreachable, so we cannot know
-      withdrawals against it either), logs a warning, and audits once per failure episode.
+      deposits/withdrawals against it either), logs a warning, and audits once per failure
+      episode.
     """
     global _anchor_fetch_warned
     if not settings.live_trading:
-        return settings.account_equity
+        return settings.account_equity + total_deposited(db)
     if not settings.use_exchange_balance:
-        return settings.account_equity - _total_withdrawn(db)
+        return settings.account_equity + total_deposited(db) - _total_withdrawn(db)
 
     now = _time.time()
     cached_ts = _anchor_cache.get("ts")
@@ -159,6 +176,24 @@ def daily_loss(db: Session) -> float:
         .scalar()
     )
     return abs(float(total or 0.0))
+
+
+def deposited_today(db: Session) -> float:
+    """Fresh capital recorded today (UTC) — same day window as ``daily_loss``.
+
+    The breaker's daily-loss arm divides today's loss by equity; a deposit landing mid-day
+    would otherwise shrink that ratio and could clear a blocking reason (cross-check
+    2026-09-21: $360 loss on $7,000 = 5.1%, a $1,000 deposit made it 4.5%). Callers subtract
+    this so the denominator is the capital the day's losses were actually taken on."""
+    today = utcnow().date()
+    start = datetime.combine(today, time.min)
+    end = datetime.combine(today, time.max)
+    total = (
+        db.query(func.coalesce(func.sum(Deposit.amount), 0.0))
+        .filter(Deposit.created_at >= start, Deposit.created_at <= end)
+        .scalar()
+    )
+    return float(total or 0.0)
 
 
 def check_position_size(symbol: str, qty: float, price: float, db: Session) -> str | None:

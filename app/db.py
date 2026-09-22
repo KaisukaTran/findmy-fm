@@ -54,6 +54,13 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("kss_sessions", "tp_trail_floor", "FLOAT NOT NULL DEFAULT 0.0"),
     # Live-native resting stop (task 1.10): cancel+replace counter for _maintain_live_stop.
     ("kss_sessions", "stop_replaces", "INTEGER NOT NULL DEFAULT 0"),
+    # Deposit-flow-safety fix (2026-09-21 cross-check round 2): mark-to-market total equity the
+    # instant before this withdrawal, so portfolio._nav_walk can price its units off the TRUE
+    # equity (including any unrealized P&L) instead of a realized-only running total. `deposits`
+    # is a brand-new table (create_all handles its own `equity_before` column); `withdrawals`
+    # already exists in the running DB, hence the ALTER here. Nullable, no default — NULL marks
+    # a pre-existing row the NAV walk must fall back to the old realized-only pricing for.
+    ("withdrawals", "equity_before", "FLOAT"),
 ]
 
 

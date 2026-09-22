@@ -73,6 +73,18 @@
       <td>{{ c.sessions_active }} / {{ c.sessions_cap }}</td>
     </tr>
     <tr>
+      <td title="Hằng số ACCOUNT_EQUITY cấu hình trong .env — không đổi khi ghi nhận nạp tiền.">Vốn gốc (cấu hình)</td>
+      <td>${{ c.base_equity | money }}</td>
+    </tr>
+    <tr>
+      <td title="Tổng tất cả các lần ghi nhận nạp tiền (bảng bên dưới).">Tổng đã nạp</td>
+      <td>${{ c.total_deposited | money }}</td>
+    </tr>
+    <tr>
+      <td title="Vốn gốc + tổng đã nạp (trừ tổng đã rút, nếu live) — đây là con số risk.capital_anchor dùng làm nền cho mọi kích thước vốn.">Vốn neo hiện tại (capital_anchor)</td>
+      <td>${{ c.capital_anchor | money }}</td>
+    </tr>
+    <tr>
       <td title="Số rung DCA (wave ≥ 1) bị cầu dao tiền mặt từ chối HOẶC cắt bớt (audit orders.rung_starved) trong 1 giờ gần nhất — mỗi rung tính MỘT lần dù cảnh báo lặp lại nhiều lần trong giờ đó. Lệnh vẫn nằm trong hàng đợi, tự khớp khi tiền mặt rảnh.">Rung đói tiền (1 giờ qua)</td>
       <td>{{ c.rung_starved.count }}{% if c.rung_starved.count %} (cần thêm ${{ c.rung_starved.needed_usd | money_kmb }}){% endif %}</td>
     </tr>
@@ -110,3 +122,32 @@
   Không có gì đang chặn phiên mới — còn cả chỗ trống lẫn ngân sách, chỉ chờ scanner tìm ra cơ hội.
   {% endif %}
 </p>
+
+<div class="panel mt-16">
+  <h3>Ghi nhận nạp tiền</h3>
+  <p class="muted fs-12 mb-6">Nạp vốn mới (ví dụ $500–1.000/tháng) được cộng ngay vào vốn neo
+    (<code>capital_anchor</code>) và tái neo ngay việc chia tỉ lệ theo vốn — không tính vào lãi,
+    không ảnh hưởng drawdown/circuit-breaker.</p>
+  <div class="flex-spaced mb-8">
+    <span>Số tiền nạp (USD):
+      <input id="dp-amount" type="number" min="0" step="any" class="w-7em"
+             title="Số tiền nạp thêm vào tài khoản."></span>
+    <span>Ghi chú:
+      <input id="dp-note" type="text" maxlength="200" class="w-12em"></span>
+    <button class="ok sm" data-action="recordDeposit">Ghi nhận nạp tiền</button>
+  </div>
+  {% if deposits %}
+  <table class="tbl">
+    <thead><tr><th>Thời gian</th><th>Số tiền</th><th>Ghi chú</th></tr></thead>
+    <tbody>
+      {% for d in deposits %}
+      <tr>
+        <td class="muted td-nowrap">{{ d.created_at | localdt }}</td>
+        <td>${{ d.amount | money_kmb }}</td>
+        <td class="muted">{{ d.note or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">Chưa ghi nhận lần nạp nào.</p>{% endif %}
+</div>

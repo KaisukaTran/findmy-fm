@@ -329,6 +329,27 @@ def tp_rests() -> bool:
     return resting_model_active() or touch_model_active()
 
 
+def reprice_resting_order(order: PendingOrder, *, price: float, quantity: float) -> None:
+    """Re-price/re-size a resting LIMIT row IN PLACE — the one sanctioned way to mutate a
+    PENDING order's ``price``/``quantity`` while it stays queued (``sync_resting_tp``'s
+    cancel+replace-in-place when a wave fill moves the session average).
+
+    Under the paper touch model this must behave exactly like a fresh venue placement: the
+    order's touch window restarts here (``created_at = utcnow()``), so ``_touch_fill_price``'s
+    1-minute-candle scan can never reach back to a touch that happened BEFORE the re-price.
+    Without this, a TP re-priced down after a rung fill "filled" at a high the market had left
+    minutes earlier (HEI session 300, 2026-09-21: a TP re-priced to 0.152928's session average
+    booked a SELL at 0.17058 — +11.5% — against a market sitting at ~0.153). No-op on
+    ``created_at`` under the live resting model: there a re-price is a real cancel+replace
+    against the exchange, and ``created_at`` there also drives the resting-timeout check
+    (``sync_resting_orders``), which must not be disturbed by this helper.
+    """
+    order.price = price
+    order.quantity = quantity
+    if touch_model_active():
+        order.created_at = utcnow()
+
+
 def _touch_candles(limit_orders: list[PendingOrder]) -> dict[str, list]:
     """1-minute candles per symbol, reaching back to the OLDEST queued limit (capped)."""
     if not limit_orders:
@@ -366,8 +387,16 @@ def _touch_fill_price(order: PendingOrder, candles: list) -> float | None:
     same rule as the backtest's B4). Strict "through" vs exact touch is the
     ``paper_fill_needs_trade_through`` knob — an exact touch on the venue often leaves you in
     the queue behind size that got there first.
+
+    The scan starts at the NEXT full minute after ``created_at``, never the candle the order was
+    placed/re-priced INSIDE: that candle's high/low can reflect trading that happened before the
+    order ever existed at this price (a re-price restarts ``created_at`` — see
+    ``reprice_resting_order`` — but a stale in-progress candle would still straddle the moment of
+    the re-price). Conservative: a genuine touch in the remainder of the placement's own minute
+    (< 60s) can be missed, but nothing from before the order existed at this price is ever booked.
     """
-    since = _created_ms(order) - 60_000  # include the candle the order was queued inside
+    created_ms = _created_ms(order)
+    since = created_ms - (created_ms % 60_000) + 60_000
     limit = order.price
     strict = bool(settings.paper_fill_needs_trade_through)
     placed = False
@@ -385,6 +414,52 @@ def _touch_fill_price(order: PendingOrder, candles: list) -> float | None:
             if placed and (c["high"] > limit if strict else c["high"] >= limit):
                 return max(limit, c["open"])
     return None
+
+
+def reset_pending_buy_touch_windows(db: Session, orders_: list[PendingOrder] | None = None) -> int:
+    """Restart the touch window of touch-model PENDING LIMIT BUYs that could not execute for a
+    reason that has nothing to do with whether the market touched them (today: held back by
+    the breaker freeze). Any touch already on record for one of these rows happened while it
+    could not act, so a later retry must need a FRESH touch, not that one. Never touches a
+    SELL — exits are never gated by the freeze at all. No-op (returns 0) unless
+    ``touch_model_active()``. Commits once.
+
+    ``orders_``: the specific rows to reset (filtered down to PENDING/kss/BUY/LIMIT/priced/
+    unlinked, same shape as the base query below) — today, whichever BUYs
+    ``auto_fill_due_orders`` actually held back this pass under ``freeze_blocks`` (a ladder rung
+    of an active dca_down session now passes THROUGH a freeze instead of being reset). ``None``
+    (the default) resets every candidate row matching the base filter, which is what a caller
+    with no per-row list wants (e.g. ``breaker_blocks_ladder_rungs=True``, where every automated
+    BUY is held back and there is nothing narrower to pass in).
+    """
+    if not touch_model_active():
+        return 0
+    if orders_ is None:
+        rows = (
+            db.query(PendingOrder)
+            .filter(
+                PendingOrder.status == PENDING,
+                PendingOrder.source == "kss",
+                PendingOrder.side == "BUY",
+                PendingOrder.order_type == "LIMIT",
+                PendingOrder.price > 0,
+                PendingOrder.exchange_order_id.is_(None),
+            )
+            .all()
+        )
+    else:
+        rows = [
+            o for o in orders_
+            if o.status == PENDING and o.source == "kss" and o.side == "BUY"
+            and o.order_type == "LIMIT" and o.price > 0 and o.exchange_order_id is None
+        ]
+    if not rows:
+        return 0
+    now = utcnow()
+    for o in rows:
+        o.created_at = now
+    db.commit()
+    return len(rows)
 
 
 def session_still_going(db: Session, source_ref: str | None) -> bool:
@@ -465,10 +540,19 @@ def auto_fill_due_orders(db: Session) -> list[int]:
     if touch_model_active():
         touches = _touch_candles([o for o in pend if o.order_type == "LIMIT" and o.price > 0])
     approved: list[int] = []
+    veto_touch_reset = False
     for o in pend:
         # Exit SELLs reduce risk — never let a (possibly stale) veto trap them; only a
         # vetoed BUY (new risk) is held back.
         if o.auto_veto and o.side == "BUY":
+            if touch_model_active() and o.status == PENDING:
+                # It could not execute this cycle because it is vetoed, not because the market
+                # never touched it — any touch already on record for it happened while it could
+                # not act. Restart the touch window (batched: one commit after the loop, not
+                # per row) so it needs a FRESH touch once the veto lifts.
+                o.created_at = utcnow()
+                veto_touch_reset = True
+            continue
             continue
         price = prices.get(o.symbol)
         if price is None:
@@ -505,8 +589,24 @@ def auto_fill_due_orders(db: Session) -> list[int]:
                 # cycle). Skip this one, keep filling the others, retry next tick.
                 logger.warning("auto-fill %s order %s skipped (%s: %s)",
                                o.symbol, o.id, type(exc).__name__, exc)
+                if fill_price is not None and o.side == "BUY" and o.status == PENDING:
+                    # This BUY was found due by a candle touch (the market reached it in the
+                    # past), but could not execute (venue reject, ...). `approve_order` already
+                    # put it back to PENDING with its OLD `created_at`, so leaving it as-is
+                    # would let a later retry fill at that same stale touch — a market the
+                    # account could not have bought at when it happened. Restart the touch
+                    # window: only a NEW touch, after this moment, may fill it from here on.
+                    # Exits are never made harder to fill, so this only ever applies to a BUY.
+                    # The `status == PENDING` guard excludes a row some earlier iteration of
+                    # this same loop already moved off PENDING (e.g. a sibling cancelled by
+                    # another order's fill) — that row must not be resurrected with a fresh
+                    # timestamp.
+                    o.created_at = utcnow()
+                    db.commit()
                 continue
             approved.append(o.id)
+    if veto_touch_reset:
+        db.commit()
     return approved
 
 

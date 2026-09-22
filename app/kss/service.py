@@ -2480,8 +2480,7 @@ def sync_resting_tp(db: Session) -> dict:
             # leave it, and the next pass queues a fresh TP for whatever is still held.
             if existing.status != models.PENDING:
                 continue
-            existing.price = price
-            existing.quantity = qty
+            orders.reprice_resting_order(existing, price=price, quantity=qty)
             audit.log(db, "kss", "tp_replaced", entity=f"kss:{row.id}", symbol=row.symbol,
                       price=round(price, 8), qty=round(qty, 8))
             out["replaced"] += 1

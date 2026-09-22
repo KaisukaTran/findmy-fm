@@ -72,6 +72,10 @@
       <td title="Số phiên đang ACTIVE / trần số phiên đồng thời cho phép (max_concurrent_sessions).">Số phiên đang chạy</td>
       <td>{{ c.sessions_active }} / {{ c.sessions_cap }}</td>
     </tr>
+    <tr>
+      <td title="Số rung DCA (wave ≥ 1) bị cầu dao tiền mặt từ chối HOẶC cắt bớt (audit orders.rung_starved) trong 1 giờ gần nhất — mỗi rung tính MỘT lần dù cảnh báo lặp lại nhiều lần trong giờ đó. Lệnh vẫn nằm trong hàng đợi, tự khớp khi tiền mặt rảnh.">Rung đói tiền (1 giờ qua)</td>
+      <td>{{ c.rung_starved.count }}{% if c.rung_starved.count %} (cần thêm ${{ c.rung_starved.needed_usd | money_kmb }}){% endif %}</td>
+    </tr>
   </tbody>
 </table>
 

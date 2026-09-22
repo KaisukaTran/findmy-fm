@@ -304,15 +304,18 @@ def run_cycle(db: Session) -> dict:
     # Phase C: periodic per-pair hyperopt + ML retrain (time-gated, never blocks).
     hyperopt_runs, ml_trained = _run_periodic(db)
 
-    # Defense-in-depth: short-circuit the auto branches when frozen. The callees
-    # also self-guard, but gating here makes the breaker's intent explicit.
+    # Both of these now self-gate PER ORDER on the freeze (`orders.freeze_blocks`), not as a
+    # whole-function short-circuit here: a freeze must never stop a SELL (exits are never
+    # gated, on any path — this early `not frozen` used to also skip a paper resting TP LIMIT
+    # fill, which was the bug), and with `breaker_blocks_ladder_rungs` off a DCA-ladder rung of
+    # a still-active session passes straight through too (measured — see `freeze_blocks`).
     # Live maker model (1.5): rungs queued above rest on the exchange NOW instead of waiting
     # for the market to reach them. Self-guards (no-op on paper / maker off), so it runs
     # unconditionally — cancels must drain even while frozen; placement re-gates per order.
     resting_tp = service.sync_resting_tp(db)
     resting = orders.sync_resting_orders(db)
-    filled = orders.auto_fill_due_orders(db) if settings.auto_trade and not frozen else []
-    auto_approved = [] if frozen else orders.auto_approve_by_policy(db)  # self-guards on autoapprove_enabled
+    filled = orders.auto_fill_due_orders(db) if settings.auto_trade else []
+    auto_approved = orders.auto_approve_by_policy(db)  # self-guards on autoapprove_enabled
     audit.log(db, "scheduler", "cycle", deadlines_closed=len(closed), tp_queued=len(tp),
               candidates=len(scan["candidates"]), auto_filled=len(filled),
               auto_approved=len(auto_approved), reconciled=len(reconciled),
@@ -446,10 +449,12 @@ def _guard_once() -> None:
             # Paper touch model: the 1-minute candles that fill a resting rung or take-profit
             # arrive between 15-minute cycles, so the fill check runs on the guard's cadence
             # too — otherwise a touch is booked up to 15 minutes late, at the wrong avg for
-            # the next rung's target. Paper-only (touch_model_active), same gates as run_cycle.
-            from app import runtime  # lazy, as elsewhere in this module
-
-            if orders.touch_model_active() and settings.auto_trade and not runtime.is_frozen(db):
+            # the next rung's target. Paper-only (touch_model_active). No `is_frozen` gate here
+            # any more — `auto_fill_due_orders` self-gates per order via `orders.freeze_blocks`,
+            # so a frozen breaker never stops a SELL (a paper resting TP fill) and, with
+            # `breaker_blocks_ladder_rungs` off, lets a DCA-ladder rung of an active session
+            # through too.
+            if orders.touch_model_active() and settings.auto_trade:
                 try:
                     orders.auto_fill_due_orders(db)
                     db.commit()

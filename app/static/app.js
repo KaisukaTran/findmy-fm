@@ -937,6 +937,8 @@ document.addEventListener("submit", async (e) => {
       crash_alert_breadth_pct: num(f.get("crash_alert_breadth_pct")),
       crash_alert_min_symbols: num(f.get("crash_alert_min_symbols")),
       crash_alert_cooldown_min: num(f.get("crash_alert_cooldown_min")),
+      breaker_blocks_ladder_rungs: f.get("breaker_blocks_ladder_rungs") === "1",
+      rung_starved_alert_min: num(f.get("rung_starved_alert_min")),
     });
     toast("Đã lưu cấu hình KSS — áp dụng cho phiên mới.", "success");
     refreshTrading(); refreshStatus();

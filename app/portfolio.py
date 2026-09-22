@@ -7,6 +7,7 @@ Kept out of the route layer so routes stay thin.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, or_
@@ -15,7 +16,14 @@ from sqlalchemy.orm import Session
 from app.clock import utcnow
 from app.config import settings
 from app.market import get_current_prices
-from app.models import SESSION_ACTIVE, Fill, KssSession, PendingOrder, Position
+from app.models import (
+    SESSION_ACTIVE,
+    AuditLog,
+    Fill,
+    KssSession,
+    PendingOrder,
+    Position,
+)
 
 
 def order_source(source_ref: str | None) -> str:
@@ -313,6 +321,30 @@ def _capital_bar(
     return bar
 
 
+def _rung_starved_last_hour(db: Session) -> dict:
+    """Rungs currently flagged cash-starved (audit ``orders.rung_starved`` — refused outright or
+    trimmed by ``_apply_cash_cap``) in the last hour, for a single row on the capital panel.
+
+    Deduped by (session, wave), not raw row count: the alert can legitimately repeat for the
+    SAME rung within the hour when ``rung_starved_alert_min`` is set below 60, and counting each
+    repeat separately would overstate how many rungs are actually stuck (one rung re-alerting
+    three times must still read as one rung, at its most recent $ shortfall)."""
+    since = utcnow() - timedelta(hours=1)
+    rows = (
+        db.query(AuditLog)
+        .filter(AuditLog.action == "rung_starved", AuditLog.created_at >= since)
+        .all()
+    )
+    latest: dict[tuple, float] = {}
+    for row in rows:
+        try:
+            detail = json.loads(row.detail) if row.detail else {}
+        except (TypeError, ValueError):
+            continue
+        latest[(row.entity, detail.get("wave"))] = float(detail.get("needed_usd") or 0.0)
+    return {"count": len(latest), "needed_usd": sum(latest.values())}
+
+
 def capital_view(db: Session) -> dict:
     """Capital-utilisation panel: the equity split that shows why only part of the
     account is actually working (docs: measured audit put per-dollar edge near
@@ -365,6 +397,7 @@ def capital_view(db: Session) -> dict:
         binding = "none"
 
     bar = _capital_bar(equity, backup, free_after_backup, resting_buy, deployed)
+    rung_starved = _rung_starved_last_hour(db)
 
     return {
         "equity": equity,
@@ -385,6 +418,7 @@ def capital_view(db: Session) -> dict:
         "sessions_cap": sessions_cap,
         "binding": binding,
         "bar": bar,
+        "rung_starved": rung_starved,
     }
 
 

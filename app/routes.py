@@ -598,6 +598,9 @@ class KssSettingsBody(BaseModel):
     heartbeat_url: str | None = None
     placement_alert_after: int | None = Field(None, ge=1)
     min_net_edge: float | None = Field(None, ge=0, le=10)
+    # Circuit-breaker: spare the ladder + the cash-starved-rung alert (app/orders.py).
+    breaker_blocks_ladder_rungs: bool | None = None
+    rung_starved_alert_min: float | None = Field(None, ge=1)
 
 
 @api_router.get("/api/kss-settings")

@@ -542,6 +542,28 @@ class Settings(BaseSettings):
     breaker_cooldown_min: int = Field(default=60, description="Minutes the breaker stays frozen before it may auto-rearm.")
     breaker_loss_cluster_sec: int = Field(default=300, description="Cửa sổ gom lệnh thoát của bộ đếm chuỗi thua: các phiên dừng lỗ trong khoảng này tính là MỘT tín hiệu. Một nhịp rơi làm bốn phiên chạm stop trong ba giây là một nhịp rơi, không phải bốn chuỗi thua. Đo trên sổ thật: 300s biến chuỗi-4 giả duy nhất trong lịch sử thành 2, mà vẫn giữ nguyên chuỗi-3 thật trải ba ngày. 0 = tắt gom theo thời gian (vẫn gom theo phiên).")
     breaker_streak_shadow: bool = Field(default=True, description="ĐO KHÔNG CAN THIỆP: bộ đếm chuỗi thua theo NHÓM (gom phiên + cửa sổ thời gian) chỉ được tính và ghi log, còn quy tắc CŨ (đếm từng fill SELL — chặt hơn, hay báo giả) vẫn là cái quyết định đóng băng. Bật=an toàn hơn: không mất lớp bảo vệ nào trong lúc đo, đổi lại một nhịp rơi vài giây VẪN có thể đóng băng oan (tự rã sau breaker_cooldown_min). Chấm điểm bằng các bản ghi audit 'circuit/shadow_divergence'; đủ mẫu thì đặt false để quy tắc mới cầm lái.")
+    breaker_blocks_ladder_rungs: bool = Field(
+        default=False,
+        description="Cầu dao (circuit breaker) đóng băng có chặn luôn rung DCA của các phiên "
+        "ĐANG chạy không. False (mặc định) = cầu dao chỉ chặn MỞ PHIÊN MỚI (và các lệnh mua "
+        "khác); rung DCA (wave ≥ 1) của một phiên dca_down còn đang hoạt động vẫn được mua bình "
+        "thường trong lúc đóng băng — đã đo: chặn rung làm sụt sâu HƠN ở mọi mức vốn, vì cái "
+        "thang chính là cơ chế gỡ lỗ, không phải rủi ro mới. Lệnh MUA khác (sóng 0/mở phiên mới, "
+        "add Pyramid-UP, thủ công qua auto-reviewer) vẫn bị chặn như cũ — chỉ có rung của ladder "
+        "đang chạy được miễn. True = khôi phục hành vi cũ: đóng băng thì chặn MỌI lệnh mua tự "
+        "động, kể cả rung. Lệnh BÁN không bao giờ bị chặn bởi cầu dao, bất kể knob này.",
+    )
+    rung_starved_alert_min: float = Field(
+        default=60.0,
+        ge=1,
+        description="Phút tối thiểu giữa hai lần cảnh báo (audit `rung_starved` + Telegram) cho "
+        "CÙNG một rung DCA (wave ≥ 1) bị `_apply_cash_cap` từ chối vì thiếu tiền mặt trong "
+        "`auto_fill_due_orders`. Lần đầu bị từ chối luôn báo ngay; các lần bị từ chối tiếp theo "
+        "trong cửa sổ này im lặng (lệnh vẫn nằm trong hàng đợi, tự thử lại mỗi tick) — chỉ báo "
+        "lại sau khi qua cửa sổ. Nhiều rung thiếu tiền trong CÙNG một lượt gộp vào MỘT tin nhắn "
+        "Telegram, không phải một tin/rung. Sóng 0 (mở phiên) đã có audit riêng "
+        "(`scanner.open_underfunded`) nên không tính ở đây.",
+    )
 
     anthropic_api_key: SecretStr = Field(default=SecretStr(""), description="Anthropic API key for LLM features (e.g. the Opus orchestrator). Empty = disabled.")
 

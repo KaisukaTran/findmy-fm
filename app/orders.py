@@ -139,7 +139,11 @@ def _apply_cash_cap(db: Session, order: PendingOrder) -> None:
 
     Sizing uses the SAME cost model as the paper fill — ref×(1+slippage)×(1+taker_fee) per unit —
     so the resulting cash is ≥ floor exactly (a tiny epsilon guards float rounding). For live the
-    real fill differs slightly, but the exchange independently rejects an over-balance order."""
+    real fill differs slightly, but the exchange independently rejects an over-balance order.
+
+    A trim of a wave >= 1 dca_down rung also fires the same ``rung_starved`` alert as an
+    outright refusal (reason="trimmed") — the dropped remainder never gets bought either,
+    silently, unless something says so. See ``_note_rung_starved``."""
     if order.side != "BUY":
         return
     cash_floor = capital_scale.cash_floor_usd(db).value
@@ -163,6 +167,133 @@ def _apply_cash_cap(db: Session, order: PendingOrder) -> None:
     audit.log(db, "orders", "partial_fill_cash", entity=order.symbol,
               requested=round(requested, 8), filled=round(affordable, 8),
               free_cash=round(free, 2), source_ref=order.source_ref)
+    # A trim is the same cash-starvation signal as an outright refusal, just partial — the
+    # dropped remainder (requested − affordable) never gets bought, silently, every time this
+    # rung is touched again. Same alert, same per-order throttle, distinguished by reason.
+    dropped_usd = (requested - affordable) * ref
+    info = _note_rung_starved(db, order, reason="trimmed", needed_usd=dropped_usd)
+    if info is not None:
+        _notify_rung_starved([info])
+
+
+# --- cash-starved rung alert (a rung refused for cash was total silence before this) -----
+#
+# `_apply_cash_cap` raises `InsufficientCashError` for a rung `auto_fill_due_orders` cannot
+# fund at all; before this, that only produced a `logger.warning` and the same rung retried
+# (and failed) every tick with no audit row and no notification — a session could sit starved
+# for hours with nothing but a log line no one was watching. Keyed per PENDING ORDER ID and
+# throttled by a wall clock (`settings.rung_starved_alert_min`), mirroring the placement-
+# failure tracker above: an in-memory dict is enough (process-lifetime; a restart clears it
+# and the very next refusal re-alerts, which is the safe direction to fail in).
+_rung_starved_last_alert: dict[int, datetime] = {}
+
+
+def reset_rung_starved_alert_state() -> None:
+    """Clear every tracked rung-starved alert timestamp (tests; a fresh boot)."""
+    _rung_starved_last_alert.clear()
+
+
+def _prune_stale_rung_starved_alerts(db: Session) -> None:
+    """Drop tracked order ids that are no longer PENDING (filled, rejected, cancelled, ...
+    since their last refusal/trim) — without this the tracker only ever grows for the lifetime
+    of the process, one entry per rung that was ever starved even briefly. Cheap: one query
+    bounded by the (small) tracked-id set, never a scan of every pending order."""
+    if not _rung_starved_last_alert:
+        return
+    tracked_ids = list(_rung_starved_last_alert.keys())
+    still_pending = {
+        oid for (oid,) in db.query(PendingOrder.id)
+        .filter(PendingOrder.id.in_(tracked_ids), PendingOrder.status == PENDING)
+        .all()
+    }
+    for oid in tracked_ids:
+        if oid not in still_pending:
+            _rung_starved_last_alert.pop(oid, None)
+
+
+def _note_rung_starved(
+    db: Session, order: PendingOrder, *, reason: str = "refused",
+    needed_usd: float | None = None, market_price: float | None = None,
+) -> dict | None:
+    """Audit ``rung_starved`` for *order* — a wave >= 1 DCA rung of an active dca_down session
+    that just could not be (fully) funded by the cash floor — the FIRST time it happens, and
+    again at most every ``rung_starved_alert_min`` minutes while it stays refused/trimmed
+    (``auto_fill_due_orders``/``_apply_cash_cap`` would otherwise retry every tick and write
+    another audit row + fire another Telegram message on every single one). Returns the detail
+    dict when it logged a NEW audit row (the caller aggregates these into one notify), or None
+    when this call was deduped or does not apply.
+
+    ``reason``: ``"refused"`` (``InsufficientCashError`` — nothing at all was funded) or
+    ``"trimmed"`` (``_apply_cash_cap`` funded a PARTIAL quantity and dropped the remainder).
+    ``needed_usd``: the $ short, when the caller already knows it (a "trimmed" call passes the
+    dropped remainder's notional); otherwise computed from the order's own qty×price, falling
+    back to *market_price* for a MARKET order (whose own ``price`` is 0, so qty×price alone
+    would silently report $0 needed).
+
+    Excluded: wave 0 (already audited by ``scanner.open_underfunded``), anything that is not a
+    ``pyramid:{id}:wave:{k}`` rung (a manual order, a dynamic exit, ...), and a Pyramid-UP
+    add/defensive rung — same source_ref SHAPE as a dca_down rung, but the opposite risk shape
+    (new capital into a winner, not the ladder this alert exists to surface), told apart via
+    the session's own ``strategy_mode``. Never raises: an alert must never break the
+    fill/approval flow it is reporting on.
+    """
+    try:
+        ref = str(order.source_ref or "")
+        parts = ref.split(":")
+        if len(parts) != 4 or parts[0] != "pyramid" or parts[2] != "wave":
+            return None
+        try:
+            session_id = int(parts[1])
+            wave_num = int(parts[3])
+        except ValueError:
+            return None
+        if wave_num < 1:
+            return None  # wave 0: already audited by scanner.open_underfunded
+        from app.kss.service import KssSession
+
+        session_row = db.get(KssSession, session_id)
+        if session_row is not None and session_row.strategy_mode != "dca_down":
+            return None  # a Pyramid-UP add/defensive rung is new risk, not this alert's ladder
+        now = utcnow()
+        last = _rung_starved_last_alert.get(order.id)
+        window_sec = max(settings.rung_starved_alert_min, 1.0) * 60.0
+        if last is not None and (now - last).total_seconds() < window_sec:
+            return None
+        _rung_starved_last_alert[order.id] = now
+        if needed_usd is None:
+            ref_price = order.price if order.price > 0 else (market_price or 0.0)
+            needed_usd = order.quantity * ref_price
+        free = _free_cash(db)
+        cash_floor = capital_scale.cash_floor_usd(db).value
+        audit.log(db, "orders", "rung_starved", entity=f"kss:{session_id}", symbol=order.symbol,
+                  wave=wave_num, reason=reason, needed_usd=round(needed_usd, 2),
+                  free_cash=round(free, 2), cash_floor_usd=round(cash_floor, 2))
+        return {"session_id": session_id, "symbol": order.symbol, "wave": wave_num,
+                "needed": needed_usd, "reason": reason}
+    except Exception:  # an alert must never break placement/fill flow
+        logger.debug("_note_rung_starved failed for order %s", getattr(order, "id", "?"),
+                     exc_info=True)
+        return None
+
+
+def _notify_rung_starved(details: list[dict]) -> None:
+    """One Telegram risk alert summarising every rung `_note_rung_starved` just newly logged
+    in this pass — never one message per rung (a starved wave-3+2+7 ladder must not flood the
+    chat)."""
+    if not details:
+        return
+    try:
+        from app import notify
+
+        total_needed = sum(d["needed"] for d in details)
+        symbols = ", ".join(sorted({d["symbol"] for d in details}))
+        notify.event(
+            "risk",
+            f"💸 {len(details)} rung DCA đang thiếu tiền mặt (tổng cần ~${total_needed:,.2f}): "
+            f"{symbols}. Lệnh vẫn giữ trong hàng đợi — tự khớp khi tiền mặt rảnh.",
+        )
+    except Exception:  # a notify failure must never break the fill loop
+        logger.debug("rung-starved notify failed", exc_info=True)
 
 
 # --- queue --------------------------------------------------------------
@@ -267,10 +398,13 @@ def auto_approve_by_policy(db: Session) -> list[int]:
     source in `autoapprove_sources` AND notional ≤ `autoapprove_max_notional`
     (notional = qty × price, using live price for market orders). Optionally skip
     orders carrying a risk note. Disabled unless `autoapprove_enabled`.
-    No-ops when the circuit-breaker is frozen.
+
+    Does NOT itself no-op on a circuit-breaker freeze (removed the early return this used to
+    have) — `approve_order` below is the chokepoint that applies `freeze_blocks` per order, so
+    a SELL (never gated) and a DCA-ladder rung exempted by `freeze_blocks` both still go
+    through here while frozen; every other automated BUY still raises there and is skipped by
+    the existing `except ValueError`.
     """
-    if runtime.is_frozen(db):
-        return []
     if not settings.autoapprove_enabled:
         return []
     pend = db.query(PendingOrder).filter(PendingOrder.status == PENDING).all()
@@ -501,15 +635,90 @@ def session_still_going(db: Session, source_ref: str | None) -> bool:
     return row.status in (SESSION_ACTIVE, SESSION_PENDING, SESSION_TP_TRIGGERED)
 
 
+def _active_dca_ladder_session(db: Session, order: PendingOrder):
+    """The KSS session *order* is a DCA-ladder rung (wave >= 1) of, or ``None`` when it is not
+    — the ONE shape ``freeze_blocks`` exempts from the circuit-breaker freeze.
+
+    Measured (2026-09-21, owner-approved): blocking DCA rung buys during a crash makes
+    drawdown WORSE at every capital level the ladder is the recovery mechanism, not new risk,
+    so a freeze whose job is to stop new risk must not hold rungs of a session already
+    committed back. ``None`` for everything else this is NOT allowed to exempt:
+
+      * wave 0 (the entry — new capital into a symbol with no position yet);
+      * a Pyramid-UP add/defensive rung — anti-martingale (buying MORE of a winner), the
+        opposite risk shape a crash brake exists to hold back, and it reuses the EXACT SAME
+        ``pyramid:{id}:wave:{k}`` source_ref shape as a dca_down rung, so the only reliable
+        tell is the session's own ``strategy_mode``;
+      * a manual/non-kss order;
+      * a session that is not ``SESSION_ACTIVE`` right now — deliberately stricter than
+        ``session_still_going`` (which also passes PENDING and TP_TRIGGERED): a PENDING
+        session has not even placed wave 0 yet (nothing to "recover"), and a TP_TRIGGERED
+        session is already on its way out — neither is the running ladder this exemption
+        exists for, and letting either one through as a BUY would be new risk, not the
+        ladder's recovery mechanism.
+    """
+    if order.source != "kss":
+        return None
+    ref = str(order.source_ref or "")
+    parts = ref.split(":")
+    if len(parts) != 4 or parts[0] != "pyramid" or parts[2] != "wave":
+        return None
+    try:
+        session_id = int(parts[1])
+        wave_num = int(parts[3])
+    except ValueError:
+        return None
+    if wave_num < 1:
+        return None
+    from app.kss.service import SESSION_ACTIVE, KssSession
+
+    row = db.get(KssSession, session_id)
+    if row is None or row.status != SESSION_ACTIVE or row.strategy_mode != "dca_down":
+        return None
+    return row
+
+
+def freeze_blocks(db: Session, order: PendingOrder) -> bool:
+    """Whether the circuit-breaker freeze should hold *order* back RIGHT NOW — the single
+    place this rule lives; every automated placement/approval/resting site calls this instead
+    of ``runtime.is_frozen`` directly, so the exemption cannot drift out of sync between them.
+
+    Always False (never blocked) when:
+      * *order* is a SELL — exits are never gated by the freeze, on any path;
+      * the breaker is not frozen at all.
+
+    Otherwise True (blocked) UNLESS ``breaker_blocks_ladder_rungs`` is off AND *order* is a
+    DCA-ladder rung (wave >= 1) of a still-active ``dca_down`` session
+    (``_active_dca_ladder_session``) — the one case measured to make a freeze's drawdown
+    WORSE instead of better. ``breaker_blocks_ladder_rungs=True`` restores the exact old
+    behaviour: a freeze blocks every automated BUY, rung or not.
+    """
+    if order.side != "BUY":
+        return False
+    if not runtime.is_frozen(db):
+        return False
+    if settings.breaker_blocks_ladder_rungs:
+        return True
+    return _active_dca_ladder_session(db, order) is None
+
+
 def auto_fill_due_orders(db: Session) -> list[int]:
     """
     Full-auto: auto-approve pending KSS-sourced orders whose limit the market has
     reached (BUY: price ≤ target, SELL: price ≥ target, MARKET: always due). Only
     touches `source="kss"` orders — manual orders always require human approval.
-    Returns the approved order ids. No-ops when the circuit-breaker is frozen.
+    Returns the approved order ids.
+
+    A frozen circuit breaker never stops a SELL here — exits are never gated, on any path,
+    including a paper resting take-profit LIMIT (this function used to return `[]` outright
+    while frozen, which blocked that fill too; the per-order `freeze_blocks` check below
+    replaces that early return). A BUY is filtered per order: with `breaker_blocks_ladder_rungs`
+    off (the default), a DCA-ladder rung (wave >= 1) of a still-active dca_down session passes
+    straight through a freeze (measured: blocking it makes drawdown worse); every other
+    automated BUY (wave 0, a new session, a Pyramid-UP add, ...) stays held back exactly as
+    before. See `freeze_blocks`.
     """
-    if runtime.is_frozen(db):
-        return []
+    _prune_stale_rung_starved_alerts(db)
     pend = (
         db.query(PendingOrder)
         .filter(
@@ -541,6 +750,8 @@ def auto_fill_due_orders(db: Session) -> list[int]:
         touches = _touch_candles([o for o in pend if o.order_type == "LIMIT" and o.price > 0])
     approved: list[int] = []
     veto_touch_reset = False
+    frozen_blocked: list[PendingOrder] = []
+    starved: list[dict] = []
     for o in pend:
         # Exit SELLs reduce risk — never let a (possibly stale) veto trap them; only a
         # vetoed BUY (new risk) is held back.
@@ -553,6 +764,12 @@ def auto_fill_due_orders(db: Session) -> list[int]:
                 o.created_at = utcnow()
                 veto_touch_reset = True
             continue
+        if o.side == "BUY" and freeze_blocks(db, o):
+            # Held back by the circuit-breaker freeze (see `freeze_blocks`) — not because the
+            # market never touched it. Same reasoning as the veto branch above: batch these for
+            # a fresh touch window once the freeze lifts (or the knob changes), so a touch
+            # recorded while it could not act can never later back-fill it.
+            frozen_blocked.append(o)
             continue
         price = prices.get(o.symbol)
         if price is None:
@@ -583,10 +800,23 @@ def auto_fill_due_orders(db: Session) -> list[int]:
                     audit.log(db, "orders", "paper_touch_fill", entity=f"order:{o.id}",
                               symbol=o.symbol, side=o.side, limit=o.price,
                               fill=round(fill_price, 10))
+            except InsufficientCashError:
+                # A wave>=1 rung the account cannot fund at all right now (wave 0's own cash
+                # refusal is audited separately by scanner.open_underfunded). This used to be
+                # total silence — a `logger.warning` and a retry every tick forever — see
+                # `_note_rung_starved`.
+                logger.warning("auto-fill %s order %s skipped (cash-starved)", o.symbol, o.id)
+                info = _note_rung_starved(db, o, market_price=price)
+                if info is not None:
+                    starved.append(info)
+                if fill_price is not None and o.side == "BUY" and o.status == PENDING:
+                    o.created_at = utcnow()
+                    db.commit()
+                continue
             except Exception as exc:
-                # Insufficient cash, no price, or a venue rejection (ccxt raises InvalidOrder,
-                # NOT ValueError — that gap let one -1013 order kill the whole scheduler
-                # cycle). Skip this one, keep filling the others, retry next tick.
+                # No price, or a venue rejection (ccxt raises InvalidOrder, NOT ValueError —
+                # that gap let one -1013 order kill the whole scheduler cycle). Skip this one,
+                # keep filling the others, retry next tick.
                 logger.warning("auto-fill %s order %s skipped (%s: %s)",
                                o.symbol, o.id, type(exc).__name__, exc)
                 if fill_price is not None and o.side == "BUY" and o.status == PENDING:
@@ -607,6 +837,10 @@ def auto_fill_due_orders(db: Session) -> list[int]:
             approved.append(o.id)
     if veto_touch_reset:
         db.commit()
+    if frozen_blocked:
+        reset_pending_buy_touch_windows(db, frozen_blocked)
+    if starved:
+        _notify_rung_starved(starved)
     return approved
 
 
@@ -615,8 +849,9 @@ def approve_order(
 ) -> Fill:
     """Approve and paper-execute a pending order; fire KSS fill hook if applicable.
 
-    Auto reviewers are blocked when the circuit-breaker freeze is active.
-    Human reviewer 'dashboard' is never blocked.
+    Auto reviewers are blocked when the circuit-breaker freeze applies to this order (see
+    `freeze_blocks` — a DCA-ladder rung of a still-active session is exempt by default).
+    Human reviewer 'dashboard' is never blocked, whatever `freeze_blocks` would say.
     ``fill_price`` (paper touch model only): the price a 1-minute candle handed this LIMIT —
     the simulated fill takes it as-is (maker fee, no slippage). Ignored on the live path.
     """
@@ -626,8 +861,9 @@ def approve_order(
     # breaker blocked automated take-profits, stop-losses and trailing exits too — turning the
     # control that is supposed to protect capital into one that holds a losing position open.
     # Every other gate in this file is already side-aware; this is the chokepoint they all
-    # pass through, so it has to be as well.
-    if order.side == "BUY" and reviewer in AUTO_REVIEWERS and runtime.is_frozen(db):
+    # pass through, so it has to be as well. `freeze_blocks` narrows this further: a DCA-ladder
+    # rung of an active session is exempt from the freeze (measured — see its docstring).
+    if reviewer in AUTO_REVIEWERS and freeze_blocks(db, order):
         raise ValueError(f"automation frozen — {reviewer} blocked")
     # HARD cash floor: partial-fill a BUY down to available cash (or reject) BEFORE any state
     # change, so cash can never go negative and a reject leaves the order untouched (PENDING).
@@ -781,9 +1017,11 @@ def _live_execute(db: Session, order: PendingOrder) -> Fill:
     if ref_price <= 0:
         raise ValueError(f"No price available to execute {order.symbol}")
 
-    # New exposure (BUY) is gated; exits (SELL) are never blocked.
+    # New exposure (BUY) is gated; exits (SELL) are never blocked. `freeze_blocks` exempts a
+    # DCA-ladder rung of a still-active dca_down session from the freeze by default — see its
+    # docstring for the measured reasoning.
     if order.side == "BUY":
-        if runtime.is_frozen(db):
+        if freeze_blocks(db, order):
             raise ValueError("circuit-breaker frozen — live BUY blocked")
         notional = ref_price * order.quantity
         notional_cap = capital_scale.live_order_notional_cap_usd(db).value
@@ -1326,15 +1564,16 @@ def _place_resting(db: Session, order: PendingOrder) -> bool:
     """Place one queued order as a resting post-only LIMIT and link it to the row.
 
     Re-gates exactly like ``_live_execute``: a BUY is new exposure (veto flag, breaker,
-    notional cap, cash floor); a SELL exit is never gated. Returns True when the order now
-    rests on the exchange. Never raises — a placement failure leaves the order queued for
+    notional cap, cash floor) — with the same ``freeze_blocks`` exemption for a DCA-ladder
+    rung of a still-active session; a SELL exit is never gated. Returns True when the order
+    now rests on the exchange. Never raises — a placement failure leaves the order queued for
     the next cycle.
     """
     from app import execution
     from app.data.providers import live_provider
 
     if order.side == "BUY":
-        if order.auto_veto or runtime.is_frozen(db):
+        if order.auto_veto or freeze_blocks(db, order):
             return False
         notional = order.price * order.quantity
         notional_cap = capital_scale.live_order_notional_cap_usd(db).value

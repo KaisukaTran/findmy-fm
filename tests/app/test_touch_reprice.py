@@ -219,7 +219,7 @@ def test_cash_capped_sell_is_never_made_harder_to_fill(db, monkeypatch):
     assert tp.created_at == original_created_at
 
 
-# --- a vetoed BUY must not back-fill a stale touch either -------------------------------------
+# --- a vetoed or frozen-cycle BUY must not back-fill a stale touch either --------------------
 
 
 def test_a_vetoed_buy_restarts_its_touch_window(db, monkeypatch):
@@ -250,6 +250,52 @@ def test_a_vetoed_buy_restarts_its_touch_window(db, monkeypatch):
     _paper(monkeypatch, prices={"SOL": 10.0}, candles={"SOL": [_c(1, 9.3, 9.4, 8.9)]})
 
     assert orders.auto_fill_due_orders(db) == [rung.id]
+
+
+def test_frozen_cycle_restarts_every_pending_buys_touch_window(db, monkeypatch):
+    """While the breaker is frozen no BUY can execute at all — a touch recorded during the
+    freeze must not later fill a resting rung once it thaws."""
+    _paper(monkeypatch, prices={"SOL": 10.0},
+           candles={"SOL": [_c(8, 9.3, 9.4, 8.9), _c(1, 9.8, 10.1, 9.7)]})
+    rung = _rung(db, price=9.0, minutes_ago=10)
+    monkeypatch.setattr(runtime, "is_frozen", lambda db_: True)
+
+    assert orders.auto_fill_due_orders(db) == []
+    db.refresh(rung)
+    assert rung.status == PENDING
+    assert rung.created_at > utcnow() - timedelta(seconds=5), \
+        "a frozen cycle must restart every pending touch-model BUY's touch window"
+
+    # Thaw, but the candles are unchanged — no touch has happened since the reset.
+    monkeypatch.setattr(runtime, "is_frozen", lambda db_: False)
+    assert orders.auto_fill_due_orders(db) == []
+    db.refresh(rung)
+    assert rung.status == PENDING
+
+    # A genuinely new touch, after the reset, fills it.
+    rung.created_at = utcnow() - timedelta(minutes=5)
+    db.commit()
+    _paper(monkeypatch, prices={"SOL": 10.0}, candles={"SOL": [_c(1, 9.3, 9.4, 8.9)]})
+
+    assert orders.auto_fill_due_orders(db) == [rung.id]
+
+
+def test_frozen_cycle_never_touches_a_sells_window(db, monkeypatch):
+    """Exits are never gated by the freeze at all — a resting SELL fills normally while frozen
+    (this used to assert the opposite: `auto_fill_due_orders` short-circuited to `[]` on ANY
+    freeze, before even looking at a row's side, which silently stranded a paper resting
+    take-profit LIMIT the whole time the breaker was frozen — the exact bug
+    `orders.freeze_blocks` exists to fix. A SELL's touch window is untouched either way,
+    because it was never held back to begin with)."""
+    _paper(monkeypatch, prices={"SOL": 10.0}, candles={"SOL": [_c(1, 9.8, 10.2, 9.7)]})
+    tp = _rung(db, side="SELL", price=10.0, ref="pyramid:1:tp", minutes_ago=10)
+    original_created_at = tp.created_at
+    monkeypatch.setattr(runtime, "is_frozen", lambda db_: True)
+
+    assert orders.auto_fill_due_orders(db) == [tp.id]
+    db.refresh(tp)
+    assert tp.status == models.EXECUTED, "an exit must never be gated by the freeze"
+    assert tp.created_at == original_created_at
 
 
 # --- the exception branch never resurrects a row that moved off PENDING ----------------------

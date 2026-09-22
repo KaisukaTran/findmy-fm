@@ -275,6 +275,14 @@
     <input name="crash_alert_min_symbols" type="number" step="1" min="1" value="{{ k.crash_alert_min_symbols }}"></label>
   <label title="Khoảng cách tối thiểu (phút) giữa hai lần cảnh báo crash liên tiếp, để một ngày xấu kéo dài không bắn tin mỗi lượt quét.">Cooldown cảnh báo (phút) <span class="varname">crash_alert_cooldown_min</span>
     <input name="crash_alert_cooldown_min" type="number" step="5" min="0" value="{{ '%.0f'|format(k.crash_alert_cooldown_min) }}"></label>
+  <h3 class="section-subhead">━ Cầu dao (circuit breaker) ━</h3>
+  <label title="Cầu dao đóng băng có chặn luôn rung DCA (wave ≥ 1) của các phiên dca_down ĐANG chạy không. Tắt (mặc định) = cầu dao chỉ chặn MỞ PHIÊN MỚI và các lệnh mua khác (sóng 0, add Pyramid-UP, lệnh thủ công qua auto-reviewer) — rung của một thang đang chạy vẫn được mua bình thường khi đóng băng: đã đo, chặn rung làm sụt sâu HƠN ở mọi mức vốn vì cái thang chính là cơ chế gỡ lỗ, không phải rủi ro mới. Bật = khôi phục hành vi cũ (đóng băng chặn mọi lệnh mua tự động, kể cả rung). Lệnh BÁN không bao giờ bị cầu dao chặn, bất kể knob này.">Cầu dao chặn cả rung ladder <span class="varname">breaker_blocks_ladder_rungs</span>
+    <select name="breaker_blocks_ladder_rungs" class="select-inline">
+      <option value="1" {% if k.breaker_blocks_ladder_rungs %}selected{% endif %}>Bật (chặn cả rung — hành vi cũ)</option>
+      <option value="0" {% if not k.breaker_blocks_ladder_rungs %}selected{% endif %}>Tắt (chỉ chặn mở phiên mới)</option>
+    </select></label>
+  <label title="Phút tối thiểu giữa hai lần cảnh báo (audit + Telegram) cho CÙNG một rung DCA (wave ≥ 1) bị từ chối vì thiếu tiền mặt. Lần đầu bị từ chối luôn báo ngay; các lần từ chối tiếp theo trong cửa sổ này im lặng (lệnh vẫn ở hàng đợi, tự thử lại mỗi tick) — chỉ báo lại sau khi qua cửa sổ. Nhiều rung thiếu tiền cùng lượt gộp vào MỘT tin nhắn.">Cảnh báo rung đói tiền (phút) <span class="varname">rung_starved_alert_min</span>
+    <input name="rung_starved_alert_min" type="number" step="1" min="1" value="{{ '%.0f'|format(k.rung_starved_alert_min) }}"></label>
   <h3 class="section-subhead">━ OPUS God Mode (học &amp; sao chép) ━</h3>
   <label title="Chế độ SAO CHÉP: ưu tiên mở các coin mà engine luật (đang có lãi) vừa chấm 'trade' trong lần quét này; OPUS phải giải thích nếu đi chệch. Chỉ là gợi ý mềm trong prompt, không phải lọc cứng.">Chế độ sao chép <span class="varname">opus_copy_mode</span>
     <select name="opus_copy_mode" class="select-inline">

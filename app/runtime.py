@@ -188,6 +188,11 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "heartbeat_url": str,
     "placement_alert_after": int,
     "min_net_edge": float,
+    # Circuit-breaker: spare the ladder (measured 2026-09-21 — blocking rungs during a crash
+    # makes drawdown worse) + the cash-starved-rung alert (app/orders.py: freeze_blocks,
+    # _note_rung_starved).
+    "breaker_blocks_ladder_rungs": _to_bool,
+    "rung_starved_alert_min": float,
 }
 
 # ---------------------------------------------------------------------------

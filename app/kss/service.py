@@ -2708,8 +2708,12 @@ def _maintain_live_stop(db: Session, row: KssSession, price: float) -> None:
 def _force_fill_queued_exits(db: Session) -> None:
     """Fill EVERY queued KSS exit SELL NOW, freeze-immune. reviewer="guard" is a non-AUTO reviewer,
     so a circuit-breaker freeze never blocks a protective exit — this also rescues SL/deadline
-    SELLs the 30-min cycle queued but could not fill during a freeze (auto_fill_due_orders no-ops
-    while frozen). Exits reduce risk and are never gated (the never-gate-exits rule).
+    SELLs the 30-min cycle queued but could not fill for some other reason (e.g. still resting
+    on the exchange, or the touch model hadn't seen a touch yet). `auto_fill_due_orders` no
+    longer no-ops wholesale on a freeze (it filters BUYs per order via `orders.freeze_blocks`
+    and never blocks a SELL on any path — see its docstring), but this stays the fast,
+    freeze-immune backstop the 90s guard/fast loop rely on. Exits reduce risk and are never
+    gated (the never-gate-exits rule).
 
     Shared by `run_position_guard` (the 90s guard) and `run_fast_exit` (the WS-fed fast loop) —
     identical force-fill behaviour either way, one place to keep it correct.

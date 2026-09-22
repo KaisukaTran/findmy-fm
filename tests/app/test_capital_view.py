@@ -504,3 +504,55 @@ def test_capital_bar_always_sums_to_100_on_a_disjoint_book():
         bar = portfolio._capital_bar(equity, *[p * scale for p in parts])
         assert sum(seg["step"] for seg in bar) == 100
         assert all(0 <= seg["step"] <= 100 and seg["step"] % 5 == 0 for seg in bar)
+
+
+# --- "Rung đói tiền" row: rung_starved audits in the last hour, deduped per rung ------------
+
+
+def _rung_starved_audit(db, *, session_id, wave, needed_usd, hours_ago=0.0):
+    from app import audit
+
+    row = audit.log(db, "orders", "rung_starved", entity=f"kss:{session_id}", symbol="SOL",
+                     wave=wave, reason="refused", needed_usd=needed_usd, free_cash=0.0,
+                     cash_floor_usd=0.0)
+    if hours_ago:
+        row.created_at = utcnow() - timedelta(hours=hours_ago)
+    db.commit()
+    return row
+
+
+def test_capital_view_reports_no_starved_rungs_by_default(db, monkeypatch):
+    monkeypatch.setattr(portfolio, "get_current_prices", lambda syms: {})
+    v = portfolio.capital_view(db)
+    assert v["rung_starved"] == {"count": 0, "needed_usd": 0.0}
+
+
+def test_capital_view_counts_starved_rungs_in_the_last_hour(db, monkeypatch):
+    monkeypatch.setattr(portfolio, "get_current_prices", lambda syms: {})
+    _rung_starved_audit(db, session_id=1, wave=1, needed_usd=10.0)
+    _rung_starved_audit(db, session_id=2, wave=2, needed_usd=20.0)
+
+    v = portfolio.capital_view(db)
+
+    assert v["rung_starved"] == {"count": 2, "needed_usd": 30.0}
+
+
+def test_capital_view_ignores_starved_rungs_older_than_an_hour(db, monkeypatch):
+    monkeypatch.setattr(portfolio, "get_current_prices", lambda syms: {})
+    _rung_starved_audit(db, session_id=1, wave=1, needed_usd=10.0, hours_ago=2.0)
+
+    v = portfolio.capital_view(db)
+
+    assert v["rung_starved"] == {"count": 0, "needed_usd": 0.0}
+
+
+def test_capital_view_dedupes_repeated_alerts_for_the_same_rung(db, monkeypatch):
+    """The same rung alerting twice within the hour (rung_starved_alert_min < 60) must still
+    read as ONE starved rung, at its most recent $ shortfall."""
+    monkeypatch.setattr(portfolio, "get_current_prices", lambda syms: {})
+    _rung_starved_audit(db, session_id=1, wave=1, needed_usd=10.0, hours_ago=0.5)
+    _rung_starved_audit(db, session_id=1, wave=1, needed_usd=15.0, hours_ago=0.1)
+
+    v = portfolio.capital_view(db)
+
+    assert v["rung_starved"] == {"count": 1, "needed_usd": 15.0}

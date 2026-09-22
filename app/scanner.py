@@ -353,7 +353,14 @@ def _universe(db: Session, provider) -> list[str]:
         audit.log(db, "scanner", "universe_degraded", entity="scan",
                   reused=len(fetched), source="cache" if fetched else "watchlist_only")
 
-    return (symbols + fetched)[: settings.scan_max_symbols]
+    # Apply the asset guard BEFORE the scan_max_symbols cut, not after: filtering after the cut
+    # would let a blocked coin (Monitoring/stock-token/etc.) occupy one of the N slots forever,
+    # crowding out a healthy coin further down the volume ranking that could have used it.
+    from app.data import asset_guard
+
+    combined = symbols + fetched
+    filtered = asset_guard.filter_blocked(db, combined)
+    return filtered[: settings.scan_max_symbols]
 
 
 def _thresholds() -> dict:
@@ -1020,6 +1027,12 @@ def _effective_open_cap(db: Session, candle_map: dict, symbols: list) -> int:
 def _trade_block_reason(db: Session, symbol: str) -> str | None:
     """Deterministic skip gates for a 'trade' candidate. Returns a reason string to skip,
     or None to proceed. Audits each block."""
+    from app.data import asset_guard
+
+    guard_reason = asset_guard.blocked_reason(db, symbol)
+    if guard_reason:
+        audit.log(db, "scanner", "skipped_asset_guard", entity=symbol, reason=guard_reason)
+        return f"chặn: {guard_reason}"
     if _in_stop_cooldown(db, symbol):
         audit.log(db, "scanner", "skipped_cooldown", entity=symbol)
         return "stop-loss cooldown"
@@ -1207,6 +1220,17 @@ def _review_and_open(
         if _symbol_at_cap(db, symbol):
             cand.reason = (cand.reason or "") + " | capped: per-symbol"
             audit.log(db, "scanner", "skipped_concentration", entity=symbol)
+            continue
+        # Defense-in-depth (same reasoning as the per-symbol re-check above): re-assert the
+        # asset guard against the CURRENT snapshot right before opening, not just at the
+        # earlier `_trade_block_reason` pre-check — a background refresh can flag a symbol
+        # between those two points in a long-running scan.
+        from app.data import asset_guard
+
+        guard_reason = asset_guard.blocked_reason(db, symbol)
+        if guard_reason:
+            cand.reason = (cand.reason or "") + f" | chặn: {guard_reason}"
+            audit.log(db, "scanner", "skipped_asset_guard", entity=symbol, reason=guard_reason)
             continue
         # Per-scan ramp cap: once this scan has opened its quota, defer the rest to the next
         # cycle (they remain ranked best-first, so the strongest open first).

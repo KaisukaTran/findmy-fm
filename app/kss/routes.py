@@ -56,6 +56,17 @@ def preview(req: PreviewRequest):
 
 @router.post("/sessions", dependencies=[Depends(require_api_key)])
 def create_session(req: CreateSession, db: Session = Depends(get_db)):
+    # ENTRY-only guard: refuse a MANUAL create on a delisting/high-risk/non-crypto base, same as
+    # the scanner path. Never applied to any exit/rung path (see app.data.asset_guard's module
+    # docstring) — this is the one other place capital can newly commit to a symbol.
+    from app.data import asset_guard
+
+    guard_reason = asset_guard.blocked_reason(db, req.symbol)
+    if guard_reason:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{req.symbol} bị asset guard chặn mở mới: {guard_reason}",
+        )
     try:
         row = service.create_session(db, **req.model_dump())
     except ValueError as exc:

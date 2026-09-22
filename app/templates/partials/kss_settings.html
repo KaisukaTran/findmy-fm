@@ -391,9 +391,61 @@
         </select></label>
       <label title="Số kết quả Live Search tối đa Grok được kéo mỗi lần quét (giới hạn chi phí tìm kiếm). Mặc định 8.">Live Search tối đa <span class="varname">grok_search_max_results</span>
         <input name="grok_search_max_results" type="number" step="1" min="1" max="30" value="{{ k.grok_search_max_results }}" required></label>
+      <label title="CHẶN ĐẦU VÀO: từ chối mở session MỚI trên coin bị Binance gắn cờ Monitoring/bStocks (cổ phiếu token hoá)/tCommodities (vàng token hoá)/wrapped trùng lặp, hoặc vừa có thông báo huỷ niêm yết — vì hầu hết sổ SL=0 nên huỷ niêm yết là sự kiện −100% không có phòng thủ ở phía thoát lệnh. KHÔNG đụng session đang chạy (rung/TP/trail/deadline vẫn y nguyên). Tắt = quay lại hành vi cũ (chỉ lọc stablecoin/fiat cứng trong providers.py).">Chặn đầu vào rủi ro <span class="varname">asset_guard_enabled</span>
+        <select name="asset_guard_enabled" class="select-inline">
+          <option value="1" {% if k.asset_guard_enabled %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.asset_guard_enabled %}selected{% endif %}>Tắt</option>
+        </select></label>
+      <label title="Chặn coin bị Binance gắn cờ 'Monitoring' (danh sách theo dõi rủi ro cao, vd AVA/FTT/GTC/LSK).">— Monitoring <span class="varname">asset_guard_block_monitoring</span>
+        <select name="asset_guard_block_monitoring" class="select-inline">
+          <option value="1" {% if k.asset_guard_block_monitoring %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.asset_guard_block_monitoring %}selected{% endif %}>Tắt</option>
+        </select></label>
+      <label title="Chặn cổ phiếu/ETF token hoá (tag bStocks, vd NVDAB/CRCLB/MSTRB/SOXLB) — không phải alpha crypto, và SOXLB tự nó là ETF đòn bẩy 3x.">— Cổ phiếu token hoá <span class="varname">asset_guard_block_stock_tokens</span>
+        <select name="asset_guard_block_stock_tokens" class="select-inline">
+          <option value="1" {% if k.asset_guard_block_stock_tokens %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.asset_guard_block_stock_tokens %}selected{% endif %}>Tắt</option>
+        </select></label>
+      <label title="Chặn token neo hàng hoá (tag tCommodities, vd PAXG/XAUT vàng token hoá) — không phải alpha crypto.">— Token hàng hoá <span class="varname">asset_guard_block_commodities</span>
+        <select name="asset_guard_block_commodities" class="select-inline">
+          <option value="1" {% if k.asset_guard_block_commodities %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.asset_guard_block_commodities %}selected{% endif %}>Tắt</option>
+        </select></label>
+      <label title="Chặn bản wrapped trùng lặp của coin đã có sẵn dạng gốc (WBTC/WBETH/BETH, hoặc tên sản phẩm chứa 'Wrapped') — tránh mở 2 thang cho cùng một tài sản kinh tế.">— Wrapped trùng lặp <span class="varname">asset_guard_block_wrapped</span>
+        <select name="asset_guard_block_wrapped" class="select-inline">
+          <option value="1" {% if k.asset_guard_block_wrapped %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.asset_guard_block_wrapped %}selected{% endif %}>Tắt</option>
+        </select></label>
+      <label title="Danh sách coin THỦ CÔNG luôn bị từ chối mở mới, cách nhau bằng dấu phẩy — độc lập với snapshot Binance (vd một coin đã sập trước đây). Session đang chạy không bị đụng.">Danh sách chặn thủ công <span class="varname">asset_guard_denylist</span>
+        <input name="asset_guard_denylist" type="text" value="{{ k.asset_guard_denylist }}"></label>
+      <label title="Số phút giữa các lần làm mới danh sách sản phẩm/huỷ niêm yết của Binance ở nền.">Làm mới snapshot (phút) <span class="varname">asset_guard_refresh_min</span>
+        <input name="asset_guard_refresh_min" type="number" step="1" min="1" max="1440" value="{{ k.asset_guard_refresh_min }}" required></label>
+      <label title="Snapshot cũ hơn số giờ này sẽ MỞ CỬA (fail-open) cho các nhóm theo tag (monitoring/cổ phiếu/hàng hoá/wrapped-theo-tên/huỷ niêm yết) — danh sách chặn thủ công và WBTC/WBETH/BETH tĩnh vẫn luôn áp dụng bất kể.">Ngưỡng snapshot cũ (giờ) <span class="varname">asset_guard_max_stale_h</span>
+        <input name="asset_guard_max_stale_h" type="number" step="1" min="1" max="720" value="{{ '%.0f'|format(k.asset_guard_max_stale_h) }}" required></label>
       <button type="submit" class="sm ok mt-4">Lưu</button>
     </form>
   </div>
+</div>
+
+<div class="settings-subpanel">
+  <span class="muted fs-12">Coin đang bị chặn đầu vào (asset guard)</span>
+  <div class="muted fs-12 mt-4">
+    Snapshot Binance:
+    {% if asset_guard_snapshot_age_h is none %}
+      <span class="neg">chưa từng lấy được — mọi nhóm theo tag đang fail-open (chỉ danh sách chặn thủ công + WBTC/WBETH/BETH còn hiệu lực).</span>
+    {% elif asset_guard_snapshot_age_h > k.asset_guard_max_stale_h %}
+      <span class="neg">cũ {{ '%.1f'|format(asset_guard_snapshot_age_h) }}h (> ngưỡng {{ '%.0f'|format(k.asset_guard_max_stale_h) }}h) — đang fail-open cho nhóm theo tag.</span>
+    {% else %}
+      <span class="pos">mới {{ '%.1f'|format(asset_guard_snapshot_age_h) }}h trước.</span>
+    {% endif %}
+  </div>
+  {% if asset_guard_blocked %}
+    {% for reason, syms in asset_guard_blocked.items() %}
+      <div class="mt-4"><span class="varname">{{ reason }}</span>: {{ syms|join(', ') }}</div>
+    {% endfor %}
+  {% else %}
+    <div class="mt-4 muted fs-12">Không có coin nào đang bị chặn theo nhóm này.</div>
+  {% endif %}
 </div>
 
 <div class="settings-subpanel">

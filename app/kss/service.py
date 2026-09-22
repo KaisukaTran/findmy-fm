@@ -879,6 +879,11 @@ def adopt_position_into_kss(
     if existing is not None:
         return _merge_rescue(db, existing, held_qty, avg_price, current_price, note=note)
 
+    # NOTE (2026-09-21 round-2): a rescue of an ALREADY-HELD position is PROTECTION (it attaches
+    # SL/TP/deadline to capital already at risk), not a new entry — the asset guard must never
+    # strand a losing position with no exit, so it does NOT apply here. The entry-only guard for
+    # OPUS instead lives where NEW risk is actually created: the BUY intent in
+    # app.orchestrator.policy (apply_intents / _open).
     held_notional = max(held_qty * avg_price, 0.0)
     row = create_session(
         db,

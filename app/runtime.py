@@ -193,6 +193,15 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     # _note_rung_starved).
     "breaker_blocks_ladder_rungs": _to_bool,
     "rung_starved_alert_min": float,
+    # Entry-only asset guard (app/data/asset_guard.py) — delisting/high-risk/non-crypto bases.
+    "asset_guard_enabled": _to_bool,
+    "asset_guard_block_monitoring": _to_bool,
+    "asset_guard_block_stock_tokens": _to_bool,
+    "asset_guard_block_commodities": _to_bool,
+    "asset_guard_block_wrapped": _to_bool,
+    "asset_guard_denylist": str,
+    "asset_guard_refresh_min": int,
+    "asset_guard_max_stale_h": float,
 }
 
 # ---------------------------------------------------------------------------
@@ -354,6 +363,11 @@ def set_kss_settings(db: Session, values: dict) -> dict:
         allowed = _KSS_ENUM_VALIDATORS.get(key)
         if allowed is not None and val not in allowed:
             continue  # reject invalid enum values silently (bad input, not an error)
+        if key == "asset_guard_denylist":
+            from app.data.asset_guard import is_valid_denylist
+
+            if not is_valid_denylist(val):
+                continue  # malformed/oversized denylist — reject silently, same as an enum
         setattr(settings, key, val)
         set(db, f"kss:{key}", val)
     return kss_settings(db)

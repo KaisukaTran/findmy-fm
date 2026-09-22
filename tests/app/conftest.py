@@ -61,6 +61,7 @@ _MUTABLE_SETTINGS = (
     "live_trading", "live_max_order_notional",
     "maker_orders", "order_fill_timeout_sec", "live_use_testnet", "use_exchange_balance",
     "telegram_notify_trades", "telegram_notify_risk", "telegram_digest_hours",
+    "asset_guard_denylist",
 )
 
 

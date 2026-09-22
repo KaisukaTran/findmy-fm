@@ -953,6 +953,14 @@ document.addEventListener("submit", async (e) => {
       crash_alert_cooldown_min: num(f.get("crash_alert_cooldown_min")),
       breaker_blocks_ladder_rungs: f.get("breaker_blocks_ladder_rungs") === "1",
       rung_starved_alert_min: num(f.get("rung_starved_alert_min")),
+      asset_guard_enabled: f.get("asset_guard_enabled") === "1",
+      asset_guard_block_monitoring: f.get("asset_guard_block_monitoring") === "1",
+      asset_guard_block_stock_tokens: f.get("asset_guard_block_stock_tokens") === "1",
+      asset_guard_block_commodities: f.get("asset_guard_block_commodities") === "1",
+      asset_guard_block_wrapped: f.get("asset_guard_block_wrapped") === "1",
+      asset_guard_denylist: f.get("asset_guard_denylist"),
+      asset_guard_refresh_min: num(f.get("asset_guard_refresh_min")),
+      asset_guard_max_stale_h: num(f.get("asset_guard_max_stale_h")),
     });
     toast("Đã lưu cấu hình KSS — áp dụng cho phiên mới.", "success");
     refreshTrading(); refreshStatus();

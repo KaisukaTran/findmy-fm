@@ -35,6 +35,17 @@ def _open(db: Session, intent: dict, allowed: set[str], result: dict) -> None:
     if not symbol or symbol not in allowed:
         result["rejected"].append({"intent": intent, "reason": "symbol not a current candidate"})
         return
+    # ENTRY-only asset guard: this is where OPUS commits NEW capital (a fresh BUY), so this is
+    # where the guard belongs — NOT the 3h rescue (that only protects capital already at risk;
+    # refusing it would strand a losing position with no exit, see kss.service.adopt_position_into_kss).
+    from app.data import asset_guard
+
+    guard_reason = asset_guard.blocked_reason(db, symbol)
+    if guard_reason:
+        result["rejected"].append({"intent": intent, "reason": f"asset_guard:{guard_reason}"})
+        audit.log(db, "opus", "open_asset_guard_blocked", entity=symbol, symbol=symbol,
+                  reason=guard_reason)
+        return
     # K-1 strategy exclusivity: never open a coin KSS already runs (no blended cost basis).
     from app.models import SESSION_ACTIVE, KssSession
     if db.query(KssSession).filter(

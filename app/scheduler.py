@@ -280,6 +280,15 @@ def run_cycle(db: Session) -> dict:
     # cause once a whitelist is set), BEFORE anything below touches the exchange this cycle.
     # Never raises (see check_ip_change); inert on paper.
     check_ip_change(db)
+    # Entry-only asset guard (app/data/asset_guard.py): a DB-only check (no network) that
+    # notes — once per symbol+reason — when an ACTIVE session's coin just became flagged
+    # (Monitoring/delisting/etc). Never touches the session itself.
+    try:
+        from app.data import asset_guard
+
+        asset_guard.audit_held_symbols(db)
+    except Exception:  # a diagnostic check must never break the cycle
+        logger.debug("asset_guard.audit_held_symbols failed", exc_info=True)
     # Live-only: book fills of resting maker orders the exchange filled since last cycle,
     # BEFORE TP/scan run so sessions/positions reflect reality. No-op on paper.
     reconciled = orders.reconcile_live_orders(db)
@@ -365,6 +374,16 @@ def _cycle_once() -> None:
             scanner.prefetch_universe_candles(db)
         except Exception:
             logger.exception("candle prefetch failed (non-fatal; scan will fetch under lock)")
+        # Asset-guard snapshot refresh (product list + delisting articles): network-heavy
+        # (up to a ~10s timeout) but read-only w.r.t. session rows, so — like the candle
+        # prefetch above — it runs OFF _work_lock and self-throttles on asset_guard_refresh_min,
+        # so most cycles no-op here. Never raises (refresh_if_due is self-contained).
+        try:
+            from app.data import asset_guard
+
+            asset_guard.refresh_if_due(db)
+        except Exception:
+            logger.exception("asset_guard refresh failed (non-fatal; last-good snapshot kept)")
         with _work_lock:  # never run concurrently with the fast guard
             run_cycle(db)
     finally:

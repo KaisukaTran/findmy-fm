@@ -602,6 +602,15 @@ class KssSettingsBody(BaseModel):
     # Circuit-breaker: spare the ladder + the cash-starved-rung alert (app/orders.py).
     breaker_blocks_ladder_rungs: bool | None = None
     rung_starved_alert_min: float | None = Field(None, ge=1)
+    # Entry-only asset guard (app/data/asset_guard.py) — delisting/high-risk/non-crypto bases.
+    asset_guard_enabled: bool | None = None
+    asset_guard_block_monitoring: bool | None = None
+    asset_guard_block_stock_tokens: bool | None = None
+    asset_guard_block_commodities: bool | None = None
+    asset_guard_block_wrapped: bool | None = None
+    asset_guard_denylist: str | None = None
+    asset_guard_refresh_min: int | None = Field(None, ge=1, le=1440)
+    asset_guard_max_stale_h: float | None = Field(None, ge=1, le=720)
 
 
 @api_router.get("/api/kss-settings")
@@ -613,6 +622,21 @@ def get_kss_settings(db: Session = Depends(get_db)):
 def set_kss_settings(body: KssSettingsBody, db: Session = Depends(get_db)):
     """Update the master KSS knobs (applied to NEW sessions). Persisted across restarts."""
     values = body.model_dump(exclude_none=True)
+    # Field guard: a malformed/oversized asset_guard_denylist used to be silently dropped by
+    # runtime.set_kss_settings (the same "reject silently" path as an invalid enum) — that left
+    # the caller believing their edit took effect when it did not. Reject it loudly instead,
+    # like every other rejected edit on this endpoint.
+    if "asset_guard_denylist" in values:
+        from app.data.asset_guard import is_valid_denylist
+
+        if not is_valid_denylist(values["asset_guard_denylist"]):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "asset_guard_denylist không hợp lệ: mỗi mã cách nhau bằng dấu phẩy, khớp "
+                    "^[A-Z0-9]{2,20}$ (không dấu, không ký tự đặc biệt), tối đa 200 mã."
+                ),
+            )
     # Cross-field guard: expectancy can never exceed tp − round-trip cost, so a gate above that
     # ceiling skips the whole universe forever with no error (the 2026-07-16 12h silent halt —
     # min_expectancy 3.0 vs a 2.70 ceiling after tp went 4.0→3.0). Check the EFFECTIVE pair, since
@@ -1364,12 +1388,16 @@ def partial_kss_settings(request: Request, db: Session = Depends(get_db)):
     affordable_waves = kss_service.affordable_max_waves(
         db, settings.scan_distance_pct, settings.scan_max_waves
     )
+    from app.data import asset_guard
+
     return templates.TemplateResponse(
         "partials/kss_settings.html",
         {"request": request, "k": k, "depth_pct": depth_pct, "gs": grok_scanner, "ta": ta,
          "cw": cw, "blocked": scanner.loss_reentry_blocklist(db), "scale": scale,
          "anchored_equity": anchored_equity, "live_equity": live_equity,
-         "affordable_waves": affordable_waves, "ws": ws},
+         "affordable_waves": affordable_waves, "ws": ws,
+         "asset_guard_blocked": asset_guard.blocked_symbols_by_reason(db),
+         "asset_guard_snapshot_age_h": asset_guard.snapshot_age_hours(db)},
     )
 
 

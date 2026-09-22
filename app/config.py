@@ -439,6 +439,16 @@ class Settings(BaseSettings):
         "0 = off (the older 'locks in full once >=50%% of the reserve is spent' rule alone).")
     scan_min_notional: float = Field(default=10.0, description="Skip dust micro-trades below this USD notional/wave.")
 
+    # --- Asset guard: ENTRY-only block on delisting/high-risk/non-crypto bases (app/data/asset_guard.py) ---
+    asset_guard_enabled: bool = Field(default=True, description="Master switch for the entry-only asset guard: refuse a NEW candidate/session on a base Binance tags Monitoring, a tokenized stock/ETF, a commodity token, a wrapped duplicate, or has just announced delisting — SL=0 makes a delisting a -100%% event with no exit-side defense. NEVER touches an existing session (rungs/TP/trail/deadline are untouched); False = today's behaviour (providers.py's stablecoin/fiat list is the only universe filter).")
+    asset_guard_block_monitoring: bool = Field(default=True, description="Block entries on bases Binance's own product feed tags 'Monitoring' (elevated-risk watchlist, e.g. AVA/FTT/GTC/LSK).")
+    asset_guard_block_stock_tokens: bool = Field(default=True, description="Block entries on tokenized stocks/ETFs (product tag 'bStocks', e.g. NVDAB/CRCLB/MSTRB/SOXLB) — not crypto directional alpha, and SOXLB is itself a 3x leveraged ETF token.")
+    asset_guard_block_commodities: bool = Field(default=True, description="Block entries on commodity-pegged tokens (product tag 'tCommodities', e.g. PAXG/XAUT gold tokens) — not crypto directional alpha.")
+    asset_guard_block_wrapped: bool = Field(default=True, description="Block entries on wrapped duplicates of a coin already tradeable natively (WBTC/WBETH/BETH, or any base whose product name contains 'Wrapped') — avoids two ladders on what is economically the same asset.")
+    asset_guard_denylist: str = Field(default="FTT,LUNA,LUNC", description="Comma-separated bases ALWAYS refused for new entries, independent of the product-list snapshot (manual override for a known-bad coin, e.g. a past collapse). Existing sessions are untouched.")
+    asset_guard_refresh_min: int = Field(default=60, ge=1, description="Minutes between background refreshes of the cached Binance product-list/delisting snapshot.")
+    asset_guard_max_stale_h: float = Field(default=48.0, ge=1, description="A cached snapshot older than this many hours FAILS OPEN for the tag-based classes (monitoring/stock_token/commodity/wrapped-by-name/delist_announced) — the manual denylist and the wrapped static seed list still apply regardless.")
+
     # --- Loss-streak block: skip re-trading a pair on a recent losing streak ---
     loss_block_enabled: bool = Field(default=True, description="Block new KSS sessions on a pair with a recent consecutive-loss streak.")
     loss_streak_block_k: int = Field(default=2, description="Block a pair after this many consecutive losing closes (a win breaks the streak).")

@@ -495,15 +495,26 @@ def projected_ladder_cost(
     entry_price: float,
     distance_pct: float,
     max_waves: int,
+    first_wave_usd: float | None = None,
 ) -> float:
     """USD a session's FULL DCA ladder would consume, from the frozen pyramid math:
     Σ over waves of (wave qty × wave price) via ``PyramidSession.estimate_total_cost``.
 
     This is the precise form of "first-wave size × số sóng × giá": it honours the
-    geometric (n+1)× qty growth, the entry×(1−d)ⁿ price decay, and the active
-    ``kss_first_wave_usd`` sizing. Used to (1) size a session's ``isolated_fund`` so the
-    ladder never starves mid-way, and (2) budget the scanner open-gate against the real
-    planned capital instead of a flat user-set ``scan_fund``.
+    geometric (n+1)× qty growth, the entry×(1−d)ⁿ price decay, and a wave-0 sizing. Used
+    to (1) size a session's ``isolated_fund`` so the ladder never starves mid-way, and (2)
+    budget the scanner open-gate against the real planned capital instead of a flat
+    user-set ``scan_fund``.
+
+    ``first_wave_usd`` (Fix A3, 2026-09-21): the wave the probed session will ACTUALLY be
+    created with. Omitted (``None``) falls back to ``PyramidSession``'s own default — the
+    LIVE ``settings.kss_first_wave_usd`` — which is only correct when capital scaling is
+    off. A session opened with capital scaling on sizes its real rungs off
+    ``capital_scale.first_wave_usd(db).value`` (`service.create_session` snapshots it onto
+    the row), so a caller pricing the reservation MUST pass that same number here — every
+    caller in `app/scanner.py` now does. Without it, a scaled wave of $30.80 or $40 prices
+    a $28 ladder while the session it reserves for actually costs more, starving the last
+    rungs the moment the two drift apart.
     """
     probe = PyramidSession(
         symbol=symbol,
@@ -514,6 +525,7 @@ def projected_ladder_cost(
         tp_pct=1.0,
         timeout_x_min=1.0,
         gap_y_min=0.0,
+        first_wave_usd=first_wave_usd,
     )
     return probe.estimate_total_cost()
 
@@ -523,6 +535,7 @@ def projected_first_wave_cost(
     entry_price: float,
     distance_pct: float,
     max_waves: int,
+    first_wave_usd: float | None = None,
 ) -> float:
     """USD wave 0 alone would consume — the FIRST order the venue will actually see.
 
@@ -530,6 +543,9 @@ def projected_first_wave_cost(
     1:2:3:… so wave 0 is only about a tenth of a four-wave ladder. Sizing gates against the
     ladder therefore lets through sessions whose very first order the venue rejects (-1013),
     and such a session holds a concurrency slot forever without ever trading.
+
+    ``first_wave_usd``: same Fix A3 override as ``projected_ladder_cost`` — pass the wave
+    the session will actually open with (see that docstring).
 
     Same frozen probe as ``projected_ladder_cost`` so the two can never drift apart.
     """
@@ -542,6 +558,7 @@ def projected_first_wave_cost(
         tp_pct=1.0,
         timeout_x_min=1.0,
         gap_y_min=0.0,
+        first_wave_usd=first_wave_usd,
     )
     wave0 = probe.generate_wave(0)
     return wave0.quantity * wave0.target_price

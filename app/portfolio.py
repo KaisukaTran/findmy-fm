@@ -319,7 +319,8 @@ def capital_view(db: Session) -> dict:
     1%/day, but only ~29% of capital-days deployed -> ~0.42%/day portfolio return).
 
     Reuses ``summary_view`` for cash, ``risk.account_equity`` for mark-to-market equity,
-    and the scanner's own lend-the-idle-reservation rule (``scanner._session_lock``) for
+    and the scanner's own reserve-gate lock rule (``scanner._session_lock`` — Fix A2,
+    2026-09-21: cash already spent plus the untouched ``ladder_coverage_pct`` pre-booking) for
     what an active session actually locks against the deployable budget — none of that
     is re-derived here.
     """

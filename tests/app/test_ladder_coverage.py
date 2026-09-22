@@ -95,9 +95,14 @@ class TestTheDeepLadderGuarantee:
     def _session(rungs: int, reserved: float = 1000.0, used: float = 100.0):
         return models.KssSession(isolated_fund=reserved, total_cost=used, current_wave=rungs)
 
-    def test_off_by_default_keeps_the_fifty_percent_money_rule(self):
+    def test_default_coverage_locks_the_full_reservation_from_wave_0(self):
+        """Fix A2 (2026-09-21) replaced the old "lend the idle reservation until 50% filled"
+        rule with a flat `ladder_coverage_pct`-of-full-ladder pre-booking. At the default 100%
+        coverage that pre-booking IS the full reservation, so a session locks it from wave 0 —
+        this is also today's PRE-2026-09-16 behaviour, before the lend rule existed."""
         assert settings.deep_ladder_lock_rungs == 0
-        assert scanner._session_lock(self._session(rungs=29)) == 100.0
+        assert settings.ladder_coverage_pct == 100.0
+        assert scanner._session_lock(self._session(rungs=29)) == 1000.0
         assert scanner._session_lock(self._session(rungs=0, used=600.0)) == 1000.0
 
     def test_a_session_at_the_rung_threshold_locks_its_whole_ladder(self, monkeypatch):
@@ -105,9 +110,14 @@ class TestTheDeepLadderGuarantee:
         assert scanner._session_lock(self._session(rungs=10)) == 1000.0
         assert scanner._session_lock(self._session(rungs=11)) == 1000.0
 
-    def test_a_shallow_session_still_lends_its_idle_reservation(self, monkeypatch):
+    def test_a_shallow_session_locks_its_coverage_share_not_all_or_nothing(self, monkeypatch):
+        """Below the deep-rung threshold, Fix A2 books cash already spent PLUS
+        `ladder_coverage_pct`% of the full reservation (the simulator's ledger) — no more
+        all-(<50%)-or-nothing(>=50%), and never above the reservation itself."""
         monkeypatch.setattr(settings, "deep_ladder_lock_rungs", 10)
-        assert scanner._session_lock(self._session(rungs=9)) == 100.0
+        monkeypatch.setattr(settings, "ladder_coverage_pct", 30.0)
+        assert scanner._session_lock(self._session(rungs=9)) == 400.0  # 100 spent + 300
+        assert scanner._session_lock(self._session(rungs=9, used=900.0)) == 1000.0  # capped
 
     def test_deep_sessions_stop_new_opens_even_under_a_thin_coverage(self, db, monkeypatch):
         """The guarantee: freed money is reclaimed the moment ladders actually go deep."""
@@ -150,9 +160,28 @@ class TestTheSettingsEndpointJudgesTheSameNumbers:
                               "ladder_coverage_pct": 30.0})
         assert r.status_code == 200, r.text
 
-    def test_lowering_coverage_alone_is_judged(self, client, monkeypatch):
-        """Coverage is an input to the invariant, so touching it must re-run the check."""
+    def test_raising_coverage_alone_is_judged(self, client, monkeypatch):
+        """Coverage is an input to the invariant, so touching it must re-run the check — even
+        when it's the only field in the request. This request RAISES coverage (30 -> 90) on an
+        already-huge config, so the settings-lockout fix below still blocks it: the post-edit
+        worst case is both over budget and strictly worse than today's."""
         self._base(monkeypatch)
         monkeypatch.setattr(settings, "kss_first_wave_usd", 400.0)  # 40 x $88k ladders
+        monkeypatch.setattr(settings, "ladder_coverage_pct", 30.0)  # today: partially covered
         r = client.post("/api/kss-settings", json={"ladder_coverage_pct": 90.0})
         assert r.status_code == 400
+
+    def test_lowering_coverage_alone_always_passes_even_if_still_over_budget(
+        self, client, monkeypatch,
+    ):
+        """Settings-lockout fix (2026-09-21 follow-up): a request that only LOWERS the worst
+        case must never be blocked, even on a book that is already over budget and stays over
+        budget after the edit — otherwise the one panel that could fix an over-budget book locks
+        the operator out of it. Was `test_lowering_coverage_alone_is_judged` (asserted 400) —
+        that assertion was exactly the "any over-budget post-edit blocks, regardless of
+        direction" behaviour this fix replaces."""
+        self._base(monkeypatch)
+        monkeypatch.setattr(settings, "kss_first_wave_usd", 400.0)  # 40 x $88k ladders
+        monkeypatch.setattr(settings, "ladder_coverage_pct", 100.0)  # today: fully covered
+        r = client.post("/api/kss-settings", json={"ladder_coverage_pct": 90.0})
+        assert r.status_code == 200, r.text

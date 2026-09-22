@@ -338,7 +338,7 @@ def test_open_session_default_reserve_carries_slack(db, monkeypatch):
 
     monkeypatch.setattr(settings, "kss_ladder_reserve_slack_pct", 1.0)
     monkeypatch.setattr(service, "projected_ladder_cost",
-                        lambda symbol, entry, distance_pct, max_waves: 100.0)
+                        lambda symbol, entry, distance_pct, max_waves, first_wave_usd=None: 100.0)
     sid = scanner._open_session(db, "AAA", 100.0, "auto", distance_pct=1.5, tp_pct=4.0,
                                 max_waves=3)
     row = db.get(KssSession, sid)

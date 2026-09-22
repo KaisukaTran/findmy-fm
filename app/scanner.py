@@ -1087,9 +1087,20 @@ def _review_and_open(
     # Capital sizing (req a): each candidate's session reserves its full projected DCA-ladder
     # cost — computed once here and reused for the batch saturation pre-check, the per-candidate
     # open-gate, and the session's isolated_fund so the ladder never starves mid-way.
+    #
+    # Fix A3 (2026-09-21): resolve the wave-0 size ONCE per candidate, here, via the same
+    # capital_scale path `create_session` will snapshot onto the row — never the
+    # `projected_ladder_cost` default (the LIVE `kss_first_wave_usd`, only correct with
+    # capital scaling off). Reused for every re-price below and passed into the session
+    # itself, so a deadband anchor move between this call and session creation can never
+    # desynchronise the reservation from the ladder it is meant to fund.
+    from app import capital_scale  # lazy: capital_scale → risk → portfolio → models
+
     for c in to_open:
+        c["first_wave_usd"] = capital_scale.first_wave_usd(db).value
         c["need"] = service.projected_ladder_cost(
-            c["symbol"], c["entry"], c["distance_pct"], c["max_waves"]
+            c["symbol"], c["entry"], c["distance_pct"], c["max_waves"],
+            first_wave_usd=c["first_wave_usd"],
         )
 
     # S5: read the active fail mode (runtime-editable; default from settings).
@@ -1214,9 +1225,15 @@ def _review_and_open(
 
         live = get_current_prices([symbol]).get(symbol)
         entry = live if live and live > 0 else c["entry"]
+        # Fix A3: re-price at the same resolved wave (c["first_wave_usd"]) — only the entry
+        # moved, not the sizing — so this re-price and the original batch pricing can never
+        # disagree about what the session's wave 0 actually costs.
         need = (
             c["need"] if entry == c["entry"]
-            else service.projected_ladder_cost(symbol, entry, c["distance_pct"], c["max_waves"])
+            else service.projected_ladder_cost(
+                symbol, entry, c["distance_pct"], c["max_waves"],
+                first_wave_usd=c["first_wave_usd"],
+            )
         )
         # P1: reserve a hair MORE than the exact projection. Step/tick filters can drift between
         # now and a later wave (exchange-info refresh, restart), and a re-quantized rung then
@@ -1231,14 +1248,14 @@ def _review_and_open(
         # slot taken the scanner stops scanning at all — 8.5 hours of the first soak went that
         # way behind a single $0.19 LTC session. Measured on WAVE 0, because that is what the
         # venue measures; the ladder can be ten times larger and still send a rejected order.
-        first_wave = service.projected_first_wave_cost(
-            symbol, entry, c["distance_pct"], c["max_waves"])
-        if _first_wave_too_small(first_wave):
+        wave0_cost = service.projected_first_wave_cost(
+            symbol, entry, c["distance_pct"], c["max_waves"], first_wave_usd=c["first_wave_usd"])
+        if _first_wave_too_small(wave0_cost):
             cand.reason = (cand.reason or "") + (
-                f" | skipped: wave 0 is only ${first_wave:.2f} (ladder ${need:.2f}), under the "
+                f" | skipped: wave 0 is only ${wave0_cost:.2f} (ladder ${need:.2f}), under the "
                 f"${settings.scan_min_notional:.2f} floor — the venue would reject it")
             audit.log(db, "scanner", "open_dust_ladder", entity=symbol,
-                      symbol=symbol, first_wave_usd=round(first_wave, 4),
+                      symbol=symbol, first_wave_usd=round(wave0_cost, 4),
                       ladder_usd=round(need, 4), floor=settings.scan_min_notional)
             continue
         ok, why = _can_open(db, need)
@@ -1246,7 +1263,8 @@ def _review_and_open(
             cand.session_id = _open_session(
                 db, symbol, entry, mode,
                 distance_pct=c["distance_pct"], tp_pct=c["tp_pct"], max_waves=c["max_waves"],
-                isolated_fund=need, strategy_mode=c.get("strategy_mode", "dca_down"),
+                isolated_fund=need, first_wave_usd=c["first_wave_usd"],
+                strategy_mode=c.get("strategy_mode", "dca_down"),
             )
             opened += 1
         else:
@@ -1257,19 +1275,40 @@ def _review_and_open(
 def _session_lock(s: KssSession) -> float:
     """Capital an ACTIVE session holds against the deployable budget.
 
-    Lend-the-idle-reservation rule (user spec): while a session has filled < 50% of its
-    planned ladder it locks only the cash actually deployed (``total_cost``) — the idle
-    reservation is freed for new sessions; once it crosses 50% filled it locks its full
-    reservation (``isolated_fund``), committed to finishing the averaging-down plan.
+    RESERVE-GATE rule (Fix A2, 2026-09-21 — replaces the "lend the idle reservation until 50%
+    filled" rule below). The Monte Carlo that justified ``ladder_coverage_pct``
+    (``scripts/capital_portfolio_study.py``, ``gate="reserve"``) pre-books ``coverage_pct`` of a
+    session's FULL ladder the instant it opens and keeps that exact amount booked for the whole
+    life of the session — it is never reduced as rungs actually fill; only released, in full, on
+    close (``ledger.reserved -= state.reserved_usd``). The old rule measured something the
+    simulator never modelled (fill fraction lending back the idle reservation), so a config that
+    looked safe against the simulator was not the one actually running: 25 shallow $28-wave
+    sessions on paper's $7,000 book locked only $28 each under the old rule (spent-cash only,
+    total $700) while the simulator that approved ``ladder_coverage_pct=30`` assumed each one
+    locked ~$304 (30% of a ~$1,013 ladder) — a 10x understatement of the real commitment, and
+    the reason ``max_concurrent_sessions`` alone (not the budget gate) was the binding cap.
 
-    DEPTH TRIGGER (``deep_ladder_lock_rungs``, Kai 2026-09-16). Money spent is a poor proxy for
-    depth on a 30-rung ladder: rung 13 of 30 is only ~30% of the reserve, so the 50%-of-money
-    rule first fires around rung 18 (−50% price). That is far too late to be the guarantee
-    behind ``ladder_coverage_pct``, which deliberately pre-books a fraction of each ladder. A
-    session that has actually filled K rungs therefore locks its WHOLE reservation regardless of
-    how little it has spent — new opens stop while the ladders already in trouble still have
-    their remaining rungs funded. Never weaker than the money rule: either trigger locks in
-    full."""
+    Formula: a shallow session locks ``min(isolated_fund, total_cost + ladder_coverage_pct% ×
+    isolated_fund)`` — cash already spent PLUS the untouched coverage pre-booking, exactly the
+    simulator's ledger (its spent cash has already left ``cash`` while ``reserved`` still holds the
+    full pre-booking: ``cash − reserved ≥ need``). An earlier ``max(spent, coverage)`` form was
+    measured looser: at $7,000 it admitted 17 sessions sitting at 3 fills where the simulator's
+    own ledger admits 11 (cross-check 2026-09-21). Capped at the reservation, which the depth
+    trigger below would lock in full anyway. ``ladder_coverage_pct`` is interpreted
+    exactly as ``_can_open`` already interprets it for a NEW candidate: in (0, 100] scales the
+    lock, anything else (0 or out of range) is treated as 100% — a coverage knob that can be
+    silently zeroed to unlock every book is not a gate.
+
+    DEPTH TRIGGER (``deep_ladder_lock_rungs``, Kai 2026-09-16) is UNCHANGED and takes priority:
+    money spent is a poor proxy for depth on a long ladder (rung 13 of 30 is only ~30% of the
+    reserve), so a session that has actually filled K rungs locks its WHOLE reservation
+    regardless of the coverage fraction — new opens stop while the ladders already in trouble
+    still have their remaining rungs funded. Never weaker than the coverage rule: either trigger
+    can only lock MORE, never less.
+
+    ``equity_backup_pct`` is intentionally NOT part of this formula (nor of the simulator's) —
+    it is a separate, additional conservatism layered on top by ``_can_open``'s budget
+    calculation, kept exactly as before."""
     reserved = s.isolated_fund or 0.0
     used = s.total_cost or 0.0
     if reserved <= 0:
@@ -1277,18 +1316,22 @@ def _session_lock(s: KssSession) -> float:
     deep_k = settings.deep_ladder_lock_rungs
     if deep_k > 0 and (s.current_wave or 0) >= deep_k:
         return reserved
-    return used if used < 0.5 * reserved else reserved
+    cov = settings.ladder_coverage_pct
+    frac = cov / 100.0 if 0.0 < cov <= 100.0 else 1.0
+    return min(reserved, used + frac * reserved)
 
 
 def _can_open(db: Session, new_need: float) -> tuple[bool, str]:
     """Capital-preservation caps: concurrent sessions, deployable budget, min notional.
 
     Budget = LIVE mark-to-market equity × (100 − ``equity_backup_pct``)% (a backup reserve the
-    bot never deploys). Existing sessions consume the budget via ``_session_lock`` (idle
-    reservations of lightly-filled sessions are reusable), and ``new_need`` is the candidate's
-    projected full-ladder cost. This replaces the old check that summed flat ``scan_fund``
-    reservations against static ``account_equity`` — which falsely tripped the cap while real
-    cash sat idle (see [[scanner-funding-knobs]])."""
+    bot never deploys). Existing sessions consume the budget via ``_session_lock`` — since Fix
+    A2 (2026-09-21) the reserve-gate formula (cash already spent plus the untouched
+    ``ladder_coverage_pct`` pre-booking, capped at the full reservation — see that function's
+    docstring for the exact math and why), mirroring the Monte Carlo that justified the knob —
+    and ``new_need`` is the candidate's projected full-ladder cost. This replaces the old check
+    that summed flat ``scan_fund`` reservations against static ``account_equity`` — which
+    falsely tripped the cap while real cash sat idle (see [[scanner-funding-knobs]])."""
     from app import risk  # lazy: risk → portfolio → models; avoid an import cycle at load
 
     active = db.query(KssSession).filter(KssSession.status == SESSION_ACTIVE).all()
@@ -1316,9 +1359,17 @@ def _has_open_capacity(db: Session) -> tuple[bool, str]:
     against a representative full-ladder cost (the same scan params every new session uses). Lets
     the scanner skip the WHOLE cycle when capital is saturated (concurrency cap hit OR the
     deployable budget / equity_backup_pct reserve is exhausted) instead of fetch+backtesting the
-    whole universe only to record a wall of 'vượt ngân sách' skips."""
+    whole universe only to record a wall of 'vượt ngân sách' skips.
+
+    Fix A3: prices the probe at the same wave a real session would open with — the
+    capital-scale-resolved one, not `projected_ladder_cost`'s live-global-knob default —
+    so this pre-check cannot disagree with the per-candidate pricing further down."""
+    from app import capital_scale  # lazy: capital_scale → risk → portfolio → models
+
+    first_wave_usd = capital_scale.first_wave_usd(db).value
     probe = service.projected_ladder_cost(
-        "PROBE", 1.0, settings.scan_distance_pct, settings.scan_max_waves
+        "PROBE", 1.0, settings.scan_distance_pct, settings.scan_max_waves,
+        first_wave_usd=first_wave_usd,
     )
     return _can_open(db, probe)
 
@@ -1501,12 +1552,21 @@ def _open_session(
     tp_pct: float | None = None,
     max_waves: int | None = None,
     isolated_fund: float | None = None,
+    first_wave_usd: float | None = None,
     strategy_mode: str = "dca_down",
 ) -> int:
     """Open a KSS session using effective (possibly hyperopt-tuned) params.
 
     ``isolated_fund`` defaults to the projected full-ladder cost (req a) so the reservation
     matches what the ladder will actually consume; callers may pass a precomputed value.
+
+    ``first_wave_usd`` (Fix A3): the wave-0 size the reservation above was (or will be)
+    priced at. When the caller already resolved it (``_review_and_open`` always does, via
+    ``capital_scale.first_wave_usd``), pass the SAME number here so it is snapshotted onto
+    the session unchanged — resolving it a second time, independently, risks the deadband
+    anchor moving between the two calls and desynchronising ``isolated_fund`` from the
+    session's real per-rung sizing. ``None`` (a caller that never resolved one, e.g. a bare
+    manual open) resolves it here, once, from the live capital_scale reading.
 
     Defaults resolve from ``settings`` at call time (not at import/definition time)
     so runtime Strategy-tab edits to ``scan_distance_pct`` / ``scan_tp_pct`` /
@@ -1523,8 +1583,13 @@ def _open_session(
         tp_pct = settings.scan_tp_pct
     if max_waves is None:
         max_waves = settings.scan_max_waves
+    if first_wave_usd is None:
+        from app import capital_scale  # lazy: capital_scale → risk → portfolio → models
+
+        first_wave_usd = capital_scale.first_wave_usd(db).value
     if isolated_fund is None:
-        isolated_fund = service.projected_ladder_cost(symbol, entry, distance_pct, max_waves)
+        isolated_fund = service.projected_ladder_cost(
+            symbol, entry, distance_pct, max_waves, first_wave_usd=first_wave_usd)
         # Same reserve slack as the scan path (see the note there) — only when WE derive the
         # fund; an explicitly-passed isolated_fund is the caller's number, untouched.
         if settings.kss_ladder_reserve_slack_pct > 0:
@@ -1544,6 +1609,7 @@ def _open_session(
             distance_pct=distance_pct,
             max_waves=max_waves,
             isolated_fund=isolated_fund,
+            first_wave_usd=first_wave_usd,
             tp_pct=tp_pct,
             # Deadline (not the intra-fill timeout) governs the hold; keep timeout long.
             timeout_x_min=float(settings.deadline_days * 1440),

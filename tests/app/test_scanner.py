@@ -780,10 +780,14 @@ def _active_kss(db, *, reserved: float, used: float, symbol: str = "AAA") -> mod
     return row
 
 
-def test_session_lock_lends_idle_reservation():
-    """<50% filled locks only the deployed cash; >=50% filled locks the full reservation."""
+def test_session_lock_books_the_full_reservation_at_default_coverage():
+    """Fix A2 (2026-09-21): replaces the old "<50% filled locks only the deployed cash" lend
+    rule with a flat `ladder_coverage_pct`-of-full-ladder pre-booking (see
+    `scanner._session_lock`'s docstring). At the default 100% coverage that pre-booking equals
+    the full reservation regardless of how little has actually filled."""
+    assert settings.ladder_coverage_pct == 100.0
     shallow = models.KssSession(isolated_fund=1000.0, total_cost=200.0)  # 20% used
-    assert scanner._session_lock(shallow) == 200.0
+    assert scanner._session_lock(shallow) == 1000.0
     deep = models.KssSession(isolated_fund=1000.0, total_cost=600.0)  # 60% used
     assert scanner._session_lock(deep) == 1000.0
     at_half = models.KssSession(isolated_fund=1000.0, total_cost=500.0)  # exactly 50%
@@ -804,24 +808,31 @@ def test_can_open_budgets_on_live_equity_minus_backup(db, monkeypatch):
     assert not ok and "dự phòng" in why
 
 
-def test_can_open_reuses_idle_reservation(db, monkeypatch):
-    """A lightly-filled session's idle reservation is lent to a new session (req b)."""
+def test_can_open_books_coverage_pct_of_a_lightly_filled_sessions_reservation(db, monkeypatch):
+    """Fix A2 (2026-09-21) replaces the old "reuse the idle reservation of a <50%-filled
+    session" rule: a shallow session now locks a FLAT `ladder_coverage_pct`% of its full
+    reservation regardless of how little it has actually spent (mirrors the reserve-gate Monte
+    Carlo — see `scanner._session_lock`'s docstring)."""
     monkeypatch.setattr("app.risk.account_equity", lambda _db: 1000.0)
     monkeypatch.setattr(settings, "equity_backup_pct", 25.0)  # budget 750
     monkeypatch.setattr(settings, "max_concurrent_sessions", 100)
-    # Reserves 1000 but only used 100 (<50%) → locks 100, leaving 650 of the 750 budget.
+    monkeypatch.setattr(settings, "ladder_coverage_pct", 30.0)
+    # Reserves 1000, spent only 100 (10%) -> locks 30% of 1000 = 300, not the old fill-based 100.
     _active_kss(db, reserved=1000.0, used=100.0)
-    ok, _ = scanner._can_open(db, 600.0)  # 100 + 600 = 700 <= 750
-    assert ok, "idle reservation of a <50%-filled session must be reusable"
-    # Old flat-reservation logic would have summed 1000 and blocked this outright.
+    ok, _ = scanner._can_open(db, 600.0)  # 300 + 600*0.30=180 -> 480 <= 750
+    assert ok
+    ok, why = scanner._can_open(db, 2000.0)  # 300 + 2000*0.30=600 -> 900 > 750
+    assert not ok and "dự phòng" in why
 
 
-def test_can_open_locks_full_reservation_when_deep(db, monkeypatch):
-    """Once a session crosses 50% filled it locks its whole reservation (protect the DCA plan)."""
+def test_can_open_locks_full_reservation_at_default_coverage(db, monkeypatch):
+    """At the default 100% coverage every active session locks its whole reservation from
+    wave 0 (Fix A2) — this test's numbers happen to be unchanged from the old ">=50% filled"
+    rule, since 100% coverage locks the full amount regardless of fill fraction."""
     monkeypatch.setattr("app.risk.account_equity", lambda _db: 1000.0)
     monkeypatch.setattr(settings, "equity_backup_pct", 25.0)  # budget 750
     monkeypatch.setattr(settings, "max_concurrent_sessions", 100)
-    _active_kss(db, reserved=1000.0, used=600.0)  # >=50% → locks full 1000 > 750
+    _active_kss(db, reserved=1000.0, used=600.0)  # locks full 1000 > 750
     ok, why = scanner._can_open(db, 10.0)
     assert not ok and "dự phòng" in why
 

@@ -2,7 +2,8 @@
 Capital-utilisation panel (`portfolio.capital_view` / `portfolio.capital_yield_view`).
 
 Reuses `summary_view` / `risk.account_equity` / `scanner._session_lock` instead of
-re-deriving equity, cash or the lend-the-idle-reservation rule.
+re-deriving equity, cash or the reserve-gate lock rule (Fix A2, 2026-09-21 — see
+`scanner._session_lock`'s docstring).
 """
 
 from __future__ import annotations
@@ -69,10 +70,11 @@ def test_capital_view_decomposition_arithmetic(db, monkeypatch):
     monkeypatch.setattr(settings, "scan_fund", 1000.0)
     monkeypatch.setattr(portfolio, "get_current_prices", lambda syms: dict.fromkeys(syms, 100.0))
 
-    # Two active sessions: one under the 50%-filled lend threshold (locks only its
-    # deployed cash), one over it (locks its full reservation).
-    _active_session(db, "AAA", isolated_fund=600.0, total_cost=200.0)   # used 200 < 300 -> lock 200
-    _active_session(db, "BBB", isolated_fund=400.0, total_cost=350.0)   # used 350 >= 200 -> lock 400
+    # Two active sessions. Fix A2 (2026-09-21): at the default 100% `ladder_coverage_pct`,
+    # `_session_lock` books each session's FULL reservation from wave 0 (no more "lend the idle
+    # reservation until 50% filled") -- lock == isolated_fund for both, regardless of fill.
+    _active_session(db, "AAA", isolated_fund=600.0, total_cost=200.0)   # locks 600 (was 200)
+    _active_session(db, "BBB", isolated_fund=400.0, total_cost=350.0)   # locks 400 (unchanged)
 
     # Matching open positions so `summary_view` cash reflects the deployed cost (price ==
     # avg -> zero unrealized, keeps equity == account_equity exactly).
@@ -99,8 +101,9 @@ def test_capital_view_decomposition_arithmetic(db, monkeypatch):
     assert v["promised"] == pytest.approx(368.0)
     assert v["free_cash"] == pytest.approx(1368.0)
     assert v["free_after_backup"] == pytest.approx(868.0)  # free_cash(1368) - backup(500)
-    assert v["locked_book"] == pytest.approx(600.0)
-    assert v["budget_free"] == pytest.approx(900.0)
+    # locked_book == committed (1000) at the default 100% coverage -- Fix A2 (see comment above).
+    assert v["locked_book"] == pytest.approx(1000.0)
+    assert v["budget_free"] == pytest.approx(500.0)
     assert v["working_pct"] == pytest.approx(31.6)
     assert v["committed_pct"] == pytest.approx(50.0)
     assert v["sessions_active"] == 2
@@ -157,9 +160,13 @@ def test_binding_is_budget_when_under_cap_but_thin_on_cash(db, monkeypatch):
 
 def test_binding_is_none_not_budget_against_corrected_threshold(db, monkeypatch):
     """D2 sibling: the OLD flat `scan_fund` constant (~4.3x too large per the audit) would
-    wrongly report "budget" here (budget_free 700 < scan_fund 1000); the corrected
+    wrongly report "budget" here (budget_free 310 < scan_fund 1000); the corrected
     threshold compares against the book's own typical per-session need (230) and correctly
-    reports "none" -- there is real room for another typically-sized session."""
+    reports "none" -- there is real room for another typically-sized session.
+
+    Fix A2 (2026-09-21): at the default 100% coverage `locked_book` equals `committed` (each
+    session locks its full reservation, not just what it has spent) -- was 300 under the old
+    fill-fraction lend rule, now 690."""
     monkeypatch.setattr(settings, "account_equity", 1000.0)
     monkeypatch.setattr(settings, "equity_backup_pct", 0.0)
     monkeypatch.setattr(settings, "max_concurrent_sessions", 10)
@@ -170,8 +177,8 @@ def test_binding_is_none_not_budget_against_corrected_threshold(db, monkeypatch)
 
     v = portfolio.capital_view(db)
     assert v["committed"] == pytest.approx(690.0)
-    assert v["locked_book"] == pytest.approx(300.0)
-    assert v["budget_free"] == pytest.approx(700.0)
+    assert v["locked_book"] == pytest.approx(690.0)
+    assert v["budget_free"] == pytest.approx(310.0)
     assert v["typical_need"] == pytest.approx(230.0)
     assert v["binding"] == "none"
 
@@ -224,12 +231,14 @@ def test_yield_uses_exit_fill_time_not_stale_last_fill_at(db):
 
     y = portfolio.capital_yield_view(db, window_days=7)
 
-    # Window start = now-7d. Overlap with the real exit time (now-1d) is 6 days -> 400*6=2400.
-    assert y["locked_dollar_days"] == pytest.approx(2400.0, rel=0.02)
-    # Using the stale last_fill_at (now-6d) would give only ~1 day -> 400 dollar-days.
-    assert y["locked_dollar_days"] > 1000.0
+    # Window start = now-7d. Overlap with the real exit time (now-1d) is 6 days. Fix A2
+    # (2026-09-21): `_session_lock` at the default 100% coverage locks the FULL reservation
+    # (isolated_fund=1000), not just total_cost(400) -- 1000*6=6000 (was 400*6=2400).
+    assert y["locked_dollar_days"] == pytest.approx(6000.0, rel=0.02)
+    # Using the stale last_fill_at (now-6d) would give only ~1 day -> 1000 dollar-days.
+    assert y["locked_dollar_days"] > 2000.0
     assert y["realized_pnl_window"] == pytest.approx(50.0)
-    assert y["pct_per_locked_dollar_day"] == pytest.approx(50.0 / 2400.0 * 100, rel=0.02)
+    assert y["pct_per_locked_dollar_day"] == pytest.approx(50.0 / 6000.0 * 100, rel=0.02)
 
 
 def test_capital_view_bar_disjoint_and_sums_to_100(db, monkeypatch):

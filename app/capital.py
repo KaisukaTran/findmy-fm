@@ -113,17 +113,21 @@ def ladder_budget_exceeded(
     Out-of-range coverage clamps to 100: a 0 would make every configuration payable, and a gate
     that can be silently disabled by a bad value is not a gate.
 
-    WHY THIS IS A HARD GATE AND NOT A RECOMMENDATION. `scanner._session_lock` lends out the
-    idle reservation of any session under 50% filled — a deliberate rule, and a good one, but
-    it means the deployable-budget gate sees a fraction of the real commitment. Measured live
-    2026-09-09: ten sessions reserved $2,303 and the gate saw $739, 32%. So that gate never
-    binds and the true ceiling is ``max_concurrent_sessions × ladder``.
+    WHY THIS IS A HARD GATE AND NOT A RECOMMENDATION. `scanner._session_lock` (Fix A2,
+    2026-09-21) books each open session's ``coverage_pct``-of-full-ladder reservation
+    (cash already spent plus the untouched coverage pre-booking, mirroring the reserve-gate
+    Monte Carlo — see that function's docstring), so the RUNTIME deployable-budget gate now
+    converges to the same ``max_concurrent_sessions × ladder × coverage_pct`` ceiling this
+    function checks. But it converges GRADUALLY, one open at a time, as sessions actually
+    accumulate their reservations — it does not refuse a doomed CONFIGURATION the moment it is
+    saved, before a single session has opened against it. This function is that static
+    pre-flight: it prices "every slot, filled" up front, on a settings change, rather than
+    discovering the same ceiling live, session by session.
 
     Harmless at a $40 first wave (60 × $234 = $14k of a $150k budget). At $428 the same 60
-    slots commit the entire budget while the gate still reports about a third — so the app
-    opens all 60, a broadly-correlated dip asks every ladder to fill at once, cash runs out,
-    and `_apply_cash_cap` refuses rungs. The ladders die silently at exactly the moment
-    averaging down is what they are for.
+    slots commit the entire budget — a broadly-correlated dip then asks every ladder to fill at
+    once, cash runs out, and `_apply_cash_cap` refuses rungs. The ladders die silently at
+    exactly the moment averaging down is what they are for.
 
     Two numbers that only mean anything relative to each other, with nothing comparing them.
     This is the comparison.

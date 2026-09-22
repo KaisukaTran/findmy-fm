@@ -627,36 +627,76 @@ def set_kss_settings(body: KssSettingsBody, db: Session = Depends(get_db)):
                     f"scanner sẽ skip 100% universe. Hạ min_expectancy_pct hoặc nâng scan_tp_pct."),
         )
     # Cross-field guard: if EVERY session filled its ladder, could the book pay for it?
-    # `scanner._session_lock` lends out the idle reservation of any session under 50% filled, so
-    # the deployable-budget gate sees a fraction of the real commitment (live 2026-09-09: ten
-    # sessions reserved $2,303, the gate saw $739) and effectively never binds. The true ceiling
-    # is `max_concurrent_sessions × ladder`. Harmless at a $40 first wave; at $428 the same 60
-    # slots commit the whole budget while the gate reports a third of it, and one correlated dip
-    # then asks every ladder to fill at once against cash that is not there. Judge only requests
-    # that TOUCH the inputs — as with the expectancy gate above, an already-bad config must not
-    # freeze every unrelated edit.
-    from app import risk  # lazy: risk -> portfolio -> models; avoid an import cycle at load
+    # This is a STATIC pre-flight, checked before a bad config is even saved — the runtime gate
+    # (`scanner._can_open` + `_session_lock`, Fix A2 2026-09-21) only converges to the same
+    # `max_concurrent_sessions × ladder × ladder_coverage_pct` ceiling gradually, as sessions
+    # actually open and their coverage-pct pre-booking accumulates; it does not refuse a
+    # doomed CONFIGURATION up front. Judge only requests that TOUCH the inputs — as with the
+    # expectancy gate above, an already-bad config must not freeze every unrelated edit.
+    #
+    # Fix A3: the ladder must be priced at the wave a NEW session would ACTUALLY open with.
+    # `ladder_cost_for`'s docstring calls this out explicitly — a settings endpoint judges the
+    # size being ASKED for, so when the request touches capital-scale inputs
+    # (`capital_scale_enabled` / `first_wave_pct` / `first_wave_max_usd`), the effective wave is
+    # capital_scale's own pure `resolve()` applied to those EFFECTIVE (request-or-current)
+    # values — never `capital_scale.first_wave_usd(db)` itself, which reads the LIVE settings
+    # and would ignore the very edit being validated. `risk.account_equity` (not the anchored,
+    # deadbanded equity) on purpose: this handler must stay side-effect-free on every POST, and
+    # `anchored_equity` can write a new anchor to `runtime_config`.
+    #
+    # SETTINGS LOCKOUT (2026-09-21 follow-up). An already-over-budget book (any live config can
+    # end up there — equity dropped, a knob was pushed too far before this guard existed) must
+    # still be EDITABLE in the risk-reducing direction, or the operator is locked out of the one
+    # panel that could fix it. So this only refuses an edit that makes the worst case WORSE: the
+    # post-edit exposure must be both over budget AND strictly greater than the PRE-edit exposure
+    # (today's live settings, run through the exact same math). An edit that keeps or lowers the
+    # worst case always passes, even on a book that is already over budget.
+    from app import audit, risk  # lazy: avoid import cycles at load
     _budget_fields = ("kss_first_wave_usd", "max_concurrent_sessions", "scan_distance_pct",
-                      "scan_max_waves", "equity_backup_pct", "ladder_coverage_pct")
+                      "scan_max_waves", "equity_backup_pct", "ladder_coverage_pct",
+                      "capital_scale_enabled", "first_wave_pct", "first_wave_max_usd")
     if any(f in values for f in _budget_fields):
         eff = {f: values.get(f, getattr(settings, f)) for f in _budget_fields}
-        ladder = kss_service.ladder_cost_for(
-            eff["kss_first_wave_usd"], eff["scan_distance_pct"], eff["scan_max_waves"])
-        over, worst, budget = capital.ladder_budget_exceeded(
-            max_concurrent=eff["max_concurrent_sessions"], ladder_cost=ladder,
-            equity=risk.account_equity(db), backup_pct=eff["equity_backup_pct"],
-            coverage_pct=eff["ladder_coverage_pct"])
-        if over:
+        pre = {f: getattr(settings, f) for f in _budget_fields}
+        equity = risk.account_equity(db)
+
+        def _worst_case(cfg: dict) -> tuple[float, float, bool, float, float]:
+            """(first_wave, ladder_cost, over, worst_usd, budget_usd) for one config."""
+            scaled = capital_scale.resolve(
+                absolute=cfg["kss_first_wave_usd"], pct=cfg["first_wave_pct"],
+                equity=equity, floor=settings.scan_min_notional,
+                enabled=cfg["capital_scale_enabled"],
+            )
+            wave = scaled.value
+            if scaled.enabled and cfg["first_wave_max_usd"] > 0:
+                wave = min(wave, max(cfg["first_wave_max_usd"], settings.scan_min_notional))
+            ladder = kss_service.ladder_cost_for(
+                wave, cfg["scan_distance_pct"], cfg["scan_max_waves"])
+            over, worst, budget = capital.ladder_budget_exceeded(
+                max_concurrent=cfg["max_concurrent_sessions"], ladder_cost=ladder,
+                equity=equity, backup_pct=cfg["equity_backup_pct"],
+                coverage_pct=cfg["ladder_coverage_pct"])
+            return wave, ladder, over, worst, budget
+
+        _pre_wave, _pre_ladder, pre_over, pre_worst, _pre_budget = _worst_case(pre)
+        first_wave, ladder, over, worst, budget = _worst_case(eff)
+        audit.log(db, "capital", "budget_gate_checked", entity="kss_settings",
+                  pre_worst=round(pre_worst, 2), post_worst=round(worst, 2),
+                  pre_over=pre_over, post_over=over, budget=round(budget, 2))
+        if over and worst > pre_worst + 1e-6:
             raise HTTPException(
                 status_code=400,
-                detail=(f"Vượt ngân sách nếu MỌI phiên lấp đầy thang "
-                        f"(đặt trước {eff['ladder_coverage_pct']:.0f}%/thang): "
+                detail=(f"Vượt ngân sách nếu MỌI phiên lấp đầy thang, VÀ mức rủi ro TĂNG so với "
+                        f"cấu hình hiện tại (đặt trước {eff['ladder_coverage_pct']:.0f}%/thang, "
+                        f"first wave ${first_wave:,.2f}): "
                         f"{eff['max_concurrent_sessions']} suất × ${ladder:,.0f}/thang = "
                         f"${worst:,.0f} > ngân sách ${budget:,.0f} "
-                        f"(equity × {100 - eff['equity_backup_pct']:.0f}%). "
-                        f"Cổng ngân sách của scanner KHÔNG bắt được điều này vì nó cho vay phần "
-                        f"đặt trước nhàn rỗi của phiên lấp <50% (scanner._session_lock), nên nó "
-                        f"chỉ thấy một phần nhỏ. Hạ kss_first_wave_usd hoặc "
+                        f"(equity × {100 - eff['equity_backup_pct']:.0f}%), tăng từ "
+                        f"${pre_worst:,.0f} hiện tại. Một chỉnh sửa GIỮ hoặc GIẢM rủi ro luôn "
+                        f"được chấp nhận, kể cả trên một cấu hình đã vượt ngân sách. Cổng runtime "
+                        f"của scanner (_can_open/_session_lock) chỉ tiến dần tới số này khi các "
+                        f"phiên thật sự mở, nên nó không tự chặn một cấu hình đã vượt ngân sách "
+                        f"ngay từ đầu. Hạ kss_first_wave_usd/first_wave_pct hoặc "
                         f"max_concurrent_sessions, hoặc giảm equity_backup_pct."),
             )
     return runtime.set_kss_settings(db, values)

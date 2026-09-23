@@ -39,6 +39,10 @@ function Write-Log([string]$Message) {
 }
 
 Write-Log 'restart requested'
+# Tell scripts/live_watchdog.py a manual restart is booting its own uvicorn, so it neither
+# counts this boot as a failure nor launches a second copy on top (it honours the marker for
+# START_TIMEOUT seconds after its mtime; a stale marker simply expires).
+try { Set-Content -Path (Join-Path $Root 'data\restart_in_progress') -Value (Get-Date -Format o) -Encoding ascii } catch { }
 
 if (-not (Test-Path $Python)) {
     # The venv interpreter is not optional: the system python has no uvicorn and no ccxt,

@@ -53,6 +53,16 @@ _last_guard_at: str | None = None
 # independently — see `_reconcile_due` / `_guard_once` below. Same "stamp on completed attempt"
 # style as `_last_guard_at`; `/health` reports it as `reconcile_seconds_ago`.
 _last_reconcile_at: str | None = None
+# 2026-09-23 cross-check: /health used to measure the "never completed a first pass" grace from
+# PROCESS start (app.routes._PROCESS_STARTED_AT) — a real boot spent ~135s of a 180s grace just
+# getting the scheduler started, and flipping full_auto on hours into an already-running process
+# was judged against that same stale process-uptime clock, so it could report
+# cycle_never_ran/guard_never_ran the instant it was turned on. This is the scheduler's OWN start
+# timestamp — set the moment start() actually creates the loop task, cleared on stop() — so that
+# grace measures from when the scheduler itself began, not from whenever the process happened to
+# boot. `/health` still needs a process-start-based bound too, for the case where the scheduler
+# never starts at all (see app.config.Settings.scheduler_not_running_grace_sec).
+_started_at: str | None = None
 
 # The 90s guard's own reconcile pass fetches every tracked order SERIALLY (one weight-4 call
 # each) ahead of the hard-SL check, under `_work_lock` — so a large tracked-order count adds
@@ -95,10 +105,31 @@ def _release_singleton_lock() -> None:
         _lock_sock = None
 
 
+def should_run() -> bool:
+    """Whether THIS process is supposed to be running the scheduler right now, honouring the
+    operator's own stop/start intent — not just the automation flags.
+
+    2026-09-23 cross-check: `settings.scheduler_enabled or settings.full_auto` alone used to be
+    read as "the operator wants this running" (by both app.main's lifespan and /health), but the
+    dashboard's standalone Scheduler toggle only ever calls stop()/start() (which flip
+    scheduler_enabled in-memory) and never touches full_auto — so with full_auto persisted on, a
+    session where the operator explicitly clicked "Scheduler off" still looked like "should be
+    running" here, and an external watchdog restarted the app a cycle later, silently undoing
+    the operator's own stop. `settings.scheduler_operator_stopped` (persisted — see
+    app.runtime.set_scheduler_operator_stopped) is the explicit override: once set, this is
+    False regardless of scheduler_enabled/full_auto, until an equally explicit start (the
+    Scheduler toggle back on, full-auto back on, or /resume) clears it.
+    """
+    if settings.scheduler_operator_stopped:
+        return False
+    return bool(settings.scheduler_enabled or settings.full_auto)
+
+
 def status() -> dict:
     """Lightweight scheduler status for the header badge / /api/automation."""
     return {
         "scheduler_running": is_running(),
+        "started_at": _started_at,
         "interval_min": settings.scan_interval_min,
         "last_cycle_at": _last_cycle_at,
         "last_guard_at": _last_guard_at,
@@ -592,12 +623,18 @@ def start() -> bool:
     global _fast_exit_task
     if not (_fast_exit_task and not _fast_exit_task.done()):
         _fast_exit_task = asyncio.create_task(_fast_exit_loop())
+    global _started_at
+    # Stamped HERE, not at process/module import: this is what lets /health measure the
+    # "never completed a first pass" grace from when the scheduler itself began, so turning
+    # full_auto on hours into an already-running process gets a fresh grace window instead of
+    # being judged against however long the process had already been up (2026-09-23 cross-check).
+    _started_at = utcnow().isoformat()
     return True
 
 
 def stop() -> bool:
     """Stop the background loop. Returns True if a running task was cancelled."""
-    global _task, _guard_task, _fast_exit_task
+    global _task, _guard_task, _fast_exit_task, _started_at
     settings.scheduler_enabled = False
     cancelled = False
     if _task and not _task.done():
@@ -610,6 +647,7 @@ def stop() -> bool:
     if _fast_exit_task and not _fast_exit_task.done():
         _fast_exit_task.cancel()
     _fast_exit_task = None
+    _started_at = None
     _release_singleton_lock()  # free the lock so the same process can restart cleanly
     return cancelled
 

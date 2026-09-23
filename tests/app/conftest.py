@@ -62,6 +62,8 @@ _MUTABLE_SETTINGS = (
     "maker_orders", "order_fill_timeout_sec", "live_use_testnet", "use_exchange_balance",
     "telegram_notify_trades", "telegram_notify_risk", "telegram_digest_hours",
     "asset_guard_denylist",
+    "scheduler_lock_fail_fast", "health_boot_grace_sec", "outage_notice_min",
+    "scheduler_not_running_grace_sec", "scheduler_operator_stopped",
 )
 
 
@@ -74,6 +76,7 @@ _FLAG_SETTINGS = (
     "auto_trade", "autoapprove_enabled", "full_auto", "scheduler_enabled",
     "telegram_enabled", "opus_mode", "opus_shadow",
     "grok_enabled", "grok_scanner_enabled", "live_trading",
+    "scheduler_operator_stopped",
 )
 
 

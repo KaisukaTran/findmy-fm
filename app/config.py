@@ -273,6 +273,50 @@ class Settings(BaseSettings):
         "instance (e.g. paper vs live) a DISTINCT port so both schedulers run; same port across two "
         "processes = only one scheduler (the cross-process lock behind the concurrency-cap fix).",
     )
+    scheduler_lock_fail_fast: bool = Field(
+        default=True,
+        description="2026-09-22 split-brain outage: a watchdog restart raced two uvicorns — one "
+        "took the scheduler singleton lock (scheduler_lock_port) then lost the HTTP bind and "
+        "exited, freeing the lock; the other bound :8001 but had already logged "
+        "'another instance holds the lock' and served with NO scheduler for ~13.7h while /health "
+        "still said ok. When true (default), a process that SHOULD run the scheduler "
+        "(scheduler_enabled or full_auto) but loses the lock race raises during lifespan startup "
+        "instead of serving HTTP as a scheduler-less twin — uvicorn then exits non-zero and an "
+        "external watchdog can retry cleanly. False restores the old silent-twin behaviour.",
+    )
+    health_boot_grace_sec: float = Field(
+        default=180.0, ge=0,
+        description="Seconds after the SCHEDULER's own start (app.scheduler's `started_at`, not "
+        "process start — 2026-09-23 cross-check: a real boot spent ~135s of a process-start-"
+        "measured 180s grace before the scheduler even started, and flipping full_auto on hours "
+        "into an already-running process used to be judged against process uptime too, so it "
+        "could report cycle_never_ran/guard_never_ran instantly) during which /health never "
+        "reports those two reasons — the ordinary boot case (first cycle/guard pass not landed "
+        "yet). After this grace elapses, a scheduler that has started but never completed a pass "
+        "is reported as a real stall, not boot noise. Only applies while "
+        "app.scheduler.should_run() is true — see scheduler_not_running_grace_sec for the "
+        "'never started at all' case, measured from process start instead.",
+    )
+    scheduler_not_running_grace_sec: float = Field(
+        default=300.0, ge=0,
+        description="Seconds after PROCESS start (not scheduler start — there IS no scheduler "
+        "start timestamp when it never started) during which /health never reports "
+        "stall_reason='scheduler_not_running'. Deliberately larger than health_boot_grace_sec: "
+        "a real boot has been measured taking ~135-151s before the scheduler/HTTP bind lands, "
+        "and this is the ONLY grace guarding the split-brain symptom itself (lock lost, "
+        "scheduler never starts) — too short a bound here defeats the point of having one.",
+    )
+    outage_notice_min: float = Field(
+        default=45.0, ge=0,
+        description="Minutes of gap between process start and the newest audit_log row above "
+        "which lifespan startup writes an 'app_restarted_after_gap' audit entry and sends a risk "
+        "notification — the operator-visible trail the 2026-09-22 outage never left (the process "
+        "answered /health the whole time, so nothing flagged the 13.7h the scheduler was down). "
+        "Default is 3x the default scan_interval_min (15) — a clean restart between two ordinary "
+        "scheduler cycles must not itself read as an outage (measured: a 10min default alerted "
+        "on ~31%% of clean restarts against the 15min cycle cadence). 0 = always notify on "
+        "restart (even a clean one).",
+    )
     credential_alert_cooldown_min: float = Field(
         default=15.0, ge=0,
         description="Min minutes between repeated Telegram alerts for a persisting LIVE "
@@ -498,6 +542,18 @@ class Settings(BaseSettings):
     full_auto: bool = Field(
         default=False,
         description="Master switch: when on, scheduler + auto_trade + autoapprove run as one. Persisted via runtime_config.",
+    )
+    scheduler_operator_stopped: bool = Field(
+        default=False,
+        description="2026-09-23 cross-check: the dashboard's standalone Scheduler toggle "
+        "(POST /api/scheduler {enabled:false}) only ever called scheduler.stop(), which flips "
+        "scheduler_enabled in-memory but never touches full_auto — so with full_auto persisted "
+        "on, app.scheduler.should_run() (and therefore /health) still said 'should be running', "
+        "and an external watchdog restarted the app, silently undoing the operator's own stop. "
+        "This is the explicit override: once set, should_run() is False regardless of "
+        "scheduler_enabled/full_auto, until an equally explicit start (Scheduler back on, "
+        "full-auto back on, or /resume) clears it. Persisted via runtime_config (KEY_SCHEDULER_"
+        "STOPPED) so a restart also respects the operator's last word, not the automation flags.",
     )
     sl_pct: float = Field(default=8.0, description="KSS session stop-loss %% below avg price (0 = disabled).")
     trailing_pct: float = Field(default=3.0, description="KSS trailing-stop %% below peak once in profit (0 = disabled).")

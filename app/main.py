@@ -79,9 +79,82 @@ async def lifespan(app: FastAPI):
 
     # Start the scan loop when it is explicitly enabled OR when full-auto is active
     # (persisted via runtime_config or set in .env) — full-auto without a running
-    # scheduler would never scan, so the two must boot together.
-    if settings.scheduler_enabled or settings.full_auto:
-        scheduler.start()
+    # scheduler would never scan, so the two must boot together. scheduler.should_run() (not
+    # the raw flags) also honours an operator's own "Scheduler off" override, restored by
+    # runtime.sync_from_db above — a restart must not silently re-arm a scheduler the operator
+    # explicitly stopped just because full_auto is still persisted on (2026-09-23 cross-check).
+    if scheduler.should_run():
+        started = scheduler.start()
+        # 2026-09-22 split-brain outage: scheduler.start() returns False both when this
+        # process already runs the loop (harmless, is_running() True) and when ANOTHER
+        # process holds the singleton lock (scheduler.is_running() stays False). Only the
+        # second case is the outage: a process that should run the scheduler but lost the
+        # lock race used to fall through and serve :8001 anyway, with no scheduler at all,
+        # for as long as it stayed up (measured ~13.7h). Fail fast instead — refuse to
+        # finish startup, so uvicorn exits and an external watchdog can retry cleanly.
+        if not started and not scheduler.is_running():
+            reason = (
+                f"scheduler singleton lock (127.0.0.1:{settings.scheduler_lock_port}) is held "
+                "by another process while this process should run the scheduler — refusing to "
+                "serve as a scheduler-less twin (2026-09-22 split-brain outage)."
+            )
+            logging.getLogger("app.main").error(reason)
+            if settings.scheduler_lock_fail_fast:
+                try:
+                    from app import notify
+
+                    notify.event(
+                        "risk",
+                        "⚠️ Khởi động bị huỷ: không giành được khoá scheduler (một tiến trình "
+                        "khác đang giữ). Dừng lại thay vì chạy song sinh KHÔNG có scheduler.",
+                    )
+                except Exception:
+                    pass  # a best-effort alert must never block the fail-fast raise below
+                raise RuntimeError(reason)
+    # Outage-visibility notice: a process that answers /health can still have sat with a dead
+    # scheduler for hours (the 2026-09-22 incident) — the operator's only real signal is the
+    # gap between "now" and the last thing the app actually did. Never blocks startup: any
+    # failure here (DB not ready, notify down) is swallowed.
+    try:
+        from app.audit import log as audit_log
+        from app.models import AuditLog
+
+        gdb = SessionLocal()
+        try:
+            last = gdb.query(AuditLog).order_by(AuditLog.created_at.desc()).first()
+            now = utcnow()
+            gap_min = (now - last.created_at).total_seconds() / 60.0 if last else None
+            if gap_min is not None and gap_min > settings.outage_notice_min:
+                hours, minutes = divmod(int(round(gap_min)), 60)
+                audit_log(
+                    gdb, "system", "app_restarted_after_gap",
+                    gap_minutes=round(gap_min, 1), last_activity_at=last.created_at.isoformat(),
+                )
+                gdb.commit()
+                from app import notify, timefmt
+
+                # created_at is stored naive-UTC; shift to the configured display zone (Vietnam
+                # by default) before printing it in the alert — a UTC timestamp in a Vietnamese
+                # message read 7 hours off the actual outage window (2026-09-23 cross-check).
+                last_local = timefmt.to_local(last.created_at)
+                last_str = last_local.strftime("%H:%M %d/%m") if last_local else "?"
+                text = (
+                    f"App khởi động lại — sổ không hoạt động {hours} giờ {minutes} phút "
+                    f"(từ {last_str})."
+                )
+                # Fire-and-forget: notify.event does a synchronous HTTP POST (10s timeout) to
+                # Telegram/Discord — a slow or unreachable bot must never delay the rest of
+                # startup (ws feed, notify pollers, yielding control to serve traffic). Any
+                # failure inside the thread is already swallowed by notify.event itself.
+                import threading
+
+                threading.Thread(
+                    target=notify.event, args=("risk", text), daemon=True
+                ).start()
+        finally:
+            gdb.close()
+    except Exception:
+        logging.getLogger("app.main").exception("outage-gap notice failed (non-fatal)")
     if ws_feed_should_start():
         from app.data import ws_feed
 

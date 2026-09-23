@@ -41,6 +41,9 @@ KEY_CONSENSUS_WEIGHTS = "consensus_weights"  # S4: JSON dict of agent weights
 KEY_GROK_FAIL_MODE = "grok_scanner_fail_mode"  # S5: "open" | "closed"
 KEY_LIVE_TRADING = "live_trading"  # Phase 6: real-money master switch (default off)
 KEY_AUTO_TRADE = "auto_trade"  # explicit operator override; wins over full_auto's cascade (see sync_from_db)
+# 2026-09-23 cross-check: the operator's own "Scheduler off" override — see
+# app.scheduler.should_run() for why this exists separately from full_auto/scheduler_enabled.
+KEY_SCHEDULER_STOPPED = "scheduler_operator_stopped"
 # Capital-scale anchor (app/capital_scale.py) — bookkeeping, NOT a settings field, and
 # deliberately NOT a "kss:"-prefixed key: it is written by anchored_equity() itself (the one
 # write that module is allowed to make), never by a dashboard edit, so it does not belong in
@@ -188,6 +191,11 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "heartbeat_url": str,
     "placement_alert_after": int,
     "min_net_edge": float,
+    # 2026-09-22 split-brain outage: scheduler singleton lock fail-fast + health truthfulness.
+    "scheduler_lock_fail_fast": _to_bool,
+    "health_boot_grace_sec": float,
+    "scheduler_not_running_grace_sec": float,
+    "outage_notice_min": float,
     # Circuit-breaker: spare the ladder (measured 2026-09-21 — blocking rungs during a crash
     # makes drawdown worse) + the cash-starved-rung alert (app/orders.py: freeze_blocks,
     # _note_rung_starved).
@@ -266,6 +274,11 @@ def full_auto_on(db: Session) -> dict:
     # ON would otherwise boot into full-auto with auto-trade silently disarmed — the same defect
     # this key was added to fix, running backwards. The store must hold the LAST action taken.
     set_bool(db, KEY_AUTO_TRADE, True)
+    # Turning full-auto ON is an explicit, more authoritative start command — it must clear a
+    # standalone "Scheduler off" the operator clicked earlier, or should_run() would stay False
+    # (per that override) even though the operator just asked, in the loudest available way, for
+    # everything including the scheduler to run.
+    set_scheduler_operator_stopped(db, False)
     if _xai_key_present():
         grok_set(db, True)
         grok_scanner_set(db, True)
@@ -318,6 +331,17 @@ def set_autotrade(db: Session, enabled: bool) -> dict:
     settings.auto_trade = enabled
     set_bool(db, KEY_AUTO_TRADE, enabled)
     return state(db)
+
+
+def set_scheduler_operator_stopped(db: Session, stopped: bool) -> None:
+    """Persist the operator's own scheduler stop/start intent — the override bit
+    `app.scheduler.should_run()` checks. Set True by an explicit "Scheduler off" (POST
+    /api/scheduler {enabled:false}); cleared by an explicit start (Scheduler back on,
+    full-auto on, or /resume) — see full_auto_on, which also clears it. Never set/cleared by
+    scheduler.stop()/start() themselves, which run on process shutdown too and must not be
+    mistaken for an operator decision."""
+    settings.scheduler_operator_stopped = stopped
+    set_bool(db, KEY_SCHEDULER_STOPPED, stopped)
 
 
 def set_autoapprove(db: Session, *, enabled: bool, max_notional: float | None) -> None:
@@ -502,6 +526,12 @@ def sync_from_db(db: Session) -> None:
     on the settings singleton. Safe when the key is absent (defaults to no-op).
     Does not touch the scheduler — the caller manages the async loop.
     """
+    # The operator's own "Scheduler off" override (app.scheduler.should_run()) — restored FIRST
+    # and independent of the full_auto cascade below, so a restart also respects the operator's
+    # last word rather than silently re-arming the scheduler because full_auto is still on.
+    settings.scheduler_operator_stopped = get_bool(
+        db, KEY_SCHEDULER_STOPPED, default=settings.scheduler_operator_stopped
+    )
     # Full-auto may come from persisted state (the dashboard switch) OR from the
     # environment (FULL_AUTO=true in .env) — honour either, and cascade the same flags
     # full_auto_on() sets so a fresh boot behaves exactly like a clicked one.

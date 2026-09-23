@@ -455,6 +455,10 @@ def test_health_not_stalled_with_fresh_timestamps(client, monkeypatch):
 
     from app.clock import utcnow
 
+    # 2026-09-23 round-2 cross-check: without should_run() True this test passed trivially
+    # (every stall reason is gated on it, so stalled was False regardless of the fresh
+    # timestamps below actually being evaluated). Set it True so the assertion is meaningful.
+    monkeypatch.setattr(settings, "scheduler_enabled", True)
     now_ish = (utcnow() - timedelta(seconds=5)).isoformat()
     monkeypatch.setattr(scheduler, "status",
                          lambda: _health_status(last_cycle_at=now_ish, last_guard_at=now_ish))
@@ -469,6 +473,11 @@ def test_health_stalled_true_on_an_old_cycle_timestamp(client, monkeypatch):
 
     from app.clock import utcnow
 
+    # 2026-09-23 cross-check: every stall reason (including this pre-existing "ran once, then
+    # went quiet" one) is now gated on scheduler.should_run() — a deliberately stopped/never-on
+    # scheduler must never read stale timestamps as a fresh stall (see test_health_truth.py for
+    # that gating's own dedicated coverage).
+    monkeypatch.setattr(settings, "scheduler_enabled", True)
     monkeypatch.setattr(settings, "scan_interval_min", 15)  # threshold = max(3*15*60, 900) = 2700s
     old = (utcnow() - timedelta(seconds=2701)).isoformat()
     fresh = utcnow().isoformat()
@@ -485,6 +494,9 @@ def test_health_stalled_true_on_an_old_guard_timestamp(client, monkeypatch):
 
     from app.clock import utcnow
 
+    # 2026-09-23 cross-check: gated on scheduler.should_run() now — see the sibling cycle test
+    # above for why.
+    monkeypatch.setattr(settings, "scheduler_enabled", True)
     monkeypatch.setattr(settings, "kss_exit_check_sec", 90)  # threshold = max(10*90, 600) = 900s
     old = (utcnow() - timedelta(seconds=901)).isoformat()
     fresh = utcnow().isoformat()

@@ -114,8 +114,29 @@ def _seconds_ago(iso_ts: str | None) -> float | None:
         return None
     try:
         return (utcnow() - datetime.fromisoformat(iso_ts)).total_seconds()
-    except ValueError:
+    except (ValueError, TypeError):  # TypeError: an aware stamp vs naive utcnow() must not 500
         return None
+
+
+def _valid_since(ts: str | None, since: str | None) -> str | None:
+    """*ts* if it is at/after *since* (or *since* is absent) — else None, as if *ts* were never
+    set. Used so a last_cycle_at/last_guard_at left over from a PREVIOUS scheduler run (stop()
+    clears started_at but not these) is never mistaken for evidence THIS run ever completed a
+    pass — see health()'s 2026-09-23 round-2 cross-check note."""
+    if ts is None or since is None:
+        return ts
+    try:
+        return ts if datetime.fromisoformat(ts) >= datetime.fromisoformat(since) else None
+    except (ValueError, TypeError):  # TypeError: naive vs aware comparison
+        return ts
+
+
+# 2026-09-22 split-brain outage: recorded once, at module import (routes.py is imported once
+# per process, at lifespan/app-creation time) — the reference point `/health` uses to tell
+# "still booting" apart from "actually stalled". A process that answers HTTP with a scheduler
+# that never started, or that started but has never completed a first cycle/guard pass, looked
+# identical to a normal boot for `health_boot_grace_sec` seconds; past that it is a real stall.
+_PROCESS_STARTED_AT = utcnow()
 
 
 @api_router.get("/health")
@@ -135,15 +156,49 @@ def health():
     pass, so an OUTSIDE watchdog (data/ensure_live.ps1) can restart a wedged-but-not-crashed
     process. Deliberately does NOT change the HTTP status code — an external monitor parses the
     body, and a 500 here would make the watchdog kill a possibly-fine app (e.g. mid-restart,
-    before either loop has run its first pass — the boot case, never stalled)."""
+    before either loop has run its first pass — the boot case, never stalled).
+
+    2026-09-22 split-brain outage: a process that lost the scheduler singleton lock race
+    (app.scheduler._acquire_singleton_lock) bound :8001 anyway and served this endpoint for
+    ~13.7h with the scheduler simply never started — the check above only ever looked at
+    loops that HAD run at least once, so a loop that never started at all read as the same
+    "boot case, never stalled". `stall_reason` closes that gap.
+
+    2026-09-23 cross-check fixes: (1) EVERY stall reason is now gated on
+    `app.scheduler.should_run()` — an operator who deliberately stopped the scheduler (or never
+    turned it on) must never see stale cycle/guard timestamps reported as a fresh stall, and an
+    external watchdog must never "fix" a state the operator chose on purpose. (2) the
+    "never completed a first pass" grace (health_boot_grace_sec) is measured from the
+    SCHEDULER's own start time (app.scheduler.status()['started_at']), not process start — a
+    real boot has been measured spending well over half of a 180s process-start-measured grace
+    just getting the scheduler started, and flipping full_auto on hours into an already-running
+    process was judged against that same stale clock. The "never started AT ALL" case
+    (scheduler_not_running) has no scheduler-start timestamp to measure from, so it keeps its
+    own, larger, process-start-measured bound (scheduler_not_running_grace_sec).
+
+    2026-09-23 round-2 cross-check: last_cycle_at/last_guard_at survive a stop() (only
+    started_at is cleared), so a re-enable more than cycle_stall_after/guard_stall_after after
+    the PREVIOUS run instantly read the leftover stamp as "went quiet", not "hasn't run yet" —
+    see `_valid_since`, which discards a stamp older than the current started_at."""
+    should_run = scheduler.should_run()
     st = scheduler.status()
-    last_cycle_at = st["last_cycle_at"]
+    scheduler_started_at = st.get("started_at")
+    # 2026-09-23 round-2 cross-check: scheduler.stop() clears started_at but leaves
+    # last_cycle_at/last_guard_at exactly where the PREVIOUS run left them — so a re-enable
+    # (Scheduler back on, full-auto back on) more than cycle_stall_after/guard_stall_after
+    # after that previous run instantly read as "cycle_stalled"/"guard_stalled", and an
+    # external watchdog could kill the app in the middle of its first cycle after a legitimate
+    # restart. A stamp from before the CURRENT start() is not evidence this run ever completed
+    # a pass — treat it as if it were absent (the never-ran path, gated by its own start-based
+    # grace) rather than as a stale-but-real one.
+    last_cycle_at = _valid_since(st["last_cycle_at"], scheduler_started_at)
     # .get(): an older/partial test double for scheduler.status() may not carry this key yet.
-    last_guard_at = st.get("last_guard_at")
+    last_guard_at = _valid_since(st.get("last_guard_at"), scheduler_started_at)
     # kss_reconcile_interval_sec split: the guard's reconcile pass now has its own cadence,
     # decoupled from the exit check itself — surfaced the same way as guard_seconds_ago so an
     # operator/watchdog can see reconcile is still happening, just less often.
     last_reconcile_at = st.get("last_reconcile_at")
+    scheduler_running = bool(st["scheduler_running"])
     last_cycle_seconds_ago = _seconds_ago(last_cycle_at)
     guard_seconds_ago = _seconds_ago(last_guard_at)
     reconcile_seconds_ago = _seconds_ago(last_reconcile_at)
@@ -151,14 +206,51 @@ def health():
     guard_stall_after = max(10 * settings.kss_exit_check_sec, 600)
     cycle_stalled = last_cycle_seconds_ago is not None and last_cycle_seconds_ago > cycle_stall_after
     guard_stalled = guard_seconds_ago is not None and guard_seconds_ago > guard_stall_after
+
+    # 2026-09-22 split-brain outage / 2026-09-23 cross-check: past their respective graces, a
+    # scheduler that SHOULD be running but isn't (measured from PROCESS start — there is no
+    # scheduler-start timestamp when it never started) or whose loops have never completed a
+    # first pass (measured from the SCHEDULER's own start) is reported as stalled. NONE of this
+    # — including the older "ran once, then went quiet" checks below — applies when the
+    # scheduler is not supposed to be running at all: stale timestamps from a deliberately
+    # stopped scheduler are not a stall.
+    process_boot_elapsed = (utcnow() - _PROCESS_STARTED_AT).total_seconds()
+    past_not_running_grace = process_boot_elapsed > settings.scheduler_not_running_grace_sec
+    scheduler_boot_elapsed = _seconds_ago(scheduler_started_at)
+    past_never_ran_grace = (
+        scheduler_boot_elapsed is not None and scheduler_boot_elapsed > settings.health_boot_grace_sec
+    )
+    stall_reason: str | None = None
+    if should_run:
+        if not scheduler_running:
+            if past_not_running_grace:
+                stall_reason = "scheduler_not_running"
+        elif last_cycle_at is None:
+            if past_never_ran_grace:
+                stall_reason = "cycle_never_ran"
+        elif scheduler.guard_should_run() and last_guard_at is None:
+            if past_never_ran_grace:
+                stall_reason = "guard_never_ran"
+        if stall_reason is None:
+            if cycle_stalled:
+                stall_reason = "cycle_stalled"
+            elif guard_stalled:
+                stall_reason = "guard_stalled"
+
     return {
         "status": "ok",
-        "scheduler_running": st["scheduler_running"],
+        "scheduler_running": scheduler_running,
+        # Exposed so an external watchdog can tell "the operator stopped it on purpose" (should
+        # run: false) apart from "it should be running and isn't" — see live_watchdog.py's
+        # is_confirmed_started, which no longer waits out the full startup timeout for a
+        # scheduler nobody wants running (2026-09-23 round-2 cross-check).
+        "should_run": should_run,
         "last_cycle_at": last_cycle_at,
         "last_cycle_seconds_ago": last_cycle_seconds_ago,
         "guard_seconds_ago": guard_seconds_ago,
         "reconcile_seconds_ago": reconcile_seconds_ago,
-        "stalled": bool(cycle_stalled or guard_stalled),
+        "stalled": stall_reason is not None,
+        "stall_reason": stall_reason,
         "credentials_ok": execution.credentials_ok(),
     }
 
@@ -599,6 +691,11 @@ class KssSettingsBody(BaseModel):
     heartbeat_url: str | None = None
     placement_alert_after: int | None = Field(None, ge=1)
     min_net_edge: float | None = Field(None, ge=0, le=10)
+    # 2026-09-22 split-brain outage: scheduler singleton lock fail-fast + health truthfulness.
+    scheduler_lock_fail_fast: bool | None = None
+    health_boot_grace_sec: float | None = Field(None, ge=0, le=3600)
+    scheduler_not_running_grace_sec: float | None = Field(None, ge=0, le=3600)
+    outage_notice_min: float | None = Field(None, ge=0, le=1440)
     # Circuit-breaker: spare the ladder + the cash-starved-rung alert (app/orders.py).
     breaker_blocks_ladder_rungs: bool | None = None
     rung_starved_alert_min: float | None = Field(None, ge=1)
@@ -871,14 +968,23 @@ def scheduler_state():
 
 
 @api_router.post("/api/scheduler", dependencies=[Depends(require_api_key)])
-async def set_scheduler(body: SchedulerBody):
-    """Start/stop the background scan+manage loop for this process (runs on the event loop)."""
+async def set_scheduler(body: SchedulerBody, db: Session = Depends(get_db)):
+    """Start/stop the background scan+manage loop for this process (runs on the event loop).
+
+    2026-09-23 cross-check: this is the ONE control that can stop the scheduler while leaving
+    full_auto on (the dashboard's standalone Scheduler toggle, independent of Full-auto) — so an
+    explicit stop here must persist the operator-stopped override (app.scheduler.should_run()),
+    or /health keeps reporting "should be running" from full_auto alone and an external
+    watchdog restarts the app, undoing this exact click. An explicit start clears it again.
+    """
     if body.interval_min:
         settings.scan_interval_min = body.interval_min
     if body.enabled:
+        runtime.set_scheduler_operator_stopped(db, False)
         scheduler.start()
     else:
         scheduler.stop()
+        runtime.set_scheduler_operator_stopped(db, True)
     return scheduler_state()
 
 

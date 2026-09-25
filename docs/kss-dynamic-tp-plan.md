@@ -12,6 +12,22 @@ floored at `max(fee_floor, avg×(1+kss_trail_lock_pct))` (default +2%) so a wide
 it back at break-even. Trade-off (accepted by the user): between entry and the arm point a reversal
 falls to the hard SL (a loss) — "let it run" and "never lose even fees" are mathematically opposed.
 
+**Revision 5 (2026-09-25): Runner mode (`kss_arm_at_tp`, default OFF).** XPL sold at its fixed TP
+(+6.2%) and ran to +22.6%. Two gaps let a runner go: (a) Ride & Trail's pre-arm zone gives up the
+fixed TP's profit when a reversal comes before `+arm%`, and (b) the spike-grab ceiling `SL×(1+gap)`
+sits BELOW the price once the trail is wider than the gap (ATR ≳ 5% at gap 5) — it sold a steady
+runner at ~+7%. Runner mode: the session's OWN TP (`estimated_tp_price`) ARMS the trail instead of
+selling. Below TP nothing changes (no arm, no sell — a fixed TP could not have sold there either), so
+the mode adds no path that ends in a loss. Once armed: SL ≥ `max(fee_floor, avg + kss_trail_lock_tp_ratio×(TP−avg))`
+(default half the TP gain) and ≥ `avg + kss_trail_keep_pct%×(peak−avg)` (default 60% of the peak
+gain); the ceiling is `max(SL×(1+gap), peak×(1+gap))` — it only grabs a real jump above the
+high-water mark. pyramid_up keeps its own BE+ stop (excluded). Worst case vs fixed TP: a reversal
+right after TP books the lock (≈ half the TP gain) instead of the full TP — a smaller profit, never a
+loss (modulo gap slippage, §9). Also: on live maker (1.5), `sync_resting_tp` no longer rests a
+fixed-TP LIMIT for a session the dynamic exit governs (it filled on the venue before the trail could
+run), and a dynamic MARKET `:tp` exit is no longer mistaken for a resting TP. Tests:
+`tests/app/test_runner_mode.py`.
+
 Upgrade the KSS exit from a single fixed take-profit (`avg×(1+tp%)`) into a **wave-stepped
 trailing channel** that activates once a session has a *real* profit: the stop-loss ratchets UP
 through wave-grid levels (always above a fee-safe floor), a floating take-profit rides `gap%` above

@@ -65,3 +65,6 @@ no access to `d:\`, and its egress proxy blocks `binance.com` / `testnet.binance
 can write code, run the offline test suite, and push — it cannot run the testnet harnesses or
 drive the live instance. Anything that must reach the exchange, or touch the real worktrees,
 belongs in a **local session** on the trading machine.
+
+Checks a cloud session could not do itself are queued in **`docs/plan/local-checks.md`** — a
+local session works through that file first.

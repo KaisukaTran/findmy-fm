@@ -115,6 +115,15 @@
     <input name="kss_trail_arm_pct" type="number" step="0.5" min="0" value="{{ '%.1f'|format(k.kss_trail_arm_pct) }}"></label>
   <label title="Khi đã arm, SL không bao giờ khoá ÍT hơn %này (floor = max(fee_floor, avg×(1+%này))) → trail ATR rộng không kéo SL về break-even. Nên < arm%.">Khoá lãi tối thiểu % <span class="varname">kss_trail_lock_pct</span>
     <input name="kss_trail_lock_pct" type="number" step="0.5" min="0" value="{{ '%.1f'|format(k.kss_trail_lock_pct) }}"></label>
+  <label title="Runner mode (cần bật Dynamic TP): chạm TP của session thì ARM trailing thay vì bán hết → coin chạy tiếp sau TP không bị chốt sớm. Dưới TP không đổi gì (DCA + hard SL như TP cố định); đã arm thì mọi lệnh thoát tự động ≥ phần lãi khoá bên dưới → không bao giờ lỗ. Thay thế arm%/khoá% ở trên cho session.">TP kích hoạt trailing <span class="varname">kss_arm_at_tp</span>
+    <select name="kss_arm_at_tp" class="select-inline">
+      <option value="1" {% if k.kss_arm_at_tp %}selected{% endif %}>Bật</option>
+      <option value="0" {% if not k.kss_arm_at_tp %}selected{% endif %}>Tắt</option>
+    </select></label>
+  <label title="Runner mode: đã arm tại TP thì SL khoá ít nhất tỉ lệ này của lãi TP (floor = avg + tỉ lệ × (TP − avg), không dưới fee floor). 0.5 = đảo chiều ngay sau TP vẫn giữ nửa lãi TP. Phải < 1.">Khoá tỉ lệ lãi TP <span class="varname">kss_trail_lock_tp_ratio</span>
+    <input name="kss_trail_lock_tp_ratio" type="number" step="0.05" min="0" max="0.95" value="{{ '%.2f'|format(k.kss_trail_lock_tp_ratio) }}"></label>
+  <label title="Runner mode: SL giữ ít nhất % này của lãi ĐỈNH (floor = avg + %này × (đỉnh − avg)). Lãi nhỏ thì chặt, lãi lớn thì rộng → trail ATR rộng không nhả phần lớn một cú +20%. 0 = tắt.">Giữ % lãi đỉnh <span class="varname">kss_trail_keep_pct</span>
+    <input name="kss_trail_keep_pct" type="number" step="5" min="0" max="95" value="{{ '%.0f'|format(k.kss_trail_keep_pct) }}"></label>
   <label title="Chu kỳ (giây) vòng guard nhẹ kiểm exit session ĐANG MỞ bằng ticker, tách khỏi scan 30 phút. Nhỏ = cửa sổ gap hẹp hơn.">Guard kiểm exit (giây) <span class="varname">kss_exit_check_sec</span>
     <input name="kss_exit_check_sec" type="number" step="1" min="5" value="{{ k.kss_exit_check_sec }}"></label>
   <label title="Crash-detect: nếu một lần guard thấy giá rớt > % này so với lần quan sát trước VÀ giá ≤ SL → bán market NGAY (chặn chảy máu trên gap). 0 = tắt.">Crash-detect % <span class="varname">kss_crash_drop_pct</span>

@@ -472,6 +472,10 @@ class KssSettingsBody(BaseModel):
     kss_trail_min_pct: float | None = Field(None, ge=0, le=50)
     kss_trail_arm_pct: float | None = Field(None, ge=0, le=100)
     kss_trail_lock_pct: float | None = Field(None, ge=0, le=100)
+    kss_arm_at_tp: bool | None = None
+    # < 1 / < 100 keeps the armed stop strictly below the price it arms at (no instant exit).
+    kss_trail_lock_tp_ratio: float | None = Field(None, ge=0, le=0.95)
+    kss_trail_keep_pct: float | None = Field(None, ge=0, le=95)
     kss_exit_check_sec: int | None = Field(None, ge=5, le=3600)
     kss_crash_drop_pct: float | None = Field(None, ge=0, le=100)
     kss_live_stop_orders: bool | None = None

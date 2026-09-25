@@ -100,6 +100,9 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "kss_trail_min_pct": float,
     "kss_trail_arm_pct": float,
     "kss_trail_lock_pct": float,
+    "kss_arm_at_tp": _to_bool,  # runner mode: the session TP arms the trail instead of selling
+    "kss_trail_lock_tp_ratio": float,
+    "kss_trail_keep_pct": float,
     "kss_exit_check_sec": int,
     "kss_crash_drop_pct": float,
     "kss_live_stop_orders": _to_bool,

@@ -1259,6 +1259,25 @@ def _queue_dynamic_exit(db: Session, row: KssSession, kind: str, price: float) -
     _cancel_pending_waves(db, row.id)  # closing → cancel any stale DCA orders (no late orphan fills)
 
 
+def _runner_tp_price(row: KssSession) -> float:
+    """The session TP that ARMS the trail in runner mode (``kss_arm_at_tp``), or 0.0 to keep Ride &
+    Trail. pyramid_up is excluded: it arms its own break-even-plus stop on an add, often below half
+    the TP gain, and a runner lock floor above the price would stop it out on the next tick."""
+    from app.config import settings
+
+    if not settings.kss_arm_at_tp or row.strategy_mode == "pyramid_up":
+        return 0.0
+    return _to_pyramid(row).estimated_tp_price
+
+
+def _dynamic_exit_governs(row: KssSession) -> bool:
+    """True when ``_evaluate_dynamic_exit`` owns this session's in-profit exit, so a fixed
+    take-profit resting on the exchange would sell it before the trail ever could."""
+    from app.config import settings
+
+    return bool(settings.kss_dynamic_tp_enabled or row.trail_active)
+
+
 def _evaluate_dynamic_exit(db: Session, row: KssSession, price: float) -> bool:
     """Ride & Trail dynamic exit (docs/kss-dynamic-tp-plan.md). Returns True when it TOOK OVER this
     tick (so the caller skips the frozen TP/stop for this session), False to leave it on the frozen
@@ -1282,6 +1301,7 @@ def _evaluate_dynamic_exit(db: Session, row: KssSession, price: float) -> bool:
     if row.total_filled_qty <= 0 or row.avg_price <= 0:
         return False
     avg, d = row.avg_price, row.distance_pct
+    tp_price = _runner_tp_price(row)  # 0.0 → Ride & Trail; else the session TP arms the trail
 
     if not row.trail_active:
         if price <= avg:
@@ -1292,22 +1312,25 @@ def _evaluate_dynamic_exit(db: Session, row: KssSession, price: float) -> bool:
         # stale peak while price was +0.4% → stopped at +0.23%). Arming on current price guarantees
         # price ≥ arm > lock floor at arm, so the SL sits below price (no immediate sub-floor stop).
         if dynamic_exit.should_arm(market=price, avg=avg, filled_qty=row.total_filled_qty,
-                                   trail_active=False):
+                                   trail_active=False, tp_price=tp_price):
             _cancel_pending_waves(db, row.id)  # committing to trail-up → drop the DCA ladder
             row.peak_price = price             # trail starts at the arm point (discard stale high-water)
             td = dynamic_exit.trail_distance_pct(_session_atr_pct(row.symbol))
             sl = dynamic_exit.compute_sl(peak=price, avg=avg, distance_pct=d, trail_dist_pct=td,
-                                         prev_sl=0.0)
+                                         prev_sl=0.0, tp_price=tp_price)
             row.trail_active = True
             row.trail_dist_pct = td
             row.trail_sl_price = sl
-            tp = dynamic_exit.compute_tp(sl=sl, avg=avg)
+            tp = dynamic_exit.compute_tp(sl=sl, avg=avg, peak=price, tp_price=tp_price)
+            arm_pct = ((dynamic_exit.arm_threshold(avg, tp_price) / avg - 1) * 100
+                       if tp_price else settings.kss_trail_arm_pct)
             audit.log(db, "scheduler", "dyn_tp_armed", entity=f"kss:{row.id}", symbol=row.symbol,
                       price=round(price, 8), sl=round(sl, 8), tp=round(tp, 8),
-                      trail_dist=round(td, 3), arm_pct=settings.kss_trail_arm_pct)
+                      trail_dist=round(td, 3), arm_pct=round(arm_pct, 3),
+                      mode="runner" if tp_price else "ride")
             from app import notify
-            notify.event("trade", f"📈 {row.symbol} → trailing-TP (armed +{settings.kss_trail_arm_pct:g}%): "
-                                  f"avg={avg:g} SL={sl:g} TP={tp:g}")
+            notify.event("trade", f"📈 {row.symbol} → trailing-TP (armed +{arm_pct:.2f}%"
+                                  f"{' at TP' if tp_price else ''}): avg={avg:g} SL={sl:g} TP={tp:g}")
             return True  # armed; no exit on the arm tick
         # riding (in profit, < arm): suppress the fixed TP so a runner isn't capped, and keep riding.
         # If price falls back ≤ avg, next tick returns False → the frozen hard SL + DCA take over
@@ -1322,7 +1345,8 @@ def _evaluate_dynamic_exit(db: Session, row: KssSession, price: float) -> bool:
     # is still cut by the hard-SL floor so a deferred trail can't bleed to the deadline.
     carried_sl = row.trail_sl_price
     if carried_sl > 0:
-        carried_tp = dynamic_exit.compute_tp(sl=carried_sl, avg=avg)
+        carried_tp = dynamic_exit.compute_tp(sl=carried_sl, avg=avg, peak=row.peak_price,
+                                             tp_price=tp_price)
         if price >= carried_tp:
             if _tp_clears_cost(db, row.symbol, price):
                 _queue_dynamic_exit(db, row, "tp", price)
@@ -1341,7 +1365,8 @@ def _evaluate_dynamic_exit(db: Session, row: KssSession, price: float) -> bool:
                 return True
     peak = max(row.peak_price, price)
     td = dynamic_exit.trail_distance_pct(_session_atr_pct(row.symbol))
-    sl = dynamic_exit.compute_sl(peak=peak, avg=avg, distance_pct=d, trail_dist_pct=td, prev_sl=carried_sl)
+    sl = dynamic_exit.compute_sl(peak=peak, avg=avg, distance_pct=d, trail_dist_pct=td, prev_sl=carried_sl,
+                                 tp_price=tp_price)
     row.peak_price = peak
     row.trail_dist_pct = td
     row.trail_sl_price = sl
@@ -1684,13 +1709,16 @@ def _k2_floor_price(db: Session, symbol: str) -> float:
 
 
 def _resting_tp_rows(db: Session) -> list[PendingOrder]:
-    """Every queued take-profit order (one per session at most)."""
+    """Every queued resting take-profit order (one per session at most). LIMIT only: a dynamic
+    channel's spike-grab exit shares the ``:tp`` ref but is a MARKET sell of a session that is no
+    longer ACTIVE — mistaking it for a resting TP would reject the very exit that closes it."""
     return (
         db.query(PendingOrder)
         .filter(
             PendingOrder.status == models.PENDING,
             PendingOrder.source == "kss",
             PendingOrder.source_ref.like("pyramid:%:tp"),
+            PendingOrder.order_type == "LIMIT",
         )
         .all()
     )
@@ -1716,6 +1744,11 @@ def sync_resting_tp(db: Session) -> dict:
 
     live_sessions: set[int] = set()
     for row in db.query(KssSession).filter(KssSession.status == SESSION_ACTIVE).all():
+        if _dynamic_exit_governs(row):
+            # The trail owns this exit: a limit at the fixed TP would fill on the venue first and
+            # cap the runner (the XPL case: sold at +6.2%, ran to +22.6%). Not adding it to
+            # live_sessions takes any TP already resting off the book below.
+            continue
         py = _to_pyramid(row)
         qty = py.total_filled_qty
         price = max(py.estimated_tp_price, _k2_floor_price(db, row.symbol))
@@ -1859,7 +1892,7 @@ def run_position_guard(db: Session) -> dict:
         # protective one. Force-filling it here would pull it off the book and re-place it —
         # churn at best, an orphaned live order at worst — and it is not what this guard is for.
         # Risk exits (sl / trailing / deadline / crash) are MARKET and still fill immediately.
-        if resting and str(o.source_ref).endswith(":tp"):
+        if resting and str(o.source_ref).endswith(":tp") and o.order_type == "LIMIT":
             continue
         try:
             orders.approve_order(db, o.id, reviewer="guard")

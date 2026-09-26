@@ -44,3 +44,6 @@ data/research/studies/
 
 # Manual-restart marker written by scripts/restart_live.ps1, read by scripts/live_watchdog.py
 data/restart_in_progress
+
+# Kline caches written by the runner-exit studies (re-fetchable from Binance)
+docs/runner-exit-*/cache/

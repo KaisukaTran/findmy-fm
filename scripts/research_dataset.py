@@ -284,25 +284,35 @@ def cmd_symbols(args) -> int:
     return 0
 
 
-def _do_klines(sym: str, months: list[str], interval: str) -> tuple[str, list[tuple], list[str]]:
-    rows: list[tuple] = []
-    done: list[str] = []
-    offered = set(months_available(sym, interval))
-    for mon in [m for m in months if m in offered]:
-        url = f"{BASE}/data/spot/monthly/klines/{sym}/{interval}/{sym}-{interval}-{mon}.zip"
-        text = fetch_zip(url)
-        if text is None:
-            continue                     # not listed yet, or not published
-        parsed = parse_kline_csv(text)
-        rows += [(sym, interval, *r) for r in parsed]
-        done.append(mon)
-    return sym, rows, done
+def _do_klines_one_month(sym: str, mon: str, interval: str) -> tuple[str, str, list[tuple] | None]:
+    """One (symbol, month) unit of work — bounds a single task's row list to ~one month's worth
+    (~43k rows for 1m) instead of a whole symbol's multi-year history. `cmd_klines` submits one
+    of these per part so memory stays flat regardless of how many months a symbol has; a
+    per-symbol task list (the original shape, still used nowhere now) OOM'd a 33GB box pulling
+    ~2.5 years of 1m data for 61 symbols (2026-09-26 incident)."""
+    url = f"{BASE}/data/spot/monthly/klines/{sym}/{interval}/{sym}-{interval}-{mon}.zip"
+    text = fetch_zip(url)
+    if text is None:
+        # 404, checksum mismatch, unreadable zip, or retries exhausted — NOT "loaded". Returning
+        # None keeps the part out of `parts` so the next run retries it (the pre-change code only
+        # ever recorded months that downloaded; recording failures silently froze holes, incl.
+        # the not-yet-published current month that `--end` defaults to).
+        return sym, mon, None
+    parsed = parse_kline_csv(text)
+    return sym, mon, [(sym, interval, *r) for r in parsed]
 
 
 def cmd_klines(args) -> int:
     db = connect(Path(args.out))
     months = month_range(args.start, args.end)
-    syms = sorted(s for s in archive_symbols() if is_study_symbol(s, args.quote))
+    if args.symbols:
+        # Exact list requested (e.g. reproducing another study's symbol sample) — skip the
+        # full-archive S3 listing entirely; a month that does not exist for a symbol simply
+        # 404s per-part below (data, not an error — see the module docstring).
+        syms = sorted({s.strip().upper() for s in args.symbols.split(",") if s.strip()})
+        print(f"explicit symbol list: {len(syms)} symbols")
+    else:
+        syms = sorted(s for s in archive_symbols() if is_study_symbol(s, args.quote))
     if args.like_universe:
         # Alphabetical truncation is not a universe. An hourly rebuild has to cover the coins
         # the live scanner would actually see, so rank by the median quote volume already in
@@ -321,23 +331,32 @@ def cmd_klines(args) -> int:
     todo = {s: m for s, m in todo.items() if m}
     print(f"{len(syms)} symbols x {len(months)} months; {sum(len(m) for m in todo.values())} parts to fetch")
 
-    done_syms = 0
+    # One task PER (symbol, month) — not per symbol — so a single in-flight task's row list is
+    # bounded to ~one month (~43k rows for 1m) instead of a whole multi-year history. Building
+    # a task per symbol OOM'd a 33GB box pulling 2.5 years of 1m data for 61 symbols
+    # (2026-09-26): with WORKERS threads all resolving large symbols at once, the accumulated
+    # in-flight row lists (plus SQLite's own WAL buffering) exceeded available RAM.
+    month_units: list[tuple[str, str]] = [(s, m) for s, ms in todo.items() for m in ms]
+    n_parts = len(month_units)
+    done_count = 0
     with futures.ThreadPoolExecutor(max_workers=WORKERS) as pool:
-        jobs = {pool.submit(_do_klines, s, m, args.interval): s for s, m in todo.items()}
+        jobs = {pool.submit(_do_klines_one_month, s, m, args.interval): (s, m)
+                for s, m in month_units}
         for fut in futures.as_completed(jobs):
-            sym, rows, done = fut.result()
-            if rows:
-                db.executemany(
-                    "INSERT OR IGNORE INTO candles(symbol,interval,ts,open,high,low,close,"
-                    "volume,quote_volume,trades) VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
-            db.executemany(
-                "INSERT OR REPLACE INTO parts(kind,symbol,part,rows,loaded_at) VALUES (?,?,?,?,?)",
-                [(f"klines:{args.interval}", sym, m, 0, datetime.now(timezone.utc).isoformat())
-                 for m in done])
-            db.commit()
-            done_syms += 1
-            if done_syms % 25 == 0:
-                print(f"  {done_syms}/{len(todo)} symbols")
+            sym, mon, rows = fut.result()
+            if rows is not None:
+                if rows:
+                    db.executemany(
+                        "INSERT OR IGNORE INTO candles(symbol,interval,ts,open,high,low,close,"
+                        "volume,quote_volume,trades) VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
+                db.execute(
+                    "INSERT OR REPLACE INTO parts(kind,symbol,part,rows,loaded_at) VALUES (?,?,?,?,?)",
+                    (f"klines:{args.interval}", sym, mon, len(rows),
+                     datetime.now(timezone.utc).isoformat()))
+                db.commit()
+            done_count += 1
+            if done_count % 200 == 0 or done_count == n_parts:
+                print(f"  {done_count}/{n_parts} parts ({time.time():.0f})")
 
     n, first, last = db.execute(
         "SELECT COUNT(*), MIN(ts), MAX(ts) FROM candles WHERE interval=?", (args.interval,)).fetchone()
@@ -413,6 +432,9 @@ def main(argv: list[str] | None = None) -> int:
     k.add_argument("--end", default=datetime.now(timezone.utc).strftime("%Y-%m"))
     k.add_argument("--interval", default="1d")
     k.add_argument("--limit", type=int, default=0, help="first N symbols (smoke test)")
+    k.add_argument("--symbols", default="",
+                   help="comma list of exact symbols to fetch (bypasses the archive-wide "
+                        "S3 listing and --quote/leveraged-token filtering)")
     k.add_argument("--like-universe", type=int, default=0,
                    help="top N symbols by 2025+ quote volume from the daily table, i.e. the "
                         "coins the live scanner would actually see")

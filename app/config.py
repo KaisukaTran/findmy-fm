@@ -207,6 +207,26 @@ class Settings(BaseSettings):
         "statistic over a handful of symbols is noise — the session-depth version of this rule "
         "was abandoned for exactly that reason (a $5,000 book holds a median of 2 sessions).",
     )
+
+    # --- runner-shadow (app/kss/runner_shadow.py) — SHADOW, compute-only measurement ----------
+    # Owner-approved 2026-09-26. Never places, cancels or modifies an order: it only logs what
+    # two alternative exits WOULD have earned against every real KSS take-profit fill, on the
+    # already-warm WS price stream. Structurally cannot affect the trading path — see the
+    # module docstring.
+    runner_shadow_enabled: bool = Field(
+        default=True,
+        description="Log a SHADOW measurement (never an order) of two alternative exits — a "
+        "trailing stop instead of the TP sale, and a small runner bought after it — against "
+        "every real KSS take-profit fill. Compute-only; safe to leave on.",
+    )
+    runner_shadow_slip_pct: float = Field(
+        default=0.1,
+        ge=0,
+        le=5,
+        description="Simulated slippage %% applied to a shadow exit/entry fill (mirrors "
+        "`slippage_pct`'s role in the real paper engine, kept separate so this measurement-only "
+        "feature can never be changed by editing a real execution knob).",
+    )
     crash_alert_cooldown_min: float = Field(
         default=180.0,
         ge=0,

@@ -96,6 +96,15 @@ def get_summary(db: Session = Depends(get_db)):
     return service.summary(db)
 
 
+@router.get("/runner-shadow")
+def get_runner_shadow(db: Session = Depends(get_db)):
+    """SHADOW, compute-only measurement (app.kss.runner_shadow): per variant×gap aggregates plus
+    the most recent rows. Read-only — never places, cancels or modifies an order."""
+    from app.kss import runner_shadow
+
+    return runner_shadow.summary(db)
+
+
 @router.get("/sessions/{session_id}")
 def get_session(session_id: int, db: Session = Depends(get_db)):
     try:

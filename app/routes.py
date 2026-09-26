@@ -708,6 +708,9 @@ class KssSettingsBody(BaseModel):
     asset_guard_denylist: str | None = None
     asset_guard_refresh_min: int | None = Field(None, ge=1, le=1440)
     asset_guard_max_stale_h: float | None = Field(None, ge=1, le=720)
+    # Runner-shadow (app/kss/runner_shadow.py) — SHADOW, compute-only measurement only.
+    runner_shadow_enabled: bool | None = None
+    runner_shadow_slip_pct: float | None = Field(None, ge=0, le=5)
 
 
 @api_router.get("/api/kss-settings")
@@ -1407,6 +1410,17 @@ def api_losses(db: Session = Depends(get_db)):
 def partial_losses(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         "partials/losses.html", {"request": request, "L": portfolio.loss_analysis(db)}
+    )
+
+
+@ui_router.get("/partials/runner-shadow", response_class=HTMLResponse)
+def partial_runner_shadow(request: Request, db: Session = Depends(get_db)):
+    """SHADOW, compute-only measurement table (app.kss.runner_shadow) — never places, cancels or
+    modifies an order. See the module docstring."""
+    from app.kss import runner_shadow
+
+    return templates.TemplateResponse(
+        "partials/runner_shadow.html", {"request": request, "S": runner_shadow.summary(db)}
     )
 
 

@@ -1,0 +1,69 @@
+{% set variant_label = {'v4a': 'Không bán, dùng lệnh dừng', 'v5': 'Bán như thật, mua lại (runner)'} %}
+{% set state_badge = {'watch': '', 'runner': 'ml-on', 'closed': 'veto', 'skipped': 'muted'} %}
+{% set state_label = {'watch': 'đang theo dõi', 'runner': 'đang giữ runner', 'closed': 'đã đóng', 'skipped': 'bỏ qua'} %}
+<h3 class="section-subhead" data-tip="Chỉ đo lường, KHÔNG BAO GIỜ đặt/huỷ/sửa lệnh thật — so sánh lãi/lỗ của TP thật với hai cách thoát khác trên cùng dữ liệu giá.">Theo dõi thả nổi (chỉ tính, không đặt lệnh)</h3>
+{% if S.buckets %}
+<div class="scroll mb-14"><table class="tbl">
+  <thead><tr>
+    <th>Biến thể</th>
+    <th>Gap</th>
+    <th title="Số dòng đã có kết quả cuối cùng (đóng theo lệnh dừng hoặc theo hạn).">Đã đóng</th>
+    <th title="Số dòng còn đang theo dõi giá.">Đang mở</th>
+    <th title="Số dòng không mua runner (giá dưới TP hoặc TP thật đã lỗ).">Bỏ qua</th>
+    <th title="Tổng chênh lệch $ so với bán TP thật, trên các dòng đã đóng.">Tổng chênh $</th>
+    <th title="Chênh lệch $ trung bình mỗi dòng đã đóng.">TB chênh $</th>
+    <th title="Tỷ lệ dòng đã đóng có kết quả TỆ HƠN bán TP thật.">% thua TP</th>
+    <th title="Chênh lệch $ thấp nhất trong các dòng đã đóng.">Tệ nhất $</th>
+    <th title="Chênh lệch $ cao nhất trong các dòng đã đóng.">Tốt nhất $</th>
+    <th title="Chênh lệch $ ước tính nếu chốt các dòng đang mở ngay tại giá quan sát gần nhất — chưa thực, chỉ tham khảo.">Đang mở (ước tính) $</th>
+  </tr></thead>
+  <tbody>
+    {% for b in S.buckets %}
+    <tr>
+      <td>{{ variant_label.get(b.variant, b.variant) }}</td>
+      <td>{{ b.gap_pct | round(0, 'floor') | int }}%</td>
+      <td>{{ b.n_closed }}</td>
+      <td>{{ b.n_open }}</td>
+      <td class="muted">{{ b.n_skipped }}</td>
+      <td class="{{ 'pos' if b.sum_diff_usd >= 0 else 'neg' }}">${{ "%.2f"|format(b.sum_diff_usd) }}</td>
+      <td class="{{ 'pos' if b.mean_diff_usd >= 0 else 'neg' }}">${{ "%.2f"|format(b.mean_diff_usd) }}</td>
+      <td>{{ "%.0f"|format(b.pct_worse_than_v0) }}%</td>
+      <td class="neg">${{ "%.2f"|format(b.worst_usd) }}</td>
+      <td class="pos">${{ "%.2f"|format(b.best_usd) }}</td>
+      <td class="{{ 'pos' if b.open_mtm_sum_usd >= 0 else 'neg' }} muted">${{ "%.2f"|format(b.open_mtm_sum_usd) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table></div>
+
+<details>
+  <summary>Các dòng gần nhất ({{ S.recent | length }})</summary>
+  {% if S.recent %}
+  <div class="scroll mt-8"><table class="tbl">
+    <thead><tr>
+      <th>Cặp</th><th>Biến thể</th><th>Gap</th><th>Trạng thái</th>
+      <th title="Giá TP thật đã bán.">Giá TP</th>
+      <th title="Lãi/lỗ đã chốt thật của lệnh TP.">Lãi TP $</th>
+      <th title="Chênh lệch $ nếu đã đóng, hoặc ước tính nếu còn mở.">Chênh $</th>
+      <th title="Kết quả nếu dùng cách thoát này thay vì TP thật.">Kết quả ước $</th>
+      <th title="Khoảng cách lớn nhất giữa hai lần quan sát giá liên tiếp — số lớn nghĩa là app từng gián đoạn.">Gián đoạn lớn nhất</th>
+    </tr></thead>
+    <tbody>
+      {% for r in S.recent %}
+      <tr>
+        <td>{{ r.symbol }}</td>
+        <td>{{ variant_label.get(r.variant, r.variant) }}</td>
+        <td>{{ r.gap_pct | round(0, 'floor') | int }}%</td>
+        <td><span class="badge {{ state_badge.get(r.state, '') }}">{{ state_label.get(r.state, r.state) }}</span></td>
+        <td class="muted">{{ "%.6g"|format(r.tp_price) }}</td>
+        <td class="{{ 'pos' if r.v0_net >= 0 else 'neg' }}">${{ "%.2f"|format(r.v0_net) }}</td>
+        <td class="{{ 'pos' if r.diff_est_usd >= 0 else 'neg' }}">${{ "%.2f"|format(r.diff_est_usd) }}</td>
+        <td class="{{ 'pos' if r.net_est_usd >= 0 else 'neg' }}">${{ "%.2f"|format(r.net_est_usd) }}</td>
+        <td class="muted">{{ r.max_gap_sec | round(0) | int }}s</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted">Chưa có dữ liệu.</p>{% endif %}
+</details>
+{% else %}<p class="muted">Chưa có dữ liệu.</p>{% endif %}

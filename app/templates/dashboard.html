@@ -125,6 +125,9 @@
         <h2>Phân tích lỗ — nguyên nhân / thời gian / giá trị / cặp</h2>
         <div hx-get="/partials/losses" hx-trigger="tab-shown from:closest [data-tab-panel], every 30s, refresh-losses from:body" hx-swap="innerHTML"></div>
       </div>
+      <div class="panel mt-16">
+        <div class="scroll" hx-get="/partials/runner-shadow" hx-trigger="tab-shown from:closest [data-tab-panel], every 30s" hx-swap="innerHTML"></div>
+      </div>
     </div>
 
     <!-- TAB: Lịch P&L (PnL Calendar) — realized PnL by day/week/month -->

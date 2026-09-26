@@ -210,6 +210,9 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "asset_guard_denylist": str,
     "asset_guard_refresh_min": int,
     "asset_guard_max_stale_h": float,
+    # Runner-shadow (app/kss/runner_shadow.py) — SHADOW, compute-only measurement only.
+    "runner_shadow_enabled": _to_bool,
+    "runner_shadow_slip_pct": float,
 }
 
 # ---------------------------------------------------------------------------

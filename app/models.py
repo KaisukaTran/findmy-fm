@@ -307,6 +307,71 @@ class KssWave(Base):
     session: Mapped[KssSession] = relationship(back_populates="waves")
 
 
+class RunnerShadow(Base):
+    """SHADOW, compute-only measurement row (app.kss.runner_shadow) — what an alternative exit
+    WOULD have earned against one real KSS take-profit fill. Never read by any order path; purely
+    for after-the-fact comparison. Six rows per TP fill: variant in {v4a, v5} x gap in {2,3,5}%."""
+
+    __tablename__ = "runner_shadow"
+    __table_args__ = (
+        UniqueConstraint("fill_id", "variant", "gap_pct", name="uq_runner_shadow_fill_variant_gap"),
+        Index("ix_runner_shadow_state", "state"),
+        Index("ix_runner_shadow_symbol", "symbol"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    fill_id: Mapped[int] = mapped_column(ForeignKey("fills.id"), nullable=False)
+    session_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    variant: Mapped[str] = mapped_column(String(8), nullable=False)  # "v4a" | "v5"
+    gap_pct: Mapped[float] = mapped_column(Float, nullable=False)
+
+    avg_price: Mapped[float] = mapped_column(Float, nullable=False)
+    qty: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    tp_price: Mapped[float] = mapped_column(Float, nullable=False)
+    v0_net: Mapped[float] = mapped_column(Float, nullable=False)
+    v0_proceeds: Mapped[float] = mapped_column(Float, nullable=False)
+
+    opened_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    decision_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    deadline_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    state: Mapped[str] = mapped_column(String(8), nullable=False, default="watch")
+    peak: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    stop: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    entry_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    runner_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+    exit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    exit_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    exit_reason: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    diff_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    net_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+    last_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    max_gap_sec: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "fill_id": self.fill_id, "session_id": self.session_id,
+            "symbol": self.symbol, "variant": self.variant, "gap_pct": self.gap_pct,
+            "avg_price": self.avg_price, "qty": self.qty, "tp_price": self.tp_price,
+            "v0_net": self.v0_net, "v0_proceeds": self.v0_proceeds,
+            "opened_at": self.opened_at.isoformat() if self.opened_at else None,
+            "decision_at": self.decision_at.isoformat() if self.decision_at else None,
+            "deadline_at": self.deadline_at.isoformat() if self.deadline_at else None,
+            "state": self.state, "peak": self.peak, "stop": self.stop,
+            "entry_price": self.entry_price, "runner_usd": self.runner_usd,
+            "exit_price": self.exit_price,
+            "exit_at": self.exit_at.isoformat() if self.exit_at else None,
+            "exit_reason": self.exit_reason, "diff_usd": self.diff_usd, "net_usd": self.net_usd,
+            "last_price": self.last_price,
+            "last_seen_at": self.last_seen_at.isoformat() if self.last_seen_at else None,
+            "max_gap_sec": self.max_gap_sec,
+        }
+
+
 # --- scanner / multi-agent audit ----------------------------------------
 
 

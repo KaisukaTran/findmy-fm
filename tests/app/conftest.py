@@ -64,6 +64,7 @@ _MUTABLE_SETTINGS = (
     "asset_guard_denylist",
     "scheduler_lock_fail_fast", "health_boot_grace_sec", "outage_notice_min",
     "scheduler_not_running_grace_sec", "scheduler_operator_stopped",
+    "runner_shadow_enabled", "runner_shadow_slip_pct",
 )
 
 

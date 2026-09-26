@@ -567,6 +567,28 @@ def fast_exit_should_run() -> bool:
     return settings.kss_fast_exit_sec > 0
 
 
+def _runner_shadow_once(db: Session) -> None:
+    """SHADOW, compute-only measurement pass (app.kss.runner_shadow) — logs what two alternative
+    exits WOULD have earned against every real KSS take-profit fill; never places, cancels or
+    modifies an order. Gated on ``runner_shadow_enabled``; while OFF it drops the watermark so
+    re-enabling re-seeds it to "now" (a TP that filled while the shadow was off was never
+    observed live and must not be back-filled). Run via ``_runner_shadow_tick`` — its OWN
+    session, never under ``_work_lock``."""
+    from app.kss import runner_shadow
+
+    if not settings.runner_shadow_enabled:
+        runner_shadow.forget_watermark(db)
+        return
+
+    runner_shadow.sync_new_tp_fills(db)
+    symbols = runner_shadow.open_symbols(db)
+    if not symbols:
+        return
+    from app.market import cached_prices
+
+    runner_shadow.tick(db, cached_prices(symbols), utcnow())
+
+
 def _fast_exit_once() -> None:
     """One fast-exit tick. Skips — no DB session opened, no writes — when ``_work_lock`` is
     already held by the 30-min cycle or the 90s guard: a second concurrent writer on the same
@@ -585,6 +607,28 @@ def _fast_exit_once() -> None:
         _work_lock.release()
 
 
+def _runner_shadow_tick() -> None:
+    """One runner-shadow pass on its OWN session, AFTER ``_work_lock`` is released. Both are
+    deliberate: the 90s guard and the 30-min cycle acquire ``_work_lock`` BLOCKING, so any shadow
+    time under it would delay them directly; and sharing the exit's session would let a shadow
+    ``commit()`` persist exit-path work that was left uncommitted (e.g. an ``approve_order`` that
+    raised mid-way) — work ``db.close()`` would otherwise have discarded. Never raises."""
+    db = SessionLocal()
+    try:
+        _runner_shadow_once(db)
+    except Exception:  # SHADOW only — must never reach the loop, let alone an exit
+        logger.exception("runner-shadow tick failed")  # close() below rolls back
+    finally:
+        db.close()
+
+
+def _fast_exit_pass() -> None:
+    """The fast loop's unit of work: the real exit tick (under ``_work_lock``), THEN the
+    measurement-only shadow (outside it, own session)."""
+    _fast_exit_once()
+    _runner_shadow_tick()
+
+
 async def _fast_exit_loop() -> None:
     """Fast take-profit loop (task 1.11): while the WS price feed is fresh, re-checks
     profitable/armed sessions every ``kss_fast_exit_sec`` instead of waiting for the 90s guard.
@@ -593,7 +637,7 @@ async def _fast_exit_loop() -> None:
     while True:
         try:
             if fast_exit_should_run():
-                await asyncio.to_thread(_fast_exit_once)
+                await asyncio.to_thread(_fast_exit_pass)
         except Exception:  # a bad tick must not kill the loop
             logger.exception("fast-exit tick failed")
         await asyncio.sleep(max(settings.kss_fast_exit_sec, 1.0))

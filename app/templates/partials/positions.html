@@ -34,8 +34,8 @@
     <tr>
       <td>{{ r.symbol }}</td>
       <td class="num" data-k="pos:{{ r.symbol }}:qty" data-v="{{ "%.8f"|format(r.quantity or 0) }}">{{ r.quantity | qty }}</td>
-      <td class="num">{{ r.avg_entry_price | money }}</td>
-      <td class="num" data-k="pos:{{ r.symbol }}:price" data-v="{{ "%.8f"|format(r.current_price or 0) }}">{{ r.current_price | money }}</td>
+      <td class="num">{{ r.avg_entry_price | price }}</td>
+      <td class="num" data-k="pos:{{ r.symbol }}:price" data-v="{{ "%.8f"|format(r.current_price or 0) }}">{{ r.current_price | price }}</td>
       <td class="num" data-k="pos:{{ r.symbol }}:value" data-v="{{ "%.8f"|format(r.market_value or 0) }}">${{ r.market_value | money_kmb }} <span class="muted fs-11">{{ "%.1f"|format(r.market_value_pct) }}%</span></td>
       <td class="num {{ 'pos' if r.unrealized_pnl >= 0 else 'neg' }}" data-k="pos:{{ r.symbol }}:upnl" data-v="{{ "%.8f"|format(r.unrealized_pnl or 0) }}">
         ${{ r.unrealized_pnl | money_kmb }} ({{ "%.1f"|format(r.unrealized_pnl_pct) }}%)

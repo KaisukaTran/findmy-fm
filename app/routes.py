@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import math
 from datetime import datetime
 from pathlib import Path
 
@@ -79,6 +80,21 @@ def _money_kmb(v) -> str:
 
 
 templates.env.filters["money_kmb"] = _money_kmb
+
+
+def _price(v) -> str:
+    """A coin PRICE: 2dp from 100 up, 4dp from 1, and 4 significant digits below 1 — `money`
+    rendered PUMP at 0.00482 as "0.00" and BABY at 0.01407 as "0.01"."""
+    n = float(v or 0)
+    a = abs(n)
+    if a == 0 or a >= 100:
+        return f"{n:,.2f}"
+    if a >= 1:
+        return f"{n:,.4f}"
+    return f"{n:.{3 - math.floor(math.log10(a))}f}"
+
+
+templates.env.filters["price"] = _price
 templates.env.filters["qty"] = lambda v: f"{float(v or 0):,.6f}"
 templates.env.filters["ladder"] = charts.pyramid_ladder_svg  # session dict -> SVG
 # Display timezone: stored UTC -> local (Vietnam GMT+7) HH:MM:SS / full datetime.

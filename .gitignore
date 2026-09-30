@@ -50,3 +50,6 @@ docs/runner-exit-*/cache/
 # Per-seed grid dumps of the capital-utilization study (15 MB; regenerate with scripts/capital_utilization_grid.py)
 docs/capital-utilization-2026-09-28/results.json
 docs/capital-utilization-2026-09-28/results_verified.json
+# Pre-fix draft of the cash-floor study (lookahead + double-counted release $); superseded by verify_*.json
+docs/cash-floor-release-2026-09-28/results.json
+docs/cash-floor-release-2026-09-28/results_sens.json

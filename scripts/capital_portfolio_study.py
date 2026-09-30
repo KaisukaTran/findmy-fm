@@ -187,6 +187,43 @@ class Config:
     # every BUY is trimmed so cash never drops below this % of the owner's equity (live
     # `cash_floor_pct` = 20 with capital scaling on). 0 = off (byte-identical to earlier runs).
     cash_floor_pct: float = 0.0
+
+    # --- cash-floor release policies (2026-09-28b, docs/cash-floor-release-2026-09-28/) ---
+    # Today NOTHING ever spends the floor: it only blocks a BUY and fires `rung_starved`. These
+    # knobs let a DCA rung (never wave 0 -- that gate is untouched, see run_portfolio Step 2)
+    # spend BELOW the floor, down to `(1 - floor_release_frac_pct/100) * floor`, when a rung at
+    # or past `floor_release_min_wave` would otherwise starve. `floor_release_trigger` == "" is
+    # OFF (byte-identical to every earlier run) -- this is the ONE switch that must be truthy for
+    # any of the rest of this block to do anything.
+    floor_release_trigger: str = ""  # "" | "starved" | "crash"
+    floor_release_min_wave: int = 1  # K: only a rung at or past this 1-based wave index qualifies
+    floor_release_frac_pct: float = 0.0  # R: % of the floor that may be spent into (0 = no extra room)
+    # The crash trigger mirrors app.crash_watch.breadth(): share of symbols ALIVE on the bar (this
+    # engine's whole loaded universe restricted to symbols with a candle that day -- see
+    # `universe_breadth(..., lookback=1)`, which reduces to exactly that definition) whose bar
+    # traded this %% below the PREVIOUS bar's high, for at least this %% breadth. Stays "active"
+    # for `floor_release_crash_window_days` after the day it last fired (a fresh firing while
+    # already active extends the window rather than stacking a second one).
+    floor_release_crash_drop_pct: float = 20.0
+    floor_release_crash_breadth_pct: float = 60.0
+    floor_release_crash_window_days: float = 3.0
+    # 2026-09-28c (verification): bars of lag between the bar whose breadth fires the trigger and
+    # the first bar it may release on. The breadth of bar t needs bar t's own low AND every
+    # symbol's bar t, i.e. it is only known at the close; a rung that fills intraday on bar t
+    # cannot have used it. 1 = honest (default). 0 = the first draft's same-bar lookahead,
+    # kept only to reproduce those numbers. Shared by policy A/crash and B/crash_only.
+    floor_release_crash_lag_bars: int = 1
+    # Policy B (manual/Telegram release): 0 = policy A (release is immediate, same bar). > 0
+    # turns a would-be release into a REQUEST that only fills `floor_release_manual_delay_days`
+    # later, and only if the rung's price is still touched that day (limit semantics: bar low <=
+    # rung price; fill at the rung price or the bar's open if it gapped below -- `_fill_price`,
+    # the same rule every other fill in this engine uses). `floor_release_manual_owner` picks the
+    # approval behaviour: "always" approves every request; "crash_only" approves only while the
+    # CRASH trigger above is active on the decision day (independent of `floor_release_trigger`,
+    # which for policy B is always conceptually "starved").
+    floor_release_manual_delay_days: float = 0.0  # D: 0 = off = policy A
+    floor_release_manual_owner: str = "always"  # "always" | "crash_only"
+
     seed: int = 7
 
     def label(self) -> str:
@@ -206,6 +243,7 @@ class SessionState:
         "unit_qty", "fill_qty", "fill_prices", "next_rung", "deployed_usd", "fund",
         "mae_pct", "armed", "floor", "peak", "eff_tp_at_arm", "rungs_starved", "rungs_partial",
         "last_close", "capital_days_acc", "prev_ts", "open_month", "halt_credit_days",
+        "pending_release", "last_starved_rung",
     )
 
     def __init__(self, symbol: str, candles: list[dict], start: int, cfg: Config,
@@ -241,6 +279,12 @@ class SessionState:
         self.prev_ts = self.entry_ts
         self.open_month = ""
         self.halt_credit_days = 0.0  # wall-clock days spent under a halt, refunded to the deadline
+        # Policy B only: {"rung": int, "decide_ts": int} while a manual floor-release request
+        # for the currently-due rung is pending owner approval. None otherwise.
+        self.pending_release: dict | None = None
+        # 2026-09-28c: the rung index last counted as a DISTINCT starve (a starved rung is
+        # retried every bar it stays touched; `rungs_starved` counts every retry).
+        self.last_starved_rung = -1
 
 
 class Ledger:
@@ -275,6 +319,22 @@ class Ledger:
         # Backstopped rung cost this bar that own cash above the floor could not pay YET. It is
         # settled by `settle_backstop` only after every session's exits for the bar are credited.
         self.bar_debt = 0.0
+        # --- cash-floor release policies (2026-09-28b) ---
+        self.floor_release_usd_total = 0.0  # $ actually spent from BELOW the normal floor
+        self.floor_release_events = 0       # rung fills (full or partial) that dipped below it
+        self.manual_requests_sent = 0
+        self.manual_requests_approved = 0       # approved AND the price was still touched AND cash sufficed
+        self.manual_requests_denied = 0         # owner did not approve on the decision day
+        self.manual_requests_missed_price = 0   # approved, but price had rebounded above the rung
+        self.manual_requests_missed_cash = 0    # approved and touched, but even the release fell short
+        self.crash_release_active_until_ts = 0  # crash trigger (shared by A/crash and B/crash_only)
+        self.crash_release_episodes = 0         # distinct firings (inactive -> active transitions)
+        self.crash_release_active_days = 0      # bars where the crash trigger was active
+        self.crash_release_fired_dates: list[str] = []
+        # 2026-09-28c: distinct (session, rung) starves and their cost at the FIRST starve --
+        # `rungs_starved_total` / `starved_usd_total` count every daily retry of the same rung.
+        self.starved_rungs_distinct = 0
+        self.starved_distinct_usd = 0.0
 
 
 def _waves_touched(state: SessionState) -> int:
@@ -364,6 +424,81 @@ def repay_backstop(ledger: Ledger, open_sessions: dict, cfg: Config) -> float:
         ledger.cash -= repay
         ledger.external_outstanding -= repay
     return repay
+
+
+def _release_active(cfg: Config, ledger: Ledger, ts: int) -> bool:
+    """Policy A's trigger gate: whether a floor release is currently allowed for an eligible
+    rung. "starved" has no separate condition -- being starved at/past `floor_release_min_wave`
+    IS the trigger. "crash" additionally requires the crash-breadth signal to be active."""
+    if cfg.floor_release_trigger == "starved":
+        return True
+    if cfg.floor_release_trigger == "crash":
+        return ts <= ledger.crash_release_active_until_ts
+    return False
+
+
+def _owner_approves(cfg: Config, ledger: Ledger, ts: int) -> bool:
+    """Policy B's approval behaviour, judged on the DECISION day (D days after the request)."""
+    if cfg.floor_release_manual_owner == "crash_only":
+        return ts <= ledger.crash_release_active_until_ts
+    return True  # "always"
+
+
+def _record_release(ledger: Ledger, pre_cash: float, spent: float) -> None:
+    """Credit `ledger.floor_release_usd_total`/`floor_release_events` for whatever part of
+    `spent` came from BELOW the normal (unreleased) floor. A no-op whenever the fill never
+    touched the release room (eff_floor == ledger.floor), so it is safe to call unconditionally."""
+    # Capped at `spent` (2026-09-28c): when the book is ALREADY below the floor (an earlier
+    # release, or the floor re-sized upward on equity), only this fill's own dollars count --
+    # the uncapped first draft re-counted the carried deficit on every later fill.
+    dipped = min(spent, max(0.0, ledger.floor - (pre_cash - spent)))
+    if dipped > 1e-9:
+        ledger.floor_release_usd_total += dipped
+        ledger.floor_release_events += 1
+
+
+def _resolve_pending_release(state: SessionState, bar: dict, cfg: Config, ledger: Ledger
+                             ) -> tuple[str | None, float]:
+    """Policy B: settle a pending manual-release request once its decision day arrives.
+
+    Denied, or approved-but-the-rung's-price-no-longer-touched-that-day (the owner's D-day-later
+    lag let the market recover first), or approved-and-touched-but-even-the-release-room-can't-
+    afford-it are all counted and the request simply lapses -- the rung stays due and may starve
+    (and request) again later, exactly like any other starved rung. Returns
+    ``(event, event_usd)`` for a fill, else ``(None, 0.0)``.
+    """
+    req = state.pending_release
+    if req is None or bar["ts"] < req["decide_ts"]:
+        return None, 0.0
+    state.pending_release = None
+    n = req["rung"]
+    if n != state.next_rung:
+        return None, 0.0  # already resolved another way (e.g. cash freed up naturally) — moot
+    if not _owner_approves(cfg, ledger, bar["ts"]):
+        ledger.manual_requests_denied += 1
+        return None, 0.0
+    target = state.targets[n]
+    if bar["low"] > target:
+        ledger.manual_requests_missed_price += 1
+        return None, 0.0
+    bar_open = bar.get("open", bar["close"])
+    price = _fill_price(target, bar_open)
+    full_qty = (n + 1) * state.unit_qty
+    full_cost = full_qty * price
+    eff_floor = ledger.floor * (1 - cfg.floor_release_frac_pct / 100.0)
+    avail = ledger.cash - eff_floor
+    if avail < full_cost:
+        ledger.manual_requests_missed_cash += 1
+        return None, 0.0
+    pre_cash = ledger.cash
+    ledger.cash -= full_cost
+    state.fill_qty[n] = full_qty
+    state.fill_prices[n] = price
+    state.deployed_usd += full_cost
+    state.next_rung += 1
+    ledger.manual_requests_approved += 1
+    _record_release(ledger, pre_cash, full_cost)
+    return "released_manual", round(full_cost, 6)
 
 
 def _sizing_equity(equity_curve: list[dict], capital: float) -> float:
@@ -556,6 +691,16 @@ def step_session(state: SessionState, bar: dict, idx: int, cfg: Config, ledger: 
                 state.peak = bar["high"]
                 state.eff_tp_at_arm = _eff_tp(cfg, k)
 
+    # Policy B (manual release): settle a pending owner-approval request BEFORE today's normal
+    # rung-fill pass, since its decision day may not be a day the rung's target is even touched
+    # (a rebound would exit the `while` below's own condition before ever being counted as
+    # "missed"). Guarded by `not state.armed` for the same reason the fill loop is: an armed
+    # (trailing) session never buys more.
+    if not state.armed and cfg.floor_release_manual_delay_days > 0 and state.pending_release is not None:
+        rel_event, rel_usd = _resolve_pending_release(state, bar, cfg, ledger)
+        if rel_event is not None:
+            event, event_usd = rel_event, rel_usd
+
     # Fill deeper rungs whose target the bar traded through. THIS is the new part: a fill only
     # happens if the ledger can afford it (full or, with --partial-last-rung, whatever cash
     # remains). A starved/partial rung STOPS the loop for this bar (cash is now known to be
@@ -577,13 +722,24 @@ def step_session(state: SessionState, bar: dict, idx: int, cfg: Config, ledger: 
             break
         # Spendable cash = cash above the hard floor (app.orders._apply_cash_cap). With the
         # floor at 0 (default) this is exactly `ledger.cash` — the parity path is untouched.
-        avail = ledger.cash - ledger.floor
+        # Cash-floor release (2026-09-28b, policy A only — B never releases inline, see above):
+        # an eligible, trigger-active rung may spend down to a LOWERED effective floor instead.
+        # `eff_floor == ledger.floor` whenever release is off/ineligible/inactive, so every branch
+        # below is byte-identical to the pre-release code in that case.
+        eff_floor = ledger.floor
+        if (cfg.floor_release_trigger and cfg.floor_release_manual_delay_days <= 0
+                and n >= cfg.floor_release_min_wave
+                and _release_active(cfg, ledger, bar["ts"])):
+            eff_floor = ledger.floor * (1 - cfg.floor_release_frac_pct / 100.0)
+        avail = ledger.cash - eff_floor
         if avail >= full_cost:
+            pre_cash = ledger.cash
             ledger.cash -= full_cost
             state.fill_qty[n] = full_qty
             state.fill_prices[n] = price
             state.deployed_usd += full_cost
             state.next_rung += 1
+            _record_release(ledger, pre_cash, full_cost)
         elif cfg.backstop:
             # The rung fills in FULL (the whole point of this mode). Own cash above the floor
             # pays what it can now; the rest becomes `bar_debt`, which `settle_backstop` pays
@@ -600,6 +756,7 @@ def step_session(state: SessionState, bar: dict, idx: int, cfg: Config, ledger: 
         elif cfg.partial_last_rung and avail > 0 and avail >= min(cfg.wave0_floor, full_cost):
             # Production trims to the cash above the floor and refuses a slice below
             # `scan_min_notional` (== wave0_floor here) outright (orders.py:162-166).
+            pre_cash = ledger.cash
             spent = avail
             got_qty = spent / price
             ledger.cash -= spent
@@ -610,11 +767,26 @@ def step_session(state: SessionState, bar: dict, idx: int, cfg: Config, ledger: 
             state.rungs_partial += 1
             event = "partial"
             event_usd = round(full_cost - spent, 6)
+            _record_release(ledger, pre_cash, spent)
             break  # cash is now exhausted; no further rung can fill this bar
         else:
             state.rungs_starved += 1
             event = "starved"
             event_usd = round(full_cost, 6)
+            if state.last_starved_rung != n:
+                state.last_starved_rung = n
+                ledger.starved_rungs_distinct += 1
+                ledger.starved_distinct_usd += full_cost
+            # Policy B: an eligible rung with no request already in flight raises one instead of
+            # just starving silently. It still starves TODAY (the pointer does not move) — the
+            # fill, if any, happens on the decision day above, D days from now.
+            if (cfg.floor_release_manual_delay_days > 0 and state.pending_release is None
+                    and n >= cfg.floor_release_min_wave):
+                state.pending_release = {
+                    "rung": n,
+                    "decide_ts": bar["ts"] + int(round(cfg.floor_release_manual_delay_days * _MS_PER_DAY)),
+                }
+                ledger.manual_requests_sent += 1
             break  # leave the ladder where it is — retried next bar if cash frees up
 
     avg = _avg_price(state)
@@ -677,6 +849,23 @@ def _date_str(ts: int) -> str:
     return datetime.fromtimestamp(ts / 1000, timezone.utc).strftime("%Y-%m-%d")
 
 
+def _detect_bars_per_day(all_ts: list[int]) -> float:
+    """How many bars make up one calendar day, from the data's own spacing. 1.0 for daily bars
+    (every `brake_universe_lookback`/crash-release "1 bar" call site was written assuming this),
+    ~24.0 for hourly. Uses the median of the first 200 gaps so one delisted/relisted symbol's
+    missing month cannot skew it; falls back to 1.0 (the pre-2026-09-29 assumption) if there are
+    fewer than 2 timestamps to compare."""
+    if len(all_ts) < 2:
+        return 1.0
+    gaps = sorted(b - a for a, b in zip(all_ts[:201], all_ts[1:201], strict=False) if b > a)
+    if not gaps:
+        return 1.0
+    typical = gaps[len(gaps) // 2]
+    if typical <= 0:
+        return 1.0
+    return max(1.0, round(_MS_PER_DAY / typical, 6))
+
+
 def _max_drawdown_pct(equities: list[float]) -> float:
     """Worst peak-to-trough decline over a daily equity curve, as a POSITIVE percentage."""
     peak = float("-inf")
@@ -722,13 +911,19 @@ def universe_breadth(series: dict[str, list[dict]], drop_pct: float, lookback: i
 
 def run_portfolio(series: dict[str, list[dict]], cfg: Config,
                    since_ts: int | None = None, until_ts: int | None = None,
-                   breadth: dict[int, float] | None = None) -> dict:
+                   breadth: dict[int, float] | None = None,
+                   listing_ts: dict[str, int] | None = None) -> dict:
     """One full day-by-day replay for one (capital, gate, bound) combination.
 
     `series` holds each symbol's FULL candle history (so `--warmup` counts real prior bars, not
     bars-since-window-start) but only timestamps inside [since_ts, until_ts] are iterated — a
     session opened near the end of the window simply never sees bars past `until_ts` and is
     reported as still open, never folded into realized wins/losses (see module docstring).
+
+    `listing_ts` (hourly-or-finer bars only): symbol -> its real first-trade ts (e.g. MIN(ts) of
+    the 1d table). On such bars `cfg.warmup` is a listing age in CALENDAR DAYS measured from it
+    (falling back to the symbol's first bar in `series`). Ignored on daily bars, where `warmup`
+    stays a bar count -- byte-identical to every run before 2026-09-29.
     """
     ts_index: dict[str, dict[int, int]] = {
         sym: {c["ts"]: i for i, c in enumerate(bars)} for sym, bars in series.items()
@@ -752,17 +947,60 @@ def run_portfolio(series: dict[str, list[dict]], cfg: Config,
     # per session once `wave0_pct` makes wave0 track compounding equity.
     ladder_cost = full_ladder_cost(cfg.distance_pct, cfg.max_waves, cfg.wave0_usd)
 
+    # Bars-per-day, detected from the data itself: 1 for daily bars (byte-identical to every
+    # run before 2026-09-29), ~24 for hourly. Anything expressed as "N bars" against a DAILY
+    # assumption (the universe-breadth brake's lookback, the crash-release trigger's "previous
+    # bar" == "previous day") must be scaled by this or it silently shrinks to N hours on an
+    # hourly dataset. Anything already expressed in ms/days (`_MS_PER_DAY` arithmetic) needs no
+    # change here; it was already bar-duration-generic.
+    bars_per_day = _detect_bars_per_day(all_ts)
+    # Warmup (2026-09-29 verification): written as "24 bars" == 24 DAYS of listing age on daily
+    # data (production's own gate is scanner._MIN_CANDLES = 30 DAILY candles). On hourly bars a
+    # bar count would shrink it to 24 hours and let a coin in the day after it lists, so there
+    # it becomes calendar days since listing. Daily keeps the bar count (byte-identical).
+    warm_first_ts: dict[str, int] | None = None
+    if bars_per_day > 1.0:
+        warm_first_ts = {
+            sym: (listing_ts or {}).get(sym, bars[0]["ts"]) for sym, bars in series.items() if bars
+        }
+    warm_ms = cfg.warmup * _MS_PER_DAY
+
     uni_on = cfg.brake_universe_drop_pct > 0 and cfg.brake_universe_breadth_pct > 0
     if uni_on and breadth is None:
         breadth = universe_breadth(series, cfg.brake_universe_drop_pct,
-                                   cfg.brake_universe_lookback)
+                                   round(cfg.brake_universe_lookback * bars_per_day))
     brake_on = cfg.brake_halt_breadth_pct > 0 and cfg.brake_halt_depth_frac > 0
     warn_depth = math.ceil(cfg.brake_warn_depth_frac * cfg.max_waves)
     halt_depth = math.ceil(cfg.brake_halt_depth_frac * cfg.max_waves)
 
+    # Cash-floor release (2026-09-28b): the "crash" trigger — needed either when policy A's own
+    # trigger is "crash", or when policy B's approver is "crash_only". Reuses `universe_breadth`
+    # with lookback == one calendar day of bars (1 on daily data, byte-identical to the old
+    # hardcoded `lookback=1`; ~24 on hourly), which reduces to app.crash_watch.breadth()'s own
+    # definition (this bar vs the PREVIOUS DAY's high) computed over every symbol alive that day
+    # (this engine's whole loaded universe, not the scanner's top-100 — see the report's
+    # assumptions).
+    release_crash_needed = cfg.floor_release_trigger == "crash" or (
+        cfg.floor_release_manual_delay_days > 0 and cfg.floor_release_manual_owner == "crash_only")
+    release_breadth = (
+        universe_breadth(series, cfg.floor_release_crash_drop_pct,
+                         lookback=round(bars_per_day))
+        if release_crash_needed else None
+    )
+
+    prev_bar_ts: int | None = None
+    last_open_date: str | None = None
+    new_today = 0
     for ts in all_ts:
         date = _date_str(ts)
         month = date[:7]
+        if date != last_open_date:
+            # `max_new_per_day` is a CALENDAR-DAY budget. On daily bars every bar starts a new
+            # date, so this resets exactly as often as the pre-2026-09-29 code (which reset it
+            # unconditionally each bar) did — byte-identical there. On hourly bars this is the
+            # fix: without it, up to `max_new_per_day` sessions could open in a single HOUR.
+            new_today = 0
+            last_open_date = date
 
         # --- Step 0: the crash brake, judged on the state the PREVIOUS bar left behind. ---
         # The lag is real, not a modelling shortcut: no brake can know a candle's depth before
@@ -793,6 +1031,23 @@ def run_portfolio(series: dict[str, list[dict]], cfg: Config,
                 ledger.halt_until_ts = ts + int(cfg.brake_resume_days * _MS_PER_DAY)
             if ledger.halted:
                 ledger.halt_bars += 1
+
+        # --- Step 0b: the cash-floor release crash trigger (independent of the brake above —
+        # the brake halts buying; this only widens the floor). A fresh firing while already
+        # active EXTENDS the window rather than stacking a second one. ---
+        if release_crash_needed:
+            # Lag (2026-09-28c): with lag 1 today's release may only use the breadth of the
+            # PREVIOUS bar, which was complete at its close; lag 0 = same-bar lookahead.
+            sig_ts = ts if cfg.floor_release_crash_lag_bars <= 0 else prev_bar_ts
+            wide = release_breadth.get(sig_ts, 0.0) if sig_ts is not None else 0.0
+            if wide >= cfg.floor_release_crash_breadth_pct:
+                if ts > ledger.crash_release_active_until_ts:
+                    ledger.crash_release_episodes += 1
+                    ledger.crash_release_fired_dates.append(date)
+                ledger.crash_release_active_until_ts = ts + int(round(
+                    cfg.floor_release_crash_window_days * _MS_PER_DAY))
+            if ts <= ledger.crash_release_active_until_ts:
+                ledger.crash_release_active_days += 1
 
         # The hard cash floor for today's buys, from yesterday's own unit-NAV (the live floor is
         # scaled off anchored equity the same way; 0 when cash_floor_pct is off).
@@ -854,10 +1109,11 @@ def run_portfolio(series: dict[str, list[dict]], cfg: Config,
         else:
             candidates = [
                 sym for sym, idx_map in ts_index.items()
-                if sym not in open_sessions and ts in idx_map and idx_map[ts] >= cfg.warmup
+                if sym not in open_sessions and ts in idx_map and (
+                    idx_map[ts] >= cfg.warmup if warm_first_ts is None
+                    else ts - warm_first_ts[sym] >= warm_ms)
             ]
         rng.shuffle(candidates)
-        new_today = 0
         # RESERVE-GATE budget: byte-for-byte app.scanner._can_open — (100-equity_backup_pct)%
         # of mark-to-market equity (the PREVIOUS bar's, the same lag `wave0_pct` already uses;
         # a scan cannot know today's still-unresolved candle either), minus every OPEN session's
@@ -926,9 +1182,28 @@ def run_portfolio(series: dict[str, list[dict]], cfg: Config,
             "external_outstanding": round(ledger.external_outstanding, 2),
             "utilization_pct": round(utilization_pct, 4),
             "own_utilization_pct": round(own_utilization_pct, 4),
+            "floor": round(ledger.floor, 2),
         })
+        prev_bar_ts = ts
 
-    return _build_report(cfg, ledger, open_sessions, equity_curve, monthly, closed_log, ladder_cost)
+    # Every report metric below (CAGR, drawdown, yearly returns, utilization/normal-day shares,
+    # window stats) is defined against ONE ROW PER CALENDAR DAY. On daily bars `equity_curve` IS
+    # that series already (one row per bar == one row per day), so this is a no-op and every
+    # pre-2026-09-29 result is byte-identical. On hourly bars `equity_curve` has ~24 rows per
+    # day; collapsing to the LAST bar of each day (the day's close, same convention the existing
+    # `by_month_equity` "last write per month" already used) keeps every day-denominated metric
+    # comparable across interval, while `equity_curve` itself (unused below) still reflects the
+    # full intrabar path for anyone who wants it later.
+    equity_daily: list[dict] = []
+    seen_date = None
+    for row in equity_curve:
+        if row["date"] != seen_date:
+            equity_daily.append(row)
+            seen_date = row["date"]
+        else:
+            equity_daily[-1] = row
+
+    return _build_report(cfg, ledger, open_sessions, equity_daily, monthly, closed_log, ladder_cost)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1090,6 +1365,19 @@ def _build_report(cfg: Config, ledger: Ledger, open_sessions: dict[str, SessionS
         "brake_rungs_blocked": ledger.rungs_blocked,
         "brake_blocked_usd": round(ledger.blocked_usd, 2),
         "ladder_reserve_usd": round(cfg.coverage_pct / 100.0 * ladder_cost, 2),
+        # --- cash-floor release policies (2026-09-28b) ---
+        "floor_release_usd": round(ledger.floor_release_usd_total, 2),
+        "floor_release_events": ledger.floor_release_events,
+        "manual_requests_sent": ledger.manual_requests_sent,
+        "manual_requests_approved": ledger.manual_requests_approved,
+        "manual_requests_denied": ledger.manual_requests_denied,
+        "manual_requests_missed_price": ledger.manual_requests_missed_price,
+        "manual_requests_missed_cash": ledger.manual_requests_missed_cash,
+        "crash_release_episodes": ledger.crash_release_episodes,
+        "crash_release_active_days": ledger.crash_release_active_days,
+        "crash_release_fired_dates": ledger.crash_release_fired_dates,
+        "starved_rungs_distinct": ledger.starved_rungs_distinct,
+        "starved_distinct_usd": round(ledger.starved_distinct_usd, 2),
     }
 
     return {
@@ -1104,6 +1392,15 @@ def _build_report(cfg: Config, ledger: Ledger, open_sessions: dict[str, SessionS
             "tp_fee_buffer_pct": cfg.tp_fee_buffer_pct, "wave0_pct": cfg.wave0_pct,
             "wave0_cap": cfg.wave0_cap, "wave0_floor": cfg.wave0_floor,
             "deep_lock_rungs": cfg.deep_lock_rungs, "cash_floor_pct": cfg.cash_floor_pct,
+            "floor_release_trigger": cfg.floor_release_trigger,
+            "floor_release_min_wave": cfg.floor_release_min_wave,
+            "floor_release_frac_pct": cfg.floor_release_frac_pct,
+            "floor_release_crash_drop_pct": cfg.floor_release_crash_drop_pct,
+            "floor_release_crash_breadth_pct": cfg.floor_release_crash_breadth_pct,
+            "floor_release_crash_window_days": cfg.floor_release_crash_window_days,
+            "floor_release_crash_lag_bars": cfg.floor_release_crash_lag_bars,
+            "floor_release_manual_delay_days": cfg.floor_release_manual_delay_days,
+            "floor_release_manual_owner": cfg.floor_release_manual_owner,
         },
         "monthly": monthly_out,
         "yearly": yearly_out,

@@ -23,6 +23,8 @@ silently be wrong.
 
 from __future__ import annotations
 
+import pytest
+
 from app.backtest import simulate_kss
 from scripts.capital_portfolio_study import (
     Config,
@@ -30,8 +32,10 @@ from scripts.capital_portfolio_study import (
     SessionState,
     _avg_price,
     _cagr_total,
+    _detect_bars_per_day,
     _session_lock,
     _sizing_equity,
+    _targets,
     _waves_touched,
     full_ladder_cost,
     repay_backstop,
@@ -42,6 +46,7 @@ from scripts.capital_portfolio_study import (
 )
 
 DAY_MS = 86_400_000
+HOUR_MS = 3_600_000
 
 
 def _bars(n: int, start_price: float, path, ts0: int = 0) -> list[dict]:
@@ -612,3 +617,456 @@ class TestUtilizationStats:
         assert s["util_median_daily_pct"] == 35.0         # median of 20, 30, 150, 40
         assert s["util_recent_pct"] == 95.0               # mean of 150, 40
         assert s["own_util_normal_days_pct"] == 30.0
+
+
+# ---------------------------------------------------------------------------------------------
+# 2026-09-28b: cash-floor release policies (docs/cash-floor-release-2026-09-28/). Today NOTHING
+# ever spends the hard floor (`cash_floor_pct`); it only blocks a BUY and fires `rung_starved`.
+# These tests pin policy A (automatic conditional release) and policy B (manual/Telegram release
+# with an approval delay), both default-OFF (`floor_release_trigger == ""` / `_manual_delay_days
+# == 0`) so every test above this point — proving byte-identical behaviour with the new fields at
+# their defaults — is the real parity guard for this whole feature.
+# ---------------------------------------------------------------------------------------------
+
+
+def _floor_cfg(**kw) -> Config:
+    defaults = {
+        "capital": 1000.0, "gate": "cashflow", "distance_pct": 4.0, "max_waves": 8,
+        "wave0_usd": 28.0, "partial_last_rung": True, "deadline_days": 1000.0, "tp_pct": 1000.0,
+        "sl_pct": 0.0,
+    }
+    defaults.update(kw)
+    return Config(pessimistic=False, **defaults)
+
+
+class TestFloorReleaseWave0NeverTouchesFloor:
+    """New sessions must NEVER use the floor under policy A or B — only the rung loop
+    (next_rung >= 1) was touched; `run_portfolio`'s Step 2 wave-0 open gate is untouched code, so
+    this pins the OUTCOME: with the floor eating nearly all of a tiny book, and release turned
+    fully on, not a single session should ever open."""
+
+    def test_no_session_opens_when_floor_blocks_wave0_even_with_release_maxed_out(self):
+        symbols = [f"SYM{i}" for i in range(4)]
+        series = {sym: _bars(30, 100.0 + i, lambda i, o: o * 0.999) for i, sym in enumerate(symbols)}
+        cfg = Config(
+            capital=100.0, gate="cashflow", pessimistic=False, distance_pct=4.0, max_waves=8,
+            wave0_usd=28.0, deadline_days=1000.0, tp_pct=1000.0, warmup=0, max_sessions=10,
+            max_new_per_day=4, seed=1, cash_floor_pct=90.0,  # floor = 90% of $100 = $90
+            floor_release_trigger="starved", floor_release_min_wave=1, floor_release_frac_pct=100.0,
+        )
+        report = run_portfolio(series, cfg)
+        # cash(100) - floor(90) = 10 < wave0(28): every candidate is refused at open, every day.
+        assert report["totals"]["sessions_opened"] == 0
+        assert all(row["cash"] >= 90.0 - 1e-6 for row in report["equity_curve"])
+
+
+class TestFloorReleasePolicyA:
+    """Automatic conditional release: an eligible, trigger-active rung may spend the floor down
+    to `(1 - frac/100) * floor` instead of starving/partialling at the plain floor."""
+
+    def _dive(self, n=10):
+        return _bars(n, 100.0, lambda i, o: o * 0.94)
+
+    def test_release_funds_a_rung_the_plain_floor_would_only_partially_fill(self):
+        cfg = self._floor_a_cfg(floor_release_min_wave=1, floor_release_frac_pct=50.0)
+        ledger = Ledger(1000.0)
+        ledger.cash = 100.0
+        ledger.floor = 80.0  # plain avail = 20 (would starve/partial); release avail = 100-40 = 60
+        candles = self._dive()
+        state = SessionState("X", candles, 0, cfg)
+        step_session(state, candles[1], 1, cfg, ledger)
+        assert state.next_rung == 2          # rung 1 filled IN FULL (cost ~$53.8 < $60 release room)
+        assert state.rungs_partial == 0
+        assert state.rungs_starved == 0
+        assert ledger.cash < 80.0             # it DID dip below the plain floor...
+        assert ledger.cash >= 40.0 - 1e-9     # ...but never past (1-0.5)*80 = 40
+        assert ledger.floor_release_usd_total > 0.0
+        assert ledger.floor_release_events == 1
+
+    def test_min_wave_gate_blocks_release_below_k(self):
+        """K=4: wave 1 does not qualify, so it starves/partials exactly like the plain floor."""
+        cfg = self._floor_a_cfg(floor_release_min_wave=4, floor_release_frac_pct=100.0)
+        ledger = Ledger(1000.0)
+        ledger.cash = 100.0
+        ledger.floor = 80.0
+        candles = self._dive()
+        state = SessionState("X", candles, 0, cfg)
+        step_session(state, candles[1], 1, cfg, ledger)
+        assert state.rungs_partial == 1       # same outcome as TestCashFloor's no-release case
+        assert ledger.cash == 80.0
+        assert ledger.floor_release_usd_total == 0.0
+
+    def test_crash_trigger_inactive_behaves_like_no_release(self):
+        cfg = self._floor_a_cfg(floor_release_min_wave=1, floor_release_frac_pct=100.0,
+                                trigger="crash")
+        ledger = Ledger(1000.0)
+        ledger.cash = 100.0
+        ledger.floor = 80.0
+        ledger.crash_release_active_until_ts = 0  # never fired
+        candles = self._dive()
+        state = SessionState("X", candles, 0, cfg)
+        step_session(state, candles[1], 1, cfg, ledger)
+        assert state.rungs_partial == 1
+        assert ledger.cash == 80.0
+        assert ledger.floor_release_usd_total == 0.0
+
+    def test_crash_trigger_active_releases(self):
+        cfg = self._floor_a_cfg(floor_release_min_wave=1, floor_release_frac_pct=100.0,
+                                trigger="crash")
+        ledger = Ledger(1000.0)
+        ledger.cash = 100.0
+        ledger.floor = 80.0
+        candles = self._dive()
+        ledger.crash_release_active_until_ts = candles[1]["ts"] + 1  # active on this bar
+        state = SessionState("X", candles, 0, cfg)
+        step_session(state, candles[1], 1, cfg, ledger)
+        assert state.next_rung == 2
+        assert ledger.floor_release_usd_total > 0.0
+
+    def _floor_a_cfg(self, *, floor_release_min_wave, floor_release_frac_pct, trigger="starved"):
+        return _floor_cfg(floor_release_trigger=trigger, floor_release_min_wave=floor_release_min_wave,
+                          floor_release_frac_pct=floor_release_frac_pct)
+
+
+class TestFloorReleasePolicyB:
+    """Manual release: a starved, eligible rung raises a REQUEST instead of releasing inline; it
+    is only bought `manual_delay_days` later, and only if approved AND the rung's price is still
+    touched that day (limit semantics — reuses `_fill_price`)."""
+
+    def _touch_then_hold(self, entry: float, target1: float, low_day2: float) -> list[dict]:
+        """day0 = the session's own start bar (flat at `entry`); day1 touches `target1`
+        intraday (starves under the plain floor, raising a request); day2 is the D=1 decision
+        day, whose low is `low_day2` (below target1 = still touched/fillable, above = missed)."""
+        return [
+            {"ts": 0, "open": entry, "high": entry * 1.001, "low": entry * 0.995, "close": entry},
+            {"ts": DAY_MS, "open": entry, "high": entry * 1.001, "low": target1 - 1.0, "close": entry},
+            {"ts": 2 * DAY_MS, "open": entry, "high": entry * 1.001, "low": low_day2, "close": entry},
+        ]
+
+    def _cfg_and_state(self, entry=100.0, **over):
+        # partial_last_rung=False: a true STARVE (not a plain-floor partial fill) must happen on
+        # day 1 for a request to be worth raising — otherwise the plain floor's own leftover cash
+        # would silently fund a partial fill and there would be nothing left to release.
+        cfg = _floor_cfg(distance_pct=4.0, max_waves=8, partial_last_rung=False,
+                         floor_release_manual_delay_days=1.0, floor_release_min_wave=1,
+                         floor_release_frac_pct=50.0, **over)
+        target1 = _targets(entry, cfg.distance_pct, cfg.max_waves)[1]
+        return cfg, target1
+
+    def test_request_is_not_filled_the_same_day_it_is_raised(self):
+        cfg, target1 = self._cfg_and_state()
+        candles = self._touch_then_hold(100.0, target1, low_day2=target1 - 1.0)
+        ledger = Ledger(1000.0)
+        ledger.cash, ledger.floor = 100.0, 80.0  # avail=20 < rung cost: starves, request raised
+        state = SessionState("X", candles, 0, cfg)
+        step_session(state, candles[1], 1, cfg, ledger)
+        assert state.next_rung == 1                    # NOT filled yet
+        assert state.rungs_starved == 1
+        assert ledger.manual_requests_sent == 1
+        assert state.pending_release is not None
+
+    def test_approved_and_still_touched_fills_on_the_decision_day(self):
+        cfg, target1 = self._cfg_and_state()
+        candles = self._touch_then_hold(100.0, target1, low_day2=target1 - 1.0)  # still touched
+        ledger = Ledger(1000.0)
+        ledger.cash, ledger.floor = 100.0, 80.0
+        state = SessionState("X", candles, 0, cfg)
+        step_session(state, candles[1], 1, cfg, ledger)   # day 1: raises the request
+        step_session(state, candles[2], 2, cfg, ledger)   # day 2: the decision day
+        assert state.next_rung == 2
+        assert state.pending_release is None
+        assert ledger.manual_requests_approved == 1
+        assert ledger.floor_release_usd_total > 0.0
+        assert ledger.cash >= 80.0 * (1 - 0.5) - 1e-9    # never past the R=50% release cap
+
+    def test_missed_when_price_has_rebounded_by_the_decision_day(self):
+        cfg, target1 = self._cfg_and_state()
+        candles = self._touch_then_hold(100.0, target1, low_day2=target1 + 1.0)  # rebounded
+        ledger = Ledger(1000.0)
+        ledger.cash, ledger.floor = 100.0, 80.0
+        state = SessionState("X", candles, 0, cfg)
+        step_session(state, candles[1], 1, cfg, ledger)
+        step_session(state, candles[2], 2, cfg, ledger)
+        assert state.next_rung == 1                     # never filled
+        assert ledger.manual_requests_missed_price == 1
+        assert ledger.manual_requests_approved == 0
+        assert ledger.cash == 100.0                      # untouched — no spend happened at all
+
+    def test_crash_only_owner_denies_without_the_crash_signal(self):
+        cfg, target1 = self._cfg_and_state(floor_release_manual_owner="crash_only")
+        candles = self._touch_then_hold(100.0, target1, low_day2=target1 - 1.0)
+        ledger = Ledger(1000.0)
+        ledger.cash, ledger.floor = 100.0, 80.0
+        ledger.crash_release_active_until_ts = 0  # never fired
+        state = SessionState("X", candles, 0, cfg)
+        step_session(state, candles[1], 1, cfg, ledger)
+        step_session(state, candles[2], 2, cfg, ledger)
+        assert state.next_rung == 1
+        assert ledger.manual_requests_denied == 1
+        assert ledger.manual_requests_approved == 0
+
+    def test_crash_only_owner_approves_while_the_crash_signal_is_active(self):
+        cfg, target1 = self._cfg_and_state(floor_release_manual_owner="crash_only")
+        candles = self._touch_then_hold(100.0, target1, low_day2=target1 - 1.0)
+        ledger = Ledger(1000.0)
+        ledger.cash, ledger.floor = 100.0, 80.0
+        ledger.crash_release_active_until_ts = candles[2]["ts"] + 1  # active on the decision day
+        state = SessionState("X", candles, 0, cfg)
+        step_session(state, candles[1], 1, cfg, ledger)
+        step_session(state, candles[2], 2, cfg, ledger)
+        assert state.next_rung == 2
+        assert ledger.manual_requests_approved == 1
+
+
+class TestCrashReleaseTriggerBookkeeping:
+    """`run_portfolio` computes the crash-release breadth series and flips the trigger on/off day
+    by day; this is the day-loop wiring the unit tests above (which set `crash_release_active_
+    until_ts` directly) don't exercise."""
+
+    def test_a_sharp_synchronized_drop_fires_the_trigger_and_it_stays_active_for_the_window(self):
+        symbols = [f"SYM{i}" for i in range(40)]
+
+        def flat(i, o):
+            return o * 1.0
+
+        series = {sym: _bars(20, 100.0, flat) for sym in symbols}
+        # Day 5: every symbol gaps 30% below its own day-4 high in one bar.
+        crash_day = 5
+        for sym in symbols:
+            b = series[sym][crash_day]
+            prev_high = series[sym][crash_day - 1]["high"]
+            b["low"] = prev_high * 0.70
+            b["close"] = prev_high * 0.72
+            b["open"] = prev_high * 0.72
+        cfg = Config(
+            capital=100_000.0, gate="cashflow", pessimistic=False, distance_pct=4.0, max_waves=5,
+            wave0_usd=28.0, deadline_days=1000.0, tp_pct=1000.0, warmup=0, max_sessions=1,
+            max_new_per_day=0, seed=0,  # no sessions open at all — isolates the trigger bookkeeping
+            floor_release_trigger="crash", floor_release_min_wave=1, floor_release_frac_pct=50.0,
+            floor_release_crash_drop_pct=20.0, floor_release_crash_breadth_pct=60.0,
+            floor_release_crash_window_days=3.0,
+        )
+        report = run_portfolio(series, cfg)
+        t = report["totals"]
+        assert t["crash_release_episodes"] == 1
+        assert t["crash_release_active_days"] >= 4          # the crash day itself + the 3-day window
+        assert len(t["crash_release_fired_dates"]) == 1
+
+
+# ---------------------------------------------------------------------------------------------
+# 2026-09-28c: adversarial verification of the cash-floor release study (Opus). Three bugs in
+# the first draft: (1) `floor_release_usd` re-counted the deficit the book was ALREADY carrying
+# below the floor on every later fill, so a $7k book "released" $0.5-7.7M; (2) the crash trigger
+# used bar t's own low and the whole day's cross-section to release a rung filled on that same
+# bar t (lookahead); (3) `starved_usd` sums the same rung once per day it is retried, which is
+# not a count of rungs. These tests pin the corrected definitions.
+# ---------------------------------------------------------------------------------------------
+
+
+class TestFloorReleaseAccountingIsCappedBySpend:
+    def test_release_usd_counts_only_the_part_of_this_fill_below_the_floor(self):
+        cfg = _floor_cfg(floor_release_trigger="starved", floor_release_min_wave=1,
+                         floor_release_frac_pct=100.0)
+        ledger = Ledger(1000.0)
+        ledger.cash = 60.0    # ALREADY $20 below the floor (yesterday's release, floor re-sized)
+        ledger.floor = 80.0
+        candles = _bars(10, 100.0, lambda i, o: o * 0.94)
+        state = SessionState("X", candles, 0, cfg)
+        step_session(state, candles[1], 1, cfg, ledger)
+        spent = 60.0 - ledger.cash
+        assert state.next_rung == 2 and spent > 0
+        # Every dollar of this fill came from below the floor -- but not a cent more than it.
+        assert abs(ledger.floor_release_usd_total - spent) < 1e-9
+        assert ledger.floor_release_events == 1
+
+
+class TestDistinctStarvedRungs:
+    def test_a_rung_retried_on_three_bars_is_one_distinct_starved_rung(self):
+        cfg = _floor_cfg(partial_last_rung=False)
+        ledger = Ledger(1000.0)
+        ledger.cash, ledger.floor = 100.0, 95.0   # $5 spendable: rung 1 can never fill
+        candles = _bars(10, 100.0, lambda i, o: o * 0.97)
+        state = SessionState("X", candles, 0, cfg)
+        for j in range(1, 5):
+            step_session(state, candles[j], j, cfg, ledger)
+        assert state.next_rung == 1
+        assert state.rungs_starved >= 3                 # retried every bar it was touched
+        assert ledger.starved_rungs_distinct == 1       # ...but it is ONE rung
+        first_cost = 2 * state.unit_qty * state.targets[1]
+        assert abs(ledger.starved_distinct_usd - first_cost) / first_cost < 0.05
+
+
+class TestCrashReleaseTriggerIsLagged:
+    """The breadth of bar t needs bar t's low and every symbol's bar t; it is only KNOWN at the
+    close. With `floor_release_crash_lag_bars=1` (the default) the trigger can first release a
+    rung on bar t+1; 0 reproduces the first draft's same-bar (lookahead) behaviour."""
+
+    def _series(self):
+        symbols = [f"SYM{i}" for i in range(40)]
+        series = {sym: _bars(20, 100.0, lambda i, o: o * 1.0) for sym in symbols}
+        for sym in symbols:
+            b = series[sym][5]
+            prev_high = series[sym][4]["high"]
+            b["low"], b["close"], b["open"] = prev_high * 0.70, prev_high * 0.72, prev_high * 0.72
+        return series
+
+    def _cfg(self, lag):
+        return Config(
+            capital=100_000.0, gate="cashflow", pessimistic=False, distance_pct=4.0, max_waves=5,
+            wave0_usd=28.0, deadline_days=1000.0, tp_pct=1000.0, warmup=0, max_sessions=1,
+            max_new_per_day=0, seed=0, floor_release_trigger="crash", floor_release_min_wave=1,
+            floor_release_frac_pct=50.0, floor_release_crash_drop_pct=20.0,
+            floor_release_crash_breadth_pct=60.0, floor_release_crash_window_days=3.0,
+            floor_release_crash_lag_bars=lag,
+        )
+
+    def test_lag_one_activates_the_bar_after_the_crash(self):
+        rep = run_portfolio(self._series(), self._cfg(1))
+        assert rep["totals"]["crash_release_fired_dates"] == ["1970-01-07"]  # bar 6, not bar 5
+
+    def test_lag_zero_is_the_same_bar_lookahead_version(self):
+        rep = run_portfolio(self._series(), self._cfg(0))
+        assert rep["totals"]["crash_release_fired_dates"] == ["1970-01-06"]  # bar 5
+
+    def test_default_is_lagged(self):
+        assert Config(capital=1.0, gate="cashflow", pessimistic=False).floor_release_crash_lag_bars == 1
+
+
+def _bars_to_hourly(daily: list[dict]) -> list[dict]:
+    """Expand a daily candle series into 24 hourly bars/day with IDENTICAL trading content: the
+    day's full O/H/L/C lands entirely on hour 0 (so every fill/TP/deadline check that would have
+    happened on the daily bar happens on that hour, at the same intrabar bound), and hours
+    1..23 are flat at the day's close (zero range, no new information). Used to prove
+    `run_portfolio` reduces the same way on hourly bars as on daily ones for every
+    day-denominated knob."""
+    out = []
+    for day in daily:
+        day_start = day["ts"]
+        out.append({"ts": day_start, "open": day["open"], "high": day["high"],
+                    "low": day["low"], "close": day["close"]})
+        for h in range(1, 24):
+            c = day["close"]
+            out.append({"ts": day_start + h * HOUR_MS, "open": c, "high": c, "low": c, "close": c})
+    return out
+
+
+class TestHourlyBarsReduceToDaily:
+    """2026-09-29: the day-by-day loop was written and tested against `1d` data only, where
+    "one bar" and "one calendar day" are the same thing. Three places silently depended on
+    that: `max_new_per_day`'s reset, the universe-breadth brake's and the cash-floor crash
+    trigger's lookback windows (both counted in bars), and CAGR/drawdown/yearly stats (which
+    need one equity sample per day, not per bar). These tests pin the fix — a portfolio replay
+    on hourly bars must gate opens per calendar day and report the same day-level numbers a
+    daily replay of the identical trading content would."""
+
+    def test_bars_per_day_detected_from_spacing(self):
+        daily_ts = [i * DAY_MS for i in range(50)]
+        hourly_ts = [i * HOUR_MS for i in range(50)]
+        assert _detect_bars_per_day(daily_ts) == 1.0
+        assert _detect_bars_per_day(hourly_ts) == 24.0
+        assert _detect_bars_per_day([0]) == 1.0  # too short to detect anything: fall back safely
+
+    def test_max_new_per_day_is_a_calendar_day_budget_not_a_per_bar_one(self):
+        """Before the fix, `new_today` was reset to 0 on EVERY bar. On daily data that is
+        harmless (every bar starts a new date), but on hourly data it let up to
+        `max_new_per_day` sessions open in a single HOUR — 24x the intended rate."""
+        symbols = [f"SYM{i}" for i in range(100)]
+
+        def flat(i, o):
+            return o * 0.999  # drifts down slowly; never closes within the test window
+
+        n_days = 4
+        series = {
+            sym: _bars_to_hourly(_bars(n_days, 100.0 + i, flat))
+            for i, sym in enumerate(symbols)
+        }
+        cfg = Config(capital=1_000_000.0, gate="cashflow", pessimistic=False, distance_pct=4.0,
+                     max_waves=6, tp_pct=1000.0, sl_pct=0.0, deadline_days=1000.0, wave0_usd=28.0,
+                     warmup=0, max_sessions=80, max_new_per_day=3, seed=5)
+        report = run_portfolio(series, cfg)
+        assert report["totals"]["sessions_opened"] == 3 * n_days
+
+    def test_cagr_and_drawdown_match_between_daily_and_hourly_representations(self):
+        """Same trading content (see `_bars_to_hourly`), different bar granularity: CAGR,
+        drawdown and the equity-curve length (one row per calendar day) must come out the same
+        either way — the report must not silently treat 24x more rows as 24x more elapsed time."""
+        def path(i, o):
+            return o * (1.15 if (i % 10 == 0) else 0.97)  # occasional pump, steady bleed
+
+        daily = _bars(120, 100.0, path)
+        hourly = _bars_to_hourly(daily)
+        cfg_kwargs = {
+            "capital": 1000.0, "gate": "cashflow", "pessimistic": True, "distance_pct": 4.0,
+            "max_waves": 6, "tp_pct": 6.0, "sl_pct": 0.0, "deadline_days": 25.0,
+            "wave0_usd": 28.0, "warmup": 0, "max_sessions": 5, "max_new_per_day": 1, "seed": 9,
+        }
+        daily_report = run_portfolio({"X": daily}, Config(**cfg_kwargs))
+        hourly_report = run_portfolio({"X": hourly}, Config(**cfg_kwargs))
+        assert daily_report["totals"]["cagr_pct"] == pytest.approx(
+            hourly_report["totals"]["cagr_pct"], abs=0.05)
+        assert daily_report["totals"]["max_drawdown_pct"] == pytest.approx(
+            hourly_report["totals"]["max_drawdown_pct"], abs=0.05)
+        assert len(daily_report["equity_curve"]) == len(hourly_report["equity_curve"])
+
+    def test_universe_breadth_lookback_scales_to_the_same_number_of_days(self):
+        """The universe-breadth brake's `lookback` is written in BARS against a daily
+        assumption (default 24 == 24 DAYS). On hourly bars this must become
+        24 days * 24 bars/day, not stay 24 bars (== 1 day) — otherwise the brake compares each
+        bar to little more than its own last hour instead of its trailing month."""
+        from scripts.capital_portfolio_study import universe_breadth
+
+        def path(i, o):
+            return o * 0.995
+
+        daily = {"X": _bars(40, 100.0, path)}
+        hourly = {"X": _bars_to_hourly(daily["X"])}
+        daily_breadth = universe_breadth(daily, drop_pct=10.0, lookback=24)
+        hourly_breadth = universe_breadth(hourly, drop_pct=10.0, lookback=round(24 * 24))
+        # Compare on the calendar days both series share: the day-0 hourly bar (hour 0) carries
+        # the same O/H/L/C as the whole daily bar, so the two breadth readings must agree there.
+        for day in daily["X"]:
+            assert hourly_breadth[day["ts"]] == pytest.approx(daily_breadth[day["ts"]], abs=1e-9)
+
+
+class TestWarmupIsListingAgeInDaysOnHourlyBars:
+    """2026-09-29 verification: `warmup` (default 24) was counted in BARS. On daily data that is
+    24 days of listing age -- close to production's `scanner._MIN_CANDLES` = 30 daily candles.
+    On hourly data it silently became 24 HOURS, so a coin was a candidate one day after it
+    listed. On hourly bars it must mean 24 calendar days since the symbol's LISTING (passed in
+    as `listing_ts`, e.g. from the 1d table -- the 1h series itself may start at the dataset's
+    own first month, long after the real listing)."""
+
+    def _series(self, n_days: int) -> dict:
+        flat = lambda i, o: o  # noqa: E731 - never reaches TP/deadline below
+        return {
+            "OLD": _bars_to_hourly(_bars(n_days, 100.0, flat)),
+            "NEW": _bars_to_hourly(_bars(n_days, 50.0, flat)),
+        }
+
+    def _cfg(self) -> Config:
+        return Config(capital=1_000_000.0, gate="cashflow", pessimistic=False, distance_pct=4.0,
+                      max_waves=6, tp_pct=1000.0, sl_pct=0.0, deadline_days=1000.0,
+                      wave0_usd=28.0, warmup=24, max_sessions=80, max_new_per_day=10, seed=3)
+
+    def test_fresh_listing_waits_24_days_old_listing_is_eligible_at_once(self):
+        series = self._series(30)
+        listing = {"OLD": series["OLD"][0]["ts"] - 400 * DAY_MS, "NEW": series["NEW"][0]["ts"]}
+        rep = run_portfolio(series, self._cfg(), listing_ts=listing)
+        open_n = [r["open_n"] for r in rep["equity_curve"]]
+        assert open_n[:24] == [1] * 24   # OLD from day 0; NEW not before 24 days of age
+        assert open_n[24:] == [2] * 6
+
+    def test_without_listing_the_series_start_counts_as_listing(self):
+        rep = run_portfolio(self._series(30), self._cfg())
+        open_n = [r["open_n"] for r in rep["equity_curve"]]
+        assert open_n[:24] == [0] * 24
+        assert open_n[24:] == [2] * 6
+
+    def test_daily_bars_keep_the_bar_count(self):
+        flat = lambda i, o: o  # noqa: E731
+        series = {"OLD": _bars(30, 100.0, flat), "NEW": _bars(30, 50.0, flat)}
+        listing = {"OLD": -400 * DAY_MS, "NEW": 0}
+        rep = run_portfolio(series, self._cfg(), listing_ts=listing)
+        open_n = [r["open_n"] for r in rep["equity_curve"]]
+        assert open_n[:24] == [0] * 24   # 1d path unchanged: idx >= warmup, listing ignored
+        assert open_n[24:] == [2] * 6

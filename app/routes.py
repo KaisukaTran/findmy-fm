@@ -593,6 +593,8 @@ class KssSettingsBody(BaseModel):
     trailing_pct: float | None = Field(None, ge=0, le=100)
     deadline_days: int | None = Field(None, ge=1, le=365)
     max_concurrent_sessions: int | None = Field(None, ge=1, le=500)  # raised for wide-scale paper tests (~universe size)
+    session_cover_rungs: float | None = Field(None, ge=0, le=50)
+    session_cover_measured: bool | None = None
     kss_ladder_reserve_slack_pct: float | None = Field(None, ge=0, le=10)
     kss_partial_last_rung_enabled: bool | None = None
     max_sessions_per_symbol: int | None = Field(None, ge=0, le=20)

@@ -69,8 +69,8 @@
       <td>${{ c.budget_free | money }}</td>
     </tr>
     <tr>
-      <td title="Số phiên đang ACTIVE / trần số phiên đồng thời cho phép (max_concurrent_sessions).">Số phiên đang chạy</td>
-      <td>{{ c.sessions_active }} / {{ c.sessions_cap }}</td>
+      <td title="Số phiên đang ACTIVE / trần số phiên scanner đang áp: tính theo vốn khi session_cover_rungs > 0 (ngân sách ÷ chi phí thang tới rung R), trần cứng là max_concurrent_sessions.">Số phiên đang chạy</td>
+      <td>{{ c.sessions_active }} / {{ c.sessions_cap }}{% if c.sessions_cap_why %} <span class="muted">({{ c.sessions_cap_why }})</span>{% endif %}</td>
     </tr>
     <tr>
       <td title="Hằng số ACCOUNT_EQUITY cấu hình trong .env — không đổi khi ghi nhận nạp tiền.">Vốn gốc (cấu hình)</td>

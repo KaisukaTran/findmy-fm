@@ -1345,6 +1345,63 @@ def _session_lock(s: KssSession) -> float:
     return min(reserved, used + frac * reserved)
 
 
+def effective_max_sessions(db: Session) -> tuple[int, str]:
+    """The concurrent-session cap, derived from capital when ``session_cover_rungs`` > 0.
+
+    Returns ``(cap, why)``; ``why`` is "" when the static ``max_concurrent_sessions`` applies.
+
+    Rule (Kai 2026-10-04): every open session must be payable down to rung R AT ONCE — a broad,
+    correlated dip asks every ladder for its next rung on the same day. So the cap is
+    ``floor(budget / ladder_cost(wave, distance, R))`` with the same budget ``_can_open`` uses
+    (``equity × (100 − equity_backup_pct)%``) and the wave a new session would open with.
+    ``max_concurrent_sessions`` stays the hard ceiling.
+
+    Why the ladder and not "sessions per $1k": the wave already scales with equity
+    (``first_wave_pct``), so a count that also scaled would grow exposure with equity SQUARED.
+    Priced off the ladder, the count stays flat while the wave scales and grows once
+    ``first_wave_max_usd`` caps the wave — extra capital becomes extra sessions, not more risk
+    per dollar. Equity is the deadbanded anchor (when capital scaling is on), so the cap does not
+    jitter with every tick. A falling cap never closes a session; it only stops new opens.
+
+    MEASURED MODE (``session_cover_measured``, Kai 2026-10-04): R is not fixed but read off the
+    book at this moment — the mean filled depth of the sessions open right now (an unfilled
+    session still needs rung 1's money, so it counts as 1), floored at ``session_cover_rungs``.
+    The open book, not the median of past sessions: shallow sessions take profit and leave
+    while deep ones linger, so past sessions' median depth (1 on paper) badly understates what
+    the open book needs at once (1.79 at its worst, 2026-10-04). Fresh opens sit at rung 1 and
+    dilute the mean, so in practice R rests on the floor and rises only when the book deepens."""
+    ceiling = settings.max_concurrent_sessions
+    rungs = settings.session_cover_rungs
+    measured_from = 0
+    if settings.session_cover_measured:
+        depths = [max(s.current_wave or 0, 1) for s in
+                  db.query(KssSession).filter(KssSession.status == SESSION_ACTIVE).all()]
+        if depths:
+            measured_from = len(depths)
+            rungs = max(rungs, sum(depths) / len(depths))
+    if rungs <= 0:
+        return ceiling, ""
+    from app import capital_scale, risk  # lazy: capital_scale → risk → portfolio → models
+
+    rungs = min(max(rungs, 1.0), float(max(settings.scan_max_waves, 1)))
+    equity = (capital_scale.anchored_equity(db) if settings.capital_scale_enabled
+              else risk.account_equity(db))
+    budget = max(equity, 0.0) * (100 - settings.equity_backup_pct) / 100
+    wave = capital_scale.first_wave_usd(db).value
+    lo = int(rungs)
+    cost = service.ladder_cost_for(wave, settings.scan_distance_pct, lo)
+    if rungs > lo:
+        nxt = service.ladder_cost_for(wave, settings.scan_distance_pct, lo + 1)
+        cost += (rungs - lo) * (nxt - cost)
+    if cost <= 0:
+        return ceiling, ""
+    derived = max(0, int(budget / cost + 1e-9))
+    why = f"theo vốn, phủ {rungs:.2f} rung"
+    if measured_from:
+        why += f" đo từ {measured_from} phiên"
+    return min(ceiling, derived), why
+
+
 def _can_open(db: Session, new_need: float) -> tuple[bool, str]:
     """Capital-preservation caps: concurrent sessions, deployable budget, min notional.
 
@@ -1359,8 +1416,9 @@ def _can_open(db: Session, new_need: float) -> tuple[bool, str]:
     from app import risk  # lazy: risk → portfolio → models; avoid an import cycle at load
 
     active = db.query(KssSession).filter(KssSession.status == SESSION_ACTIVE).all()
-    if len(active) >= settings.max_concurrent_sessions:
-        return False, f"max concurrent {settings.max_concurrent_sessions}"
+    cap, cap_why = effective_max_sessions(db)
+    if len(active) >= cap:
+        return False, f"max concurrent {cap}" + (f" ({cap_why})" if cap_why else "")
     equity = risk.account_equity(db)
     budget = equity * (100 - settings.equity_backup_pct) / 100
     locked = sum(_session_lock(s) for s in active)

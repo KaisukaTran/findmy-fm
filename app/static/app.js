@@ -871,6 +871,8 @@ document.addEventListener("submit", async (e) => {
       trailing_pct: num(f.get("trailing_pct")),
       deadline_days: num(f.get("deadline_days")),
       max_concurrent_sessions: num(f.get("max_concurrent_sessions")),
+      session_cover_rungs: num(f.get("session_cover_rungs")),
+      session_cover_measured: f.get("session_cover_measured") === "1",
       max_sessions_per_symbol: num(f.get("max_sessions_per_symbol")),
       max_deployed_pct: num(f.get("max_deployed_pct")),
       equity_backup_pct: num(f.get("equity_backup_pct")),

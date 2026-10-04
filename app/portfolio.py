@@ -367,7 +367,10 @@ def capital_view(db: Session) -> dict:
     is re-derived here.
     """
     from app import risk  # lazy: risk -> portfolio; avoid an import cycle at load
-    from app.scanner import _session_lock  # lazy: scanner -> orders -> risk -> portfolio
+    from app.scanner import (  # lazy: scanner -> orders -> risk -> portfolio
+        _session_lock,
+        effective_max_sessions,
+    )
 
     active = db.query(KssSession).filter(KssSession.status == SESSION_ACTIVE).all()
 
@@ -393,7 +396,8 @@ def capital_view(db: Session) -> dict:
     committed_pct = committed / equity * 100 if equity else 0.0
 
     sessions_active = len(active)
-    sessions_cap = settings.max_concurrent_sessions
+    # The cap the scanner actually enforces — derived from capital when session_cover_rungs > 0.
+    sessions_cap, sessions_cap_why = effective_max_sessions(db)
     # The book's own evidence of what a typical session actually needs, instead of the flat
     # `scan_fund` constant (which the real scanner gate doesn't use either — it sizes off
     # `kss_service.projected_ladder_cost`, ~4x smaller on the live book — D2). No network
@@ -429,6 +433,7 @@ def capital_view(db: Session) -> dict:
         "committed_pct": committed_pct,
         "sessions_active": sessions_active,
         "sessions_cap": sessions_cap,
+        "sessions_cap_why": sessions_cap_why,
         "binding": binding,
         "bar": bar,
         "rung_starved": rung_starved,

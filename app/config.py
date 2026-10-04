@@ -486,6 +486,18 @@ class Settings(BaseSettings):
     min_net_edge: float = Field(default=0.5, description="Min TP%% above round-trip cost to trade (micro-trade guard).")
     walk_forward_split: float = Field(default=0.5, description="Fraction of history used in-sample; metric is out-of-sample.")
     max_concurrent_sessions: int = Field(default=10, description="Cap on simultaneously active sessions.")
+    session_cover_rungs: float = Field(
+        default=0.0, ge=0.0,
+        description="Derive the session cap from capital (0 = off, use max_concurrent_sessions alone). "
+        "Cap = budget ÷ ladder cost down to this many rungs, at the wave a new session would open "
+        "with, so every open session can fill to rung R at once. max_concurrent_sessions stays the "
+        "hard ceiling. Fractional values interpolate between rungs. With session_cover_measured "
+        "on, this is the FLOOR under the measured depth.")
+    session_cover_measured: bool = Field(
+        default=False,
+        description="Measure R instead of fixing it: R = max(session_cover_rungs, mean filled rungs "
+        "of the sessions open right now; an unfilled session counts as 1). Recomputed on every "
+        "open decision, so the cap shrinks as the book goes deeper.")
     max_new_sessions_per_scan: int = Field(default=5, ge=0, description="Cap on NEW KSS sessions opened in a single scan (0 = no limit). Ramps exposure gradually instead of opening the whole concurrent budget at once; within the cap the highest win-rate-lower-bound / most-tried candidates open first.")
     max_deployed_pct: float = Field(default=50.0, description="(legacy) Cap total isolated funds as %% of equity. The KSS open-gate now uses equity_backup_pct instead.")
     equity_backup_pct: float = Field(default=25.0, description="Reserve %% of LIVE equity the bot never deploys (backup). KSS open-gate budget = (100 − this)%% × equity.")

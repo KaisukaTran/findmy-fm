@@ -67,6 +67,8 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "trailing_pct": float,
     "deadline_days": int,
     "max_concurrent_sessions": int,
+    "session_cover_rungs": float,  # derive the session cap from capital: all sessions payable to rung R (0=off)
+    "session_cover_measured": _to_bool,  # R = mean depth of the open book, floored at session_cover_rungs
     "max_new_sessions_per_scan": int,  # cap NEW opens per scan (0=off); ramp gradually, best-first
     "max_sessions_per_symbol": int,  # K-1: 1 = one ladder per coin (no blended cost basis)
     "max_deployed_pct": float,

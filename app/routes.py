@@ -650,6 +650,7 @@ class KssSettingsBody(BaseModel):
     crash_alert_min_symbols: int | None = Field(None, ge=1)
     crash_alert_cooldown_min: float | None = Field(None, ge=0)
     entry_momentum_gate: bool | None = None  # veto open when ST down & MACDh<0
+    entry_rsi_max: float | None = Field(None, ge=0, le=100)  # skip open when daily RSI >= this (0=off)
     max_avg_mae_pct: float | None = Field(None, ge=0, le=100)  # absolute avg_mae drawdown gate (0=off)
     # Dynamic trailing TP/SL (docs/kss-dynamic-tp-plan.md)
     kss_dynamic_tp_enabled: bool | None = None

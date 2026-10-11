@@ -94,6 +94,7 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "min_trials": int,  # min backtest trials for a trustworthy edge (cut thin-sample noise)
     "block_downtrend_adx": float,  # hard veto: HTF+ST down & ADX≥this (0=off) — entry timing
     "entry_momentum_gate": _to_bool,  # veto open when ST down & MACDh<0 (don't buy a falling knife)
+    "entry_rsi_max": float,  # skip open when daily RSI(14) >= this (0=off) — entry-only, never exits
     "rel_strength_enabled": _to_bool,  # skip coins materially weaker than BTC over the lookback
     "rel_strength_lookback_bars": int,
     "rel_strength_margin_pct": float,

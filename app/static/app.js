@@ -893,6 +893,7 @@ document.addEventListener("submit", async (e) => {
       scan_max_symbols: num(f.get("scan_max_symbols")),
       min_quote_volume: num(f.get("min_quote_volume")),
       entry_momentum_gate: f.get("entry_momentum_gate") === "1",
+      entry_rsi_max: num(f.get("entry_rsi_max")),
       max_avg_mae_pct: num(f.get("max_avg_mae_pct")),
       kss_dynamic_tp_enabled: f.get("kss_dynamic_tp_enabled") === "1",
       kss_tp_step_per_rung_pct: num(f.get("kss_tp_step_per_rung_pct")),

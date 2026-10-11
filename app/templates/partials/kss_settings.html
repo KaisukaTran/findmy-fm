@@ -88,6 +88,8 @@
       <option value="1" {% if k.entry_momentum_gate %}selected{% endif %}>Bật</option>
       <option value="0" {% if not k.entry_momentum_gate %}selected{% endif %}>Tắt</option>
     </select></label>
+  <label title="Chặn mở phiên khi RSI(14) nến ngày ≥ ngưỡng này (coin vừa tăng nóng). Nghiên cứu 1h 2024–2026: RSI ngày ≥60 lãi/vốn-ngày thấp hơn ~18%. 0 = tắt. Chỉ ảnh hưởng mở phiên mới, không bao giờ chặn lệnh thoát.">Chặn RSI ngày ≥ <span class="varname">entry_rsi_max</span>
+    <input name="entry_rsi_max" type="number" step="1" min="0" max="100" value="{{ '%.0f'|format(k.entry_rsi_max) }}"></label>
   <label title="Notional sóng đầu mỗi session. >0 = đặt cỡ lệnh đầu theo USD (dùng nhiều vốn hơn); 0 = cỡ pip mặc định (rất nhỏ).">Giá trị lệnh đầu (USD) <span class="varname">kss_first_wave_usd</span>
     <input name="kss_first_wave_usd" type="number" step="any" min="0" value="{{ '%.2f'|format(k.kss_first_wave_usd) }}"></label>
   <label title="Trần số coin mỗi lần quét. Tăng để quét nhiều coin hơn (mặc định 50).">Số coin quét tối đa <span class="varname">scan_max_symbols</span>

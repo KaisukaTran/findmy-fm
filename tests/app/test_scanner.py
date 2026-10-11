@@ -730,6 +730,30 @@ def test_scan_skips_confirmed_downtrend(db, scan_env, monkeypatch):
     assert db.query(models.AuditLog).filter_by(action="skipped_downtrend").count() >= 1
 
 
+def test_scan_skips_hot_rsi_entry(db, scan_env, monkeypatch):
+    """entry_rsi_max > 0: a 'trade' candidate whose daily RSI >= limit is skipped and audited
+    as 'skipped_entry_rsi'; with the knob at 0 the same candidate is not blocked by this gate."""
+    hot = {**_DOWNTREND_TA, "rsi": 72.0, "st": "up", "htf": "up", "macd_h": 0.5}
+    monkeypatch.setattr(scanner.ta_bundle, "build", lambda *a, **k: dict(hot))
+    monkeypatch.setattr(settings, "entry_momentum_gate", True)
+    monkeypatch.setattr(settings, "entry_rsi_max", 60.0)
+    scanner.run_scan(db, mode="semi")
+    cand = db.query(models.Candidate).filter_by(symbol="BTC").one()
+    assert cand.decision == "skip"
+    assert cand.session_id is None
+    assert "RSI" in (cand.reason or "")
+    assert db.query(models.AuditLog).filter_by(action="skipped_entry_rsi").count() >= 1
+
+
+def test_scan_rsi_gate_off_does_not_skip(db, scan_env, monkeypatch):
+    hot = {**_DOWNTREND_TA, "rsi": 72.0, "st": "up", "htf": "up", "macd_h": 0.5}
+    monkeypatch.setattr(scanner.ta_bundle, "build", lambda *a, **k: dict(hot))
+    monkeypatch.setattr(settings, "entry_rsi_max", 0.0)
+    scanner.run_scan(db, mode="semi")
+    assert db.query(models.AuditLog).filter_by(action="skipped_entry_rsi").count() == 0
+    assert db.query(models.Candidate).filter_by(symbol="BTC").one().decision == "trade"
+
+
 def test_grok_fail_mode_open_missing_verdict_opens(db, scan_env, monkeypatch):
     """S5 item 3 (a): fail_mode='open' — a symbol absent from the Grok verdict map
     is treated as endorsed and the session opens (today's behaviour preserved)."""

@@ -378,7 +378,7 @@ _SNAPSHOT_KNOBS = (
     "min_net_edge", "max_loss_rate", "max_avg_mae_pct", "scan_distance_pct", "scan_tp_pct",
     "scan_max_waves", "scan_max_symbols", "min_quote_volume", "max_concurrent_sessions",
     "max_new_sessions_per_scan", "max_sessions_per_symbol", "max_session_deploy_usd",
-    "kss_first_wave_usd", "block_downtrend_adx", "entry_momentum_gate", "rel_strength_enabled",
+    "kss_first_wave_usd", "block_downtrend_adx", "entry_momentum_gate", "entry_rsi_max", "rel_strength_enabled",
     "rel_strength_lookback_bars", "rel_strength_margin_pct", "mae_quartile_gate_enabled",
     "regime_ramp_enabled", "strategy_router_enabled", "autotune_levels_enabled",
     "autotune_tp_atr_mult", "autotune_dca_atr_mult", "grok_scanner_enabled", "ml_enabled",
@@ -788,17 +788,21 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
             # instead of only advising Grok.
             veto = _downtrend_veto(ta)
             knife = None if veto else _falling_knife_veto(ta)
+            # Overheated-entry gate (off when entry_rsi_max=0): skip a coin whose daily RSI(14)
+            # is already ≥ the limit — entries after a hot run earn less per $ of capital-day
+            # (2.6y 1h study, docs/entry-pump-gate-2026-10-11/). Entry-only; exits never see it.
+            rsi_block = None if (veto or knife) else _entry_rsi_veto(ta)
             # Drawdown gate (off when max_avg_mae_pct=0): reject coins whose backtested typical
             # deepest dip below avg is worse than the limit. avg_mae is ≤ 0, so "deeper" = more
             # negative than −max_avg_mae_pct.
             mae_block = None
-            if not veto and not knife and settings.max_avg_mae_pct > 0 \
+            if not veto and not knife and not rsi_block and settings.max_avg_mae_pct > 0 \
                     and wr["avg_mae"] < -settings.max_avg_mae_pct:
                 mae_block = (f"drawdown lịch sử TB {wr['avg_mae']:.1f}% "
                              f"sâu hơn -{settings.max_avg_mae_pct:.0f}%")
             # Relative-strength vs BTC: block coins materially weaker than BTC over the lookback.
             rs_block = None
-            if not veto and not knife and not mae_block:
+            if not veto and not knife and not rsi_block and not mae_block:
                 rs_block = _rel_strength_veto(candles, _btc_ret)
             if veto:
                 cand.decision = d["decision"] = "skip"
@@ -810,6 +814,11 @@ def _run_scan_locked(db: Session, mode: str | None = None) -> dict:
                 cand.reason = (cand.reason or "") + f" | chặn: {knife}"
                 audit.log(db, "scanner", "skipped_entry_timing", entity=symbol, reason=knife,
                           st=ta.get("st"), macd_h=ta.get("macd_h"))
+            elif rsi_block:
+                cand.decision = d["decision"] = "skip"
+                cand.reason = (cand.reason or "") + f" | chặn: {rsi_block}"
+                audit.log(db, "scanner", "skipped_entry_rsi", entity=symbol, reason=rsi_block,
+                          rsi=ta.get("rsi"))
             elif mae_block:
                 cand.decision = d["decision"] = "skip"
                 cand.reason = (cand.reason or "") + f" | chặn: {mae_block}"
@@ -926,6 +935,20 @@ def _falling_knife_veto(ta: dict) -> str | None:
         return None
     if ta.get("st") == "down" and ta.get("macd_h", 0.0) < 0:
         return f"momentum ngắn hạn xuống (ST down, MACDh {ta.get('macd_h', 0.0):+.2f})"
+    return None
+
+
+def _entry_rsi_veto(ta: dict) -> str | None:
+    """Overheated-entry gate. Returns a reason to SKIP a 'trade' candidate whose daily RSI(14)
+    (``ta["rsi"]``) is ≥ ``settings.entry_rsi_max`` — the coin just ran hot. ``entry_rsi_max = 0``
+    disables it; a missing RSI never vetoes. Entry-only: it gates opening a NEW session and is
+    never consulted by any exit path."""
+    lim = settings.entry_rsi_max
+    rsi = ta.get("rsi")
+    if lim <= 0 or rsi is None:
+        return None
+    if rsi >= lim:
+        return f"RSI ngày {rsi:.0f}≥{lim:.0f} (vừa tăng nóng)"
     return None
 
 

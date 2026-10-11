@@ -1,0 +1,5 @@
+avg vs avgcopy: 1774 sessions, 0 mismatches
+avg 90.9117 factor 1.0624
+avg 96.5846 pnl% 5.94
+entry 106.24 pnl% 16.5607
+max 100 pnl% 9.6969

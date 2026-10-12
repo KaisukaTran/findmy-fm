@@ -1,0 +1,46 @@
+== pess
+2025-08-01..2025-10-10 (pre-crash starts): n=3942 total A0 $21,562; deep n=504 deep sum $10,819 (50.2% of total); deep TP% 82.7
+   D1: total $13,788 (delta -7,775); deep sum $4,264; capdays 0.723x A0; $/1000cd 3.36 vs A0 3.80
+   D2: total $5,123 (delta -16,439); deep sum $-5,621; capdays 0.629x A0; $/1000cd 1.43 vs A0 3.80
+   D3: total $23,852 (delta +2,290); deep sum $13,108; capdays 0.581x A0; $/1000cd 7.23 vs A0 3.80
+   D4: total $-14,513 (delta -36,076); deep sum $-25,257; capdays 1.316x A0; $/1000cd -1.94 vs A0 3.80
+2025-10-10..2025-12-31 (post): n=4959 total A0 $20,784; deep n=604 deep sum $2,496 (12.0% of total); deep TP% 83.3
+   D1: total $15,463 (delta -5,321); deep sum $-40; capdays 0.767x A0; $/1000cd 2.27 vs A0 2.34
+   D2: total $15,621 (delta -5,163); deep sum $-2,666; capdays 0.645x A0; $/1000cd 2.73 vs A0 2.34
+   D3: total $16,201 (delta -4,583); deep sum $-2,087; capdays 0.611x A0; $/1000cd 2.99 vs A0 2.34
+   D4: total $15,221 (delta -5,564); deep sum $-3,067; capdays 0.942x A0; $/1000cd 1.82 vs A0 2.34
+all: n=48762 total A0 $197,155; deep n=5886 deep sum $44,912 (22.8% of total); deep TP% 84.2
+   D1: total $152,708 (delta -44,446); deep sum $20,231; capdays 0.744x A0; $/1000cd 2.54 vs A0 2.44
+   D2: total $98,313 (delta -98,842); deep sum $-53,930; capdays 0.609x A0; $/1000cd 2.00 vs A0 2.44
+   D3: total $144,299 (delta -52,856); deep sum $-7,944; capdays 0.624x A0; $/1000cd 2.87 vs A0 2.44
+   D4: total $86,099 (delta -111,055); deep sum $-66,143; capdays 0.970x A0; $/1000cd 1.10 vs A0 2.44
+fills>=7: n=3209 sum $-24,979 of total $197,155 (-12.7%)
+  exit at 5 fills: n=1636 sum $37,230 (18.9% of profit)
+  exit at 6 fills: n=1041 sum $32,661 (16.6% of profit)
+  exit at 7 fills: n=773 sum $28,235 (14.3% of profit)
+  exit at 8 fills: n=646 sum $28,142 (14.3% of profit)
+  exit at 9 fills: n=432 sum $19,527 (9.9% of profit)
+  exit at 10 fills: n=1358 sum $-100,884 (-51.2% of profit)
+== opt
+2025-08-01..2025-10-10 (pre-crash starts): n=3942 total A0 $38,275; deep n=534 deep sum $27,860 (72.8% of total); deep TP% 90.3
+   D1: total $22,307 (delta -15,968); deep sum $13,061; capdays 0.773x A0; $/1000cd 7.30 vs A0 9.68
+   D2: total $10,060 (delta -28,215); deep sum $-355; capdays 0.727x A0; $/1000cd 3.50 vs A0 9.68
+   D3: total $41,133 (delta +2,858); deep sum $30,718; capdays 0.662x A0; $/1000cd 15.72 vs A0 9.68
+   D4: total $320 (delta -37,954); deep sum $-10,094; capdays 1.426x A0; $/1000cd 0.06 vs A0 9.68
+2025-10-10..2025-12-31 (post): n=4959 total A0 $24,136; deep n=605 deep sum $5,910 (24.5% of total); deep TP% 84.1
+   D1: total $17,952 (delta -6,184); deep sum $2,511; capdays 0.757x A0; $/1000cd 2.78 vs A0 2.82
+   D2: total $16,915 (delta -7,222); deep sum $-1,312; capdays 0.648x A0; $/1000cd 3.06 vs A0 2.82
+   D3: total $18,898 (delta -5,238); deep sum $672; capdays 0.618x A0; $/1000cd 3.58 vs A0 2.82
+   D4: total $18,605 (delta -5,532); deep sum $378; capdays 0.934x A0; $/1000cd 2.33 vs A0 2.82
+all: n=48762 total A0 $239,620; deep n=5762 deep sum $86,202 (36.0% of total); deep TP% 85.8
+   D1: total $184,170 (delta -55,449); deep sum $50,870; capdays 0.726x A0; $/1000cd 3.43 vs A0 3.24
+   D2: total $121,701 (delta -117,919); deep sum $-31,717; capdays 0.605x A0; $/1000cd 2.72 vs A0 3.24
+   D3: total $193,582 (delta -46,037); deep sum $40,165; capdays 0.636x A0; $/1000cd 4.11 vs A0 3.24
+   D4: total $127,625 (delta -111,995); deep sum $-25,792; capdays 0.973x A0; $/1000cd 1.77 vs A0 3.24
+fills>=7: n=3086 sum $16,335 of total $239,620 (6.8%)
+  exit at 5 fills: n=1635 sum $37,206 (15.5% of profit)
+  exit at 6 fills: n=1041 sum $32,661 (13.6% of profit)
+  exit at 7 fills: n=760 sum $27,625 (11.5% of profit)
+  exit at 8 fills: n=624 sum $26,916 (11.2% of profit)
+  exit at 9 fills: n=407 sum $18,006 (7.5% of profit)
+  exit at 10 fills: n=1295 sum $-56,212 (-23.5% of profit)

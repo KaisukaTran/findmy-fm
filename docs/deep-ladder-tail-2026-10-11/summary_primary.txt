@@ -1,0 +1,96 @@
+##### cov1  seeds pess=20 opt=20
+-- pess: A0 median cagr_own_pct -39.9, DD 86.0, end$ 1,885, closed 5524, util 102.1, starved 1906, stuck 57/MTM -179, 60d-deadline 374/$-19,743
+   D1: dcagr_own_pct -1.4 [-5.1;+2.5] 11/20 | dDD +0.6 [-1.5;+2.6] 10/20 | dEnd$ -139 [-465;+178] 11/20 | yr 2024:-1.1(10/20<0) 2025:-0.9(12/20<0) 2026:-2.1(11/20<0)
+        closed 5970 util 101.4 starved 2110 stuck 57/-161 dl 350/$-19,028 deep-exit 0/$0
+   D2: dcagr_own_pct -1.0 [-5.5;+3.3] 11/20 | dDD +0.2 [-2.0;+2.4] 9/20 | dEnd$ -105 [-490;+263] 11/20 | yr 2024:+4.4(7/20<0) 2025:-1.1(13/20<0) 2026:-3.5(10/20<0)
+        closed 6057 util 100.9 starved 2149 stuck 56/-171 dl 374/$-19,278 deep-exit 0/$0
+   D3: dcagr_own_pct +10.1 [+5.6;+14.0] 3/20 | dDD -6.4 [-8.5;-4.1] 18/20 | dEnd$ +947 [+521;+1316] 3/20 | yr 2024:+0.5(8/20<0) 2025:+16.2(2/20<0) 2026:-1.4(11/20<0)
+        closed 7723 util 84.7 starved 2505 stuck 46/-98 dl 41/$-285 deep-exit 589/$-27,299
+   D4: dcagr_own_pct -1.7 [-5.5;+2.0] 13/20 | dDD +1.3 [-0.7;+3.4] 7/20 | dEnd$ -189 [-521;+121] 13/20 | yr 2024:+3.6(9/20<0) 2025:-4.2(14/20<0) 2026:+2.3(8/20<0)
+        closed 6244 util 106.2 starved 2328 stuck 60/-193 dl 455/$-21,109 deep-exit 0/$0
+   D5: dcagr_own_pct -1.0 [-5.4;+3.7] 12/20 | dDD +0.5 [-2.5;+3.1] 12/20 | dEnd$ -92 [-471;+320] 12/20 | yr 2024:+4.2(8/20<0) 2025:-1.8(11/20<0) 2026:-1.4(10/20<0)
+        closed 5533 util 102.1 starved 2024 stuck 58/-147 dl 394/$-19,500 deep-exit 0/$0
+-- opt: A0 median cagr_own_pct -28.6, DD 82.7, end$ 2,931, closed 6110, util 100.5, starved 1982, stuck 66/MTM -258, 60d-deadline 384/$-25,190
+   D1: dcagr_own_pct +2.8 [-2.1;+7.9] 7/20 | dDD -1.7 [-4.5;+0.8] 12/20 | dEnd$ +366 [-211;+951] 7/20 | yr 2024:-0.7(10/20<0) 2025:+4.4(10/20<0) 2026:-0.2(13/20<0)
+        closed 6570 util 99.2 starved 2098 stuck 74/-236 dl 352/$-24,554 deep-exit 0/$0
+   D2: dcagr_own_pct +2.9 [-1.5;+7.5] 7/20 | dDD -2.6 [-5.3;+0.1] 13/20 | dEnd$ +354 [-169;+881] 7/20 | yr 2024:+4.3(9/20<0) 2025:+4.3(8/20<0) 2026:-1.6(13/20<0)
+        closed 6291 util 98.7 starved 2090 stuck 70/-254 dl 350/$-22,591 deep-exit 0/$0
+   D3: dcagr_own_pct +14.1 [+8.2;+21.0] 3/20 | dDD -9.9 [-14.5;-5.9] 16/20 | dEnd$ +1808 [+984;+2871] 3/20 | yr 2024:-0.3(8/20<0) 2025:+19.0(2/20<0) 2026:+4.2(7/20<0)
+        closed 8176 util 82.9 starved 2530 stuck 45/-118 dl 42/$-312 deep-exit 603/$-32,620
+   D4: dcagr_own_pct -2.1 [-5.6;+1.4] 13/20 | dDD +1.0 [-0.9;+2.9] 7/20 | dEnd$ -254 [-617;+92] 13/20 | yr 2024:-3.5(11/20<0) 2025:-1.1(12/20<0) 2026:-2.1(12/20<0)
+        closed 6900 util 104.0 starved 2360 stuck 79/-261 dl 466/$-26,343 deep-exit 0/$0
+   D5: dcagr_own_pct +4.0 [-1.8;+9.7] 11/20 | dDD -2.1 [-5.1;+0.9] 10/20 | dEnd$ +477 [-161;+1120] 11/20 | yr 2024:+5.9(9/20<0) 2025:+6.6(9/20<0) 2026:-4.0(13/20<0)
+        closed 6230 util 101.1 starved 2072 stuck 68/-304 dl 406/$-24,932 deep-exit 0/$0
+   VERDICT: D1: null (CI contains 0, both bounds); D2: null (CI contains 0, both bounds); D3: BETTER (both CIs > 0); D4: null (CI contains 0, both bounds); D5: null (CI contains 0, both bounds)
+##### cov1_n5  seeds pess=10 opt=10
+-- pess: A0 median cagr_own_pct -6.3, DD 52.7, end$ 5,920, closed 2096, util 63.0, starved 230, stuck 42/MTM -152, 60d-deadline 82/$-12,984
+   D1: dcagr_own_pct -2.4 [-13.0;+9.8] 6/10 | dDD -0.3 [-8.8;+7.2] 4/10 | dEnd$ -340 [-2056;+1635] 6/10 | yr 2024:-14.6(7/10<0) 2025:+10.2(3/10<0) 2026:-5.6(7/10<0)
+        closed 2365 util 60.2 starved 218 stuck 42/-119 dl 68/$-10,837 deep-exit 0/$0
+   D2: dcagr_own_pct +7.9 [-0.5;+16.1] 2/10 | dDD -10.1 [-17.0;-3.5] 8/10 | dEnd$ +1499 [+52;+2862] 2/10 | yr 2024:-8.0(5/10<0) 2025:+18.1(1/10<0) 2026:+6.7(4/10<0)
+        closed 2514 util 53.7 starved 239 stuck 45/-284 dl 55/$-8,547 deep-exit 0/$0
+   D3: dcagr_own_pct +5.8 [-7.1;+17.1] 3/10 | dDD -1.7 [-8.2;+4.8] 7/10 | dEnd$ +891 [-1290;+2811] 3/10 | yr 2024:-22.0(7/10<0) 2025:+35.6(1/10<0) 2026:+0.4(4/10<0)
+        closed 2784 util 48.0 starved 236 stuck 42/-292 dl 14/$-32 deep-exit 148/$-12,778
+   D4: dcagr_own_pct -0.9 [-7.9;+7.8] 6/10 | dDD -2.6 [-6.9;+0.9] 4/10 | dEnd$ -297 [-1468;+1105] 6/10 | yr 2024:-2.0(5/10<0) 2025:+2.0(4/10<0) 2026:-2.3(5/10<0)
+        closed 2461 util 67.9 starved 268 stuck 50/-173 dl 106/$-14,650 deep-exit 0/$0
+   D5: dcagr_own_pct -4.3 [-14.4;+6.0] 7/10 | dDD +1.7 [-4.4;+7.7] 5/10 | dEnd$ -805 [-2556;+940] 7/10 | yr 2024:-3.3(7/10<0) 2025:-3.0(6/10<0) 2026:-4.4(6/10<0)
+        closed 2096 util 63.2 starved 246 stuck 42/-134 dl 86/$-12,996 deep-exit 0/$0
+-- opt: A0 median cagr_own_pct -2.4, DD 55.1, end$ 6,569, closed 2186, util 61.7, starved 222, stuck 45/MTM -220, 60d-deadline 83/$-13,634
+   D1: dcagr_own_pct +22.9 [+15.1;+30.7] 1/10 | dDD -17.4 [-20.7;-14.0] 10/10 | dEnd$ +4912 [+3085;+6753] 1/10 | yr 2024:+20.3(3/10<0) 2025:+35.2(0/10<0) 2026:+1.1(7/10<0)
+        closed 2594 util 52.6 starved 220 stuck 43/-172 dl 72/$-11,550 deep-exit 0/$0
+   D2: dcagr_own_pct +29.7 [+22.3;+37.6] 0/10 | dDD -22.8 [-26.9;-18.5] 10/10 | dEnd$ +6629 [+4788;+8709] 0/10 | yr 2024:+37.4(1/10<0) 2025:+32.1(1/10<0) 2026:+5.6(3/10<0)
+        closed 2834 util 46.3 starved 198 stuck 46/-444 dl 48/$-7,465 deep-exit 0/$0
+   D3: dcagr_own_pct +18.8 [+10.0;+27.4] 1/10 | dDD -10.1 [-16.8;-2.9] 7/10 | dEnd$ +4021 [+2090;+5987] 1/10 | yr 2024:-2.1(7/10<0) 2025:+53.8(1/10<0) 2026:-3.1(6/10<0)
+        closed 2865 util 44.6 starved 222 stuck 46/-349 dl 13/$-41 deep-exit 140/$-14,487
+   D4: dcagr_own_pct -9.9 [-16.3;-3.0] 7/10 | dDD +3.0 [-5.2;+10.9] 4/10 | dEnd$ -1523 [-2534;-428] 7/10 | yr 2024:-10.6(7/10<0) 2025:-11.8(5/10<0) 2026:-7.4(7/10<0)
+        closed 2451 util 68.2 starved 310 stuck 48/-140 dl 117/$-14,194 deep-exit 0/$0
+   D5: dcagr_own_pct +6.5 [-7.3;+20.9] 4/10 | dDD -6.6 [-16.3;+4.0] 7/10 | dEnd$ +1663 [-963;+4575] 4/10 | yr 2024:+9.1(6/10<0) 2025:+9.3(4/10<0) 2026:-3.5(6/10<0)
+        closed 2169 util 60.9 starved 243 stuck 46/-210 dl 80/$-13,204 deep-exit 0/$0
+   VERDICT: D1: UNDECIDED (bounds disagree in sign); D2: leans better (one bound CI > 0); D3: leans better (one bound CI > 0); D4: leans worse (one bound CI < 0); D5: null (CI contains 0, both bounds)
+##### cov30  seeds pess=20 opt=20
+-- pess: A0 median cagr_own_pct 8.8, DD 44.0, end$ 8,695, closed 1762, util 46.9, starved 42, stuck 15/MTM -132, 60d-deadline 52/$-10,874
+   D1: dcagr_own_pct +11.0 [+4.6;+17.3] 6/20 | dDD -9.5 [-13.5;-5.5] 17/20 | dEnd$ +2243 [+948;+3514] 6/20 | yr 2024:+13.2(7/20<0) 2025:+8.3(7/20<0) 2026:+6.8(9/20<0)
+        closed 2094 util 42.4 starved 46 stuck 15/-210 dl 41/$-9,186 deep-exit 0/$0
+   D2: dcagr_own_pct +7.2 [-0.5;+14.9] 8/20 | dDD -13.0 [-18.4;-7.5] 17/20 | dEnd$ +1446 [-195;+3104] 8/20 | yr 2024:+5.4(10/20<0) 2025:+8.0(7/20<0) 2026:+3.7(9/20<0)
+        closed 2176 util 37.4 starved 45 stuck 15/-154 dl 28/$-6,054 deep-exit 0/$0
+   D3: dcagr_own_pct +9.3 [+3.9;+14.7] 5/20 | dDD -13.7 [-18.4;-8.9] 18/20 | dEnd$ +1935 [+740;+3134] 5/20 | yr 2024:+4.8(10/20<0) 2025:+20.2(3/20<0) 2026:-2.4(12/20<0)
+        closed 2222 util 34.1 starved 40 stuck 15/-120 dl 10/$-37 deep-exit 101/$-11,479
+   D4: dcagr_own_pct -7.8 [-14.1;-1.8] 12/20 | dDD +5.1 [+0.4;+9.6] 7/20 | dEnd$ -1610 [-2842;-446] 12/20 | yr 2024:-4.4(11/20<0) 2025:-11.4(14/20<0) 2026:-3.1(12/20<0)
+        closed 2630 util 64.6 starved 90 stuck 21/-190 dl 94/$-15,221 deep-exit 0/$0
+   D5: dcagr_own_pct +3.8 [-4.3;+12.4] 11/20 | dDD -3.3 [-8.9;+2.4] 13/20 | dEnd$ +743 [-932;+2595] 11/20 | yr 2024:+5.2(10/20<0) 2025:+0.4(11/20<0) 2026:+4.7(10/20<0)
+        closed 1728 util 48.4 starved 46 stuck 15/-138 dl 52/$-10,841 deep-exit 0/$0
+-- opt: A0 median cagr_own_pct 29.6, DD 34.3, end$ 13,672, closed 2060, util 44.5, starved 29, stuck 18/MTM -237, 60d-deadline 56/$-11,739
+   D1: dcagr_own_pct +5.3 [-0.9;+11.4] 6/20 | dDD -4.5 [-9.3;+0.1] 14/20 | dEnd$ +1374 [-336;+3046] 6/20 | yr 2024:+7.2(7/20<0) 2025:+4.8(11/20<0) 2026:+1.6(8/20<0)
+        closed 2530 util 39.2 starved 23 stuck 20/-250 dl 43/$-9,184 deep-exit 0/$0
+   D2: dcagr_own_pct -6.9 [-12.3;-1.8] 15/20 | dDD -8.8 [-13.6;-4.0] 16/20 | dEnd$ -1838 [-3259;-545] 15/20 | yr 2024:-13.0(15/20<0) 2025:-3.2(11/20<0) 2026:-4.3(11/20<0)
+        closed 2544 util 34.4 starved 17 stuck 18/-227 dl 28/$-6,483 deep-exit 0/$0
+   D3: dcagr_own_pct +6.9 [-0.1;+13.8] 7/20 | dDD -6.8 [-10.5;-2.9] 15/20 | dEnd$ +1903 [-37;+3856] 7/20 | yr 2024:-6.6(12/20<0) 2025:+23.9(5/20<0) 2026:-3.7(11/20<0)
+        closed 2711 util 32.4 starved 32 stuck 22/-240 dl 12/$-30 deep-exit 110/$-12,186
+   D4: dcagr_own_pct -21.6 [-27.7;-15.1] 18/20 | dDD +14.1 [+10.4;+17.7] 2/20 | dEnd$ -5130 [-6632;-3584] 18/20 | yr 2024:-14.5(15/20<0) 2025:-24.7(16/20<0) 2026:-12.7(14/20<0)
+        closed 2812 util 63.8 starved 88 stuck 22/-226 dl 96/$-16,469 deep-exit 0/$0
+   D5: dcagr_own_pct -4.8 [-13.8;+4.6] 12/20 | dDD +4.6 [-0.9;+10.1] 8/20 | dEnd$ -1115 [-3513;+1337] 12/20 | yr 2024:-1.5(10/20<0) 2025:-3.6(10/20<0) 2026:-5.8(14/20<0)
+        closed 1918 util 45.5 starved 42 stuck 17/-177 dl 52/$-11,644 deep-exit 0/$0
+   VERDICT: D1: leans better (one bound CI > 0); D2: UNDECIDED (bounds disagree in sign); D3: leans better (one bound CI > 0); D4: WORSE (both CIs < 0); D5: null (CI contains 0, both bounds)
+##### cov30_n5  seeds pess=10 opt=10
+-- pess: A0 median cagr_own_pct 9.2, DD 39.4, end$ 8,794, closed 1421, util 44.6, starved 38, stuck 14/MTM -124, 60d-deadline 43/$-9,642
+   D1: dcagr_own_pct -3.8 [-13.8;+5.9] 4/10 | dDD -4.4 [-9.8;+2.0] 8/10 | dEnd$ -676 [-2725;+1270] 4/10 | yr 2024:-2.6(7/10<0) 2025:-1.0(6/10<0) 2026:-5.6(7/10<0)
+        closed 1600 util 39.7 starved 38 stuck 14/-140 dl 34/$-7,402 deep-exit 0/$0
+   D2: dcagr_own_pct +3.7 [-3.3;+9.9] 2/10 | dDD -11.5 [-17.3;-5.6] 8/10 | dEnd$ +737 [-773;+2060] 2/10 | yr 2024:+4.6(3/10<0) 2025:+1.7(5/10<0) 2026:+3.1(5/10<0)
+        closed 1761 util 32.9 starved 29 stuck 15/-160 dl 24/$-4,508 deep-exit 0/$0
+   D3: dcagr_own_pct -3.0 [-10.6;+3.7] 4/10 | dDD -7.7 [-12.7;-2.0] 8/10 | dEnd$ -644 [-2222;+781] 4/10 | yr 2024:-10.7(7/10<0) 2025:+11.8(4/10<0) 2026:-8.8(7/10<0)
+        closed 1752 util 31.6 starved 30 stuck 15/-70 dl 7/$-17 deep-exit 86/$-9,478
+   D4: dcagr_own_pct -16.8 [-23.1;-9.8] 9/10 | dDD +11.8 [+7.4;+16.6] 0/10 | dEnd$ -3142 [-4413;-1816] 9/10 | yr 2024:-13.1(7/10<0) 2025:-24.3(9/10<0) 2026:-5.1(7/10<0)
+        closed 1858 util 57.5 starved 64 stuck 22/-147 dl 76/$-11,583 deep-exit 0/$0
+   D5: dcagr_own_pct -3.2 [-16.0;+8.8] 5/10 | dDD +0.7 [-7.5;+10.0] 5/10 | dEnd$ -450 [-3040;+2034] 5/10 | yr 2024:+3.8(5/10<0) 2025:-13.3(7/10<0) 2026:+2.8(5/10<0)
+        closed 1390 util 43.6 starved 35 stuck 15/-105 dl 45/$-9,084 deep-exit 0/$0
+-- opt: A0 median cagr_own_pct 23.2, DD 30.3, end$ 11,994, closed 1530, util 42.5, starved 26, stuck 18/MTM -164, 60d-deadline 46/$-9,234
+   D1: dcagr_own_pct +0.0 [-6.5;+6.4] 6/10 | dDD -7.6 [-14.8;-0.5] 7/10 | dEnd$ -37 [-1745;+1590] 6/10 | yr 2024:-0.0(5/10<0) 2025:+2.7(6/10<0) 2026:-2.5(6/10<0)
+        closed 1874 util 36.5 starved 17 stuck 18/-203 dl 34/$-7,359 deep-exit 0/$0
+   D2: dcagr_own_pct -2.3 [-10.1;+6.0] 5/10 | dDD -13.4 [-19.3;-7.9] 10/10 | dEnd$ -584 [-2571;+1533] 5/10 | yr 2024:-9.0(6/10<0) 2025:+6.9(2/10<0) 2026:-5.1(6/10<0)
+        closed 1932 util 30.1 starved 18 stuck 18/-150 dl 22/$-4,144 deep-exit 0/$0
+   D3: dcagr_own_pct -1.4 [-9.6;+6.8] 5/10 | dDD -9.4 [-15.9;-3.6] 8/10 | dEnd$ -354 [-2496;+1735] 5/10 | yr 2024:-19.2(7/10<0) 2025:+18.3(1/10<0) 2026:-4.9(6/10<0)
+        closed 1885 util 30.3 starved 30 stuck 16/-130 dl 8/$-29 deep-exit 87/$-9,407
+   D4: dcagr_own_pct -22.6 [-30.9;-14.8] 10/10 | dDD +12.5 [+2.9;+21.2] 2/10 | dEnd$ -5032 [-6875;-3292] 10/10 | yr 2024:-14.9(9/10<0) 2025:-29.9(9/10<0) 2026:-8.9(7/10<0)
+        closed 1868 util 57.0 starved 75 stuck 24/-161 dl 76/$-12,497 deep-exit 0/$0
+   D5: dcagr_own_pct -2.6 [-11.0;+5.9] 6/10 | dDD +2.1 [-4.4;+8.6] 4/10 | dEnd$ -529 [-2780;+1743] 6/10 | yr 2024:+4.5(4/10<0) 2025:-5.7(7/10<0) 2026:-2.8(7/10<0)
+        closed 1478 util 41.4 starved 33 stuck 16/-147 dl 44/$-9,986 deep-exit 0/$0
+   VERDICT: D1: null (CI contains 0, both bounds); D2: null (CI contains 0, both bounds); D3: null (CI contains 0, both bounds); D4: WORSE (both CIs < 0); D5: null (CI contains 0, both bounds)

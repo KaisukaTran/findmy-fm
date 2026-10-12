@@ -1,0 +1,15 @@
+Portfolio holdout (Aug1-Oct10 2026, 71d): MDE80 = 2.8*SE, SE=CIwidth/3.92, on total return pp (seed-bootstrap; understates true uncertainty: seeds vary coin picks, not the one price path)
+cov1 pess D1 MDE 6.6pp; D2 MDE 4.8pp; D3 MDE 2.4pp; D4 MDE 6.7pp; D5 MDE 9.2pp
+cov1 opt D1 MDE 9.2pp; D2 MDE 5.2pp; D3 MDE 2.7pp; D4 MDE 7.4pp; D5 MDE 8.6pp
+cov30 pess D1 MDE 1.9pp; D2 MDE 1.4pp; D3 MDE 0.9pp; D4 MDE 2.8pp; D5 MDE 2.7pp
+cov30 opt D1 MDE 2.3pp; D2 MDE 1.0pp; D3 MDE 0.2pp; D4 MDE 2.5pp; D5 MDE 1.5pp
+pess per-session: n 32497 deep(>=5 fills) 419 (1.29%)
+  D1: dmean$/session -0.166 [-0.267;-0.036] MDE80 0.165
+  D2: dmean$/session -0.080 [-0.216;+0.085] MDE80 0.214
+  D3: dmean$/session -0.011 [-0.094;+0.082] MDE80 0.126
+  D4: dmean$/session +0.032 [-0.054;+0.129] MDE80 0.131
+opt per-session: n 32497 deep(>=5 fills) 381 (1.17%)
+  D1: dmean$/session -0.167 [-0.256;-0.035] MDE80 0.158
+  D2: dmean$/session -0.049 [-0.187;+0.107] MDE80 0.210
+  D3: dmean$/session +0.005 [-0.057;+0.081] MDE80 0.099
+  D4: dmean$/session +0.036 [-0.042;+0.127] MDE80 0.121

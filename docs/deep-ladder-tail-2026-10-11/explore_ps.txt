@@ -1,0 +1,14 @@
+== pess (EXPLORATORY)
+A0: TP% 97.52 mean$ 4.043 days 6.90 timeout% 2.37 timeout$ -176761 $/1000cd 2.444 capdays 8.068e+07
+E1: TP% 96.58 mean$ 2.189 days 5.59 timeout% 3.34 timeout$ -125906 $/1000cd 2.637 capdays 4.047e+07 | d mean$ -1.854 [-2.192;-1.508] d$/1000cd +0.194 [-0.079;+0.466]
+E2: TP% 96.26 mean$ 3.039 days 6.36 timeout% 3.64 timeout$ -178761 $/1000cd 2.625 capdays 5.644e+07 | d mean$ -1.005 [-1.295;-0.701] d$/1000cd +0.182 [-0.024;+0.393]
+E3: TP% 96.92 mean$ 3.319 days 6.56 timeout% 2.98 timeout$ -187074 $/1000cd 2.526 capdays 6.407e+07 | d mean$ -0.724 [-0.993;-0.458] d$/1000cd +0.083 [-0.098;+0.259]
+E4: TP% 96.67 mean$ 3.574 days 6.57 timeout% 3.22 timeout$ -172252 $/1000cd 2.585 capdays 6.742e+07 | d mean$ -0.469 [-0.681;-0.260] d$/1000cd +0.141 [+0.004;+0.277]
+E5: TP% 93.51 mean$ 2.540 days 5.69 timeout% 6.42 timeout$ -147630 $/1000cd 3.324 capdays 3.726e+07 | d mean$ -1.504 [-1.873;-1.127] d$/1000cd +0.880 [+0.561;+1.179]
+== opt (EXPLORATORY)
+A0: TP% 97.75 mean$ 4.914 days 6.71 timeout% 2.19 timeout$ -149781 $/1000cd 3.237 capdays 7.402e+07
+E1: TP% 96.98 mean$ 3.028 days 5.46 timeout% 2.98 timeout$ -98188 $/1000cd 3.971 capdays 3.718e+07 | d mean$ -1.886 [-2.200;-1.571] d$/1000cd +0.734 [+0.471;+1.013]
+E2: TP% 96.69 mean$ 4.148 days 6.25 timeout% 3.26 timeout$ -148451 $/1000cd 3.816 capdays 5.301e+07 | d mean$ -0.766 [-1.036;-0.491] d$/1000cd +0.579 [+0.381;+0.781]
+E3: TP% 97.30 mean$ 4.408 days 6.43 timeout% 2.65 timeout$ -156023 $/1000cd 3.567 capdays 6.025e+07 | d mean$ -0.506 [-0.729;-0.277] d$/1000cd +0.330 [+0.157;+0.501]
+E4: TP% 96.97 mean$ 4.427 days 6.42 timeout% 2.97 timeout$ -148956 $/1000cd 3.471 capdays 6.219e+07 | d mean$ -0.487 [-0.679;-0.288] d$/1000cd +0.234 [+0.098;+0.368]
+E5: TP% 94.01 mean$ 3.424 days 5.61 timeout% 5.95 timeout$ -125324 $/1000cd 4.739 capdays 3.522e+07 | d mean$ -1.491 [-1.838;-1.144] d$/1000cd +1.502 [+1.210;+1.808]

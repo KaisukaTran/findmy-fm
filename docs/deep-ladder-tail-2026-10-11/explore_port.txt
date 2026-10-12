@@ -1,0 +1,36 @@
+cov1 pess N=10 D3-A0 cagr_own_pct: +9.9 [+4.6;+15.1] neg 2/10
+cov1 pess N=10 D3-A0 max_drawdown_unit_nav_pct: -6.2 [-9.1;-3.2] neg 9/10
+      2024: +0.6 (neg 4/10)      2025: +15.3 (neg 1/10)      2026: +0.1 (neg 5/10)
+cov1 pess N=10 E1-A0 cagr_own_pct: +5.5 [-1.7;+13.0] neg 4/10
+cov1 pess N=10 E1-A0 max_drawdown_unit_nav_pct: -3.5 [-7.7;+0.7] neg 6/10
+      2024: -9.2 (neg 5/10)      2025: +13.3 (neg 1/10)      2026: -1.9 (neg 3/10)
+cov1 pess N=10 E5-A0 cagr_own_pct: +5.2 [-1.7;+11.3] neg 2/10
+cov1 pess N=10 E5-A0 max_drawdown_unit_nav_pct: -1.2 [-4.3;+2.4] neg 7/10
+      2024: -3.6 (neg 6/10)      2025: +0.3 (neg 5/10)      2026: +20.5 (neg 2/10)
+cov1 opt N=10 D3-A0 cagr_own_pct: +18.0 [+7.4;+30.3] neg 2/10
+cov1 opt N=10 D3-A0 max_drawdown_unit_nav_pct: -11.9 [-19.4;-5.4] neg 8/10
+      2024: +9.1 (neg 2/10)      2025: +23.8 (neg 1/10)      2026: +2.5 (neg 4/10)
+cov1 opt N=10 E1-A0 cagr_own_pct: +19.9 [+11.4;+28.5] neg 0/10
+cov1 opt N=10 E1-A0 max_drawdown_unit_nav_pct: -13.9 [-18.9;-9.1] neg 10/10
+      2024: +8.4 (neg 3/10)      2025: +27.1 (neg 1/10)      2026: +0.8 (neg 5/10)
+cov1 opt N=10 E5-A0 cagr_own_pct: +7.1 [+2.4;+11.9] neg 3/10
+cov1 opt N=10 E5-A0 max_drawdown_unit_nav_pct: -3.7 [-6.3;-1.1] neg 8/10
+      2024: +12.0 (neg 4/10)      2025: +4.1 (neg 3/10)      2026: +7.7 (neg 2/10)
+cov30 pess N=10 D3-A0 cagr_own_pct: +9.8 [+2.4;+17.8] neg 2/10
+cov30 pess N=10 D3-A0 max_drawdown_unit_nav_pct: -10.2 [-17.5;-3.2] neg 8/10
+      2024: +7.2 (neg 5/10)      2025: +14.7 (neg 3/10)      2026: +1.8 (neg 6/10)
+cov30 pess N=10 E1-A0 cagr_own_pct: +5.7 [-2.5;+14.0] neg 3/10
+cov30 pess N=10 E1-A0 max_drawdown_unit_nav_pct: -12.4 [-18.7;-6.2] neg 9/10
+      2024: -11.9 (neg 5/10)      2025: +16.9 (neg 4/10)      2026: +3.4 (neg 5/10)
+cov30 pess N=10 E5-A0 cagr_own_pct: +14.3 [+10.0;+18.9] neg 0/10
+cov30 pess N=10 E5-A0 max_drawdown_unit_nav_pct: -18.0 [-24.3;-11.9] neg 10/10
+      2024: +12.3 (neg 5/10)      2025: +10.4 (neg 3/10)      2026: +11.5 (neg 2/10)
+cov30 opt N=10 D3-A0 cagr_own_pct: +10.6 [+3.7;+18.2] neg 2/10
+cov30 opt N=10 D3-A0 max_drawdown_unit_nav_pct: -10.4 [-13.5;-7.3] neg 10/10
+      2024: +4.6 (neg 5/10)      2025: +27.5 (neg 0/10)      2026: -6.1 (neg 5/10)
+cov30 opt N=10 E1-A0 cagr_own_pct: +2.7 [-2.3;+8.4] neg 5/10
+cov30 opt N=10 E1-A0 max_drawdown_unit_nav_pct: -10.6 [-15.2;-6.0] neg 9/10
+      2024: -11.0 (neg 7/10)      2025: +16.0 (neg 4/10)      2026: -2.7 (neg 5/10)
+cov30 opt N=10 E5-A0 cagr_own_pct: +3.2 [-4.6;+11.9] neg 3/10
+cov30 opt N=10 E5-A0 max_drawdown_unit_nav_pct: -9.8 [-15.2;-3.2] neg 8/10
+      2024: -4.7 (neg 5/10)      2025: +7.6 (neg 4/10)      2026: +1.2 (neg 3/10)

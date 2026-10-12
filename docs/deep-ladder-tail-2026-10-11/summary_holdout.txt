@@ -1,0 +1,48 @@
+##### cov1  seeds pess=20 opt=20
+-- pess: A0 median total_return_pct 32.4, DD 5.9, end$ 9,265, closed 870, util 72.1, starved 45, stuck 47/MTM -353, 60d-deadline 5/$-321
+   D1: dtotal_return_pct -4.1 [-8.7;+0.6] 14/20 | dDD +0.1 [-1.3;+1.3] 9/20 | dEnd$ -284 [-610;+41] 14/20 | yr 2026:-4.1(14/20<0)
+        closed 912 util 73.8 starved 42 stuck 51/-431 dl 4/$-377 deep-exit 0/$0
+   D2: dtotal_return_pct -0.7 [-3.9;+2.8] 11/20 | dDD -0.4 [-1.7;+0.7] 11/20 | dEnd$ -48 [-277;+190] 11/20 | yr 2026:-0.7(11/20<0)
+        closed 922 util 73.9 starved 60 stuck 52/-349 dl 6/$-379 deep-exit 0/$0
+   D3: dtotal_return_pct +1.1 [-0.6;+2.8] 6/20 | dDD -0.1 [-0.4;+0.1] 5/20 | dEnd$ +78 [-38;+194] 6/20 | yr 2026:+1.1(6/20<0)
+        closed 935 util 73.7 starved 64 stuck 50/-338 dl 4/$-1 deep-exit 2/$-434
+   D4: dtotal_return_pct +2.3 [-2.4;+6.9] 8/20 | dDD -0.4 [-1.5;+0.6] 12/20 | dEnd$ +163 [-169;+481] 8/20 | yr 2026:+2.3(8/20<0)
+        closed 970 util 81.6 starved 116 stuck 51/-610 dl 6/$-284 deep-exit 0/$0
+   D5: dtotal_return_pct -4.2 [-10.8;+2.1] 11/20 | dDD +0.9 [-0.8;+2.5] 5/20 | dEnd$ -295 [-752;+147] 11/20 | yr 2026:-4.2(11/20<0)
+        closed 861 util 72.6 starved 40 stuck 45/-465 dl 4/$-369 deep-exit 0/$0
+-- opt: A0 median total_return_pct 33.7, DD 5.5, end$ 9,360, closed 908, util 71.2, starved 35, stuck 48/MTM -378, 60d-deadline 5/$-363
+   D1: dtotal_return_pct +3.2 [-3.4;+9.6] 8/20 | dDD +0.2 [-1.2;+1.7] 10/20 | dEnd$ +224 [-220;+676] 8/20 | yr 2026:+3.2(8/20<0)
+        closed 1042 util 72.4 starved 42 stuck 52/-351 dl 5/$-377 deep-exit 0/$0
+   D2: dtotal_return_pct +3.6 [-0.2;+7.1] 6/20 | dDD -0.2 [-1.4;+0.8] 10/20 | dEnd$ +250 [-22;+500] 6/20 | yr 2026:+3.6(6/20<0)
+        closed 1040 util 72.9 starved 42 stuck 52/-330 dl 5/$-18 deep-exit 0/$0
+   D3: dtotal_return_pct +2.7 [+0.8;+4.7] 5/20 | dDD +0.1 [-0.1;+0.2] 4/20 | dEnd$ +190 [+59;+325] 5/20 | yr 2026:+2.7(5/20<0)
+        closed 966 util 71.9 starved 44 stuck 50/-250 dl 4/$-1 deep-exit 2/$-476
+   D4: dtotal_return_pct +6.5 [+1.3;+11.7] 6/20 | dDD +0.2 [-0.6;+1.0] 6/20 | dEnd$ +458 [+94;+825] 6/20 | yr 2026:+6.5(6/20<0)
+        closed 1068 util 80.6 starved 134 stuck 62/-449 dl 6/$-299 deep-exit 0/$0
+   D5: dtotal_return_pct +3.1 [-2.8;+9.3] 9/20 | dDD +1.1 [-0.4;+2.4] 5/20 | dEnd$ +219 [-204;+654] 9/20 | yr 2026:+3.1(9/20<0)
+        closed 982 util 74.7 starved 66 stuck 46/-494 dl 4/$-413 deep-exit 0/$0
+   VERDICT: D1: null (CI contains 0, both bounds); D2: null (CI contains 0, both bounds); D3: leans better (one bound CI > 0); D4: leans better (one bound CI > 0); D5: null (CI contains 0, both bounds)
+##### cov30  seeds pess=20 opt=20
+-- pess: A0 median total_return_pct 7.0, DD 1.4, end$ 7,492, closed 190, util 14.8, starved 0, stuck 14/MTM -39, 60d-deadline 1/$-0
+   D1: dtotal_return_pct -0.1 [-1.4;+1.2] 11/20 | dDD -0.4 [-1.3;+0.6] 10/20 | dEnd$ -9 [-97;+87] 11/20 | yr 2026:-0.1(11/20<0)
+        closed 196 util 13.4 starved 0 stuck 15/-34 dl 1/$-0 deep-exit 0/$0
+   D2: dtotal_return_pct -0.2 [-1.1;+0.8] 12/20 | dDD -0.4 [-0.8;+0.0] 10/20 | dEnd$ -13 [-80;+57] 12/20 | yr 2026:-0.2(12/20<0)
+        closed 196 util 14.8 starved 0 stuck 15/-39 dl 1/$-0 deep-exit 0/$0
+   D3: dtotal_return_pct +0.4 [-0.2;+1.1] 3/20 | dDD -0.3 [-0.6;+0.0] 3/20 | dEnd$ +27 [-14;+73] 3/20 | yr 2026:+0.4(3/20<0)
+        closed 194 util 14.8 starved 0 stuck 14/-37 dl 1/$-0 deep-exit 0/$0
+   D4: dtotal_return_pct +5.1 [+3.2;+7.1] 2/20 | dDD +0.5 [-0.4;+1.4] 5/20 | dEnd$ +360 [+224;+501] 2/20 | yr 2026:+5.1(2/20<0)
+        closed 314 util 24.7 starved 0 stuck 22/-81 dl 1/$-0 deep-exit 0/$0
+   D5: dtotal_return_pct +1.6 [-0.4;+3.4] 5/20 | dDD +0.4 [-0.7;+1.6] 7/20 | dEnd$ +109 [-31;+236] 5/20 | yr 2026:+1.6(5/20<0)
+        closed 222 util 15.8 starved 0 stuck 14/-38 dl 0/$0 deep-exit 0/$0
+-- opt: A0 median total_return_pct 8.8, DD 1.0, end$ 7,615, closed 209, util 13.7, starved 0, stuck 15/MTM -38, 60d-deadline 1/$-0
+   D1: dtotal_return_pct -1.9 [-3.5;-0.3] 14/20 | dDD +0.6 [-0.4;+1.5] 10/20 | dEnd$ -133 [-247;-23] 14/20 | yr 2026:-1.9(14/20<0)
+        closed 224 util 13.4 starved 0 stuck 15/-27 dl 1/$-0 deep-exit 0/$0
+   D2: dtotal_return_pct -0.6 [-1.3;+0.2] 15/20 | dDD -0.3 [-0.6;-0.0] 11/20 | dEnd$ -42 [-90;+11] 15/20 | yr 2026:-0.6(15/20<0)
+        closed 206 util 13.6 starved 0 stuck 15/-25 dl 1/$-0 deep-exit 0/$0
+   D3: dtotal_return_pct -0.1 [-0.3;+0.0] 1/20 | dDD +0.0 [+0.0;+0.0] 0/20 | dEnd$ -7 [-20;+0] 1/20 | yr 2026:-0.1(1/20<0)
+        closed 209 util 13.7 starved 0 stuck 15/-38 dl 1/$-0 deep-exit 0/$0
+   D4: dtotal_return_pct +5.0 [+3.3;+6.7] 3/20 | dDD +0.4 [-0.3;+1.0] 6/20 | dEnd$ +353 [+229;+470] 3/20 | yr 2026:+5.0(3/20<0)
+        closed 337 util 21.8 starved 0 stuck 23/-55 dl 1/$-0 deep-exit 0/$0
+   D5: dtotal_return_pct +2.2 [+1.2;+3.2] 2/20 | dDD -0.0 [-0.7;+0.6] 9/20 | dEnd$ +155 [+82;+225] 2/20 | yr 2026:+2.2(2/20<0)
+        closed 242 util 14.3 starved 0 stuck 15/-25 dl 0/$0 deep-exit 0/$0
+   VERDICT: D1: leans worse (one bound CI < 0); D2: null (CI contains 0, both bounds); D3: null (CI contains 0, both bounds); D4: BETTER (both CIs > 0); D5: leans better (one bound CI > 0)

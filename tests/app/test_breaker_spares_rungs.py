@@ -272,6 +272,8 @@ def test_manual_dashboard_buy_is_never_blocked_by_the_freeze(db, monkeypatch):
     """A human approval always bypasses the freeze, independent of `freeze_blocks`."""
     monkeypatch.setattr(execution, "live_enabled", lambda: False)
     monkeypatch.setattr("app.market.get_current_prices", lambda syms, **kw: {"SOL": 100.0})
+    # orders.py binds its own reference; the dashboard path checks marketability against it.
+    monkeypatch.setattr("app.orders.get_current_prices", lambda syms: {"SOL": 100.0})
     row = _session(db)
     wave0 = _rung(db, session_id=row.id, wave=0, price=100.0)
     runtime.freeze(db, "test")

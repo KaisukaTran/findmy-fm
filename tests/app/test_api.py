@@ -24,7 +24,9 @@ def test_health_and_security_headers(client):
     assert "default-src 'self'" in home.headers["Content-Security-Policy"]
 
 
-def test_order_approve_flow(client):
+def test_order_approve_flow(client, monkeypatch):
+    # Market at/below the BUY limit: a dashboard approval of a not-yet-marketable limit is refused.
+    monkeypatch.setattr("app.orders.get_current_prices", lambda syms: dict.fromkeys(syms, 49000.0))
     r = client.post("/api/orders", json={"symbol": "BTC", "side": "BUY", "quantity": 0.01, "price": 50000})
     assert r.status_code == 200
     oid = r.json()["order"]["id"]

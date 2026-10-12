@@ -313,6 +313,8 @@ def create_order(body: ManualOrder, db: Session = Depends(get_db)):
 def approve(order_id: int, db: Session = Depends(get_db)):
     try:
         fill = orders.approve_order(db, order_id, reviewer="dashboard")
+    except orders.NotMarketable as exc:  # resting limit the market hasn't reached — not a fault
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"message": "approved", "fill": fill.to_dict()}

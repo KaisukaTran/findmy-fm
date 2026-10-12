@@ -849,6 +849,45 @@ def auto_fill_due_orders(db: Session) -> list[int]:
     return approved
 
 
+MANUAL_REVIEWER = "dashboard"
+
+
+class NotMarketable(ValueError):
+    """Paper: a LIMIT approved by hand while the market has not reached it. A subclass of
+    ValueError so `approve_all` keeps skipping it; the order stays PENDING and rests."""
+
+
+def _refuse_if_not_marketable(
+    db: Session, order: PendingOrder, reviewer: str | None, fill_price: float | None
+) -> None:
+    """Paper only, operator approvals only (reviewer == "dashboard"): refuse to fill a LIMIT the
+    ticker has not reached (SELL: market < limit, BUY: market > limit) — a venue would leave it
+    resting. Automated reviewers are deliberately NOT gated here: each owns its marketability
+    rule (touch model / the auto-approver's `due` check / the scanner's wave-0 tolerance) and the
+    90s guard's force-fill is an exit backstop that must never be slowed. Also skipped for the
+    touch model (``fill_price`` given), MARKET orders and live (the venue decides). With no
+    market price at all (mkt == 0) the legacy offline fallback stands: the order fills at its
+    limit. Writes an audit row, then raises `NotMarketable`."""
+    from app import execution
+
+    if (reviewer != MANUAL_REVIEWER or fill_price is not None or order.price <= 0
+            or execution.live_enabled()):
+        return
+    mkt = get_current_prices([order.symbol]).get(order.symbol) or 0.0
+    if mkt <= 0:
+        return
+    if (order.side == "SELL" and mkt >= order.price) or (order.side == "BUY" and mkt <= order.price):
+        return
+    audit.log(db, "orders", "approve_not_marketable", entity=f"order:{order.id}",
+              symbol=order.symbol, side=order.side, limit=order.price, market=mkt,
+              reviewer=reviewer)
+    db.commit()  # audit.log only flushes; the caller is about to raise
+    raise NotMarketable(
+        f"Lệnh {order.side} {order.symbol} @ {order.price:g} chưa chạm giá "
+        f"(thị trường {mkt:g}) — để nằm chờ, sẽ khớp khi giá chạm"
+    )
+
+
 def approve_order(
     db: Session, order_id: int, reviewer: str | None = None, *, fill_price: float | None = None,
 ) -> Fill:
@@ -870,6 +909,9 @@ def approve_order(
     # rung of an active session is exempt from the freeze (measured — see its docstring).
     if reviewer in AUTO_REVIEWERS and freeze_blocks(db, order):
         raise ValueError(f"automation frozen — {reviewer} blocked")
+    # Paper marketability: BEFORE any state change (cash cap, status) so a refusal leaves the
+    # order exactly as queued.
+    _refuse_if_not_marketable(db, order, reviewer, fill_price)
     # HARD cash floor: partial-fill a BUY down to available cash (or reject) BEFORE any state
     # change, so cash can never go negative and a reject leaves the order untouched (PENDING).
     _apply_cash_cap(db, order)
@@ -900,6 +942,11 @@ def approve_order(
         db.commit()
         raise
     order.status = EXECUTED
+    if reviewer == MANUAL_REVIEWER:  # no other record of a human approval exists
+        mkt = get_current_prices([order.symbol]).get(order.symbol) or 0.0
+        audit.log(db, "orders", "manual_approve", entity=f"order:{order.id}",
+                  symbol=order.symbol, side=order.side, limit=order.price, market=mkt,
+                  fill_price=fill.price)
     db.commit()
     db.refresh(fill)
 

@@ -10,7 +10,9 @@ from app.main import app as fastapi_app
 # --- auto-approval policy + bulk (unit) ---------------------------------
 
 
-def test_approve_all_and_reject_all(db):
+def test_approve_all_and_reject_all(db, monkeypatch):
+    # Market at/below the BUY limits so "Duyệt tất cả" finds them marketable.
+    monkeypatch.setattr("app.orders.get_current_prices", lambda syms: dict.fromkeys(syms, 1000.0))
     for i in range(2):
         orders.queue_order(db, symbol="BTC", side="BUY", quantity=0.001, price=50000 + i)
     assert len(orders.approve_all(db)) == 2
@@ -65,7 +67,8 @@ def test_automation_and_status(client):
     assert client.get("/partials/pending").status_code == 200
 
 
-def test_autoapprove_toggle_and_approve_all_endpoint(client):
+def test_autoapprove_toggle_and_approve_all_endpoint(client, monkeypatch):
+    monkeypatch.setattr("app.orders.get_current_prices", lambda syms: dict.fromkeys(syms, 49000.0))
     assert client.get("/api/autoapprove").json()["enabled"] is False
     assert client.post("/api/autoapprove", json={"enabled": True, "max_notional": 25}).json()["enabled"] is True
     settings.autoapprove_enabled = False  # reset shared singleton

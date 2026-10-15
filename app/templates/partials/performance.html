@@ -17,7 +17,8 @@
     <div class="card"><div class="label muted" title="Lãi/lỗ đã chốt trong kỳ = tiền bán − giá vốn − phí.">Realized P&L</div>
       <div class="value {{ 'pos' if p.realized_pnl >= 0 else 'neg' }}">${{ p.realized_pnl | money }}</div></div>
     <div class="card"><div class="label muted" title="Tỉ lệ lệnh thắng trong kỳ (số lệnh đã chốt).">Win-rate</div>
-      <div class="value">{{ "%.0f"|format(p.win_rate) }}% <span class="muted fs-12">({{ p.closed }})</span></div></div>
+      <div class="value">{{ "%.0f"|format(p.win_rate) }}% <span class="muted fs-12">({{ p.closed }})</span></div>
+      <div class="muted fs-12" title="Win-rate chỉ đếm lệnh BÁN đã đóng; các vị thế đang giữ và khoản lỗ chưa chốt của chúng không nằm trong con số này.">chỉ tính lệnh đã đóng · đang mở {{ open_sessions }} phiên, chưa chốt {{ '-' if p.unrealized_pnl < 0 else '+' }}${{ p.unrealized_pnl | abs | money }}</div></div>
     <div class="card"><div class="label muted" title="Kỳ vọng mỗi lệnh = lãi/lỗ trung bình trên mỗi lệnh đã chốt. Dương = hệ thống có lời.">Expectancy/lệnh</div>
       <div class="value {{ 'pos' if p.expectancy >= 0 else 'neg' }}">${{ p.expectancy | money }}</div></div>
     <div class="card"><div class="label muted" title="Profit factor = tổng lãi / tổng lỗ. > 1 là có lời; ≥ 1.5 là tốt.">Profit factor</div>
@@ -26,6 +27,7 @@
       <div class="value {{ 'neg' if p.max_drawdown_pct > 0 else '' }}">{{ "%.1f"|format(p.max_drawdown_pct) }}%</div></div>
   </div>
 
+  <div class="muted fs-12 mb-4">{% if mtm %}Equity (giá thị trường){% else %}Đường cong theo lệnh đã chốt (chưa có lịch sử equity theo giờ){% endif %}</div>
   <div class="perf-curve mb-8">{{ equity_svg | safe }}</div>
 
   <div class="perf-stats">

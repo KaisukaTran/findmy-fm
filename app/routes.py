@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import (
@@ -18,11 +18,12 @@ from fastapi import (
     Depends,
     Header,
     HTTPException,
+    Query,
     Request,
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -36,6 +37,7 @@ from app import (
     costs,
     deposits,
     diagrams,
+    equity_history,
     execution,
     hyperopt,
     market,
@@ -49,6 +51,7 @@ from app import (
     savings,
     scanner,
     scheduler,
+    session_map,
     timefmt,
 )
 from app.clock import utcnow
@@ -427,6 +430,39 @@ def get_audit(limit: int = 100, db: Session = Depends(get_db)):
 @api_router.get("/api/performance")
 def get_performance(db: Session = Depends(get_db)):
     return portfolio.performance_view(db)
+
+
+@api_router.get("/api/equity-history")
+def get_equity_history(
+    days: str = Query("30", pattern="^(7|30|all)$"), db: Session = Depends(get_db)
+):
+    """Hourly mark-to-market equity snapshots as chart series (read-only, display only)."""
+    return equity_history.build_series(db, days)
+
+
+@api_router.get("/api/equity-history/backfill")
+def get_equity_backfill_status():
+    """State of the equity-history backfill: idle | running | done | error, plus its counts."""
+    return equity_history.backfill_status()
+
+
+@api_router.post(
+    "/api/equity-history/backfill", status_code=202, dependencies=[Depends(require_api_key)]
+)
+def post_equity_backfill(since: datetime | None = None):
+    """Rebuild the missing hourly snapshots from fills + exchange candles on a background thread.
+    202 + the running status when started; 409 + the current status when one is already
+    running. Idempotent: existing rows (live ones included) are never overwritten."""
+    if since is not None and since.tzinfo is not None:
+        since = since.astimezone(timezone.utc).replace(tzinfo=None)
+    try:
+        return equity_history.start_backfill(since)
+    except equity_history.BackfillBusy:
+        return JSONResponse(
+            status_code=409,
+            content={"detail": "a backfill is already running",
+                     "status": equity_history.backfill_status()},
+        )
 
 
 def _grok_scanner_active() -> bool:
@@ -1542,6 +1578,30 @@ def partial_kss_settings(request: Request, db: Session = Depends(get_db)):
     )
 
 
+@ui_router.get("/partials/session-map", response_class=HTMLResponse)
+def partial_session_map(
+    request: Request,
+    sort: str = "",
+    dir: str = "asc",
+    db: Session = Depends(get_db),
+):
+    """Overview: every ACTIVE KSS session on one page with a range bar on a common axis.
+    `sort`/`dir` are whitelisted inside `session_map.normalize_sort` (read-only, no orders)."""
+    return templates.TemplateResponse(
+        "partials/session_map.html", {"request": request, **session_map.build_map(db, sort, dir)}
+    )
+
+
+@ui_router.get("/partials/timeline", response_class=HTMLResponse)
+def partial_timeline(request: Request, db: Session = Depends(get_db)):
+    """Overview: the hourly equity timeline panel (chart is drawn client-side from
+    /api/equity-history). Without any snapshot it shows how to build the history instead."""
+    return templates.TemplateResponse(
+        "partials/timeline.html",
+        {"request": request, "snapshots": equity_history.snapshot_count(db)},
+    )
+
+
 @ui_router.get("/partials/ladder", response_class=HTMLResponse)
 def partial_ladder(
     request: Request,
@@ -1567,9 +1627,12 @@ def partial_ladder(
         return templates.TemplateResponse(
             "partials/ladder.html", {"request": request, "o": None, "msg": "Session không tồn tại."}
         )
+    from app.kss import chart_data
+
     return templates.TemplateResponse(
         "partials/ladder.html",
-        {"request": request, "o": st, "ladder_svg": charts.price_ladder_svg(st)},
+        {"request": request, "o": st,
+         "rungs": chart_data.wave_rows(st["waves"], float(st["entry_price"] or 0.0))},
     )
 
 
@@ -1653,13 +1716,19 @@ def partial_performance(request: Request, period: str = "all", db: Session = Dep
     if period not in ("24h", "7d", "30d", "all"):
         period = "all"
     p = portfolio.performance_view(db, period=period)
+    # Mark-to-market curve from the hourly snapshots when there are some; the fills-based curve
+    # (essentially realized P&L) is the fallback.
+    mtm = equity_history.curve_for_period(db, period, live_equity=p["total_equity"])
+    curve, times = mtm if mtm else (p["equity_curve"], p["equity_times"])
     return templates.TemplateResponse(
         "partials/performance.html",
         {
             "request": request,
             "p": p,
             "period": period,
-            "equity_svg": charts.equity_curve_svg(p["equity_curve"], p["equity_times"]),
+            "mtm": mtm is not None,
+            "open_sessions": equity_history.active_session_count(db),
+            "equity_svg": charts.equity_curve_svg(curve, times),
             "winloss_svg": charts.winloss_bars_svg(p["wins"], p["losses"]),
         },
     )

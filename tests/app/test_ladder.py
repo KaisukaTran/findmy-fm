@@ -4,21 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from app import charts
 from app.config import settings
 from app.kss import service
 from app.models import KssWave
-
-
-def test_price_ladder_svg_has_all_five_labels():
-    svg = charts.price_ladder_svg({
-        "avg_price": 100.0, "current_price": 105.0, "next_wave_price": 98.0,
-        "estimated_tp_price": 103.0, "sl_price": 92.0, "waves": [],
-    })
-    assert svg.startswith("<svg")
-    for label in ("Giá mua TB", "Giá hiện tại", "Sóng kế tiếp", "Chốt lời", "Cắt lỗ"):
-        assert label in svg
-    assert charts.price_ladder_svg({}).startswith("<p")  # empty -> placeholder
 
 
 def test_ladder_status_enriches(db, monkeypatch):

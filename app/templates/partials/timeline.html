@@ -1,0 +1,18 @@
+{# Dòng thời gian: hourly mark-to-market equity vs realized vs BTC (+ cash, sessions, daily bars).
+   The chart is drawn client-side (app.js renderTimeline) from /api/equity-history; this partial
+   is only the frame. No inline script / style (strict CSP). #}
+{% if snapshots %}
+<div id="timeline-pane">
+  <div class="perf-period tl-range">
+    {% for key, lbl in [('7', '7 ngày'), ('30', '30 ngày'), ('all', 'Tất cả')] %}
+    <button class="sm {{ '' if key == '30' else 'ghost' }}" data-action="timelineRange" data-id="{{ key }}"
+            data-timeline-range="{{ key }}">{{ lbl }}</button>
+    {% endfor %}
+    <span class="muted fs-12 tl-meta">{{ snapshots }} điểm theo giờ · giờ UTC · % so với vốn đã nạp</span>
+  </div>
+  <div class="tl-legend fs-12" data-timeline-legend></div>
+  <div class="timeline-chart" data-timeline-chart></div>
+</div>
+{% else %}
+<p class="muted">Chưa có lịch sử — chạy dựng lại (POST /api/equity-history/backfill)</p>
+{% endif %}

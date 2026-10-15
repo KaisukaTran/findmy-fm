@@ -152,7 +152,7 @@ button { white-space: nowrap; }
 
 /* Click-to-view overlay modal (price ladder) */
 .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 100; }
-.overlay-box { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; width: min(560px, 92vw); max-height: 90vh; overflow: auto; }
+.overlay-box { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; width: min(960px, 96vw); max-height: 92vh; overflow: auto; }
 
 /* --- Tab navigation --- */
 .tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 16px 0 4px; border-bottom: 1px solid var(--line); }
@@ -372,6 +372,54 @@ button { white-space: nowrap; }
 /* --- ladder.html title / table margin --------------------------------- */
 .ladder-title { margin: 0 0 4px; }
 
+/* --- per-session time x price chart (Lightweight Charts) --------------- */
+.session-chart { height: 380px; width: 100%; position: relative; }
+.session-chart-rel { height: 150px; width: 100%; position: relative; }
+.chart-caption { margin: 8px 0 2px; }
+.chart-legend { margin: 4px 0 8px; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.chart-legend .lg-candle { color: var(--green); }
+.chart-legend .lg-avg, .chart-legend .lg-next { color: var(--orange); }
+.chart-legend .lg-fill { color: var(--green); }
+.chart-legend .lg-tp { color: var(--red); }
+.chart-legend .lg-coin { color: var(--accent); }
+.chart-legend .lg-btc { color: var(--amber); }
+.chart-note { padding: 24px 8px; text-align: center; }
+.chart-credit { margin: 8px 0 0; text-align: right; }
+.rung-table { font-size: 12px; }
+@media (max-width: 640px) {
+  .overlay-box { padding: 10px; }
+  .session-chart { height: 280px; }
+  .session-chart-rel { height: 120px; }
+  .rung-table { display: block; overflow-x: auto; }
+}
+
+/* --- session map (Overview): one row per active KSS session ------------ */
+.smap-summary { margin: 0 0 6px; line-height: 1.7; }
+.smap-legend { margin: 0 0 8px; }
+.smap-legend .lg { margin: 0 4px; white-space: nowrap; }
+.smap-legend .lg-next, .smap-legend .lg-avg { color: var(--orange); }
+.smap-legend .lg-entry { color: var(--muted-2); }
+.smap-legend .lg-now { color: var(--accent); }
+.smap-legend .lg-tp { color: var(--green); }
+.smap-scroll { max-height: 70vh; overflow: auto; max-width: 100%; }
+.smap-tbl td { vertical-align: middle; }
+.smap-row { cursor: pointer; }
+.smap-rung { font-weight: 600; text-align: center; }
+.smap-rung.depth-warn { color: var(--amber); background: color-mix(in srgb, var(--amber) 14%, transparent); }
+.smap-rung.depth-bad { color: var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent); }
+.smap-tbl td.starved { background: color-mix(in srgb, var(--red) 12%, transparent); }
+.smap-warn { color: var(--warn); cursor: help; }
+.smap-bar { padding-top: 2px; padding-bottom: 2px; }
+.smap-svg { display: block; width: 260px; height: 22px; }
+.smap-axis { stroke: var(--line); }
+.smap-band { fill: var(--muted-2); fill-opacity: .35; }
+.smap-now { stroke: var(--accent); }
+.smap-next { stroke: var(--orange); fill: var(--orange); }
+.smap-avg { fill: var(--orange); stroke: var(--bg); stroke-width: 1; }
+.smap-entry { stroke: var(--muted); fill: var(--muted); }
+.smap-tp { stroke: var(--green); fill: var(--green); }
+.smap-off { stroke: none; }
+
 /* --- losses / audit section subheadings ------------------------------- */
 .section-subhead { margin: 6px 0 4px; font-size: 13px; color: var(--muted); }
 
@@ -566,4 +614,21 @@ button { white-space: nowrap; }
 .diagram-frame {
   display: block; width: 100%; height: calc(100vh - 170px); min-height: 620px;
   margin: 12px 0 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg);
+}
+
+/* --- Overview timeline (Lightweight Charts, 3 panes) -------------------- */
+.timeline-chart { height: 560px; width: 100%; position: relative; }
+.tl-range { align-items: center; flex-wrap: wrap; }
+.tl-meta { margin-left: 8px; }
+.tl-legend { display: flex; flex-wrap: wrap; gap: 2px 14px; margin: 0 0 6px; min-height: 18px; }
+.tl-item { white-space: nowrap; }
+.tl-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+.tl-eq { background: var(--accent); }
+.tl-re, .tl-tp { background: var(--green); }
+.tl-bt { background: var(--amber); }
+.tl-ca { background: var(--muted); }
+.tl-se, .tl-ru { background: var(--orange); }
+.tl-st { background: var(--red); }
+@media (max-width: 640px) {
+  .timeline-chart { height: 440px; }
 }

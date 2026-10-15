@@ -17,6 +17,7 @@
   <meta name="htmx-config" content='{"includeIndicatorStyles": false, "allowEval": false}' />
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/static/style.css?v={{ asset_v }}" />
+  <script defer src="/static/vendor/lightweight-charts-5.2.1.standalone.production.js"></script>
   <script defer src="/static/app.js?v={{ asset_v }}"></script>
   <script defer src="/static/htmx.min.js"></script>
   <script defer src="/static/alpine.min.js"></script>
@@ -58,6 +59,22 @@
 
     <!-- TAB: Tổng quan (Overview) -->
     <div data-tab-panel="overview">
+      <!-- Session map: ALL active KSS sessions, range bars on a common axis. The returned
+           #smap-pane owns its polling, so a clicked sort survives the refresh. -->
+      <div class="panel">
+        <h2>Bản đồ phiên (Session map)</h2>
+        <div hx-get="/partials/session-map" hx-trigger="load, tab-shown from:closest [data-tab-panel]" hx-swap="innerHTML">
+          <span class="htmx-indicator loading-row">Đang tải…</span>
+        </div>
+      </div>
+      <!-- Timeline: hourly mark-to-market equity vs realized vs BTC, cash, sessions, daily bars.
+           Frame only; app.js draws the chart from /api/equity-history after each swap. -->
+      <div class="panel mt-16">
+        <h2>Dòng thời gian (Timeline)</h2>
+        <div hx-get="/partials/timeline" hx-trigger="load, tab-shown from:closest [data-tab-panel]" hx-swap="innerHTML">
+          <span class="htmx-indicator loading-row">Đang tải…</span>
+        </div>
+      </div>
       <!-- Capital-allocation bar (backup / free / resting / deployed / promised). -->
       <div hx-get="/partials/capital" hx-trigger="load, tab-shown from:closest [data-tab-panel], every 15s, refresh-trading from:body" hx-swap="innerHTML"></div>
       <div class="panel mt-16">

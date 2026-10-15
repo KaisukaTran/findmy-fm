@@ -3,7 +3,18 @@
   <span class="muted fs-12">· sóng {{ o.filled_waves_count }}/{{ o.max_waves }} · uP&L
     <span class="{{ 'pos' if o.unrealized_pnl >= 0 else 'neg' }}">${{ o.unrealized_pnl | money_kmb }}</span></span>
 </h3>
-{{ ladder_svg | safe }}
+<div class="session-chart" data-session-chart="{{ o.id }}"></div>
+<p class="muted fs-12 chart-caption">Coin so với BTC (% từ lúc mở phiên)</p>
+<div class="session-chart-rel"></div>
+<p class="muted fs-12 chart-legend">
+  <span class="lg lg-candle">▮ nến 1h</span>
+  <span class="lg lg-avg">━ giá vốn TB (bậc thang)</span>
+  <span class="lg lg-fill">▲ rung khớp</span>
+  <span class="lg lg-tp">▼ bán/TP</span>
+  <span class="lg lg-next">┄ rung kế</span>
+  <span class="lg lg-coin">━ coin</span>
+  <span class="lg lg-btc">━ BTC</span>
+</p>
 <table class="tbl mt-8">
   <tbody>
     <tr><td><span class="badge badge-avg-price">●</span> Giá mua TB</td>
@@ -18,6 +29,26 @@
         <td title="SL = avg × (1 − SL%/100). Giá ≤ đây sẽ bán cắt lỗ.">{{ ("%.6g"|format(o.sl_price)) if o.sl_price else "—" }}</td></tr>
   </tbody>
 </table>
+<table class="tbl mt-8 rung-table">
+  <thead>
+    <tr><th>Rung</th><th>Giá đặt</th><th>Cách rung trước %</th><th>So với giá vào %</th>
+        <th>Trạng thái</th><th>Giá khớp</th><th>Thời điểm khớp (UTC)</th></tr>
+  </thead>
+  <tbody>
+  {% for r in rungs %}
+    <tr>
+      <td>{{ r.n }}</td>
+      <td>{{ "%.6g"|format(r.target) }}</td>
+      <td>{{ ("%+.2f"|format(r.gap_pct)) if r.gap_pct is not none else "—" }}</td>
+      <td>{{ ("%+.2f"|format(r.from_entry_pct)) if r.from_entry_pct is not none else "—" }}</td>
+      <td>{{ r.status }}</td>
+      <td>{{ ("%.6g"|format(r.filled_price)) if r.filled_price else "—" }}</td>
+      <td>{{ r.filled_label }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="muted fs-12 chart-credit">Biểu đồ: TradingView Lightweight Charts™</p>
 {% else %}
 <p class="muted">{{ msg or "Không có session KSS cho coin này." }}</p>
 {% endif %}

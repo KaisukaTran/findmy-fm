@@ -113,6 +113,18 @@ def get_session(session_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.get("/sessions/{session_id}/chart")
+def get_session_chart(session_id: int, db: Session = Depends(get_db)):
+    """Time x price data for the ladder modal chart (fills, average steps, candles, coin vs BTC).
+    Read-only; a market-data failure comes back as ``candles_error``, never a 500."""
+    from app.kss import chart_data
+
+    try:
+        return chart_data.build_chart(db, session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.post("/sessions/{session_id}/start", dependencies=[Depends(require_api_key)])
 def start_session(session_id: int, db: Session = Depends(get_db)):
     try:

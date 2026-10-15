@@ -36,6 +36,9 @@ _guard_task: asyncio.Task | None = None
 # scheduler.fast_exit_should_run). Same lifecycle as _guard_task: always spun up by start(), a
 # no-op each tick unless the knob and the WS feed both say go.
 _fast_exit_task: asyncio.Task | None = None
+# The hourly equity-snapshot writer (app.equity_history) — display-only history for the Overview
+# timeline. Same lifecycle as the other loops; never takes _work_lock, never touches an order.
+_equity_task: asyncio.Task | None = None
 # Serialize the 30-min cycle and the fast position-guard so only one DB writer runs at a time
 # (prevents a guard exit racing manage_open_sessions on the same session → no double-sell).
 _work_lock = threading.Lock()
@@ -643,6 +646,31 @@ async def _fast_exit_loop() -> None:
         await asyncio.sleep(max(settings.kss_fast_exit_sec, 1.0))
 
 
+def _equity_snapshot_tick() -> None:
+    """One equity-history tick on its OWN session, outside ``_work_lock``: stamps the hour that
+    just finished (once; a repeat is a no-op). Display-only — never raises, never delays an exit."""
+    from app import equity_history
+
+    db = SessionLocal()
+    try:
+        equity_history.write_live_snapshot(db)
+    except Exception:  # must never reach the loop, let alone trading
+        logger.exception("equity snapshot tick failed")
+    finally:
+        db.close()
+
+
+async def _equity_loop() -> None:
+    """Every ~2 minutes check whether the last finished hour has its equity snapshot yet."""
+    logger.info("equity-snapshot loop started (hourly rows)")
+    while True:
+        try:
+            await asyncio.to_thread(_equity_snapshot_tick)
+        except Exception:  # a bad tick must not kill the loop
+            logger.exception("equity snapshot loop tick failed")
+        await asyncio.sleep(120)
+
+
 def start() -> bool:
     """Start the background loop if not already running. Returns True if started.
 
@@ -667,6 +695,9 @@ def start() -> bool:
     global _fast_exit_task
     if not (_fast_exit_task and not _fast_exit_task.done()):
         _fast_exit_task = asyncio.create_task(_fast_exit_loop())
+    global _equity_task
+    if not (_equity_task and not _equity_task.done()):
+        _equity_task = asyncio.create_task(_equity_loop())
     global _started_at
     # Stamped HERE, not at process/module import: this is what lets /health measure the
     # "never completed a first pass" grace from when the scheduler itself began, so turning
@@ -678,7 +709,7 @@ def start() -> bool:
 
 def stop() -> bool:
     """Stop the background loop. Returns True if a running task was cancelled."""
-    global _task, _guard_task, _fast_exit_task, _started_at
+    global _task, _guard_task, _fast_exit_task, _equity_task, _started_at
     settings.scheduler_enabled = False
     cancelled = False
     if _task and not _task.done():
@@ -691,6 +722,9 @@ def stop() -> bool:
     if _fast_exit_task and not _fast_exit_task.done():
         _fast_exit_task.cancel()
     _fast_exit_task = None
+    if _equity_task and not _equity_task.done():
+        _equity_task.cancel()
+    _equity_task = None
     _started_at = None
     _release_singleton_lock()  # free the lock so the same process can restart cleanly
     return cancelled

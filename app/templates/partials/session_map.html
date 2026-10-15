@@ -1,0 +1,84 @@
+{# Bản đồ phiên: every ACTIVE KSS session, one row each, range bar on a common -25%..+25% axis.
+   Server-side sort (whitelisted in session_map.normalize_sort) so it survives the poll; the pane
+   owns its own polling and re-renders itself (outerHTML), carrying the active sort in its hx-get. #}
+{% macro pc(v, signed=true) -%}
+{%- if v is none -%}<span class="muted">—</span>{%- else -%}{{ ("%+.1f" if signed else "%.1f")|format(v) }}%{%- endif -%}
+{%- endmacro %}
+{% macro pcc(v) -%}
+{%- if v is none -%}<span class="muted">—</span>{%- else -%}<span class="{{ 'pos' if v >= 0 else 'neg' }}">{{ "%+.1f"|format(v) }}%</span>{%- endif -%}
+{%- endmacro %}
+{% set S = summary %}
+{% set sortcols = {
+     'tp': 'Giá phải tăng bao nhiêu % từ giá hiện tại để chạm TP ước tính. Nhỏ = gần chốt lời; âm = giá đã vượt TP.',
+     'next': 'Giá phải giảm bao nhiêu % để chạm rung kế (lệnh DCA kế tiếp). Gần 0 = sắp khớp rung.',
+     'invested': 'Tổng vốn đã khớp của phiên (giá vốn các rung đã mua).',
+     'upnl': 'Lãi/lỗ tạm tính = KL × giá hiện tại − vốn đã vào, và % so với vốn đã vào.',
+     'vsbtc': 'Điểm phần trăm: (coin từ lúc mở) − (BTC cùng kỳ). Âm = coin đang kém BTC.',
+     'age': 'Số ngày kể từ lúc phiên được tạo.',
+} %}
+{% macro sorth(key, label) -%}
+<th class="num" title="{{ sortcols[key] }} Bấm để sắp xếp.">
+  <a class="th-sort" role="button" tabindex="0"
+     hx-get="/partials/session-map?sort={{ key }}&dir={{ 'desc' if (sort == key and dir == 'asc') else 'asc' }}"
+     hx-target="#smap-pane" hx-swap="outerHTML">{{ label }}{% if sort == key %} <span class="sort-ico">{{ '▲' if dir == 'asc' else '▼' }}</span>{% endif %}</a>
+</th>
+{%- endmacro %}
+<div id="smap-pane"
+     hx-get="/partials/session-map?sort={{ sort }}&dir={{ dir }}"
+     hx-trigger="every 30s, refresh-trading from:body"
+     hx-target="this" hx-swap="outerHTML">
+{% if rows %}
+<p class="smap-summary">
+  <b>{{ S.total }}</b> phiên đang mở
+  · <span class="pos" title="Số phiên có TP cách giá hiện tại ≤ {{ "%.0f"|format(S.near_tp_pct) }}%.">{{ S.near_tp }} gần TP (≤ {{ "%.0f"|format(S.near_tp_pct) }}%)</span>
+  · <span class="warn-text" title="Số phiên có rung kế cách giá hiện tại ≤ {{ "%.0f"|format(S.near_next_pct) }}%.">{{ S.near_next }} sắp khớp rung kế (≤ {{ "%.0f"|format(S.near_next_pct) }}%)</span>
+  · <span class="{{ 'neg' if S.starved else 'muted' }}" title="Rung kế có giá trị lớn hơn tiền mặt đang rảnh nên sẽ bị từ chối khi khớp.">{{ S.starved }} rung kế sẽ bị từ chối vì thiếu tiền (cash ${{ "%.0f"|format(S.free_cash) }}{% if S.starved_near %}, {{ S.starved_near }} trong số đó sắp khớp{% endif %})</span>
+  · Coin − BTC (trung vị): {{ pcc(S.median_vs_btc) }}
+</p>
+<p class="smap-legend muted fs-12">
+  Trục chung quanh giá hiện tại:
+  <b>−{{ axis_pct }}%</b>
+  <span class="lg lg-next" title="Rung kế (DCA kế tiếp)">▌rung kế</span>
+  <span class="lg lg-avg" title="Giá vốn trung bình">● giá TB</span>
+  <span class="lg lg-entry" title="Giá vào lệnh đầu">▌giá vào</span>
+  <span class="lg lg-now" title="Đường xanh dương ở giữa = giá hiện tại">┃ giá hiện tại</span>
+  <span class="lg lg-tp" title="TP ước tính">▌TP</span>
+  <b>+{{ axis_pct }}%</b>
+  · ◂ ▸ = vượt thang (kẹp vào mép)
+</p>
+<div class="scroll tbl-scroll smap-scroll">
+<table class="tbl smap-tbl">
+  <thead><tr>
+    <th title="Mã coin. Bấm vào dòng để mở biểu đồ phiên.">Coin</th>
+    <th title="Số rung đã khớp / tối đa. Vàng = từ rung 3-4, đỏ = từ rung 5 trở lên (đã DCA sâu).">Rung</th>
+    <th title="Giá hiện tại ở giữa; trục −{{ axis_pct }}% … +{{ axis_pct }}% chung cho mọi dòng. Cam: rung kế, chấm cam: giá TB, xám: giá vào, xanh lá: TP.">Bản đồ giá</th>
+    {{ sorth('tp', 'TP cách %') }}
+    {{ sorth('next', 'Rung kế cách %') }}
+    {{ sorth('invested', 'Vốn đã vào $') }}
+    {{ sorth('upnl', 'uP&L $ (%)') }}
+    <th class="num" title="Giá hiện tại so với giá vào lúc mở phiên.">Coin từ lúc mở %</th>
+    <th class="num" title="BTC thay đổi bao nhiêu % từ nến 1h chứa lúc mở phiên đến giờ. — = không có dữ liệu nến.">BTC cùng kỳ %</th>
+    {{ sorth('vsbtc', 'Coin − BTC (điểm %)') }}
+    {{ sorth('age', 'Tuổi (ngày)') }}
+  </tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr class="smap-row" data-action="viewLadder" data-id="{{ r.id }}" title="Bấm để xem biểu đồ phiên #{{ r.id }}">
+      <td><b>{{ r.symbol }}</b></td>
+      <td class="smap-rung {{ r.depth_class }}">{{ r.filled }}/{{ r.max_waves }}</td>
+      <td class="smap-bar">{{ r.svg | safe }}</td>
+      <td class="num">{{ pc(r.to_tp_pct) }}</td>
+      <td class="num{% if r.starved %} starved{% endif %}">{{ pc(r.to_next_pct) }}{% if r.starved %} <span class="smap-warn" title="Rung kế cần ${{ "%.0f"|format(r.next_cost) }} nhưng tiền mặt rảnh chỉ ${{ "%.0f"|format(S.free_cash) }} — sẽ bị từ chối.">⚠</span>{% endif %}</td>
+      <td class="num">{% if r.invested %}${{ r.invested | money_kmb }}{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td class="num">{% if r.upnl is none %}<span class="muted">—</span>{% else %}<span class="{{ 'pos' if r.upnl >= 0 else 'neg' }}">${{ r.upnl | money_kmb }} ({{ "%.1f"|format(r.upnl_pct) }}%)</span>{% endif %}</td>
+      <td class="num">{{ pcc(r.coin_pct) }}</td>
+      <td class="num">{{ pcc(r.btc_pct) }}</td>
+      <td class="num">{{ pcc(r.vs_btc) }}</td>
+      <td class="num">{% if r.age_days is none %}<span class="muted">—</span>{% else %}{{ "%.1f"|format(r.age_days) }}{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}<p class="muted">Chưa có phiên KSS nào đang mở.</p>{% endif %}
+</div>

@@ -656,3 +656,38 @@ class SavingsHolding(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class EquitySnapshot(Base):
+    """One hourly mark-to-market equity point (the "Dòng thời gian" timeline).
+
+    ``ts`` is the UTC START of the hour the row describes: the state after every fill with
+    ``executed_at < ts + 1h``, priced at the close of that hour's 1h bar. Rows are written by
+    the live hourly writer (``source='live'``) or reconstructed from fills + exchange candles
+    (``source='backfill'``); a backfill never overwrites an existing row. Display-only — nothing
+    in trading reads this table. Created by ``Base.metadata.create_all`` at startup."""
+
+    __tablename__ = "equity_snapshots"
+    __table_args__ = (Index("ux_equity_snapshots_ts", "ts", unique=True),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ts: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    equity: Mapped[float] = mapped_column(Float, nullable=False)
+    cash: Mapped[float] = mapped_column(Float, nullable=False)
+    market_value: Mapped[float] = mapped_column(Float, nullable=False)
+    cost_basis: Mapped[float] = mapped_column(Float, nullable=False)
+    unrealized: Mapped[float] = mapped_column(Float, nullable=False)
+    realized_cum: Mapped[float] = mapped_column(Float, nullable=False)
+    active_sessions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    btc_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source: Mapped[str] = mapped_column(String(12), nullable=False, default="live")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "ts": self.ts.isoformat() if self.ts else None,
+            "equity": self.equity, "cash": self.cash, "market_value": self.market_value,
+            "cost_basis": self.cost_basis, "unrealized": self.unrealized,
+            "realized_cum": self.realized_cum, "active_sessions": self.active_sessions,
+            "btc_price": self.btc_price, "source": self.source,
+        }

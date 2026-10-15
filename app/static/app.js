@@ -316,20 +316,426 @@ document.addEventListener("DOMContentLoaded", () => {
     // The ladder modal is the only modal left (the manual order / new-session / pyramid
     // preview dialogs and their Alpine state were removed with their header buttons).
     const m = document.getElementById("ladder-modal");
-    if (m && !m.classList.contains("hidden")) m.classList.add("hidden");
+    if (m && !m.classList.contains("hidden")) hideLadder();
   });
 });
 
-async function openLadder(url) {
-  const res = await fetch(url, { headers: apiHeaders() });
-  document.getElementById("ladder-body").innerHTML = await res.text();
-  const m = document.getElementById("ladder-modal");
-  m.classList.remove("hidden");
+// --- ladder modal + per-session time x price chart ----------------------
+// Charts are TradingView Lightweight Charts (vendored, same-origin). Everything dynamic that
+// reaches the DOM here (error text, symbol) goes through textContent / createElement — never
+// innerHTML — and styling is CSSOM-only, so the strict CSP (no inline style/script) holds.
+
+let _ladderCharts = [];   // charts currently alive; removed on every close / re-open
+let _ladderSeq = 0;       // guards a slow fetch from rendering into a modal that moved on
+
+function disposeLadderCharts() {
+  for (const c of _ladderCharts) {
+    try { c.remove(); } catch (_) { /* already gone */ }
+  }
+  _ladderCharts = [];
 }
+
+function hideLadder() {
+  _ladderSeq++;
+  disposeLadderCharts();
+  const m = document.getElementById("ladder-modal");
+  if (m) m.classList.add("hidden");
+}
+
+async function openLadder(url) {
+  const seq = ++_ladderSeq;
+  disposeLadderCharts();
+  const res = await fetch(url, { headers: apiHeaders() });
+  const html = await res.text();
+  if (seq !== _ladderSeq) return;
+  document.getElementById("ladder-body").innerHTML = html;
+  document.getElementById("ladder-modal").classList.remove("hidden");
+  const el = document.querySelector("#ladder-body [data-session-chart]");
+  if (el) await renderSessionChart(el, seq);
+}
+
+function _chartNote(el, text) {
+  el.textContent = "";
+  const p = document.createElement("p");
+  p.className = "muted fs-12 chart-note";
+  p.textContent = text;
+  el.appendChild(p);
+}
+
+function _cssVar(name, fallback) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
+
+// The time scale is index-based (one slot per distinct time across ALL series), so a fill at
+// 21:37:36 would insert an extra empty slot between two 1h candles. Snap to the bar's open.
+const _BAR_S = 3600;
+const _toBar = (t) => Math.floor(t / _BAR_S) * _BAR_S;
+
+function _pricePrecision(p) {
+  if (!(p > 0)) return 6;
+  if (p >= 1000) return 2;
+  if (p >= 1) return 4;
+  if (p >= 0.01) return 6;
+  return 8;
+}
+
+async function renderSessionChart(el, seq) {
+  const LW = window.LightweightCharts;
+  if (!LW) { _chartNote(el, "Thư viện biểu đồ chưa tải được."); return; }
+  const relEl = document.querySelector("#ladder-body .session-chart-rel");
+  const relCap = document.querySelector("#ladder-body .chart-caption");
+  const hideRel = () => {
+    if (relEl) relEl.classList.add("hidden");
+    if (relCap) relCap.classList.add("hidden");
+  };
+
+  let d;
+  try {
+    const res = await fetch(`/api/kss/sessions/${encodeURIComponent(el.dataset.sessionChart)}/chart`,
+      { headers: apiHeaders() });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    d = await res.json();
+  } catch (_) {
+    if (seq !== _ladderSeq) return;
+    _chartNote(el, "Không tải được dữ liệu biểu đồ.");
+    hideRel();
+    return;
+  }
+  if (seq !== _ladderSeq) return;
+  if (d.candles_error || !d.candles || !d.candles.length) {
+    _chartNote(el, "Không có nến để vẽ: " + (d.candles_error || "không có dữ liệu"));
+    hideRel();
+    return;
+  }
+
+  const fg = _cssVar("--fg", "#e6edf3");
+  const muted = _cssVar("--muted", "#8b98a5");
+  const line = _cssVar("--line", "#2a333d");
+  const green = _cssVar("--green", "#2ea043");
+  const red = _cssVar("--red", "#e5534b");
+  const orange = _cssVar("--orange", "#f0883e");
+  const blue = _cssVar("--accent", "#2f81f7");
+  const amber = _cssVar("--amber", "#d29922");
+  const base = {
+    autoSize: true,
+    layout: { attributionLogo: false, background: { type: LW.ColorType.Solid, color: "transparent" },
+              textColor: fg },
+    grid: { vertLines: { color: line }, horzLines: { color: line } },
+    timeScale: { timeVisible: true, secondsVisible: false, borderColor: line },
+    crosshair: { mode: LW.CrosshairMode.Normal },
+  };
+  const scale = (margin) => ({ minimumWidth: 72, borderColor: line,
+                               scaleMargins: { top: margin, bottom: margin } });
+
+  // --- main chart: candles + average-price steps + levels + fill markers
+  const chart = LW.createChart(el, { ...base, rightPriceScale: scale(0.08) });
+  _ladderCharts.push(chart);
+  const prec = _pricePrecision(d.entry_price || d.current_price);
+  const pf = { type: "price", precision: prec, minMove: Math.pow(10, -prec) };
+  const wavesP = d.waves || [];
+  const pending = wavesP.filter((w) => w.status === "pending" || w.status === "sent")
+    .sort((a, b) => a.n - b.n);
+  const nextRung = pending.length ? pending[0] : null;
+  const levels = [d.tp_price, d.entry_price, d.sl_price, nextRung && nextRung.target]
+    .filter((v) => v > 0);
+
+  const candles = chart.addSeries(LW.CandlestickSeries, {
+    upColor: green, downColor: red, borderUpColor: green, borderDownColor: red,
+    wickUpColor: green, wickDownColor: red, priceFormat: pf, lastValueVisible: false,
+    priceLineVisible: false,
+    // price lines do not move the autoscale: widen it so TP / SL / next rung stay on screen
+    autoscaleInfoProvider: (orig) => {
+      const r = orig();
+      if (r && levels.length) {
+        r.priceRange.minValue = Math.min(r.priceRange.minValue, ...levels);
+        r.priceRange.maxValue = Math.max(r.priceRange.maxValue, ...levels);
+      }
+      return r;
+    },
+  });
+  candles.setData(d.candles);
+
+  if (d.avg_steps && d.avg_steps.length) {
+    const avg = chart.addSeries(LW.LineSeries, {
+      color: orange, lineWidth: 2, lineType: LW.LineType.WithSteps, priceFormat: pf,
+      title: "Giá vốn TB", priceLineVisible: false, crosshairMarkerVisible: false,
+    });
+    const steps = [];
+    for (const p of d.avg_steps) {           // snap + keep the last value per bar
+      const t = _toBar(p.time);
+      if (steps.length && steps[steps.length - 1].time === t) steps[steps.length - 1].value = p.value;
+      else steps.push({ time: t, value: p.value });
+    }
+    avg.setData(steps);
+  }
+
+  const level = (price, color, title, lineStyle, lineWidth, axis) => candles.createPriceLine({
+    price, color, title, lineStyle, lineWidth, axisLabelVisible: axis,
+  });
+  if (d.tp_price > 0) level(d.tp_price, green, "TP", LW.LineStyle.Solid, 2, true);
+  if (d.entry_price > 0) level(d.entry_price, muted, "Vào", LW.LineStyle.Dashed, 1, true);
+  if (d.sl_price > 0) level(d.sl_price, red, "SL", LW.LineStyle.Solid, 1, true);
+  for (const w of pending) {
+    if (!(w.target > 0)) continue;
+    if (nextRung && w.n === nextRung.n) level(w.target, orange, "Rung kế", LW.LineStyle.Dashed, 1, true);
+    else level(w.target, muted, "R" + w.n, LW.LineStyle.Dotted, 1, false);
+  }
+
+  const firstT = d.candles[0].time;
+  const markers = [];
+  for (const w of wavesP) {
+    if (w.status === "filled" && w.filled_at && w.filled_at >= firstT) {
+      markers.push({ time: _toBar(w.filled_at), position: "belowBar", color: green, shape: "arrowUp",
+                     text: "R" + w.n });
+    }
+  }
+  for (const x of d.exits || []) {
+    if (x.time && x.time >= firstT) {
+      markers.push({ time: _toBar(x.time), position: "aboveBar", color: red, shape: "arrowDown",
+                     text: x.kind === "tp" ? "TP" : x.kind === "manual_tp" ? "TP tay" : String(x.kind) });
+    }
+  }
+  markers.sort((a, b) => a.time - b.time);
+  if (markers.length) LW.createSeriesMarkers(candles, markers);
+
+  // --- relative performance chart: coin vs BTC (% since the session opened)
+  const relData = d.rel || {};
+  if (relEl && relData.coin && relData.coin.length) {
+    const rel = LW.createChart(relEl, { ...base, rightPriceScale: scale(0.1) });
+    _ladderCharts.push(rel);
+    const pct = { type: "custom", minMove: 0.01, formatter: (v) => v.toFixed(2) + "%" };
+    const coin = rel.addSeries(LW.LineSeries, { color: blue, lineWidth: 2, priceFormat: pct,
+      title: String(d.symbol), priceLineVisible: false });
+    // Whitespace bars for the pre-open context so both charts share the same time points;
+    // without them the range sync would crop the main chart to the session's lifetime.
+    const relStart = relData.coin[0].time;
+    const pad = d.candles.filter((c) => c.time < relStart).map((c) => ({ time: c.time }));
+    coin.setData(pad.concat(relData.coin));
+    if (relData.btc && relData.btc.length && d.symbol !== "BTC") {
+      const btc = rel.addSeries(LW.LineSeries, { color: amber, lineWidth: 1, priceFormat: pct,
+        title: "BTC", priceLineVisible: false });
+      btc.setData(relData.btc);
+    }
+    coin.createPriceLine({ price: 0, color: muted, lineWidth: 1, lineStyle: LW.LineStyle.Dotted,
+                           axisLabelVisible: false, title: "" });
+
+    // keep both time axes aligned; the flag stops the two handlers re-triggering each other
+    let syncing = false;
+    const link = (from, to) => from.timeScale().subscribeVisibleTimeRangeChange((r) => {
+      if (syncing || !r) return;
+      syncing = true;
+      try { to.timeScale().setVisibleRange(r); } catch (_) { /* range outside data: ignore */ }
+      syncing = false;
+    });
+    link(chart, rel);
+    link(rel, chart);
+  } else {
+    hideRel();
+  }
+  chart.timeScale().fitContent();
+}
+
+// --- Overview timeline ("Dòng thời gian"): hourly equity vs realized vs BTC -----------------
+// One Lightweight Charts v5 chart with three PANES sharing a time scale: (0) % lines, (1) cash %
+// area + open-session count, (2) daily bars. Data: GET /api/equity-history. Like the ladder
+// charts: text reaches the DOM through textContent only, colours come from CSS variables, and the
+// chart is disposed whenever its panel is swapped out or re-rendered.
+
+let _timeline = null;        // { chart, el } while a chart is alive
+let _timelineDays = "30";
+let _timelineSeq = 0;        // guards a slow fetch from drawing into a panel that moved on
+
+function disposeTimeline() {
+  if (_timeline) {
+    try { _timeline.chart.remove(); } catch (_) { /* already gone */ }
+    _timeline = null;
+  }
+}
+
+function _alpha(color, a) {
+  const m = /^#([0-9a-f]{6})$/i.exec(color || "");
+  if (!m) return color;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+}
+
+const _fmtPct = (v) => (v >= 0 ? "+" : "") + v.toFixed(2) + "%";
+const _fmtUsd = (v) => "$" + v.toLocaleString("en-US", { maximumFractionDigits: 0 });
+const _dayKey = (t) => Math.floor(t / 86400);
+
+function _timelineLegend(host, items) {
+  host.textContent = "";
+  const vals = {};
+  for (const it of items) {
+    const box = document.createElement("span");
+    box.className = "tl-item";
+    const dot = document.createElement("span");
+    dot.className = "tl-dot " + it.cls;
+    const lbl = document.createElement("span");
+    lbl.className = "muted";
+    lbl.textContent = it.label + " ";
+    const val = document.createElement("b");
+    val.textContent = "—";
+    box.append(dot, lbl, val);
+    host.appendChild(box);
+    vals[it.key] = val;
+  }
+  return vals;
+}
+
+async function renderTimeline(el) {
+  const LW = window.LightweightCharts;
+  const seq = ++_timelineSeq;
+  disposeTimeline();
+  document.querySelectorAll("[data-timeline-range]").forEach((b) => {
+    b.classList.toggle("ghost", b.dataset.timelineRange !== _timelineDays);
+  });
+  const legendEl = document.querySelector("[data-timeline-legend]");
+  if (!LW) { _chartNote(el, "Thư viện biểu đồ chưa tải được."); return; }
+
+  let d;
+  try {
+    const res = await fetch("/api/equity-history?days=" + encodeURIComponent(_timelineDays),
+      { headers: apiHeaders() });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    d = await res.json();
+  } catch (_) {
+    if (seq !== _timelineSeq) return;
+    _chartNote(el, "Không tải được lịch sử equity.");
+    return;
+  }
+  if (seq !== _timelineSeq || !el.isConnected) return;
+  if (!d.count) {
+    _chartNote(el, "Chưa có điểm nào trong khoảng này.");
+    return;
+  }
+  el.textContent = "";
+
+  const fg = _cssVar("--fg", "#e6edf3");
+  const muted = _cssVar("--muted", "#8b98a5");
+  const line = _cssVar("--line", "#2a333d");
+  const green = _cssVar("--green", "#2ea043");
+  const red = _cssVar("--red", "#e5534b");
+  const orange = _cssVar("--orange", "#f0883e");
+  const blue = _cssVar("--accent", "#2f81f7");
+  const amber = _cssVar("--amber", "#d29922");
+
+  const chart = LW.createChart(el, {
+    autoSize: true,
+    layout: { attributionLogo: false, background: { type: LW.ColorType.Solid, color: "transparent" },
+              textColor: fg, panes: { separatorColor: line } },
+    grid: { vertLines: { color: line }, horzLines: { color: line } },
+    timeScale: { timeVisible: true, secondsVisible: false, borderColor: line },
+    rightPriceScale: { minimumWidth: 64, borderColor: line },
+    leftPriceScale: { visible: true, minimumWidth: 40, borderColor: line },
+    crosshair: { mode: LW.CrosshairMode.Normal },
+  });
+  _timeline = { chart, el };
+
+  const pctFmt = { type: "custom", minMove: 0.01, formatter: (v) => v.toFixed(2) + "%" };
+  const intFmt = { type: "custom", minMove: 1, formatter: (v) => String(Math.abs(Math.round(v))) };
+  const quiet = { priceLineVisible: false, lastValueVisible: false };
+
+  // pane 0: % lines
+  const sEq = chart.addSeries(LW.LineSeries, { ...quiet, color: blue, lineWidth: 2,
+    priceFormat: pctFmt, title: "Equity" }, 0);
+  const sRe = chart.addSeries(LW.LineSeries, { ...quiet, color: green, lineWidth: 2,
+    priceFormat: pctFmt, title: "Đã chốt" }, 0);
+  const sBtc = chart.addSeries(LW.LineSeries, { ...quiet, color: amber, lineWidth: 1,
+    priceFormat: pctFmt, title: "BTC" }, 0);
+  sEq.setData(d.equity_pct);
+  sRe.setData(d.realized_pct);
+  sBtc.setData(d.btc_pct || []);
+  sEq.createPriceLine({ price: 0, color: muted, lineWidth: 1, lineStyle: LW.LineStyle.Dotted,
+                        axisLabelVisible: false, title: "" });
+
+  // pane 1: cash % (area, right scale) + open sessions (steps, left scale)
+  const sCash = chart.addSeries(LW.AreaSeries, { ...quiet, priceScaleId: "right",
+    lineColor: muted, topColor: _alpha(muted, 0.35), bottomColor: _alpha(muted, 0.02),
+    lineWidth: 1, priceFormat: pctFmt, title: "Tiền mặt" }, 1);
+  const sSes = chart.addSeries(LW.LineSeries, { ...quiet, priceScaleId: "left", color: orange,
+    lineWidth: 1, lineType: LW.LineType.WithSteps, priceFormat: intFmt, title: "Phiên" }, 1);
+  sCash.setData(d.cash_pct);
+  sSes.setData(d.active_sessions);
+
+  // pane 2: daily counts. Times are existing hourly snapshot times, so no extra slots appear.
+  // "Rung bị từ chối" is drawn BELOW the baseline so it never hides the bars above it.
+  const day = d.daily || { tp: [], rungs: [], starved: [] };
+  const hist = (color, data, title) => {
+    const s = chart.addSeries(LW.HistogramSeries, { ...quiet, color, priceFormat: intFmt, title }, 2);
+    s.setData(data);
+    return s;
+  };
+  hist(orange, day.rungs, "Rung khớp");
+  hist(green, day.tp, "TP");
+  hist(red, day.starved.map((p) => ({ time: p.time, value: -p.value })), "Bị từ chối");
+
+  try {
+    const panes = chart.panes();
+    if (panes[0]) panes[0].setStretchFactor(3);
+    if (panes[1]) panes[1].setStretchFactor(1);
+    if (panes[2]) panes[2].setStretchFactor(1);
+  } catch (_) { /* older build: default pane heights */ }
+
+  // legend: numbers follow the crosshair, else the latest point
+  const byTime = (arr) => { const m = new Map(); for (const p of arr || []) m.set(p.time, p.value); return m; };
+  const eq = byTime(d.equity_pct), re = byTime(d.realized_pct), bt = byTime(d.btc_pct);
+  const ca = byTime(d.cash_pct), se = byTime(d.active_sessions);
+  const eqUsd = byTime(d.equity), caUsd = byTime(d.cash);
+  const dayMap = (arr) => { const m = new Map(); for (const p of arr || []) m.set(_dayKey(p.time), p.value); return m; };
+  const dTp = dayMap(day.tp), dRu = dayMap(day.rungs), dSt = dayMap(day.starved);
+  const items = [
+    { key: "eq", cls: "tl-eq", label: "Equity" },
+    { key: "re", cls: "tl-re", label: "Đã chốt" },
+    { key: "bt", cls: "tl-bt", label: "BTC" },
+    { key: "ca", cls: "tl-ca", label: "Tiền mặt" },
+    { key: "se", cls: "tl-se", label: "Phiên mở" },
+    { key: "ru", cls: "tl-ru", label: "Rung khớp/ngày" },
+    { key: "tp", cls: "tl-tp", label: "TP/ngày" },
+    { key: "st", cls: "tl-st", label: "Bị từ chối/ngày" },
+  ];
+  const vals = legendEl ? _timelineLegend(legendEl, items) : null;
+  const show = (t) => {
+    if (!vals) return;
+    const pct = (m) => (m.has(t) ? _fmtPct(m.get(t)) : "—");
+    vals.eq.textContent = pct(eq) + (eqUsd.has(t) ? " (" + _fmtUsd(eqUsd.get(t)) + ")" : "");
+    vals.re.textContent = pct(re);
+    vals.bt.textContent = pct(bt);
+    vals.ca.textContent = ca.has(t)
+      ? ca.get(t).toFixed(1) + "%" + (caUsd.has(t) ? " (" + _fmtUsd(caUsd.get(t)) + ")" : "") : "—";
+    vals.se.textContent = se.has(t) ? String(se.get(t)) : "—";
+    const k = _dayKey(t);
+    vals.ru.textContent = String(dRu.get(k) || 0);
+    vals.tp.textContent = String(dTp.get(k) || 0);
+    vals.st.textContent = String(dSt.get(k) || 0);
+  };
+  const lastT = d.last_ts;
+  show(lastT);
+  chart.subscribeCrosshairMove((param) => show(param && param.time ? param.time : lastT));
+  chart.timeScale().fitContent();
+}
+
+// The panel is swapped (tab-shown / load): dispose the old chart BEFORE its container goes away,
+// draw the new one AFTER the swap.
+document.addEventListener("htmx:beforeSwap", (e) => {
+  const t = e.detail && e.detail.target;
+  if (_timeline && t && t.contains && t.contains(_timeline.el)) disposeTimeline();
+});
+document.addEventListener("htmx:afterSwap", (e) => {
+  const t = e.detail && e.detail.target;
+  const el = t && t.querySelector ? t.querySelector("[data-timeline-chart]") : null;
+  if (el) renderTimeline(el);
+});
 
 // --- mutation handlers (event delegation) -------------------------------
 
 const actions = {
+  timelineRange(days) {
+    _timelineDays = ["7", "30", "all"].includes(days) ? days : "30";
+    const el = document.querySelector("[data-timeline-chart]");
+    if (el) renderTimeline(el);
+  },
   async approve(id) {
     await api("POST", `/api/pending/approve/${id}`);
     refreshTrading(); refreshStatus();
@@ -563,7 +969,7 @@ const actions = {
     await openLadder(`/partials/ladder?symbol=${encodeURIComponent(sym)}`);
   },
   closeLadder() {
-    document.getElementById("ladder-modal").classList.add("hidden");
+    hideLadder();
   },
   auditFilterSymbol(sym) {
     window._auditSym = sym || "";
@@ -728,7 +1134,7 @@ document.addEventListener("click", (e) => {
 // Close the ladder modal when clicking the dark backdrop (outside the box).
 document.addEventListener("click", (e) => {
   const m = document.getElementById("ladder-modal");
-  if (m && e.target === m) m.classList.add("hidden");
+  if (m && e.target === m) hideLadder();
 });
 
 // --- Keyboard shortcuts (U9) ----------------------------------------------

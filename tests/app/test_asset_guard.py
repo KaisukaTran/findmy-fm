@@ -1023,3 +1023,47 @@ def test_blocked_symbols_by_reason_groups_and_dedupes(db, monkeypatch):
     assert out["stablecoin"] == ["RLUSD"]
     assert out["delist_announced"] == ["ICX"]
     assert out["denylist"] == ["FTT"]
+
+
+# --- market_halted: the venue itself has stopped trading the pair (TON BREAK, 2026-10-14) ---
+
+
+def _halt(monkeypatch, *bases):
+    monkeypatch.setattr("app.market.non_trading_bases", lambda: set(bases))
+
+
+def test_halted_market_blocks_entry_even_without_a_product_snapshot(db, monkeypatch):
+    """The venue's own status is authoritative and needs no product snapshot: a pair Binance
+    has put on BREAK cannot be bought on live, so paper must not open a ladder on it either."""
+    _halt(monkeypatch, "TON")
+    assert asset_guard.blocked_reason(db, "TON") == "market_halted"
+    assert asset_guard.blocked_reason(db, "ton") == "market_halted"
+    assert asset_guard.blocked_reason(db, "BTC") is None
+
+
+def test_filter_blocked_drops_a_halted_market_from_the_universe(db, monkeypatch):
+    _seed_fresh_snapshot(db)
+    _halt(monkeypatch, "TON")
+    assert asset_guard.filter_blocked(db, ["BTC", "TON", "ETH"]) == ["BTC", "ETH"]
+
+
+def test_halted_knob_off_lets_a_halted_market_through(db, monkeypatch):
+    _halt(monkeypatch, "TON")
+    monkeypatch.setattr(settings, "asset_guard_block_halted", False)
+    assert asset_guard.blocked_reason(db, "TON") is None
+
+
+def test_held_session_on_a_halted_market_is_alerted_once_and_left_untouched(db, monkeypatch):
+    from app import notify
+
+    _seed_fresh_snapshot(db)
+    row = _active_session(db, symbol="TON")
+    _halt(monkeypatch, "TON")
+    sent = []
+    monkeypatch.setattr(notify, "event", lambda kind, text, **kw: sent.append((kind, text)) or True)
+
+    assert asset_guard.audit_held_symbols(db) == ["TON"]
+    assert asset_guard.audit_held_symbols(db) == []  # deduped
+    assert len(sent) == 1 and "market_halted" in sent[0][1]
+    db.refresh(row)
+    assert row.status == SESSION_ACTIVE  # informational only: never closes the session

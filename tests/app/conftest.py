@@ -112,6 +112,25 @@ def _no_live_probe_by_default(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_market_status_probe_by_default(request, monkeypatch):
+    """`app.market.non_trading_bases` (the halted-market check behind the entry guard and the
+    paper BUY fill guard) loads the REAL venue's market list. Default it to "nothing halted"
+    (the pre-check behaviour) so no test reaches the network through it; a test that means to
+    exercise the real helper opts out with ``@pytest.mark.real_market_status``, and one that
+    wants a halted coin monkeypatches it after this fixture runs."""
+    if request.node.get_closest_marker("real_market_status"):
+        return
+    from app import market
+
+    monkeypatch.setattr(market, "non_trading_bases", lambda: set())
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "real_market_status: run app.market.non_trading_bases unstubbed")
+
+
+@pytest.fixture(autouse=True)
 def _reset_guard_reconcile_clock():
     """`app.scheduler._last_reconcile_at` (kss_reconcile_interval_sec cadence split) is a
     module-level timestamp that GATES behaviour — unlike `_last_guard_at`, which every test

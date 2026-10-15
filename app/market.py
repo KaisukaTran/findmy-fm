@@ -111,6 +111,18 @@ def get_current_prices(symbols: list[str], force: bool = False) -> dict[str, flo
     return {**cached, **fetched}
 
 
+def non_trading_bases() -> set[str]:
+    """Bases whose pair on the live exchange is not open for trading (Binance BREAK/HALT, see
+    ``CcxtProvider.non_trading_bases``). Used by the entry guard (``asset_guard``) and the paper
+    BUY fill guard (``orders``), never by an exit path. Never raises: any failure is an empty
+    set (fail open), so a venue hiccup cannot block anything."""
+    try:
+        return set(live_provider().non_trading_bases())
+    except Exception as exc:
+        logger.warning("%s market status failed: %s", settings.live_exchange, exc)
+        return set()
+
+
 def get_exchange_info(symbol: str) -> dict:
     """Return lot-size/precision info for a symbol; cached; safe defaults on failure."""
     if symbol in _exchange_info_cache:

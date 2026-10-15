@@ -431,3 +431,83 @@ def test_get_provider_and_execution_client_are_distinct_objects(monkeypatch):
     finally:
         reset_providers()
         execution.reset_client_cache()
+
+
+# --- market status: a halted pair must never reach the universe (TON, 2026-10-14) ----------
+
+
+class _HaltedMarketsEx(_FakeEx):
+    """Binance keeps serving a FROZEN 24h ticker for a halted pair — TON/USDT (status BREAK,
+    last trade 2026-06-30) still reported last=1.6 and quoteVolume=$7.7M on 2026-10-14, so the
+    volume floor alone let it into the scan. ccxt's `active` flag is the only reliable signal."""
+
+    def __init__(self):
+        self.markets = None
+        self.load_calls = 0
+
+    def load_markets(self, reload=False):
+        self.load_calls += 1
+        self.markets = {
+            "BTC/USD": {"active": True, "info": {"status": "TRADING"}},
+            "ETH/USD": {"active": False, "info": {"status": "BREAK"}},
+            "XRP/USD": {"active": None, "info": {}},          # unknown ≠ halted
+            "ETH/USDT": {"active": False, "info": {"status": "BREAK"}},  # other quote
+        }
+        return self.markets
+
+
+def _halted_provider():
+    p = CcxtProvider("coinbase")
+    p._ex = _HaltedMarketsEx()
+    return p
+
+
+def test_non_trading_bases_reads_ccxt_active_flag_for_this_quote_only():
+    assert _halted_provider().non_trading_bases() == {"ETH"}
+
+
+def test_all_symbols_and_top_symbols_drop_a_halted_pair_despite_its_frozen_volume():
+    p = _halted_provider()
+    assert p.all_symbols(0) == ["BTC"]
+    assert p.top_symbols(5) == ["BTC"]
+
+
+def test_market_status_is_cached_and_reloaded_after_the_ttl(monkeypatch):
+    from app.data import providers
+
+    p = _halted_provider()
+    clock = [1000.0]
+    monkeypatch.setattr(providers.time, "monotonic", lambda: clock[0])
+    p.non_trading_bases()
+    p.non_trading_bases()
+    assert p._ex.load_calls == 1
+    clock[0] += providers._MARKETS_TTL_SEC + 1
+    p.non_trading_bases()
+    assert p._ex.load_calls == 2
+
+
+def test_non_trading_bases_fails_open_when_markets_cannot_load():
+    class _Broken(_FakeEx):
+        markets = None
+
+        def load_markets(self, reload=False):
+            raise ccxt.NetworkError("down")
+
+    p = CcxtProvider("coinbase")
+    p._ex = _Broken()
+    assert p.non_trading_bases() == set()
+    assert p.all_symbols(0) == ["BTC", "ETH"]  # degrade to today's behaviour, not to nothing
+
+
+@pytest.mark.real_market_status
+def test_market_helper_fails_open_on_any_provider_error(monkeypatch):
+    """`app.market.non_trading_bases` is what the entry guard and the paper fill guard call;
+    it must never raise into them. (conftest stubs it suite-wide; the marker opts out.)"""
+    from app import market
+
+    class _Boom:
+        def non_trading_bases(self):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(market, "live_provider", lambda: _Boom())
+    assert market.non_trading_bases() == set()

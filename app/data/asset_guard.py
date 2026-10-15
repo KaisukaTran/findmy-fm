@@ -623,13 +623,30 @@ def _audit_stale_once(db, never_fetched: bool) -> None:
               max_stale_h=settings.asset_guard_max_stale_h)
 
 
-def _classify(base: str, snapshot: dict | None, stale: bool) -> str | None:
+def _halted_bases() -> set[str]:
+    """Bases the venue itself has stopped trading (``app.market.non_trading_bases``), or an
+    empty set when ``asset_guard_block_halted`` is off. Fails open (empty) on any error."""
+    if not settings.asset_guard_block_halted:
+        return set()
+    from app import market
+
+    try:
+        return {b.upper() for b in market.non_trading_bases()}
+    except Exception as exc:
+        logger.warning("asset_guard: market status unavailable: %s", exc)
+        return set()
+
+
+def _classify(base: str, snapshot: dict | None, stale: bool,
+              halted: set[str] | frozenset[str] = frozenset()) -> str | None:
     """Pure per-symbol classification given an ALREADY-LOADED snapshot and its precomputed
     staleness — the shared core of ``blocked_reason`` (single symbol) and ``filter_blocked``
     (a whole batch, loading the snapshot only once). Order:
 
       1. ALWAYS-APPLY classes, independent of the snapshot's existence/freshness: the manual
-         denylist and the wrapped static seed list (WBTC/WBETH/BETH).
+         denylist, the wrapped static seed list (WBTC/WBETH/BETH) and ``market_halted`` (the
+         venue's own trading status, *halted* = ``_halted_bases()``: a BREAK pair keeps a
+         frozen ticker that every other filter mistakes for a live market).
       2. Tag-based classes (monitoring/stock_token/commodity/stablecoin/wrapped-by-name) and
          the best-effort delisting list — these need a snapshot. Missing/stale FAILS OPEN for
          these classes (the caller is responsible for the debounced ``asset_guard_stale`` audit
@@ -639,6 +656,8 @@ def _classify(base: str, snapshot: dict | None, stale: bool) -> str | None:
         return "denylist"
     if base in WRAPPED_SEEDS and settings.asset_guard_block_wrapped:
         return "wrapped"
+    if base in halted:
+        return "market_halted"
     if snapshot is None or stale:
         return None  # fail-open: no verified evidence to classify tag-based classes by
     product = snapshot.get("products", {}).get(base)
@@ -669,7 +688,7 @@ def blocked_reason(db, symbol: str) -> str | None:
     stale = _snapshot_is_stale(snapshot)
     if snapshot is None or stale:
         _audit_stale_once(db, snapshot is None)
-    return _classify(base, snapshot, stale)
+    return _classify(base, snapshot, stale, _halted_bases())
 
 
 def filter_blocked(db, symbols: list[str]) -> list[str]:
@@ -685,7 +704,9 @@ def filter_blocked(db, symbols: list[str]) -> list[str]:
     stale = _snapshot_is_stale(snapshot)
     if snapshot is None or stale:
         _audit_stale_once(db, snapshot is None)
-    return [s for s in symbols if _classify((s or "").upper(), snapshot, stale) is None]
+    halted = _halted_bases()
+    return [s for s in symbols
+            if _classify((s or "").upper(), snapshot, stale, halted) is None]
 
 
 def blocked_symbols_by_reason(db) -> dict[str, list[str]]:

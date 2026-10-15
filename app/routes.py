@@ -778,6 +778,7 @@ class KssSettingsBody(BaseModel):
     asset_guard_block_stock_tokens: bool | None = None
     asset_guard_block_commodities: bool | None = None
     asset_guard_block_wrapped: bool | None = None
+    asset_guard_block_halted: bool | None = None
     asset_guard_denylist: str | None = None
     asset_guard_refresh_min: int | None = Field(None, ge=1, le=1440)
     asset_guard_max_stale_h: float | None = Field(None, ge=1, le=720)

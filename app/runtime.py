@@ -210,6 +210,7 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "asset_guard_block_stock_tokens": _to_bool,
     "asset_guard_block_commodities": _to_bool,
     "asset_guard_block_wrapped": _to_bool,
+    "asset_guard_block_halted": _to_bool,
     "asset_guard_denylist": str,
     "asset_guard_refresh_min": int,
     "asset_guard_max_stale_h": float,

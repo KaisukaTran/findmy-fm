@@ -28,6 +28,7 @@ from app.models import (
     EXECUTED,
     PENDING,
     REJECTED,
+    AuditLog,
     Fill,
     PendingOrder,
     Position,
@@ -857,6 +858,42 @@ class NotMarketable(ValueError):
     ValueError so `approve_all` keeps skipping it; the order stays PENDING and rests."""
 
 
+class MarketNotTrading(ValueError):
+    """Paper: a BUY on a pair the venue is not trading (Binance BREAK/HALT). A ValueError so
+    `approve_all` keeps skipping it; the order stays PENDING, exactly as queued."""
+
+
+def _refuse_if_market_halted(db: Session, order: PendingOrder) -> None:
+    """Paper only, BUY only: refuse to fill a BUY on a pair the venue has stopped trading.
+
+    A halted pair keeps a FROZEN ticker (TON/USDT: last 1.6 for months after its last trade), so
+    every price-based rule (the touch model aside: a halted pair prints no candles) sees a live
+    market and fills it; live would be rejected by the venue. Session 10 (TON, 2026-09-21) was
+    such a phantom fill. Never applied to a SELL: exits are never gated, and selling a frozen
+    position is the operator's call. Live is skipped (the venue decides). The status read
+    (`market.non_trading_bases`) fails open. Audited once per order, then raises
+    `MarketNotTrading`."""
+    from app import execution, market
+
+    if order.side != "BUY" or execution.live_enabled():
+        return
+    if (order.symbol or "").upper() not in {b.upper() for b in market.non_trading_bases()}:
+        return
+    entity = f"order:{order.id}"
+    seen = (db.query(AuditLog.id)
+            .filter(AuditLog.action == "paper_buy_market_halted",
+                    AuditLog.entity == entity)
+            .first())
+    if seen is None:
+        audit.log(db, "orders", "paper_buy_market_halted", entity=entity,
+                  symbol=order.symbol, limit=order.price, qty=order.quantity,
+                  source_ref=order.source_ref)
+        db.commit()  # audit.log only flushes; the caller is about to raise
+    raise MarketNotTrading(
+        f"{order.symbol}: sàn đang NGỪNG giao dịch cặp này — không khớp BUY trên giá đông cứng"
+    )
+
+
 def _refuse_if_not_marketable(
     db: Session, order: PendingOrder, reviewer: str | None, fill_price: float | None
 ) -> None:
@@ -909,8 +946,9 @@ def approve_order(
     # rung of an active session is exempt from the freeze (measured — see its docstring).
     if reviewer in AUTO_REVIEWERS and freeze_blocks(db, order):
         raise ValueError(f"automation frozen — {reviewer} blocked")
-    # Paper marketability: BEFORE any state change (cash cap, status) so a refusal leaves the
-    # order exactly as queued.
+    # Paper: no BUY on a pair the venue is not trading (frozen ticker), and marketability —
+    # both BEFORE any state change (cash cap, status) so a refusal leaves the order as queued.
+    _refuse_if_market_halted(db, order)
     _refuse_if_not_marketable(db, order, reviewer, fill_price)
     # HARD cash floor: partial-fill a BUY down to available cash (or reject) BEFORE any state
     # change, so cash can never go negative and a reject leaves the order untouched (PENDING).

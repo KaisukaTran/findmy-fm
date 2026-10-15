@@ -37,6 +37,14 @@ logger = logging.getLogger(__name__)
 # per TTL window.
 _TICKERS_TTL_SEC = 60.0
 
+# How long the venue's market list (load_markets: trading status per pair) is trusted before a
+# reload. A pair Binance halts (status BREAK) keeps serving a FROZEN 24h ticker: TON/USDT still
+# showed last=1.6 / quoteVolume=$7.7M on 2026-10-14, months after its last trade, so the volume
+# floor cannot see a halt; only `market['active']` can. exchangeInfo is weight 20, so a
+# few-hours refresh is cheap; a failed load is retried after _MARKETS_RETRY_SEC, not every call.
+_MARKETS_TTL_SEC = 6 * 3600.0
+_MARKETS_RETRY_SEC = 300.0
+
 # ccxt id -> quote asset used for that exchange's USD-ish spot pairs.
 # Binance is the only venue this app configures at runtime; the rest stay only
 # because tests exercise the abstraction (offline, no network) against them.
@@ -169,6 +177,7 @@ class DataProvider(Protocol):
     def get_ohlcv(self, symbol: str, timeframe: str = "1d", limit: int = 200) -> list[Candle]: ...
     def top_symbols(self, n: int = 10) -> list[str]: ...
     def all_symbols(self, min_quote_volume: float = 0.0) -> list[str]: ...
+    def non_trading_bases(self) -> set[str]: ...
     def get_exchange_info(self, symbol: str) -> dict: ...
 
 
@@ -198,6 +207,8 @@ class CcxtProvider:
         # instance and must not interleave on it, but this lock is entirely separate from
         # execution._client_lock — a SELL never waits behind a scan sweep (see execution.py).
         self._lock = threading.RLock()
+        # When the market list (trading status) was last (re)loaded; see non_trading_bases.
+        self._markets_ts: float = 0.0
 
     def pair(self, symbol: str) -> str:
         """Map a base symbol (e.g. 'BTC') to this exchange's pair (e.g. 'BTC/USD')."""
@@ -335,21 +346,59 @@ class CcxtProvider:
         except Exception:
             return 0
 
+    def non_trading_bases(self) -> set[str]:
+        """Bases whose pair for this quote the venue marks NOT tradable (ccxt ``active is
+        False``: Binance status BREAK/HALT/...). ``active`` None (unknown) is not a halt.
+
+        The market list is (re)loaded at most every ``_MARKETS_TTL_SEC``; a failed load keeps
+        whatever list ccxt already holds and is retried after ``_MARKETS_RETRY_SEC``. With no
+        list at all this returns an empty set: fail open, i.e. exactly the old behaviour."""
+        now = time.monotonic()
+        with self._lock:
+            markets = getattr(self._ex, "markets", None)
+            if markets and not self._markets_ts:
+                self._markets_ts = now  # loaded elsewhere (get_exchange_info): adopt it
+            due = not markets or now - self._markets_ts >= _MARKETS_TTL_SEC
+            if due and hasattr(self._ex, "load_markets"):
+                try:
+                    if markets:
+                        self._ex.load_markets(reload=True)
+                    else:
+                        self._ex.load_markets()
+                    self._markets_ts = now
+                except Exception as exc:
+                    note_if_rate_error(exc, self._ex)
+                    logger.warning("%s load_markets failed: %s", self.exchange_id, exc)
+                    self._markets_ts = now - _MARKETS_TTL_SEC + _MARKETS_RETRY_SEC
+                markets = getattr(self._ex, "markets", None)
+        suffix = f"/{self.quote}"
+        return {pair[: -len(suffix)] for pair, m in (markets or {}).items()
+                if pair.endswith(suffix) and isinstance(m, dict) and m.get("active") is False}
+
+    def _halted_or_empty(self) -> set[str]:
+        try:
+            return self.non_trading_bases()
+        except Exception as exc:  # the status check must never cost us the universe
+            logger.warning("%s market status check failed: %s", self.exchange_id, exc)
+            return set()
+
     def top_symbols(self, n: int = 10) -> list[str]:
-        """Top-N base symbols by quote volume for this exchange's quote asset."""
+        """Top-N base symbols by quote volume for this exchange's quote asset (halted pairs
+        excluded, see non_trading_bases)."""
         try:
             tickers = self._fetch_tickers_map()
         except Exception as exc:
             note_if_rate_error(exc, self._ex)  # 429/418/-1015: note the hold before degrading
             logger.warning("%s fetch_tickers failed: %s", self.exchange_id, exc)
             return []
+        halted = self._halted_or_empty()
         rows: list[tuple[str, float]] = []
         suffix = f"/{self.quote}"
         for pair, t in tickers.items():
             if not pair.endswith(suffix):
                 continue
             base = pair[: -len(suffix)]
-            if _is_excluded_base(base):
+            if _is_excluded_base(base) or base in halted:
                 continue
             vol = t.get("quoteVolume") or 0.0
             rows.append((base, float(vol)))
@@ -357,20 +406,22 @@ class CcxtProvider:
         return [sym for sym, _ in rows[:n]]
 
     def all_symbols(self, min_quote_volume: float = 0.0) -> list[str]:
-        """All base symbols for this quote whose quote volume clears the floor, by volume desc."""
+        """All base symbols for this quote whose quote volume clears the floor, by volume desc.
+        A halted pair is dropped whatever its (frozen) volume says, see non_trading_bases."""
         try:
             tickers = self._fetch_tickers_map()
         except Exception as exc:
             note_if_rate_error(exc, self._ex)  # 429/418/-1015: note the hold before degrading
             logger.warning("%s fetch_tickers failed: %s", self.exchange_id, exc)
             return []
+        halted = self._halted_or_empty()
         rows: list[tuple[str, float]] = []
         suffix = f"/{self.quote}"
         for pair, t in tickers.items():
             if not pair.endswith(suffix):
                 continue
             base = pair[: -len(suffix)]
-            if _is_excluded_base(base):
+            if _is_excluded_base(base) or base in halted:
                 continue
             vol = float(t.get("quoteVolume") or 0.0)
             if vol < min_quote_volume:

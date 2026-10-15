@@ -1371,6 +1371,7 @@ document.addEventListener("submit", async (e) => {
       asset_guard_block_stock_tokens: f.get("asset_guard_block_stock_tokens") === "1",
       asset_guard_block_commodities: f.get("asset_guard_block_commodities") === "1",
       asset_guard_block_wrapped: f.get("asset_guard_block_wrapped") === "1",
+      asset_guard_block_halted: f.get("asset_guard_block_halted") === "1",
       asset_guard_denylist: f.get("asset_guard_denylist"),
       asset_guard_refresh_min: num(f.get("asset_guard_refresh_min")),
       asset_guard_max_stale_h: num(f.get("asset_guard_max_stale_h")),

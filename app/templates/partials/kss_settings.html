@@ -436,6 +436,11 @@
           <option value="1" {% if k.asset_guard_block_wrapped %}selected{% endif %}>Bật</option>
           <option value="0" {% if not k.asset_guard_block_wrapped %}selected{% endif %}>Tắt</option>
         </select></label>
+      <label title="Chặn mở mới trên cặp mà chính sàn đã NGỪNG giao dịch (Binance BREAK/HALT). Cặp ngừng vẫn trả ticker đông cứng (TON 14/10: giá 1,6, khối lượng $7,7M dù 4 tháng không khớp lệnh) nên sàn khối lượng và backtest tưởng là thị trường sống. Session đang chạy không bị đụng, chỉ cảnh báo.">— Thị trường ngừng giao dịch <span class="varname">asset_guard_block_halted</span>
+        <select name="asset_guard_block_halted" class="select-inline">
+          <option value="1" {% if k.asset_guard_block_halted %}selected{% endif %}>Bật</option>
+          <option value="0" {% if not k.asset_guard_block_halted %}selected{% endif %}>Tắt</option>
+        </select></label>
       <label title="Danh sách coin THỦ CÔNG luôn bị từ chối mở mới, cách nhau bằng dấu phẩy — độc lập với snapshot Binance (vd một coin đã sập trước đây). Session đang chạy không bị đụng.">Danh sách chặn thủ công <span class="varname">asset_guard_denylist</span>
         <input name="asset_guard_denylist" type="text" value="{{ k.asset_guard_denylist }}"></label>
       <label title="Số phút giữa các lần làm mới danh sách sản phẩm/huỷ niêm yết của Binance ở nền.">Làm mới snapshot (phút) <span class="varname">asset_guard_refresh_min</span>

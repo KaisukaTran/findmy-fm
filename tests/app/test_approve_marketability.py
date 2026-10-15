@@ -265,3 +265,62 @@ def test_kss_resting_tp_above_market_stays_resting(db, monkeypatch):
     assert db.get(PendingOrder, tp.id).status == PENDING
     assert db.query(Fill).count() == 0
     assert db.query(Position).filter_by(symbol="SOL").one().quantity == 3.0
+
+
+# --- halted market: paper must not fill a BUY the venue cannot trade (TON BREAK) ----------
+# Session 10 (TON, 2026-09-21) bought 17.5 TON at the FROZEN ticker of a pair Binance had put on
+# BREAK in June; live would have been rejected. A BUY on a non-trading pair is refused before
+# any state change; a SELL is never checked — exits are never gated.
+
+
+def _halt(monkeypatch, *bases):
+    monkeypatch.setattr("app.market.non_trading_bases", lambda: set(bases))
+
+
+@pytest.mark.parametrize("reviewer", ["auto-trader", "dashboard"])
+def test_buy_on_a_halted_market_is_refused_and_left_pending(db, monkeypatch, reviewer):
+    _px(monkeypatch, {"TON": 1.6})
+    _halt(monkeypatch, "TON")
+    o = _order(db, "BUY", 1.6, symbol="TON", qty=17.5)
+
+    with pytest.raises(orders.MarketNotTrading):
+        orders.approve_order(db, o.id, reviewer=reviewer)
+    with pytest.raises(orders.MarketNotTrading):
+        orders.approve_order(db, o.id, reviewer=reviewer)  # retried next tick
+
+    db.refresh(o)
+    assert o.status == PENDING
+    assert db.query(Fill).count() == 0
+    assert db.query(Position).filter_by(symbol="TON").count() == 0
+    rows = _audits(db, "paper_buy_market_halted")
+    assert len(rows) == 1  # once per order, not once per tick
+
+
+def test_sell_on_a_halted_market_still_fills(db, monkeypatch):
+    """Exits are never gated — not even by the halted-market check."""
+    _px(monkeypatch, {"TON": 1.6})
+    _halt(monkeypatch, "TON")
+    _held(db, symbol="TON", qty=17.5, avg=1.6)
+    o = _order(db, "SELL", 0.0, symbol="TON", qty=17.5)
+
+    fill = orders.approve_order(db, o.id, reviewer="dashboard")
+
+    assert fill.side == "SELL" and fill.quantity == pytest.approx(17.5)
+    db.refresh(o)
+    assert o.status == EXECUTED
+    assert _audits(db, "paper_buy_market_halted") == []
+
+
+def test_buy_on_a_trading_market_is_unaffected(db, monkeypatch):
+    _px(monkeypatch, {"SOL": 10.0})
+    _halt(monkeypatch, "TON")
+    o = _order(db, "BUY", 10.0)
+    assert orders.approve_order(db, o.id, reviewer="auto-trader").side == "BUY"
+
+
+def test_halted_check_is_paper_only(db, monkeypatch):
+    """Live: the venue rejects the order itself; this guard must not second-guess it."""
+    _halt(monkeypatch, "TON")
+    o = _order(db, "BUY", 1.6, symbol="TON", qty=17.5)
+    monkeypatch.setattr(execution, "live_enabled", lambda: True)
+    orders._refuse_if_market_halted(db, o)  # no raise

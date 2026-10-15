@@ -113,7 +113,7 @@ app/
   orchestrator/  OPUS mode (advanced, independent full-auto; paper, off)
   ta/            technical-analysis evidence bundle (3 tiers)
   templates/     dashboard.html + partials/
-  static/        htmx.min.js, alpine.min.js (CSP build), app.js, style.css
+  static/        app.js, style.css; vendor/ = pinned htmx, Alpine (CSP build), lightweight-charts
 
 docs/            documentation (see docs/README.md)
 tests/app/       the v2 test suite

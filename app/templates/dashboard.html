@@ -7,7 +7,7 @@
   {# htmx injects its own <style> for .htmx-indicator, which this app's CSP
      (style-src 'self') blocks with a console error on every page load. We already
      define those rules ourselves in style.css, so the injected copy is redundant.
-     Set through a meta tag, not JS: app.js is deferred BEFORE htmx.min.js, so
+     Set through a meta tag, not JS: app.js is deferred BEFORE htmx, so
      htmx.config does not exist yet when app.js runs.
      allowEval=false stops htmx probing for the Function constructor at start-up,
      which the same CSP blocks and which logged an EvalError on every page load. The
@@ -19,8 +19,10 @@
   <link rel="stylesheet" href="/static/style.css?v={{ asset_v }}" />
   <script defer src="/static/vendor/lightweight-charts-5.2.1.standalone.production.js"></script>
   <script defer src="/static/app.js?v={{ asset_v }}"></script>
-  <script defer src="/static/htmx.min.js"></script>
-  <script defer src="/static/alpine.min.js"></script>
+  {# Pinned + hash-checked: app/static/vendor/VENDOR.md, tests/app/test_vendor_assets.py. Deferred
+     scripts run in this order; Alpine last so every component app.js registers already exists. #}
+  <script defer src="/static/vendor/htmx-2.0.3.min.js"></script>
+  <script defer src="/static/vendor/alpine-csp-3.14.1.min.js"></script>
 </head>
 <body class="env-{{ mode.env }}">
   <header>

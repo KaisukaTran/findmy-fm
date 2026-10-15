@@ -8,7 +8,7 @@ description: Patterns for building the FINDMY-FM dashboard with Jinja2 + HTMX + 
 Server-rendered, no SPA, no build step. Vendored assets (no runtime CDN) so CSP stays strict.
 
 ## Asset handling
-- Put `htmx.min.js`, `alpine.min.js`, `style.css` in `app/static/`; reference via `/static/...`.
+- Third-party JS lives in `app/static/vendor/` under versioned names (`htmx-2.0.3.min.js`, `alpine-csp-3.14.1.min.js`), pinned by sha256 in `VENDOR.md` + `tests/app/test_vendor_assets.py`; own code (`app.js`, `style.css`) in `app/static/`; reference via `/static/...`.
 - CSP can stay `default-src 'self'` because nothing loads cross-origin. Avoid inline `<script>`; if a tiny inline script is unavoidable, keep it out of CSP-sensitive paths.
 
 ## Partial endpoints (return HTML fragments)

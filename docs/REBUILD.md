@@ -37,7 +37,7 @@ app/
   security.py  API-key dependency, security headers, CORS, rate limiting
   kss/         pyramid.py (verbatim) · service.py (DB authority) · routes.py
   templates/   dashboard.html + partials/
-  static/      htmx.min.js, alpine.min.js (CSP build), app.js, style.css
+  static/      app.js, style.css; vendor/ = pinned htmx, Alpine (CSP build), lightweight-charts
 ```
 
 ## Run

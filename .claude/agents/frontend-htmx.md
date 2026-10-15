@@ -8,7 +8,7 @@ model: sonnet
 You build the FINDMY-FM dashboard: deliberately simple, server-rendered, no SPA.
 
 ## Stack & rules (see `htmx-dashboard` skill)
-- Jinja2 templates in `app/templates/` (`dashboard.html` + `partials/`), assets in `app/static/` (htmx.min.js, alpine.min.js, one small style.css — vendored locally, no CDN at runtime so CSP stays tight).
+- Jinja2 templates in `app/templates/` (`dashboard.html` + `partials/`), assets in `app/static/` (app.js, one small style.css) and `app/static/vendor/` (htmx, Alpine CSP build, lightweight-charts — versioned, hash-pinned, see VENDOR.md; no CDN at runtime so CSP stays tight).
 - Data refresh: HTMX `hx-get` polling partials + a `/ws` WebSocket for push updates. No full-page reloads.
 - Alpine.js only for small client state (modals, form toggles, pyramid preview chart inputs).
 - Partial endpoints return HTML fragments (templates), JSON endpoints stay under `/api/*`.

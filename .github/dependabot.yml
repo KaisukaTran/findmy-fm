@@ -1,0 +1,20 @@
+# Weekly update PRs for the two pinned supply chains: Python requirements and the SHA-pinned
+# GitHub Actions. PRs target `live` (the branch that ships); review + merge stay manual.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    target-branch: "live"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      runtime-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "live"
+    schedule:
+      interval: "weekly"

@@ -24,6 +24,24 @@ def test_health_and_security_headers(client):
     assert "default-src 'self'" in home.headers["Content-Security-Policy"]
 
 
+def test_dashboard_csp_is_explicit_and_never_unsafe(client):
+    """Every directive the dashboard relies on is spelled out (not inherited from default-src),
+    and nothing may ever loosen it: no 'unsafe-*', no wildcard, no remote host, no data: script.
+    /diagrams carries its own sandboxed policy and is deliberately not covered here."""
+    for path in ("/", "/health", "/partials/positions"):
+        csp = client.get(path).headers["Content-Security-Policy"]
+        directives = {d.split()[0]: d.split()[1:] for d in (x.strip() for x in csp.split(";")) if d}
+        assert directives["default-src"] == ["'self'"]
+        assert directives["script-src"] == ["'self'"]
+        assert directives["connect-src"] == ["'self'"]
+        assert directives["frame-ancestors"] == ["'none'"]
+        assert directives["object-src"] == ["'none'"]
+        assert directives["base-uri"] == ["'self'"]
+        assert directives["form-action"] == ["'self'"]
+        assert "'unsafe-" not in csp
+        assert "*" not in csp and "http:" not in csp and "https:" not in csp and "//" not in csp
+
+
 def test_order_approve_flow(client, monkeypatch):
     # Market at/below the BUY limit: a dashboard approval of a not-yet-marketable limit is refused.
     monkeypatch.setattr("app.orders.get_current_prices", lambda syms: dict.fromkeys(syms, 49000.0))

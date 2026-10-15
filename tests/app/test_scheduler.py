@@ -2,7 +2,7 @@
 
 import pytest
 
-from app import models, orders, scanner, scheduler
+from app import models, orders, scanner, scheduler, security
 from app.config import settings
 from app.data import candle_cache
 from app.kss import service
@@ -135,7 +135,8 @@ def test_heartbeat_pings_when_url_set(db, env, monkeypatch):
         calls.append((url, timeout))
         return resp
 
-    monkeypatch.setattr(scheduler.urllib.request, "urlopen", _urlopen)
+    monkeypatch.setattr(scheduler, "_open_heartbeat", _urlopen)
+    monkeypatch.setattr(security, "_resolve", lambda host, port: ["93.184.216.34"])  # no real DNS
     monkeypatch.setattr(scheduler, "_spawn_daemon", _run_inline)
 
     scheduler.run_cycle(db)
@@ -162,7 +163,8 @@ def test_heartbeat_ping_failure_never_breaks_the_cycle(db, env, monkeypatch):
     def _boom(url, timeout=5):
         raise OSError("network down")
 
-    monkeypatch.setattr(scheduler.urllib.request, "urlopen", _boom)
+    monkeypatch.setattr(scheduler, "_open_heartbeat", _boom)
+    monkeypatch.setattr(security, "_resolve", lambda host, port: ["93.184.216.34"])
     monkeypatch.setattr(scheduler, "_spawn_daemon", _run_inline)
 
     summary = scheduler.run_cycle(db)  # must not raise
@@ -171,23 +173,24 @@ def test_heartbeat_ping_failure_never_breaks_the_cycle(db, env, monkeypatch):
 
 
 def test_heartbeat_refuses_a_non_http_scheme(db, env, monkeypatch):
-    """`file://`/etc must never be opened — only http/https are legitimate monitor URLs."""
+    """`file://`/etc must never be opened — only https to a public host is a legitimate monitor URL."""
     monkeypatch.setattr(settings, "heartbeat_url", "file:///etc/passwd")
     calls = []
-    monkeypatch.setattr(scheduler.urllib.request, "urlopen",
+    monkeypatch.setattr(scheduler, "_open_heartbeat",
                          lambda url, timeout=5: calls.append(url))
     monkeypatch.setattr(scheduler, "_spawn_daemon", _run_inline)
 
     scheduler.run_cycle(db)
 
-    assert calls == [], "urlopen must never be called for a non-http(s) scheme"
+    assert calls == [], "the URL must never be opened for a non-https scheme"
 
 
-def test_heartbeat_opens_and_closes_an_http_url(monkeypatch):
+def test_heartbeat_opens_and_closes_an_https_url(monkeypatch):
     resp = _SpyResponse()
-    monkeypatch.setattr(scheduler.urllib.request, "urlopen", lambda url, timeout=5: resp)
+    monkeypatch.setattr(scheduler, "_open_heartbeat", lambda url, timeout=5: resp)
+    monkeypatch.setattr(security, "_resolve", lambda host, port: ["93.184.216.34"])
 
-    scheduler._fire_heartbeat_ping("http://hc-ping.com/test-id")
+    scheduler._fire_heartbeat_ping("https://hc-ping.com/test-id")
 
     assert resp.read_calls == 1
     assert resp.closed is True

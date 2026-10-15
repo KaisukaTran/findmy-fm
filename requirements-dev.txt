@@ -1,5 +1,5 @@
 # Development dependencies
--r requirements-prod.txt
+-r requirements-app.txt
 
 # Testing
 pytest==7.4.3
@@ -19,4 +19,4 @@ ipython==9.7.0
 ipdb==0.13.13
 
 # Package management
-pip-audit==2.6.1
+pip-audit==2.10.1

@@ -195,11 +195,16 @@ def test_kss_ladder_reserve_slack_pct_persists_and_restores(db):
 
 
 def test_heartbeat_url_persists_and_restores(db):
-    runtime.set_kss_settings(db, {"heartbeat_url": "https://hc-ping.com/xyz"})
-    assert settings.heartbeat_url == "https://hc-ping.com/xyz"
-    settings.heartbeat_url = ""  # corrupt in-memory, then restore from DB
-    runtime.sync_from_db(db)
-    assert settings.heartbeat_url == "https://hc-ping.com/xyz"
+    try:
+        runtime.set_kss_settings(db, {"heartbeat_url": "https://hc-ping.com/xyz"})
+        assert settings.heartbeat_url == "https://hc-ping.com/xyz"
+        settings.heartbeat_url = ""  # corrupt in-memory, then restore from DB
+        runtime.sync_from_db(db)
+        assert settings.heartbeat_url == "https://hc-ping.com/xyz"
+    finally:
+        # Clear it in memory AND in the shared test DB: a leftover URL makes every later
+        # run_cycle() spawn a real ping thread that can land inside another test's monkeypatch.
+        runtime.set_kss_settings(db, {"heartbeat_url": ""})
 
 
 def test_the_three_new_knobs_persist_through_the_endpoint_and_render_in_the_partial():
@@ -230,3 +235,5 @@ def test_the_three_new_knobs_persist_through_the_endpoint_and_render_in_the_part
         assert 'name="heartbeat_url"' in html
         assert "https://hc-ping.com/abc123" in html  # current value rendered back
         assert 'name="placement_alert_after" type="number" step="1" min="1" value="5"' in html
+        # Don't leave a live heartbeat URL behind (see test_heartbeat_url_persists_and_restores).
+        assert c.post("/api/kss-settings", json={"heartbeat_url": ""}).status_code == 200

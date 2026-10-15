@@ -1,4 +1,6 @@
-# FINDMY-FM lean rebuild (app/) — runtime dependencies
+# FINDMY-FM lean rebuild (app/) — runtime dependencies. The ONE runtime list: Dockerfile, CI and
+# requirements-dev.txt all install this file. tests/app/test_requirements.py fails if app/ imports
+# a third-party module that is not pinned here.
 fastapi==0.124.4
 uvicorn[standard]==0.38.0
 sqlalchemy==2.0.23
@@ -9,3 +11,6 @@ python-multipart==0.0.20
 ccxt==4.0.5
 slowapi==0.1.9
 websockets==13.1
+httpx==0.28.1
+requests==2.34.2
+# Optional, NOT installed by default: pandas + pandas-ta for app/ta/lib.py (ta_lib_enabled).

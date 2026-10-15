@@ -17,12 +17,11 @@ import logging
 import socket
 import threading
 import time
-import urllib.parse
 import urllib.request
 
 from sqlalchemy.orm import Session
 
-from app import audit, orders, scanner
+from app import audit, orders, scanner, security
 from app.clock import utcnow
 from app.config import settings
 from app.db import SessionLocal
@@ -261,7 +260,21 @@ def _run_periodic(db: Session) -> tuple[int, bool]:
     return hyperopt_runs, ml_trained
 
 
-_HEARTBEAT_ALLOWED_SCHEMES = {"http", "https"}
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse every redirect: urllib raises HTTPError(3xx) instead of following it. A monitor
+    that answers 302 → http://127.0.0.1/... would otherwise walk straight past the URL guard."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_HEARTBEAT_OPENER = urllib.request.build_opener(_NoRedirect)
+_heartbeat_refused_warned: set[str] = set()
+
+
+def _open_heartbeat(url: str, timeout: float = 5):
+    """GET *url* without following redirects (a seam the tests replace)."""
+    return _HEARTBEAT_OPENER.open(url, timeout=timeout)
 
 
 def _fire_heartbeat_ping(url: str) -> None:
@@ -270,18 +283,21 @@ def _fire_heartbeat_ping(url: str) -> None:
     raises: a monitor that is slow, unreachable, or returns an error must not surface here,
     only be noted at debug level.
 
-    Scheme allowlist: `urllib.request.urlopen` happily opens `file://`/`ftp://`/etc, and
-    `settings.heartbeat_url` is operator-supplied config, not a validated http(s) endpoint —
-    only `http`/`https` are ever requested; anything else is refused with one debug log and
-    no request. The response is read+closed via a context manager rather than left to the
-    garbage collector (urlopen's return value is a connection that stays open until closed).
+    SSRF guard: `settings.heartbeat_url` is editable at runtime (POST /api/kss-settings, auth
+    off on paper), so it is checked again HERE, with DNS — `security.outbound_url_problem`
+    admits only https to public addresses — and the request never follows a redirect. A
+    refused URL is logged once at WARNING (the external monitor going silent is the alert).
+    The response is read+closed via a context manager rather than left to the garbage
+    collector (the opener's return value is a connection that stays open until closed).
     """
-    scheme = urllib.parse.urlsplit(url).scheme.lower()
-    if scheme not in _HEARTBEAT_ALLOWED_SCHEMES:
-        logger.debug("heartbeat ping to %s skipped — unsupported scheme %r", url, scheme)
+    problem = security.outbound_url_problem(url, resolve=True)
+    if problem is not None:
+        if url not in _heartbeat_refused_warned:
+            _heartbeat_refused_warned.add(url)
+            logger.warning("heartbeat ping refused — %s", problem)
         return
     try:
-        with urllib.request.urlopen(url, timeout=5) as resp:  # noqa: S310 — scheme allowlisted above
+        with _open_heartbeat(url, timeout=5) as resp:
             resp.read(1)
     except Exception:
         logger.debug("heartbeat ping to %s failed", url, exc_info=True)

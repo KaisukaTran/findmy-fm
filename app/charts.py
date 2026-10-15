@@ -47,7 +47,7 @@ def _time_label(iso: str) -> str:
 
     dt = to_local(iso)
     if dt is None:
-        return (iso or "")[:10]
+        return html.escape((iso or "")[:10])  # raw text lands in |safe SVG
     return dt.strftime("%H:%M") if "T" in iso else dt.strftime("%m-%d")
 
 
@@ -57,7 +57,7 @@ def _date_time_label(iso: str) -> str:
 
     dt = to_local(iso)
     if dt is None:
-        return (iso or "")[:10]
+        return html.escape((iso or "")[:10])  # raw text lands in |safe SVG
     return dt.strftime("%m-%d %H:%M") if "T" in iso else dt.strftime("%m-%d")
 
 

@@ -4,6 +4,7 @@ Security helpers for FINDMY-FM (lean rebuild).
 - require_api_key : FastAPI dependency guarding write/mutation endpoints.
 - SecurityHeadersMiddleware : adds standard hardening headers + a tight CSP.
 - install_security : wire CORS, security headers, and rate limiting onto the app.
+- outbound_url_problem : SSRF guard for operator-editable URLs the server itself requests.
 
 Auth is intentionally simple for a local paper-trading demo: a single shared API
 key in the `X-API-Key` header, enforced only when settings.require_auth is true.
@@ -12,7 +13,11 @@ key in the `X-API-Key` header, enforced only when settings.require_auth is true.
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import logging
+import re
+import socket
+import urllib.parse
 
 from fastapi import FastAPI, Header, HTTPException, status
 from slowapi import Limiter
@@ -30,9 +35,15 @@ _log = logging.getLogger("app.security")
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
 
+# Every directive the dashboard depends on is explicit rather than inherited from default-src, so
+# a later edit to default-src can never silently widen scripts/connections/framing. No 'unsafe-*'
+# ever (tests/app/test_api.py) — Alpine is the CSP build, all JS is same-origin. connect-src
+# 'self' also covers the same-origin /ws socket (CSP3). frame-ancestors duplicates
+# X-Frame-Options: DENY for browsers that honour only one of them.
 _CSP = (
-    "default-src 'self'; img-src 'self' data:; style-src 'self'; "
-    "object-src 'none'; base-uri 'self'; form-action 'self'"
+    "default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; "
+    "style-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; "
+    "frame-ancestors 'none'"
 )
 _HEADERS = {
     "X-Content-Type-Options": "nosniff",
@@ -146,3 +157,72 @@ def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> Response:
     from starlette.responses import JSONResponse
 
     return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
+
+
+# --- outbound URL guard (SSRF) ----------------------------------------------------------------
+# A URL the server fetches on its own (heartbeat_url) but that is editable at runtime — with
+# auth off on paper, by anyone who can reach the dashboard. Only public https endpoints pass.
+
+_LOCAL_SUFFIXES = (".localhost", ".local", ".internal", ".lan", ".home.arpa")
+# A public DNS name ends in an alphabetic TLD (or punycode xn--). This also refuses the numeric
+# host forms that getaddrinfo quietly turns into an address ("2130706433", "0x7f.1" = 127.0.0.1).
+_TLD_RE = re.compile(r"^(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$")
+
+
+def _resolve(host: str, port: int) -> list[str]:
+    """Every address *host* resolves to (a seam so tests never touch real DNS)."""
+    return [info[4][0] for info in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)]
+
+
+def _ip_is_public(addr: str) -> bool:
+    ip = ipaddress.ip_address(addr.split("%", 1)[0])  # drop an IPv6 zone id
+    if isinstance(ip, ipaddress.IPv6Address):
+        # An IPv6 form that tunnels an IPv4 address is judged by the IPv4 inside it.
+        inner = ip.ipv4_mapped or ip.sixtofour or (ip.teredo[1] if ip.teredo else None)
+        if inner is not None:
+            ip = inner
+    return ip.is_global and not ip.is_multicast
+
+
+def outbound_url_problem(url: str, *, resolve: bool) -> str | None:
+    """Why *url* must not be requested by the server, or None when it may be.
+
+    Always: https only, a host is required, and an IP-literal / local-looking host must be
+    public. With ``resolve=True`` (at request time) the name is also resolved and EVERY address
+    must be public — a name that points into the LAN is refused. Residual risk, accepted: DNS
+    can change between this check and the connect (rebinding); the caller makes one blind GET
+    with a short timeout and never follows a redirect, which bounds what that buys an attacker.
+    """
+    try:
+        parts = urllib.parse.urlsplit(url)
+        port = parts.port or 443
+    except ValueError:
+        return "URL không hợp lệ"
+    if parts.scheme.lower() != "https":
+        return "chỉ nhận https://"
+    host = (parts.hostname or "").rstrip(".").lower()
+    if not host:
+        return "thiếu tên máy chủ"
+    try:
+        ipaddress.ip_address(host)
+        is_literal = True
+    except ValueError:
+        is_literal = False
+    if is_literal:
+        if not _ip_is_public(host):
+            return f"{host} là địa chỉ nội bộ/không công khai"
+    elif host == "localhost" or host.endswith(_LOCAL_SUFFIXES):
+        return f"{host} là máy nội bộ"
+    elif not _TLD_RE.match(host.rsplit(".", 1)[-1]):
+        return f"{host} không phải tên miền công khai"
+    if resolve and not is_literal:
+        try:
+            addrs = _resolve(host, port)
+        except OSError:
+            return f"không phân giải được {host}"
+        if not addrs:
+            return f"không phân giải được {host}"
+        bad = [a for a in addrs if not _ip_is_public(a)]
+        if bad:
+            return f"{host} trỏ tới địa chỉ nội bộ {bad[0]}"
+    return None

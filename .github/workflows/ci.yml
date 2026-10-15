@@ -2,25 +2,27 @@ name: CI
 
 on:
   push:
-    branches: [ main, v0.* ]
+    branches: [ main, live, v0.* ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, live ]
+
+permissions:
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
     
     - name: Set up Python 3.12
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
       with:
         python-version: '3.12'
     
     - name: Install dependencies
       run: |
         pip install -r requirements-dev.txt
-        pip install -r requirements-prod.txt
     
     # Non-blocking until the lean rebuild (app/) is ruff/black-clean — see tests.yml.
     - name: Lint

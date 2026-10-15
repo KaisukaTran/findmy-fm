@@ -794,6 +794,18 @@ def set_kss_settings(body: KssSettingsBody, db: Session = Depends(get_db)):
                     "^[A-Z0-9]{2,20}$ (không dấu, không ký tự đặc biệt), tối đa 200 mã."
                 ),
             )
+    # SSRF guard: the scheduler GETs heartbeat_url every cycle, and this endpoint is open when
+    # auth is off (paper) — only a public https endpoint may be stored. Empty = off, always OK.
+    if values.get("heartbeat_url"):
+        from app.security import outbound_url_problem
+
+        problem = outbound_url_problem(values["heartbeat_url"], resolve=False)
+        if problem:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"heartbeat_url bị từ chối: {problem}. Chỉ nhận https:// tới máy chủ "
+                        "công khai (không localhost, không IP nội bộ/LAN)."),
+            )
     # Cross-field guard: expectancy can never exceed tp − round-trip cost, so a gate above that
     # ceiling skips the whole universe forever with no error (the 2026-07-16 12h silent halt —
     # min_expectancy 3.0 vs a 2.70 ceiling after tp went 4.0→3.0). Check the EFFECTIVE pair, since

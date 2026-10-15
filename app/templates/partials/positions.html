@@ -1,7 +1,8 @@
 {# Click-to-sort: 1st click on a column = ascending (nhỏ→lớn), click again = descending.
    Sorting is server-side so it survives the 15s poll + pagination (a client-side sort
-   would be wiped on the next swap). qs carries the active sort onto every hx-get here. #}
-{% set qs = ('&sort=' ~ sort ~ '&dir=' ~ dir) if sort else '' %}
+   would be wiped on the next swap). qs() carries the active sort onto every hx-get here;
+   only the values are interpolated (urlencoded + autoescaped) — no |safe on request data. #}
+{% macro qs() %}{% if sort %}&sort={{ sort | urlencode }}&dir={{ dir | urlencode }}{% endif %}{% endmacro %}
 {% set sortcols = [
      ('symbol', 'Symbol', 'Mã coin.'),
      ('quantity', 'Qty', 'Khối lượng đang nắm giữ.'),
@@ -11,7 +12,7 @@
      ('unrealized_pnl', 'uP&L', 'Lãi/lỗ tạm tính = (giá hiện tại − avg) × KL, và % so với giá vốn.'),
 ] %}
 <div id="positions-pane"
-     hx-get="/partials/positions?page={{ page }}{{ qs | safe }}"
+     hx-get="/partials/positions?page={{ page }}{{ qs() }}"
      hx-trigger="every 15s, refresh-trading from:body"
      hx-target="this" hx-swap="outerHTML">
 {% if rows %}
@@ -54,11 +55,11 @@
 {% else %}<p class="muted">No open positions.</p>{% endif %}
 <div class="page-nav">
   <button class="sm ghost" {{ 'disabled' if not has_prev }}
-          hx-get="/partials/positions?page={{ page - 1 }}{{ qs | safe }}"
+          hx-get="/partials/positions?page={{ page - 1 }}{{ qs() }}"
           hx-target="#positions-pane" hx-swap="outerHTML">&#8249; Trước</button>
   <span class="muted">Trang {{ page }}</span>
   <button class="sm ghost" {{ 'disabled' if not has_next }}
-          hx-get="/partials/positions?page={{ page + 1 }}{{ qs | safe }}"
+          hx-get="/partials/positions?page={{ page + 1 }}{{ qs() }}"
           hx-target="#positions-pane" hx-swap="outerHTML">Sau &#8250;</button>
 </div>
 </div>

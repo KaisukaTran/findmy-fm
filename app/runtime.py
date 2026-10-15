@@ -398,6 +398,11 @@ def set_kss_settings(db: Session, values: dict) -> dict:
 
             if not is_valid_denylist(val):
                 continue  # malformed/oversized denylist — reject silently, same as an enum
+        if key == "heartbeat_url" and val:
+            from app.security import outbound_url_problem
+
+            if outbound_url_problem(val, resolve=False):
+                continue  # SSRF guard: non-https / local / private target — never stored
         setattr(settings, key, val)
         set(db, f"kss:{key}", val)
     return kss_settings(db)

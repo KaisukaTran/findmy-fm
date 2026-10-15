@@ -57,7 +57,8 @@ def test_dashboard_keeps_strict_csp_and_has_diagram_tab(monkeypatch):
     with TestClient(fastapi_app) as c:
         home = c.get("/")
     assert home.headers["X-Frame-Options"] == "DENY"
-    assert "script-src" not in home.headers["Content-Security-Policy"]  # still default-src 'self'
+    csp = home.headers["Content-Security-Policy"]
+    assert "script-src 'self';" in csp and "'unsafe-" not in csp  # the /diagrams relaxation stays scoped
     assert 'data-tab="diagrams"' in home.text
     assert 'data-tab-panel="diagrams"' in home.text
     for name in diagrams.DIAGRAMS:

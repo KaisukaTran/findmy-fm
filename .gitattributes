@@ -1,0 +1,2 @@
+# Vendored assets are hash-pinned (tests/app/test_vendor_assets.py): never let autocrlf rewrite them.
+app/static/vendor/** -text

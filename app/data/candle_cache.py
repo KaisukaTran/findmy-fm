@@ -87,6 +87,7 @@ def get_candles(
     timeframe: str,
     limit: int,
     provider_factory: Callable[[str], CcxtProvider],
+    need_from_ms: int | None = None,
 ) -> tuple[list[Candle], bool]:
     """Return ``(candles, was_cache_hit)`` for the requested series.
 
@@ -103,9 +104,17 @@ def get_candles(
     provider_factory:
         Callable ``exchange_id -> CcxtProvider``.  Called inside the worker so
         each parallel thread gets its own ccxt client (see thread-safety note).
+    need_from_ms:
+        Optional oldest bar the caller needs. The key ignores ``limit``, so an entry first
+        filled by a shorter request would otherwise be served (and only tail-extended) forever;
+        when the cached series starts after this point it is treated as a cold miss and
+        re-fetched in full with ``limit``.
     """
     key = (exchange_id, symbol, timeframe)
     entry = _cache.get(key)
+    if (entry is not None and need_from_ms is not None and entry.candles
+            and entry.candles[0]["ts"] > need_from_ms):
+        entry = None  # too short for this caller: full fetch below
 
     if entry is not None and entry.is_fresh(timeframe):
         return entry.candles, True  # cache hit — no network call

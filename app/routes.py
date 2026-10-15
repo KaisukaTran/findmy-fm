@@ -63,7 +63,23 @@ from app.orchestrator import service as opus_service
 from app.security import require_api_key
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
-templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+
+
+class _Templates(Jinja2Templates):
+    """starlette 1.x removed the legacy ``TemplateResponse(name, {"request": request, ...})`` call
+    shape that every route here uses. Accept it by forwarding to the current
+    ``(request, name, context)`` signature; calls already in the current shape pass straight
+    through. Once the call sites are migrated this subclass can go."""
+
+    def TemplateResponse(self, *args, **kwargs):  # noqa: N802 — starlette's method name
+        if args and isinstance(args[0], str):  # legacy: (name, context, ...)
+            name, rest = args[0], list(args[1:])
+            context = rest.pop(0) if rest else kwargs.pop("context")
+            return super().TemplateResponse(context["request"], name, context, *rest, **kwargs)
+        return super().TemplateResponse(*args, **kwargs)
+
+
+templates = _Templates(directory=str(_TEMPLATES_DIR))
 # Display filters: money = ##,###.## (thousands + 2dp); qty keeps crypto precision.
 templates.env.filters["money"] = lambda v: f"{float(v or 0):,.2f}"
 

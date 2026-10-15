@@ -72,3 +72,21 @@ def test_kss_preview_and_create(client):
 def test_partials_render(client):
     for name in ("summary", "positions", "trades", "pending", "kss"):
         assert client.get(f"/partials/{name}").status_code == 200
+
+
+def test_templates_accept_both_template_response_call_shapes():
+    """starlette 1.x removed TemplateResponse(name, {"request": request, ...}); app.routes.templates
+    keeps that legacy shape working AND takes the current (request, name, context) one."""
+    from starlette.requests import Request
+
+    from app.routes import templates
+
+    req = Request({"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b""})
+    ctx = {"request": req, "rows": [], "page": 1, "has_prev": False, "has_next": False,
+           "sort": "", "dir": "asc"}
+    legacy = templates.TemplateResponse("partials/positions.html", dict(ctx))
+    current = templates.TemplateResponse(req, "partials/positions.html", dict(ctx))
+    kw = templates.TemplateResponse("partials/positions.html", context=dict(ctx), status_code=201)
+    assert legacy.body == current.body and b"No open positions." in legacy.body
+    assert kw.status_code == 201
+

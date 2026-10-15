@@ -1,13 +1,19 @@
 # FINDMY-FM lean rebuild (app/) — runtime dependencies. The ONE runtime list: Dockerfile, CI and
 # requirements-dev.txt all install this file. tests/app/test_requirements.py fails if app/ imports
 # a third-party module that is not pinned here.
-fastapi==0.124.4
+# fastapi HELD at 0.136.3: >=0.137 wraps include_router() in _IncludedRouter, which slowapi 0.1.9
+# cannot see into — it then exempts every routed request and the 200/min limit silently turns
+# off. tests/app/test_rate_limit.py fails if a bump reintroduces that.
+fastapi==0.136.3
+# Pinned explicitly (not left to fastapi): 1.3.1+ closes the 0.50.x advisories, incl. GHSA-wqp7
+# (StaticFiles SSRF/NTLM leak via UNC paths on Windows). pip-audit gates this in CI.
+starlette==1.7.0
 uvicorn[standard]==0.38.0
 sqlalchemy==2.0.23
 pydantic==2.12.5
 pydantic-settings==2.6.1
 jinja2==3.1.6
-python-multipart==0.0.20
+python-multipart==0.0.32
 ccxt==4.0.5
 slowapi==0.1.9
 websockets==13.1

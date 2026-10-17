@@ -1,6 +1,9 @@
 {# Bản đồ phiên: every ACTIVE KSS session, one row each, range bar on a common -25%..+25% axis.
    Server-side sort (whitelisted in session_map.normalize_sort) so it survives the poll; the pane
-   owns its own polling and re-renders itself (outerHTML), carrying the active sort in its hx-get. #}
+   owns its own polling (every 30s only) and re-renders itself (outerHTML), carrying the active
+   sort in its hx-get. The timed poll alone also sends `keep` (ids on screen, added by app.js on
+   htmx:configRequest) so rows do not jump; header links and "Sắp lại" never send it. Numeric
+   cells carry data-sk (NOT data-k: that is the page-wide tick-flash key) for the smap-flash pass. #}
 {% macro pc(v, signed=true) -%}
 {%- if v is none -%}<span class="muted">—</span>{%- else -%}{{ ("%+.1f" if signed else "%.1f")|format(v) }}%{%- endif -%}
 {%- endmacro %}
@@ -25,7 +28,7 @@
 {%- endmacro %}
 <div id="smap-pane"
      hx-get="/partials/session-map?sort={{ sort }}&dir={{ dir }}"
-     hx-trigger="every 30s, refresh-trading from:body"
+     hx-trigger="every 30s"
      hx-target="this" hx-swap="outerHTML">
 {% if rows %}
 <p class="smap-summary">
@@ -34,6 +37,10 @@
   · <span class="warn-text" title="Số phiên có rung kế cách giá hiện tại ≤ {{ "%.0f"|format(S.near_next_pct) }}%.">{{ S.near_next }} sắp khớp rung kế (≤ {{ "%.0f"|format(S.near_next_pct) }}%)</span>
   · <span class="{{ 'neg' if S.starved else 'muted' }}" title="Rung kế có giá trị lớn hơn tiền mặt đang rảnh nên sẽ bị từ chối khi khớp.">{{ S.starved }} rung kế sẽ bị từ chối vì thiếu tiền (cash ${{ "%.0f"|format(S.free_cash) }}{% if S.starved_near %}, {{ S.starved_near }} trong số đó sắp khớp{% endif %})</span>
   · Coin − BTC (trung vị): {{ pcc(S.median_vs_btc) }}
+  {% if reorder_pending %}<button type="button" class="smap-reorder"
+     title="Bảng giữ nguyên thứ tự lúc bạn đang xem; bấm để sắp lại theo cột đang chọn."
+     hx-get="/partials/session-map?sort={{ sort }}&dir={{ dir }}"
+     hx-target="#smap-pane" hx-swap="outerHTML">Thứ tự đã thay đổi · Sắp lại</button>{% endif %}
 </p>
 <p class="smap-legend muted fs-12">
   Trục chung quanh giá hiện tại:
@@ -67,14 +74,14 @@
       <td><b>{{ r.symbol }}</b></td>
       <td class="smap-rung {{ r.depth_class }}">{{ r.filled }}/{{ r.max_waves }}</td>
       <td class="smap-bar">{{ r.svg | safe }}</td>
-      <td class="num">{{ pc(r.to_tp_pct) }}</td>
-      <td class="num{% if r.starved %} starved{% endif %}">{{ pc(r.to_next_pct) }}{% if r.starved %} <span class="smap-warn" title="Rung kế cần ${{ "%.0f"|format(r.next_cost) }} nhưng tiền mặt rảnh chỉ ${{ "%.0f"|format(S.free_cash) }} — sẽ bị từ chối.">⚠</span>{% endif %}</td>
-      <td class="num">{% if r.invested %}${{ r.invested | money_kmb }}{% else %}<span class="muted">—</span>{% endif %}</td>
-      <td class="num">{% if r.upnl is none %}<span class="muted">—</span>{% else %}<span class="{{ 'pos' if r.upnl >= 0 else 'neg' }}">${{ r.upnl | money_kmb }} ({{ "%.1f"|format(r.upnl_pct) }}%)</span>{% endif %}</td>
-      <td class="num">{{ pcc(r.coin_pct) }}</td>
-      <td class="num">{{ pcc(r.btc_pct) }}</td>
-      <td class="num">{{ pcc(r.vs_btc) }}</td>
-      <td class="num">{% if r.age_days is none %}<span class="muted">—</span>{% else %}{{ "%.1f"|format(r.age_days) }}{% endif %}</td>
+      <td class="num" data-sk="tp">{{ pc(r.to_tp_pct) }}</td>
+      <td class="num{% if r.starved %} starved{% endif %}" data-sk="next">{{ pc(r.to_next_pct) }}{% if r.starved %} <span class="smap-warn" title="Rung kế cần ${{ "%.0f"|format(r.next_cost) }} nhưng tiền mặt rảnh chỉ ${{ "%.0f"|format(S.free_cash) }} — sẽ bị từ chối.">⚠</span>{% endif %}</td>
+      <td class="num" data-sk="invested">{% if r.invested %}${{ r.invested | money_kmb }}{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td class="num" data-sk="upnl">{% if r.upnl is none %}<span class="muted">—</span>{% else %}<span class="{{ 'pos' if r.upnl >= 0 else 'neg' }}">${{ r.upnl | money_kmb }} ({{ "%.1f"|format(r.upnl_pct) }}%)</span>{% endif %}</td>
+      <td class="num" data-sk="coin">{{ pcc(r.coin_pct) }}</td>
+      <td class="num" data-sk="btc">{{ pcc(r.btc_pct) }}</td>
+      <td class="num" data-sk="vsbtc">{{ pcc(r.vs_btc) }}</td>
+      <td class="num" data-sk="age">{% if r.age_days is none %}<span class="muted">—</span>{% else %}{{ "%.1f"|format(r.age_days) }}{% endif %}</td>
     </tr>
     {% endfor %}
   </tbody>

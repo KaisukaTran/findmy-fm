@@ -99,6 +99,40 @@ def sort_rows(rows: list[dict], key: str, direction: str) -> list[dict]:
     return have + missing
 
 
+KEEP_MAX = 500                  # ids honoured from the ``keep`` query parameter
+_KEEP_ID_MAX_DIGITS = 12
+
+
+def parse_keep(raw: str | None) -> list[int]:
+    """Defensive parse of the ``keep`` order hint: positive ints only, de-duplicated, in order,
+    at most ``KEEP_MAX``. Everything else (junk, markup, absurdly long numbers) is dropped."""
+    if not raw:
+        return []
+    out: list[int] = []
+    seen: set[int] = set()
+    for tok in raw[:KEEP_MAX * (_KEEP_ID_MAX_DIGITS + 1)].split(","):
+        tok = tok.strip()
+        if not tok.isascii() or not tok.isdigit() or len(tok) > _KEEP_ID_MAX_DIGITS:
+            continue
+        n = int(tok)
+        if n <= 0 or n in seen:
+            continue
+        seen.add(n)
+        out.append(n)
+        if len(out) >= KEEP_MAX:
+            break
+    return out
+
+
+def apply_keep(rows: list[dict], keep: list[int]) -> list[dict]:
+    """Order ``rows`` (already in the normal sort order) by their position in ``keep``. Rows the
+    reader has not seen yet go last in the normal order; ids no longer active simply drop out."""
+    pos = {sid: i for i, sid in enumerate(keep)}
+    seen = sorted((r for r in rows if r["id"] in pos), key=lambda r: pos[r["id"]])
+    fresh = [r for r in rows if r["id"] not in pos]
+    return seen + fresh
+
+
 def btc_at(bars: list[dict], ts: int) -> float | None:
     """Close of the 1h bar that contains epoch-second ``ts``; None when the series lacks it."""
     start = ts // _H * _H
@@ -279,8 +313,12 @@ def _free_cash(db: Session) -> float:
         return 0.0
 
 
-def build_map(db: Session, sort: str | None = None, direction: str | None = None) -> dict:
-    """Assemble the panel context for every ACTIVE session. Never raises on market-data errors."""
+def build_map(db: Session, sort: str | None = None, direction: str | None = None,
+              keep: list[int] | None = None) -> dict:
+    """Assemble the panel context for every ACTIVE session. Never raises on market-data errors.
+
+    ``keep`` (the ids the reader currently sees, in display order) freezes the row order across
+    an auto-refresh; ``reorder_pending`` then says the fresh sort would order them differently."""
     key, dirn = normalize_sort(sort, direction)
     now_ts = chart_data.to_epoch(utcnow())
     rows_db = (
@@ -309,7 +347,12 @@ def build_map(db: Session, sort: str | None = None, direction: str | None = None
         for i in inputs
     ]
     rows = sort_rows(rows, key, dirn)
+    reorder_pending = False
+    if keep:
+        shown = apply_keep(rows, keep)
+        reorder_pending = [r["id"] for r in shown] != [r["id"] for r in rows]
+        rows = shown
     for r in rows:
         r["svg"] = range_bar_svg(r)
     return {"rows": rows, "summary": summarize(rows, free_cash), "sort": key, "dir": dirn,
-            "axis_pct": int(AXIS_PCT)}
+            "axis_pct": int(AXIS_PCT), "reorder_pending": reorder_pending}

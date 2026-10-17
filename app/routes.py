@@ -1612,13 +1612,15 @@ def partial_session_map(
     request: Request,
     sort: str = "",
     dir: str = "asc",
+    keep: str = "",
     db: Session = Depends(get_db),
 ):
     """Overview: every ACTIVE KSS session on one page with a range bar on a common axis.
-    `sort`/`dir` are whitelisted inside `session_map.normalize_sort` (read-only, no orders)."""
-    return templates.TemplateResponse(
-        "partials/session_map.html", {"request": request, **session_map.build_map(db, sort, dir)}
-    )
+    `sort`/`dir` are whitelisted inside `session_map.normalize_sort`; `keep` (the ids on screen,
+    sent by the timed poll only) freezes the row order — parsed defensively, never echoed
+    (read-only, no orders)."""
+    ctx = session_map.build_map(db, sort, dir, keep=session_map.parse_keep(keep))
+    return templates.TemplateResponse(request, "partials/session_map.html", ctx)
 
 
 @ui_router.get("/partials/timeline", response_class=HTMLResponse)

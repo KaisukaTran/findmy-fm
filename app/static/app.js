@@ -259,6 +259,82 @@ function _tickCompare(root) {
   });
 }
 
+// --- Session map (Bản đồ phiên): a calm auto-refresh --------------------------
+// The pane re-renders itself every 30s (outerHTML). Three things keep that from fighting the
+// reader: (1) the timed poll sends `keep` = the ids on screen in display order, so the server
+// holds the order and offers a "Sắp lại" button instead of re-sorting under the cursor (header
+// sort links and "Sắp lại" are NOT the pane element, so they never send it); (2) the inner scroll
+// box keeps its scroll position across the swap; (3) cells whose text changed flash briefly.
+// Cells are keyed data-sk (not data-k: that is the page-wide tick-flash key, one Map for all).
+let _smapState = null; // { top, left, snap|null } captured in beforeSwap, consumed in afterSwap
+
+function _smapPane() { return document.getElementById("smap-pane"); }
+
+function _smapKeepIds(pane) {
+  const ids = [];
+  pane.querySelectorAll("tr.smap-row[data-id]").forEach((tr) => {
+    if (/^[0-9]+$/.test(tr.dataset.id)) ids.push(tr.dataset.id);
+  });
+  return ids.slice(0, 500).join(",");
+}
+
+function _smapSnapshot(pane) {
+  const snap = {};
+  pane.querySelectorAll("tr.smap-row[data-id]").forEach((tr) => {
+    const cells = {};
+    tr.querySelectorAll("[data-sk]").forEach((td) => { cells[td.dataset.sk] = td.textContent.trim(); });
+    snap[tr.dataset.id] = cells;
+  });
+  return snap;
+}
+
+document.addEventListener("htmx:configRequest", (e) => {
+  const elt = e.detail && e.detail.elt;
+  if (!elt || elt.id !== "smap-pane") return; // only the timed poll of the pane itself
+  const keep = _smapKeepIds(elt);
+  if (!keep) return;
+  const p = e.detail.parameters;
+  if (p && typeof p.set === "function") p.set("keep", keep);
+  else if (p) p.keep = keep;
+});
+
+document.addEventListener("htmx:beforeSwap", (e) => {
+  const d = e.detail || {};
+  const t = d.target;
+  if (!t || t.id !== "smap-pane" || d.shouldSwap === false) { _smapState = null; return; }
+  const box = t.querySelector(".smap-scroll");
+  const cfg = d.requestConfig || {};
+  const isPoll = !!(cfg.elt && cfg.elt.id === "smap-pane"); // keep-poll: flash; re-sort: don't
+  _smapState = {
+    top: box ? box.scrollTop : 0,
+    left: box ? box.scrollLeft : 0,
+    snap: isPoll ? _smapSnapshot(t) : null,
+  };
+});
+
+document.addEventListener("htmx:afterSwap", () => {
+  const st = _smapState;
+  _smapState = null;
+  if (!st) return;
+  const pane = _smapPane(); // outerHTML replaced the node: look it up again
+  if (!pane) return;
+  const box = pane.querySelector(".smap-scroll");
+  if (box) { box.scrollTop = st.top; box.scrollLeft = st.left; }
+  if (!st.snap) return;
+  pane.querySelectorAll("tr.smap-row[data-id]").forEach((tr) => {
+    const prev = st.snap[tr.dataset.id];
+    if (!prev) return; // new row: nothing to compare against
+    tr.querySelectorAll("[data-sk]").forEach((td) => {
+      const before = prev[td.dataset.sk];
+      if (before === undefined || before === td.textContent.trim()) return;
+      td.classList.add("smap-flash");
+      const off = () => td.classList.remove("smap-flash");
+      td.addEventListener("animationend", off, { once: true });
+      setTimeout(off, 1500); // reduced-motion has no animation, so no animationend
+    });
+  });
+});
+
 document.addEventListener("DOMContentLoaded", () => {
   // U2: sync key indicator on load.
   _updateKeyIndicator();

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import re
+import subprocess
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -293,3 +296,99 @@ def test_route_empty_state(monkeypatch):
     _btc_candles(monkeypatch)
     r = _get()
     assert r.status_code == 200 and "Chưa có phiên" in r.text
+
+
+# --- stable order on auto-refresh ("keep"), reorder hint, flash hooks ----------
+
+
+def _order(html: str) -> list[int]:
+    return [int(x) for x in re.findall(r'data-action="viewLadder" data-id="(\d+)"', html)]
+
+
+def _three(db):
+    """Three sessions whose upnl (desc) order is a > b > c (-9.5, -10, -13 at price 90)."""
+    a = _mk_session(db, "AAA", filled=3)
+    b = _mk_session(db, "BBB", filled=1)
+    c = _mk_session(db, "CCC", filled=2)
+    return a, b, c
+
+
+def test_parse_keep_defensive():
+    assert session_map.parse_keep("3, 1,x,<script>,99999999999999999999,-4,2,3") == [3, 1, 2]
+    assert session_map.parse_keep("") == [] and session_map.parse_keep(None) == []
+    assert len(session_map.parse_keep(",".join(str(i) for i in range(1, 2000)))) == 500
+
+
+def test_route_keep_orders_rows_by_kept_sequence(monkeypatch, db):
+    _btc_candles(monkeypatch)
+    a, b, c = _three(db)
+    keep = f"{c.id},{a.id},{b.id}"
+    assert _order(_get(sort="upnl", dir="desc", keep=keep).text) == [c.id, a.id, b.id]
+    # without keep the normal sort wins
+    assert _order(_get(sort="upnl", dir="desc").text) == [a.id, b.id, c.id]
+
+
+def test_route_keep_new_session_goes_last_and_gone_ids_drop(monkeypatch, db):
+    _btc_candles(monkeypatch)
+    a, b, c = _three(db)
+    d = _mk_session(db, "DDD", filled=1)                 # not in keep; upnl ties A -> normal order
+    keep = f"{c.id},{a.id},987654,{b.id}"
+    assert _order(_get(sort="upnl", dir="desc", keep=keep).text) == [c.id, a.id, b.id, d.id]
+
+
+def test_route_keep_junk_is_ignored_and_never_echoed(monkeypatch, db):
+    _btc_candles(monkeypatch)
+    a, b, c = _three(db)
+    junk = "1,x,<script>alert(1)</script>,99999999999999999999"
+    r = _get(sort="upnl", dir="desc", keep=junk)
+    assert r.status_code == 200
+    assert "alert(1)" not in r.text and "99999999999999999999" not in r.text
+    assert len(_order(r.text)) == 3
+
+
+def test_reorder_pending_flag_and_hint_control(monkeypatch, db):
+    _btc_candles(monkeypatch)
+    a, b, c = _three(db)
+    same = f"{a.id},{b.id},{c.id}"
+    ctx = session_map.build_map(db, "upnl", "desc", keep=[a.id, b.id, c.id])
+    assert ctx["reorder_pending"] is False
+    ctx = session_map.build_map(db, "upnl", "desc", keep=[c.id, a.id, b.id])
+    assert ctx["reorder_pending"] is True
+    assert session_map.build_map(db, "upnl", "desc")["reorder_pending"] is False
+
+    ok = _get(sort="upnl", dir="desc", keep=same).text
+    assert "smap-reorder" not in ok and "Sắp lại" not in ok
+    html = _get(sort="upnl", dir="desc", keep=f"{c.id},{a.id},{b.id}").text
+    assert "Thứ tự đã thay đổi" in html and "Sắp lại" in html
+    m = re.search(r'<button[^>]*class="[^"]*smap-reorder[^"]*"[^>]*>', html)
+    assert m, "reorder button missing"
+    tag = m.group(0)
+    assert 'hx-get="/partials/session-map?sort=upnl&amp;dir=desc"' in tag or \
+           'hx-get="/partials/session-map?sort=upnl&dir=desc"' in tag
+    assert "keep" not in tag
+    assert 'hx-target="#smap-pane"' in tag and 'hx-swap="outerHTML"' in tag
+
+
+def test_pane_markup_trigger_links_cells_and_csp(monkeypatch, db):
+    _btc_candles(monkeypatch)
+    a, b, c = _three(db)
+    html = _get(sort="upnl", dir="desc", keep=f"{c.id},{a.id},{b.id}").text
+    pane = re.search(r'<div id="smap-pane"[^>]*>', html).group(0)
+    assert 'hx-trigger="every 30s"' in pane and "refresh-trading" not in pane
+    assert "keep" not in pane
+    for link in re.findall(r'<a class="th-sort"[^>]*>', html):
+        assert "keep" not in link
+    for k in ("tp", "next", "invested", "upnl", "coin", "btc", "vsbtc", "age"):
+        assert f'data-sk="{k}"' in html
+    assert "<script" not in html and ' style="' not in html and "<style" not in html
+
+
+def test_app_js_syntax_and_hooks():
+    js = Path(__file__).resolve().parents[2] / "app" / "static" / "app.js"
+    text = js.read_text(encoding="utf-8")
+    assert "smap-flash" in text and "keep" in text
+    try:
+        res = subprocess.run(["node", "--check", str(js)], capture_output=True, text=True)
+    except FileNotFoundError:
+        pytest.skip("node not installed")
+    assert res.returncode == 0, res.stderr

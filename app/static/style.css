@@ -402,6 +402,18 @@ button { white-space: nowrap; }
 .smap-legend .lg-now { color: var(--accent); }
 .smap-legend .lg-tp { color: var(--green); }
 .smap-scroll { max-height: 70vh; overflow: auto; max-width: 100%; }
+.smap-reorder { margin-left: 6px; padding: 0 8px; font: inherit; font-size: 12px; line-height: 1.5;
+  color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 10px;
+  cursor: pointer; white-space: nowrap; }
+.smap-reorder:hover, .smap-reorder:focus-visible { color: var(--fg); border-color: var(--muted); }
+@keyframes smap-flash {
+  0%   { background-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+  100% { background-color: transparent; }
+}
+.smap-tbl td.smap-flash { animation: smap-flash 1.2s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .smap-tbl td.smap-flash { animation: none; outline: 1px solid var(--muted-2); outline-offset: -1px; }
+}
 .smap-tbl td { vertical-align: middle; }
 .smap-row { cursor: pointer; }
 .smap-rung { font-weight: 600; text-align: center; }

@@ -8,6 +8,7 @@ Safe to call every scheduler cycle.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -16,6 +17,8 @@ from app import audit, portfolio, risk, runtime
 from app.clock import utcnow
 from app.config import settings
 from app.models import Fill
+
+logger = logging.getLogger(__name__)
 
 # Reviewers that must be blocked when the breaker is frozen.
 AUTO_REVIEWERS: frozenset[str] = frozenset({"auto-trader", "auto-approver", "scheduler", "opus"})
@@ -145,13 +148,28 @@ def metrics(db: Session) -> dict:
     """Return current circuit-breaker metrics."""
     perf = portfolio.performance_view(db)
     # Net of today's deposits: fresh capital must not dilute a loss taken before it arrived.
-    eq = max(portfolio.equity(db) - risk.deposited_today(db), 1e-9)
+    total_equity = portfolio.equity(db)
+    eq = max(total_equity - risk.deposited_today(db), 1e-9)
     dl = risk.daily_loss(db)
+    # Drawdown is measured on mark-to-market equity (hourly snapshots, flow-adjusted) when there
+    # is a history. The realized-P&L curve only rises while the book has no losing close, so its
+    # "peak" was a level true equity never reached and the breaker froze on a phantom ~16% DD.
+    # No snapshots (fresh DB) or any error -> the old realized-curve number, unchanged.
+    mtm = None
+    try:
+        from app import equity_history  # lazy: keep circuit's import graph as it was
+
+        mtm = equity_history.mtm_drawdown(db, total_equity)
+    except Exception:  # noqa: BLE001 - a read problem must not break the breaker
+        logger.exception("mtm drawdown failed; using the realized curve")
     return {
         # CURRENT drawdown, not the all-time worst. The breaker keeps the freeze while a
         # "current-state" reason is true, and a historical maximum is never false again — so
         # gating on it froze the account permanently after one dip, manual reset included.
-        "drawdown_pct": perf.get("current_drawdown_pct", perf["max_drawdown_pct"]),
+        "drawdown_pct": (mtm["drawdown_pct"] if mtm
+                         else perf.get("current_drawdown_pct", perf["max_drawdown_pct"])),
+        "drawdown_source": "mtm_snapshots" if mtm else "realized_curve",
+        "drawdown_peak_equity": mtm["peak_equity"] if mtm else None,
         "daily_loss_pct": dl / eq * 100,
         # Both counters are always reported. `consecutive_losses` is the legacy raw-fill
         # count; `consecutive_loss_events` groups by session and collapses a ~300s window.

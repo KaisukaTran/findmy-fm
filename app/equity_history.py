@@ -28,6 +28,7 @@ from collections import Counter, defaultdict
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -556,6 +557,55 @@ def _daily_events(db: Session, snaps: list[EquitySnapshot]) -> dict:
                 if d in day_time and n > 0]
 
     return {"tp": series(tp), "rungs": series(rungs), "starved": series(starved)}
+
+
+def mtm_drawdown_from(points: list[tuple[datetime, float]], current: float,
+                      now: datetime) -> dict | None:
+    """PURE. Drawdown of ``current`` against the highest flow-adjusted point seen.
+
+    ``points`` are ``(ts, adjusted_equity)`` where adjusted = equity - net capital contributed
+    by then (so a deposit is neither a gain nor a recovery). The peak is the max over the points
+    AND the live ``current`` (itself a point at ``now``), so ``current`` above every snapshot is
+    a new peak and a drawdown of 0. None when there is no usable peak (no points, or <= 0)."""
+    if not points:
+        return None
+    peak_ts, peak = max(points, key=lambda p: p[1])
+    if current > peak:
+        peak_ts, peak = now, current
+    if peak <= 0:
+        return None
+    return {"drawdown_pct": max(0.0, (peak - current) / peak * 100), "peak_equity": peak,
+            "peak_ts": peak_ts, "current": current}
+
+
+def mtm_drawdown(db: Session, current_equity: float, now: datetime | None = None) -> dict | None:
+    """Mark-to-market drawdown for the circuit breaker, from the hourly ``equity_snapshots``.
+
+    Flow-adjusted like ``build_series``: perf(t) = equity(t) - net capital contributed up to t
+    (start capital cancels), using ``portfolio._capital_flows``; a snapshot row covers its whole
+    hour, so flows are counted up to ``ts + 1h``. Returns ``{drawdown_pct, peak_equity, peak_ts,
+    current}`` or None when there are no snapshots (caller falls back to the realized curve)."""
+    now = now or utcnow()
+    q = db.query(EquitySnapshot.ts, EquitySnapshot.equity)
+    # A book reset deletes fills/sessions/orders but not this table: rows from before the current
+    # book's first fill belong to an old book and must not set the peak (it would be a phantom DD).
+    first_fill = db.query(func.min(Fill.executed_at)).scalar()
+    if first_fill is not None:
+        q = q.filter(EquitySnapshot.ts >= hour_floor(first_fill))
+    snaps = q.order_by(EquitySnapshot.ts).all()
+    if not snaps:
+        return None
+    flows = sorted((f[0], float(f[1])) for f in portfolio._capital_flows(db))
+    points: list[tuple[datetime, float]] = []
+    cum = 0.0
+    i = 0
+    for ts, eq in snaps:
+        end = ts + HOUR
+        while i < len(flows) and flows[i][0] < end:
+            cum += flows[i][1]
+            i += 1
+        points.append((ts, float(eq) - cum))
+    return mtm_drawdown_from(points, float(current_equity) - sum(a for _, a in flows), now)
 
 
 def curve_for_period(db: Session, period: str, now: datetime | None = None,

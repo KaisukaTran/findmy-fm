@@ -131,6 +131,37 @@ def _ensure_columns() -> None:
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
 
 
+def _clear_position_float_residue() -> int:
+    """Zero positions whose quantity is pure float residue (0 < qty < 1e-9). Idempotent; real
+    exchange dust (>= 1e-9) is untouched. Returns the number of rows changed."""
+    import logging
+
+    with engine.begin() as conn:
+        if "positions" not in set(inspect(conn).get_table_names()):
+            return 0
+        rows = conn.execute(
+            text("SELECT symbol FROM positions WHERE quantity > 0 AND quantity < 1e-9")
+        ).fetchall()
+        if not rows:
+            return 0
+        symbols = sorted(r[0] for r in rows)
+        conn.execute(
+            text("UPDATE positions SET quantity = 0, total_cost = 0, avg_entry_price = 0 "
+                 "WHERE quantity > 0 AND quantity < 1e-9")
+        )
+    logging.getLogger(__name__).info(
+        "positions float residue cleared: %d row(s) %s", len(symbols), symbols)
+    try:
+        from app import audit
+
+        with SessionLocal() as db:
+            audit.log(db, "system", "positions_float_residue_cleared", None, symbols=symbols)
+            db.commit()
+    except Exception:  # the audit row is a nicety; the cleanup above already committed
+        logging.getLogger(__name__).warning("float-residue audit row not written", exc_info=True)
+    return len(symbols)
+
+
 def init_db() -> None:
     """Create all tables, then apply additive column migrations. Imports models so
     they register on Base.metadata."""
@@ -139,3 +170,4 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _ensure_columns()
+    _clear_position_float_residue()

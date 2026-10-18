@@ -63,6 +63,12 @@ POSITION_SORT_KEYS = frozenset(
 )
 
 
+# A position worth less than this (market value) is "dust": hidden by default in the table and
+# not counted in positions_count. It still counts in equity. Cost basis < this is dust for the
+# equity-snapshot price check (which has no price to value it with).
+DUST_USD = 0.01
+
+
 def positions_view(
     db: Session, sort: str | None = None, direction: str = "asc"
 ) -> list[dict]:
@@ -100,6 +106,7 @@ def positions_view(
                 "market_value_pct": market_value / eq * 100,  # % of total equity
                 "unrealized_pnl": unrealized,
                 "unrealized_pnl_pct": (unrealized / p.total_cost * 100) if p.total_cost else 0.0,
+                "is_dust": market_value < DUST_USD,
                 "sources": owners.get(p.symbol, []),  # ["OPUS"], ["KSS"], or both
             }
         )
@@ -250,7 +257,8 @@ def summary_view(db: Session) -> dict:
     return {
         "total_trades": int(total_trades),
         "pending_count": int(pending_count),
-        "positions_count": len(positions),
+        "positions_count": sum(1 for p in positions if not p["is_dust"]),
+        "dust_positions_count": sum(1 for p in positions if p["is_dust"]),
         "realized_pnl": realized_pnl,
         "realized_pct": realized_pnl / base * 100,
         "unrealized_pnl": unrealized_pnl,

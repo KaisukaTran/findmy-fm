@@ -1935,7 +1935,11 @@ def _update_position(
             pos.realized_pnl += realized
             pos.quantity = max(0.0, pos.quantity - sell_qty)
             pos.total_cost = max(0.0, pos.total_cost - cost_basis)
-            if pos.quantity == 0:
+            if pos.quantity <= sell_qty * 1e-9:
+                # Float residue of a full close (104.6 - 104.60000000000001 = 1e-14): flat is flat.
+                # Would otherwise linger as a phantom "open" row with qty ~0.
+                pos.quantity = 0.0
+                pos.total_cost = 0.0
                 pos.avg_entry_price = 0.0
     pos.updated_at = utcnow()
     db.flush()

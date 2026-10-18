@@ -1387,6 +1387,7 @@ def partial_positions(
     page: int = 1,
     sort: str = "",
     dir: str = "asc",
+    dust: int = 0,
     db: Session = Depends(get_db),
 ):
     # Trading tab: page size 20, up to 10 pages.
@@ -1395,13 +1396,18 @@ def partial_positions(
     # Sanitise the click-to-sort inputs before they reach the view / template.
     sort = sort if sort in portfolio.POSITION_SORT_KEYS else ""
     direction = "desc" if dir == "desc" else "asc"
-    all_rows = portfolio.positions_view(db, sort=sort or None, direction=direction)
+    every_row = portfolio.positions_view(db, sort=sort or None, direction=direction)
+    dust_count = sum(1 for r in every_row if r["is_dust"])
+    show_dust = bool(dust) and dust_count > 0
+    all_rows = every_row if show_dust else [r for r in every_row if not r["is_dust"]]
     rows = all_rows[offset: offset + 20]
     return templates.TemplateResponse(
         "partials/positions.html",
         {
             "request": request,
             "rows": rows,
+            "dust_count": dust_count,
+            "show_dust": show_dust,
             "page": page,
             "has_prev": page > 1,
             "has_next": len(all_rows) > offset + 20,

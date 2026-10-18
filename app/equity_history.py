@@ -447,7 +447,9 @@ def write_live_snapshot(db: Session, now: datetime | None = None,
             return None
         if db.query(EquitySnapshot.id).filter(EquitySnapshot.ts == hour).first():
             return None
-        if any(p["current_price"] <= 0 for p in portfolio.positions_view(db)):
+        # Dust (cost basis < $0.01) is ignored: a delisted dust coin must not stop the history.
+        if any(p["current_price"] <= 0 and p["total_cost"] >= portfolio.DUST_USD
+               for p in portfolio.positions_view(db)):
             logger.warning("equity snapshot skipped: an open position has no price")
             return None                     # a 0 price would book a bogus equity dip
         s = portfolio.summary_view(db)

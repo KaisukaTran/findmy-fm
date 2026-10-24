@@ -137,6 +137,14 @@ def _free_cash(db: Session) -> float:
     return capital_anchor(db) + realized - invested
 
 
+def _is_ladder_rung(order: PendingOrder) -> bool:
+    """A DCA ladder rung: ``pyramid:{session_id}:wave:{k}`` with k >= 1 (wave 0 is the opening
+    buy, anything else is not a rung)."""
+    parts = str(order.source_ref or "").split(":")
+    return (len(parts) == 4 and parts[0] == "pyramid" and parts[2] == "wave"
+            and parts[3].isdigit() and int(parts[3]) >= 1)
+
+
 def _apply_cash_cap(db: Session, order: PendingOrder) -> None:
     """HARD floor for BUYs: shrink ``order.quantity`` to the qty the available cash can fund
     (partial fill), so a fill can never push cash below ``cash_floor_usd``. Raise
@@ -149,7 +157,12 @@ def _apply_cash_cap(db: Session, order: PendingOrder) -> None:
 
     A trim of a wave >= 1 dca_down rung also fires the same ``rung_starved`` alert as an
     outright refusal (reason="trimmed") — the dropped remainder never gets bought either,
-    silently, unless something says so. See ``_note_rung_starved``."""
+    silently, unless something says so. See ``_note_rung_starved``.
+
+    K7: a DCA rung whose affordable slice is below ``kss_partial_rung_min_pct`` of its quantity
+    is REFUSED (InsufficientCashError, the order untouched and PENDING) instead of trimmed — a
+    27% slice barely moves the average yet used to count as a whole rung for the take-profit
+    step. It waits in the queue until cash funds a real slice. Other BUYs keep the plain trim."""
     if order.side != "BUY":
         return
     cash_floor = capital_scale.cash_floor_usd(db).value
@@ -167,6 +180,12 @@ def _apply_cash_cap(db: Session, order: PendingOrder) -> None:
         raise InsufficientCashError(
             f"thiếu tiền mặt: còn ${free:.2f} (giữ Cash ≥ ${cash_floor:.0f}) — "
             f"không đủ mua {order.symbol}; lệnh bị giữ lại."
+        )
+    min_pct = settings.kss_partial_rung_min_pct
+    if min_pct > 0 and _is_ladder_rung(order) and affordable < order.quantity * min_pct / 100.0:
+        raise InsufficientCashError(
+            f"thiếu tiền mặt: chỉ đủ mua {affordable / order.quantity:.0%} rung {order.symbol}, "
+            f"dưới ngưỡng {min_pct:g}% — rung chờ trong hàng đợi tới khi đủ tiền."
         )
     requested = order.quantity
     order.quantity = affordable

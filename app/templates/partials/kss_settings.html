@@ -54,6 +54,8 @@
       <option value="1" {% if k.kss_partial_last_rung_enabled %}selected{% endif %}>Bật</option>
       <option value="0" {% if not k.kss_partial_last_rung_enabled %}selected{% endif %}>Tắt</option>
     </select></label>
+  <label title="Một rung DCA chỉ được khớp một phần vì thiếu tiền khi phần mua được ≥ ngưỡng này (% khối lượng rung). Dưới ngưỡng → từ chối, rung chờ ở hàng đợi tới khi đủ tiền (vẫn báo rung đói tiền). Và chỉ rung khớp ≥ ngưỡng mới được tính là một rung cho bậc TP (+kss_tp_step_per_rung_pct/rung): một lát 27% không hạ giá vốn nhưng từng đẩy TP xa thêm. 0 = hành vi cũ (mua lát bất kỳ ≥ min notional, mọi rung đều tính).">Ngưỡng khớp một phần của rung % <span class="varname">kss_partial_rung_min_pct</span>
+    <input name="kss_partial_rung_min_pct" type="number" step="1" min="0" max="100" value="{{ '%g'|format(k.kss_partial_rung_min_pct) }}" required></label>
   <label title="Chặn mở session mới cho coin đã thua K lần ĐÓNG LỆNH liên tiếp (một lần lãi sẽ phá chuỗi). Tăng để khó bị chặn hơn.">Chặn sau K lần thua <span class="varname">loss_streak_block_k</span>
     <input name="loss_streak_block_k" type="number" step="1" min="1" max="20" value="{{ k.loss_streak_block_k }}" required></label>
   <label title="Chỉ tính các lần đóng lệnh trong N ngày gần nhất — lỗ cũ trôi ra ngoài cửa sổ thì coin tự được giao dịch lại.">Cửa sổ lỗ (ngày) <span class="varname">loss_streak_window_days</span>

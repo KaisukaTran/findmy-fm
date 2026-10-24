@@ -662,6 +662,7 @@ class KssSettingsBody(BaseModel):
     session_cover_measured: bool | None = None
     kss_ladder_reserve_slack_pct: float | None = Field(None, ge=0, le=10)
     kss_partial_last_rung_enabled: bool | None = None
+    kss_partial_rung_min_pct: float | None = Field(None, ge=0, le=100)
     max_sessions_per_symbol: int | None = Field(None, ge=0, le=20)
     max_deployed_pct: float | None = Field(None, gt=0, le=100)
     equity_backup_pct: float | None = Field(None, ge=0, le=90)

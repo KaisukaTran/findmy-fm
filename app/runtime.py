@@ -90,6 +90,7 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "max_session_deploy_usd": float,  # hard ceiling on total USD deployed per session (0=off)
     "kss_ladder_reserve_slack_pct": float,  # extra % on the ladder reserve at open (step-drift buffer)
     "kss_partial_last_rung_enabled": _to_bool,  # shrink a starved rung to fit remaining_fund instead of skipping it
+    "kss_partial_rung_min_pct": float,  # a cash-trimmed DCA rung below this % of its plan is refused, and does not count as a rung
     "min_expectancy_pct": float,
     "max_avg_mae_pct": float,  # drawdown gate (0=off) + ranking: shallower backtest dip = better
     "min_win_rate": float,

@@ -91,7 +91,16 @@ def _to_pyramid(row: KssSession) -> PyramidSession:
     # of the same fill, and `_save_state` deliberately never writes tp_pct back. Both exits
     # read it from `py.tp_pct`: the frozen `check_tp` (paper) and `sync_resting_tp`'s
     # `estimated_tp_price` (live), which re-places the resting order when it moves.
-    rungs_filled = sum(1 for w in py.waves if w.wave_num >= 1 and w.status == WAVE_FILLED)
+    # K7: a rung counts only when it filled at least `kss_partial_rung_min_pct` of its PLANNED
+    # quantity (`w.quantity` is the plan; the frozen on_fill leaves it alone and records what
+    # filled in `filled_qty`). A 27% slice used to count as a whole rung and push the TP out
+    # without lowering the cost basis. 0 = every FILLED rung counts, as before.
+    min_pct = settings.kss_partial_rung_min_pct
+    rungs_filled = sum(
+        1 for w in py.waves
+        if w.wave_num >= 1 and w.status == WAVE_FILLED
+        and (min_pct <= 0 or (w.filled_qty or 0.0) >= (w.quantity or 0.0) * min_pct / 100.0)
+    )
     if rungs_filled and settings.kss_tp_step_per_rung_pct > 0:
         py.tp_pct = row.tp_pct + settings.kss_tp_step_per_rung_pct * rungs_filled
     return py

@@ -245,14 +245,16 @@ def test_a_trimmed_rung_alerts_with_reason_trimmed(db, monkeypatch):
     monkeypatch.setattr(settings, "cash_floor_usd", 0.0)
     monkeypatch.setattr(settings, "scan_min_notional", 1.0)
 
+    # 15 x $9 = $135 against $100 of cash: ~74% is affordable, i.e. above the
+    # kss_partial_rung_min_pct threshold (a slice under it is REFUSED now - see K7), so it trims.
     o, _ = orders.queue_order(
-        db, symbol="SOL", side="BUY", quantity=100.0, price=9.0,
+        db, symbol="SOL", side="BUY", quantity=15.0, price=9.0,
         source="kss", source_ref="pyramid:1:wave:2",
     )
 
     fill = orders.approve_order(db, o.id, reviewer="auto-trader")
 
-    assert fill.quantity < 100.0, "the order must have been trimmed, not fully funded"
+    assert fill.quantity < 15.0, "the order must have been trimmed, not fully funded"
     rows = _rows(db)
     assert len(rows) == 1
     detail = json.loads(rows[0].detail)

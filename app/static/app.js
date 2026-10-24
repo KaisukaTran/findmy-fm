@@ -1366,6 +1366,7 @@ document.addEventListener("submit", async (e) => {
       cash_floor_usd: num(f.get("cash_floor_usd")),
       kss_ladder_reserve_slack_pct: num(f.get("kss_ladder_reserve_slack_pct")),
       kss_partial_last_rung_enabled: f.get("kss_partial_last_rung_enabled") === "1",
+      kss_partial_rung_min_pct: num(f.get("kss_partial_rung_min_pct")),
       loss_streak_block_k: num(f.get("loss_streak_block_k")),
       loss_streak_window_days: num(f.get("loss_streak_window_days")),
       min_expectancy_pct: num(f.get("min_expectancy_pct")),

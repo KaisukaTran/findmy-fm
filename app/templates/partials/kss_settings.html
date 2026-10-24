@@ -293,6 +293,14 @@
   <label title="Khoảng cách tối thiểu (phút) giữa hai lần cảnh báo crash liên tiếp, để một ngày xấu kéo dài không bắn tin mỗi lượt quét.">Cooldown cảnh báo (phút) <span class="varname">crash_alert_cooldown_min</span>
     <input name="crash_alert_cooldown_min" type="number" step="5" min="0" value="{{ '%.0f'|format(k.crash_alert_cooldown_min) }}"></label>
   <h3 class="section-subhead">━ Cầu dao (circuit breaker) ━</h3>
+  <label title="Sụt vốn (equity drawdown, tính từ đỉnh) vượt ngưỡng này thì cầu dao ĐÓNG BĂNG tự động. Hạ ngưỡng xuống dưới mức sụt vốn HIỆN TẠI sẽ đóng băng ngay ở chu kỳ kế tiếp. Muốn mở lại (rearm) cần sụt vốn ≤ ngưỡng − dải đệm rearm (breaker_rearm_hysteresis_pct) và đã qua cooldown.">Ngưỡng sụt vốn đóng băng (%) <span class="varname">max_drawdown_pct</span>
+    <input name="max_drawdown_pct" type="number" step="0.1" min="0.1" max="100" value="{{ '%g'|format(k.max_drawdown_pct) }}" required></label>
+  <label title="Lỗ đã chốt trong NGÀY vượt ngưỡng này (% vốn) thì cầu dao đóng băng. Rearm cần lỗ trong ngày ≤ ngưỡng − dải đệm rearm.">Ngưỡng lỗ trong ngày (%) <span class="varname">daily_loss_hard_pct</span>
+    <input name="daily_loss_hard_pct" type="number" step="0.1" min="0.1" max="100" value="{{ '%g'|format(k.daily_loss_hard_pct) }}" required></label>
+  <label title="Số lệnh thoát LỖ liên tiếp để cầu dao đóng băng (một lệnh lãi sẽ phá chuỗi). Chuỗi thua chỉ là lịch sử nên không chặn rearm — hết cooldown là mở lại.">Chuỗi thua tối đa <span class="varname">max_consecutive_losses</span>
+    <input name="max_consecutive_losses" type="number" step="1" min="1" max="50" value="{{ k.max_consecutive_losses }}" required></label>
+  <label title="Số phút tối thiểu cầu dao phải đóng băng trước khi được phép tự rearm (vẫn cần sụt vốn và lỗ trong ngày dưới ngưỡng trừ dải đệm). 0 = rearm ngay khi đủ điều kiện.">Cooldown cầu dao (phút) <span class="varname">breaker_cooldown_min</span>
+    <input name="breaker_cooldown_min" type="number" step="1" min="0" max="1440" value="{{ k.breaker_cooldown_min }}" required></label>
   <label title="Cầu dao đóng băng có chặn luôn rung DCA (wave ≥ 1) của các phiên dca_down ĐANG chạy không. Tắt (mặc định) = cầu dao chỉ chặn MỞ PHIÊN MỚI và các lệnh mua khác (sóng 0, add Pyramid-UP, lệnh thủ công qua auto-reviewer) — rung của một thang đang chạy vẫn được mua bình thường khi đóng băng: đã đo, chặn rung làm sụt sâu HƠN ở mọi mức vốn vì cái thang chính là cơ chế gỡ lỗ, không phải rủi ro mới. Bật = khôi phục hành vi cũ (đóng băng chặn mọi lệnh mua tự động, kể cả rung). Lệnh BÁN không bao giờ bị cầu dao chặn, bất kể knob này.">Cầu dao chặn cả rung ladder <span class="varname">breaker_blocks_ladder_rungs</span>
     <select name="breaker_blocks_ladder_rungs" class="select-inline">
       <option value="1" {% if k.breaker_blocks_ladder_rungs %}selected{% endif %}>Bật (chặn cả rung — hành vi cũ)</option>

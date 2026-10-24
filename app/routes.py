@@ -784,6 +784,10 @@ class KssSettingsBody(BaseModel):
     # Circuit-breaker: spare the ladder + the cash-starved-rung alert (app/orders.py).
     breaker_blocks_ladder_rungs: bool | None = None
     breaker_rearm_hysteresis_pct: float | None = Field(None, ge=0, le=50)
+    max_drawdown_pct: float | None = Field(None, gt=0, le=100)
+    daily_loss_hard_pct: float | None = Field(None, gt=0, le=100)
+    max_consecutive_losses: int | None = Field(None, ge=1, le=50)
+    breaker_cooldown_min: int | None = Field(None, ge=0, le=1440)
     rung_starved_alert_min: float | None = Field(None, ge=1)
     # Entry-only asset guard (app/data/asset_guard.py) — delisting/high-risk/non-crypto bases.
     asset_guard_enabled: bool | None = None

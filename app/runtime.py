@@ -208,6 +208,12 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     # _note_rung_starved).
     "breaker_blocks_ladder_rungs": _to_bool,
     "breaker_rearm_hysteresis_pct": float,  # rearm margin below the freeze limits (0 = old behaviour)
+    # The freeze thresholds themselves (circuit.evaluate reads settings live) - safety knobs must
+    # be visible and editable at runtime, not .env-only.
+    "max_drawdown_pct": float,
+    "daily_loss_hard_pct": float,
+    "max_consecutive_losses": int,
+    "breaker_cooldown_min": int,
     "rung_starved_alert_min": float,
     # Entry-only asset guard (app/data/asset_guard.py) — delisting/high-risk/non-crypto bases.
     "asset_guard_enabled": _to_bool,
@@ -549,12 +555,14 @@ def sync_from_db(db: Session) -> None:
     settings.scheduler_operator_stopped = get_bool(
         db, KEY_SCHEDULER_STOPPED, default=settings.scheduler_operator_stopped
     )
-    # Full-auto may come from persisted state (the dashboard switch) OR from the
-    # environment (FULL_AUTO=true in .env) — honour either, and cascade the same flags
-    # full_auto_on() sets so a fresh boot behaves exactly like a clicked one.
-    full_auto = settings.full_auto or get_bool(db, KEY_FULL_AUTO, default=False)
+    # Full-auto: a PERSISTED value (the dashboard switch, on OR off) is the operator's last word
+    # and wins; with no key the environment (FULL_AUTO=true in .env) decides, as it always did.
+    # It used to be `settings.full_auto or persisted`, so a dashboard OFF was silently undone by
+    # the next restart whenever .env said true — same trap as auto_trade below. Cascade the same
+    # flags full_auto_on() sets so a fresh boot behaves exactly like a clicked one.
+    full_auto = get_bool(db, KEY_FULL_AUTO, default=settings.full_auto)
+    settings.full_auto = full_auto
     if full_auto:
-        settings.full_auto = True
         settings.auto_trade = True
         settings.autoapprove_enabled = True
     # An explicitly persisted auto_trade always wins over the full-auto cascade above. Turning

@@ -589,11 +589,19 @@ def get_live_trading(db: Session = Depends(get_db)):
 def set_live_trading(body: LiveTradingBody, db: Session = Depends(get_db)):
     """Flip the real-money master switch.
 
-    Enabling requires a typed confirmation phrase AND configured exchange keys AND an
-    armed circuit breaker (a tripped breaker blocks going live). Disabling is always
-    allowed and immediate.
+    Enabling requires auth enforcement (REQUIRE_AUTH=true) AND a typed confirmation phrase
+    AND configured exchange keys AND an armed circuit breaker (a tripped breaker blocks going
+    live). Disabling is always allowed and immediate.
     """
     if body.enabled:
+        # With auth off `require_api_key` is a no-op, so anyone who can reach the dashboard
+        # could arm real money. Checked first: no point revealing the other conditions.
+        if not settings.require_auth:
+            raise HTTPException(
+                status_code=409,
+                detail="Bật tiền thật đòi REQUIRE_AUTH=true và một API_KEY mạnh — "
+                "bật auth trước, rồi mới bật live.",
+            )
         if (body.confirm or "").strip() != _LIVE_CONFIRM_PHRASE:
             raise HTTPException(
                 status_code=400,

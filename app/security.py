@@ -24,6 +24,7 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
+from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
@@ -95,6 +96,41 @@ def validate_auth_config() -> None:
         raise RuntimeError(
             "Refusing to boot: live_trading is ON with a default API_KEY. Set a strong API_KEY."
         )
+
+
+def enforce_auth_posture(db: Session) -> str | None:
+    """Force a persisted live_trading flag OFF when it no longer fits the auth posture.
+
+    `validate_auth_config` only sees env values at import time; the persisted flag is restored
+    later by `runtime.sync_from_db`, so a switch flipped on while auth was off survives restarts
+    unchallenged. Called right after that restore. Fails CLOSED without raising (a raise inside
+    lifespan makes uvicorn exit and the watchdog restart-loop): returns the reason when it
+    forced the flag off, None when the posture is fine. Never includes the key in the reason.
+    """
+    if not settings.live_trading:
+        return None
+    weak_key = settings.api_key.get_secret_value() in _DEFAULT_KEYS
+    if settings.require_auth and not weak_key:
+        return None
+    reason = (
+        "live_trading was ON with require_auth OFF - real-money endpoints would be "
+        "unauthenticated; forced OFF at boot"
+        if not settings.require_auth
+        else "live_trading was ON with a default API_KEY; forced OFF at boot"
+    )
+    # Memory first: execution.live_enabled() reads this flag, so it must be off even if the DB
+    # writes below fail.
+    settings.live_trading = False
+    try:
+        from app import audit, runtime
+
+        runtime.set_live_trading(db, False)
+        audit.log(db, "security", "live_forced_off", reason=reason)
+        db.commit()
+    except Exception:
+        _log.exception("could not persist the live_trading force-off (the in-memory flag is off)")
+    _log.warning(reason)
+    return reason
 
 
 def _allowed_origins() -> set[str]:

@@ -61,13 +61,18 @@ def ws_feed_should_start() -> bool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    from app import runtime, scheduler
+    from app import runtime, scheduler, security
     from app.config import settings
     from app.db import SessionLocal
 
     db = SessionLocal()
     try:
         runtime.sync_from_db(db)
+        # The persisted live_trading flag was just restored, after the import-time boot guard
+        # had already passed — re-check it against the auth posture (fails closed, never raises).
+        posture_msg = security.enforce_auth_posture(db)
+        if posture_msg:
+            logging.getLogger("app.main").warning(posture_msg)
     finally:
         db.close()
 

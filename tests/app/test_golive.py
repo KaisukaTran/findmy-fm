@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 from app import execution, orders, runtime
 from app.config import settings
@@ -27,6 +28,16 @@ def client(monkeypatch):
     monkeypatch.setattr("app.portfolio.get_current_prices", lambda syms: dict.fromkeys(syms, 100.0))
     with TestClient(fastapi_app) as c:
         yield c
+
+
+@pytest.fixture
+def authed(monkeypatch):
+    """Auth ON with a real key: arming real money is refused (409) unless `require_auth` is on
+    (S1), so the tests that exercise the later gates must clear that first one. Returns the
+    header the client must send."""
+    monkeypatch.setattr(settings, "require_auth", True)
+    monkeypatch.setattr(settings, "api_key", SecretStr("a-strong-test-key-0123456789"))
+    return {"X-API-Key": "a-strong-test-key-0123456789"}
 
 
 def test_live_enabled_requires_flag_and_keys(monkeypatch):
@@ -104,31 +115,33 @@ def test_live_sell_exit_not_gated_when_frozen_or_over_cap(db, monkeypatch):
     assert fill.price == 100.0                               # the exit went through
 
 
-def test_live_trading_route_requires_typed_confirm(client, monkeypatch):
+def test_live_trading_route_requires_typed_confirm(client, monkeypatch, authed):
     from app import execution as ex2
     monkeypatch.setattr(ex2, "live_key_present", lambda: True)
     # wrong / missing confirm phrase → 400, stays paper
-    r = client.post("/api/live-trading", json={"enabled": True, "confirm": "yes"})
+    r = client.post("/api/live-trading", headers=authed, json={"enabled": True, "confirm": "yes"})
     assert r.status_code == 400
-    r = client.post("/api/live-trading", json={"enabled": True})
+    r = client.post("/api/live-trading", headers=authed, json={"enabled": True})
     assert r.status_code == 400
     assert client.get("/api/live-trading").json()["live_trading"] is False
 
 
-def test_live_trading_route_blocks_enable_without_keys(client, monkeypatch):
+def test_live_trading_route_blocks_enable_without_keys(client, monkeypatch, authed):
     from app import execution as ex2
     monkeypatch.setattr(ex2, "live_key_present", lambda: False)
-    r = client.post("/api/live-trading", json={"enabled": True, "confirm": "LIVE-TRADING"})
+    r = client.post("/api/live-trading", headers=authed,
+                    json={"enabled": True, "confirm": "LIVE-TRADING"})
     assert r.status_code == 400 and "key" in r.json()["detail"].lower()
 
 
-def test_live_trading_route_enable_and_disable(client, monkeypatch):
+def test_live_trading_route_enable_and_disable(client, monkeypatch, authed):
     from app import execution as ex2
     monkeypatch.setattr(ex2, "live_key_present", lambda: True)
-    r = client.post("/api/live-trading", json={"enabled": True, "confirm": "LIVE-TRADING"})
+    r = client.post("/api/live-trading", headers=authed,
+                    json={"enabled": True, "confirm": "LIVE-TRADING"})
     assert r.status_code == 200 and r.json()["live_trading"] is True
     # disabling never needs a confirm
-    r = client.post("/api/live-trading", json={"enabled": False})
+    r = client.post("/api/live-trading", headers=authed, json={"enabled": False})
     assert r.status_code == 200 and r.json()["live_trading"] is False
 
 

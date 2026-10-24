@@ -12,7 +12,7 @@
     <input name="scan_max_waves" type="number" step="1" min="1" value="{{ k.scan_max_waves }}" required></label>
   <label title="(cũ) Vốn cô lập đặt cứng mỗi session. Không còn dùng cho scanner: mỗi session giờ TỰ tính vốn = tổng chi phí cả thang DCA (sóng đầu × số sóng × giá). Vẫn dùng cho session tạo thủ công.">Vốn/session $ (cũ) <span class="varname">scan_fund</span>
     <input name="scan_fund" type="number" step="any" min="1" value="{{ '%.0f'|format(k.scan_fund) }}" required></label>
-  <label title="Cắt lỗ: bán toàn bộ khi giá ≤ avg×(1−SL%). 0 = tắt.">SL % <span class="varname">sl_pct</span>
+  <label title="Cắt lỗ: bán toàn bộ khi giá ≤ avg×(1−SL%). 0 = tắt. CHỈ ÁP CHO PHIÊN MỚI: giá trị được chụp vào phiên lúc mở, đổi ở đây không đụng phiên đang chạy (0 trên phiên = phiên đó không có SL).">SL % <span class="varname">sl_pct</span>
     <input name="sl_pct" type="number" step="0.1" min="0" value="{{ '%.2f'|format(k.sl_pct) }}" required></label>
   <label title="Trailing stop: khi có lãi, bán nếu giá ≤ đỉnh×(1−Trail%). 0 = tắt.">Trailing % <span class="varname">trailing_pct</span>
     <input name="trailing_pct" type="number" step="0.1" min="0" value="{{ '%.2f'|format(k.trailing_pct) }}" required></label>

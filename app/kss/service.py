@@ -67,7 +67,9 @@ def _to_pyramid(row: KssSession) -> PyramidSession:
     py.start_time = row.started_at
     py.last_fill_time = row.last_fill_at
     py.created_at = row.created_at
-    py.sl_pct = row.sl_pct if row.sl_pct > 0 else settings.sl_pct
+    # Frozen at open (create_session): 0 = this session has NO stop-loss; the global never
+    # re-prices an open session (K3).
+    py.sl_pct = row.sl_pct or 0.0
     py.trailing_pct = row.trailing_pct if row.trailing_pct > 0 else settings.trailing_pct
     py.peak_price = row.peak_price
     py.waves = [
@@ -589,6 +591,11 @@ def create_session(db: Session, **params: Any) -> KssSession:
     # session that already committed its ladder. Off (default) returns kss_first_wave_usd
     # unchanged.
     params.setdefault("first_wave_usd", capital_scale.first_wave_usd(db).value)
+    # K3: the stop-loss is snapshotted at open for the same reason (ETC#5). The readers used to
+    # fall back to the LIVE global when the column was 0, so every session (all stored 0)
+    # followed the global retroactively - one lost runtime_config row and the 90s guard would
+    # have market-sold every open session at -8%. 0 now means OFF for that session.
+    params.setdefault("sl_pct", settings.sl_pct)
     PyramidSession(**params)  # raises ValueError on invalid params (strategy fields only)
     row = KssSession(status=SESSION_PENDING, note=note, deadline_days=deadline_days, **params)
     db.add(row)
@@ -1939,7 +1946,7 @@ def _evaluate_dynamic_exit(db: Session, row: KssSession, price: float) -> bool:
                 return True
             audit.log(db, "scheduler", "trailing_deferred", entity=f"kss:{row.id}",
                       symbol=row.symbol, price=round(price, 8))
-            sl_pct = row.sl_pct if row.sl_pct and row.sl_pct > 0 else settings.sl_pct
+            sl_pct = row.sl_pct or 0.0  # the session's own frozen SL; 0 = off (K3)
             if sl_pct > 0 and price <= avg * (1 - sl_pct / 100.0):
                 _queue_dynamic_exit(db, row, "sl", price)  # hard SL still cuts the real loser
                 return True
@@ -2083,9 +2090,7 @@ def _guard_hard_sl(db: Session, row: KssSession, price: float) -> bool:
     at market between cycles. TP / trailing / DCA stay the 30-min cycle's job — this is purely the
     disaster floor, so it mirrors the hard-SL branch of manage_open_sessions (no K-trail defer: a
     hard SL is meant to realize the loss on a real loser). Returns True if it queued an exit."""
-    from app.config import settings
-
-    sl_pct = row.sl_pct if row.sl_pct and row.sl_pct > 0 else settings.sl_pct
+    sl_pct = row.sl_pct or 0.0  # the session's own frozen SL; 0 = off, never the global (K3)
     if sl_pct <= 0 or row.avg_price <= 0 or row.total_filled_qty <= 0:
         return False
     floor = row.avg_price * (1 - sl_pct / 100.0)
@@ -2116,9 +2121,7 @@ def _pyramid_up_hard_sl(db: Session, row: KssSession, price: float) -> bool:
     market — the only loss-cutter before the BE+ trail arms. Returns True if it queued an exit.
     The hard SL is allowed to realize a loss (unlike K-2/K-trail, which only DEFER profit-taking
     below cost); cutting a real loser is its whole job."""
-    from app.config import settings
-
-    sl_pct = row.sl_pct if row.sl_pct and row.sl_pct > 0 else settings.sl_pct
+    sl_pct = row.sl_pct or 0.0  # the session's own frozen SL; 0 = off, never the global (K3)
     if sl_pct <= 0 or row.avg_price <= 0 or row.total_filled_qty <= 0:
         return False
     floor = row.avg_price * (1 - sl_pct / 100.0)

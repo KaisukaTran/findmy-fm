@@ -591,7 +591,7 @@ class Settings(BaseSettings):
         "full-auto back on, or /resume) clears it. Persisted via runtime_config (KEY_SCHEDULER_"
         "STOPPED) so a restart also respects the operator's last word, not the automation flags.",
     )
-    sl_pct: float = Field(default=8.0, description="KSS session stop-loss %% below avg price (0 = disabled).")
+    sl_pct: float = Field(default=8.0, description="KSS session stop-loss %% below avg price (0 = disabled). Applies to NEW sessions only: it is snapshotted onto each session when it opens, so changing it never re-prices an open one.")
     trailing_pct: float = Field(default=3.0, description="KSS trailing-stop %% below peak once in profit (0 = disabled).")
 
     # --- Dynamic trailing TP/SL (docs/kss-dynamic-tp-plan.md) — service-layer, OFF by default ---

@@ -218,9 +218,10 @@ class KssSession(Base):
     timeout_x_min: Mapped[float] = mapped_column(Float, nullable=False)
     gap_y_min: Mapped[float] = mapped_column(Float, nullable=False)
 
-    # Risk exits (Phase A). 0.0 = fall back to the settings default (sl_pct /
-    # trailing_pct); a positive per-session value overrides it. peak_price is the
-    # high-water mark used by the trailing stop.
+    # Risk exits (Phase A). sl_pct is FROZEN onto the session when it opens (create_session
+    # snapshots the global): 0.0 = this session has no stop-loss, it never falls back to the
+    # live global. trailing_pct is still 0.0 = fall back to the settings default. peak_price is
+    # the high-water mark used by the trailing stop.
     sl_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     trailing_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     peak_price: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)

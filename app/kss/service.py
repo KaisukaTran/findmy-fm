@@ -1002,6 +1002,8 @@ def handle_fill_event(
                                 take-profit-then-trail stop can only fire at/above the TP
                                 target, so this is a PROFITABLE exit — same branch as tp,
                                 see app.kss.service._maintain_live_stop)
+      pyramid:{id}:manual_tp -> the "chốt lời ngay" button's sell filled -> session COMPLETED
+                                (same branch as tp: a voluntary exit, so no re-entry cooldown)
     """
     parts = source_ref.split(":")
     if len(parts) < 3 or parts[0] != "pyramid":
@@ -1011,13 +1013,15 @@ def handle_fill_event(
     if row is None:
         return None
 
-    # TP sell, or the live-native resting stop's fill (task 1.10) — both end the session the
-    # SAME way (never a re-entry cooldown; that is only for a risk or deadline exit below). Under the
-    # resting model an ACTIVE session has its exit AND its unfilled DCA rungs on the book at
-    # once, so two things matter here that did not under the legacy model.
-    if parts[2] in {"tp", "stop"}:
-        label = "TP" if parts[2] == "tp" else "stop"
-        reason_kind = "take-profit" if parts[2] == "tp" else "stop"
+    # TP sell, the live-native resting stop's fill (task 1.10), or the manual take-profit button's
+    # sell — all end the session the SAME way (never a re-entry cooldown; that is only for a risk
+    # or deadline exit below). `manual_tp` used to match nothing here and crash on parts[3].
+    # Under the resting model an ACTIVE session has its exit AND its unfilled DCA rungs on the
+    # book at once, so two things matter here that did not under the legacy model.
+    if parts[2] in {"tp", "stop", "manual_tp"}:
+        label = {"tp": "TP", "stop": "stop", "manual_tp": "manual TP"}[parts[2]]
+        reason_kind = {"tp": "take-profit", "stop": "stop",
+                       "manual_tp": "manual take-profit"}[parts[2]]
         # A PARTIAL fill does not end anything. A resting maker exit in a thin book fills in
         # pieces routinely, and completing on the first piece abandoned the rest of the
         # position with no managed exit at all.

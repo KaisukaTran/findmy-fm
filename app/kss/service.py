@@ -2168,6 +2168,108 @@ def _exit_in_flight(db: Session, session_id: int) -> bool:
     return any(str(r[0] or "").rsplit(":", 1)[-1] != "tp" for r in rows)
 
 
+def _session_eval_failed(db: Session, session_id: int, symbol: str, where: str,
+                         exc: Exception) -> None:
+    """Contain ONE session's failure inside an exit loop (O4): drop its uncommitted work, log
+    it, and leave an audit row so the operator can see which row is sick. Must never raise -
+    the next session (and, in the guard, the force-fill of queued exits) depends on it."""
+    db.rollback()
+    logger.exception("%s: session %s (%s) failed: %s", where, session_id, symbol, exc)
+    try:
+        audit.log(db, "kss", "session_eval_failed", entity=f"kss:{session_id}", symbol=symbol,
+                  where=where, error=type(exc).__name__)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("could not record session_eval_failed for session %s", session_id)
+
+
+def _manage_one_session(db: Session, row: KssSession, price: float) -> bool:
+    """One ACTIVE session's turn in `manage_open_sessions`: queue its take-profit / stop when
+    one is due. Returns True when it queued an exit (the caller lists the session as
+    triggered). Its own unit of failure - the caller isolates it from the other sessions."""
+    if _exit_in_flight(db, row.id):
+        return False  # its stop/TP sell is already queued — re-queueing would duplicate it
+    if row.strategy_mode == "pyramid_up":
+        # Defensive-DCA trigger FIRST (reversal-flip): if price has fallen to the
+        # defensive rung, fill it now — the session flips to dca_down in
+        # _handle_pyramid_up_fill and the up-add loop below becomes moot (its ARMED
+        # waves get cancelled on the flip).
+        _maybe_queue_pyramid_defensive(db, row, price)
+        # Add-trigger loop (docs/pyramid-up-plan.md): queue the next armed add-on once
+        # price clears its trigger, the prior add is filled, and capital caps allow it.
+        # Exit (TP/trail/SL) is the existing _evaluate_dynamic_exit below — pyramid_up
+        # never queues a DCA-down wave, so it never falls through to py.check_tp.
+        _maybe_queue_pyramid_add(db, row, price)
+        if row.total_filled_qty > 0:
+            if _evaluate_dynamic_exit(db, row, price):
+                if row.status != SESSION_ACTIVE:
+                    return True
+            elif _pyramid_up_hard_sl(db, row, price):
+                # not armed / still accumulating → the hard SL is the only floor (no
+                # DCA-down).
+                return True
+        return False
+    if row.total_filled_qty <= 0:
+        return False
+    if _evaluate_dynamic_exit(db, row, price):
+        # the dynamic channel took over this session this tick — skip the frozen exits
+        # + DCA.
+        if row.status != SESSION_ACTIVE:
+            return True
+        return False
+    if row.tp_trail_floor > 0:
+        # An armed v2 take-profit-then-trail session belongs ENTIRELY to the 90s guard
+        # (docs/tp-then-trail-2026-09-14.md): it ratchets the stop and sells at market
+        # there. Suppressing only the TP branch here would leave `check_stop` below
+        # running on the SAME `peak_price` v2 ratchets — so a legacy `trailing_pct` set
+        # back above 0 would exit off v2's high-water mark, below v2's floor, on the
+        # slow cycle. One owner per session.
+        return False
+    py = _to_pyramid(row)
+    # 1.5 live maker: the exit already rests on the exchange (sync_resting_tp), so
+    # triggering a market TP here would sell the same inventory twice.
+    res = None if orders.tp_rests() else py.check_tp(price)
+    if res and not _tp_clears_cost(db, row.symbol, price):
+        # K-2 defer: market hit the session TP but it would realize below true cost+fees.
+        py.status = PyramidSessionStatus.ACTIVE
+        audit.log(db, "scheduler", "tp_deferred", entity=f"kss:{row.id}",
+                  symbol=row.symbol, price=price)
+        res = None  # fall through to the stop-loss check below
+    if res:
+        _queue(db, res["order"])
+        _save_state(row, py)
+        audit.log(db, "scheduler", "tp_queued", entity=f"kss:{row.id}",
+                  symbol=row.symbol, price=price)
+        _cancel_pending_waves(db, row.id)  # session closing → kill stale DCA orders
+        return True                        # (else they fill later into a position no
+                                           # session owns = orphan)
+    else:
+        # check_stop also updates peak_price; always save so the high-water
+        # mark is persisted even when neither exit triggers.
+        res = py.check_stop(price)
+        if (res and res.get("action") == "trailing_stop"
+                and not _tp_clears_cost(db, row.symbol, price)):
+            # K-trail: a trailing stop must only LOCK PROFIT, never sell below the true
+            # cost basis + fees. Defer — the hard stop-loss (sl_pct) still cuts genuine
+            # losers; the position rides so DCA can pull avg down toward TP.
+            audit.log(db, "scheduler", "trailing_deferred", entity=f"kss:{row.id}",
+                      symbol=row.symbol, price=price)
+            _save_state(row, py)  # persist the peak high-water mark
+        elif res:
+            _queue(db, res["order"])
+            _save_state(row, py)
+            audit.log(
+                db, "scheduler", "stop_queued", entity=f"kss:{row.id}",
+                symbol=row.symbol, price=price, kind=res["action"],
+            )
+            _cancel_pending_waves(db, row.id)  # session closing → kill stale DCA orders
+            return True
+        else:
+            _save_state(row, py)
+    return False
+
+
 def manage_open_sessions(db: Session) -> list[int]:
     """
     Check every ACTIVE session against the live price and queue a TP sell when the
@@ -2191,97 +2293,33 @@ def manage_open_sessions(db: Session) -> list[int]:
     if active:
         prices = get_current_prices(list({s.symbol for s in active}))
         for row in active:
-            price = prices.get(row.symbol)
-            if not price:
-                continue
-            if _exit_in_flight(db, row.id):
-                continue  # its stop/TP sell is already queued — re-queueing would duplicate it
-            if row.strategy_mode == "pyramid_up":
-                # Defensive-DCA trigger FIRST (reversal-flip): if price has fallen to the
-                # defensive rung, fill it now — the session flips to dca_down in
-                # _handle_pyramid_up_fill and the up-add loop below becomes moot (its ARMED
-                # waves get cancelled on the flip).
-                _maybe_queue_pyramid_defensive(db, row, price)
-                # Add-trigger loop (docs/pyramid-up-plan.md): queue the next armed add-on once
-                # price clears its trigger, the prior add is filled, and capital caps allow it.
-                # Exit (TP/trail/SL) is the existing _evaluate_dynamic_exit below — pyramid_up
-                # never queues a DCA-down wave, so it never falls through to py.check_tp.
-                _maybe_queue_pyramid_add(db, row, price)
-                if row.total_filled_qty > 0:
-                    if _evaluate_dynamic_exit(db, row, price):
-                        if row.status != SESSION_ACTIVE:
-                            triggered.append(row.id)
-                    elif _pyramid_up_hard_sl(db, row, price):
-                        # not armed / still accumulating → the hard SL is the only floor (no
-                        # DCA-down).
-                        triggered.append(row.id)
-                continue
-            if row.total_filled_qty <= 0:
-                continue
-            if _evaluate_dynamic_exit(db, row, price):
-                # the dynamic channel took over this session this tick — skip the frozen exits
-                # + DCA.
-                if row.status != SESSION_ACTIVE:
-                    triggered.append(row.id)
-                continue
-            if row.tp_trail_floor > 0:
-                # An armed v2 take-profit-then-trail session belongs ENTIRELY to the 90s guard
-                # (docs/tp-then-trail-2026-09-14.md): it ratchets the stop and sells at market
-                # there. Suppressing only the TP branch here would leave `check_stop` below
-                # running on the SAME `peak_price` v2 ratchets — so a legacy `trailing_pct` set
-                # back above 0 would exit off v2's high-water mark, below v2's floor, on the
-                # slow cycle. One owner per session.
-                continue
-            py = _to_pyramid(row)
-            # 1.5 live maker: the exit already rests on the exchange (sync_resting_tp), so
-            # triggering a market TP here would sell the same inventory twice.
-            res = None if orders.tp_rests() else py.check_tp(price)
-            if res and not _tp_clears_cost(db, row.symbol, price):
-                # K-2 defer: market hit the session TP but it would realize below true cost+fees.
-                py.status = PyramidSessionStatus.ACTIVE
-                audit.log(db, "scheduler", "tp_deferred", entity=f"kss:{row.id}",
-                          symbol=row.symbol, price=price)
-                res = None  # fall through to the stop-loss check below
-            if res:
-                _queue(db, res["order"])
-                _save_state(row, py)
-                audit.log(db, "scheduler", "tp_queued", entity=f"kss:{row.id}",
-                          symbol=row.symbol, price=price)
-                _cancel_pending_waves(db, row.id)  # session closing → kill stale DCA orders
-                triggered.append(row.id)           # (else they fill later into a position no
-                                                    # session owns = orphan)
-            else:
-                # check_stop also updates peak_price; always save so the high-water
-                # mark is persisted even when neither exit triggers.
-                res = py.check_stop(price)
-                if (res and res.get("action") == "trailing_stop"
-                        and not _tp_clears_cost(db, row.symbol, price)):
-                    # K-trail: a trailing stop must only LOCK PROFIT, never sell below the true
-                    # cost basis + fees. Defer — the hard stop-loss (sl_pct) still cuts genuine
-                    # losers; the position rides so DCA can pull avg down toward TP.
-                    audit.log(db, "scheduler", "trailing_deferred", entity=f"kss:{row.id}",
-                              symbol=row.symbol, price=price)
-                    _save_state(row, py)  # persist the peak high-water mark
-                elif res:
-                    _queue(db, res["order"])
-                    _save_state(row, py)
-                    audit.log(
-                        db, "scheduler", "stop_queued", entity=f"kss:{row.id}",
-                        symbol=row.symbol, price=price, kind=res["action"],
-                    )
-                    _cancel_pending_waves(db, row.id)  # session closing → kill stale DCA orders
-                    triggered.append(row.id)
-                else:
-                    _save_state(row, py)
-        db.commit()
+            # One bad row used to abort this loop and leave every later session unevaluated for
+            # the tick - its take-profit / stop never queued (O4). Each session is its own unit,
+            # committed on its own so one rollback can't take a sibling's queued exit with it.
+            sid, sym = row.id, row.symbol
+            try:
+                price = prices.get(sym)
+                if not price:
+                    continue
+                queued = _manage_one_session(db, row, price)
+                db.commit()
+                if queued:
+                    triggered.append(sid)
+            except Exception as exc:
+                _session_eval_failed(db, sid, sym, "manage", exc)
     # Watchdogs: re-attempt a dead ladder's next rung (_rearm_dead_ladders) and finalise/flag a
     # TP_TRIGGERED session its exit never actually closed (_reconcile_tp_triggered). Run
     # unconditionally (not nested under `if active:`) so a session that is itself the ONLY one
     # in the book and not ACTIVE — the stranded TP_TRIGGERED shape this exists to fix — still
     # gets reconciled. Runs AFTER the commit above so it sees a fresh, fully up to date view of
     # anything the loop just closed/queued this same pass.
-    _rearm_dead_ladders(db)
-    _reconcile_tp_triggered(db)
+    # Each watchdog is isolated from the other: one failing must not skip its sibling.
+    for watchdog in (_rearm_dead_ladders, _reconcile_tp_triggered):
+        try:
+            watchdog(db)
+        except Exception:
+            db.rollback()
+            logger.exception("%s failed", getattr(watchdog, "__name__", "watchdog"))
     db.commit()
     return triggered
 
@@ -2770,6 +2808,41 @@ def _force_fill_queued_exits(db: Session) -> None:
         orders.sync_resting_orders(db)
 
 
+def _guard_one_session(db: Session, row: KssSession, price: float, dyn: bool) -> bool:
+    """One ACTIVE, inventory-holding session's turn in `run_position_guard`: crash-detect /
+    dynamic channel / v2 trail when armed, the hard-SL net otherwise. Returns True when the
+    session left ACTIVE this tick. Its own unit of failure - the caller isolates it."""
+    before = row.status
+    # The armed channel may only OWN a session while it can actually act. A session that
+    # armed while the feature was on, and is still open when it is switched off, matched
+    # `trail_active` here, had `_evaluate_dynamic_exit` return immediately (it is gated on
+    # the same toggle), and never reached the `elif` — so its hard stop silently fell from
+    # this 90s guard to the 15-minute cycle. Seen live 2026-09-09 within minutes of
+    # switching the feature off for an A/B: PUMP #47, armed, wave 2 of 3, unprotected.
+    # `kss_dynamic_tp_enabled` is a profit-taking preference; the hard SL is the disaster
+    # floor, and a preference must never be able to disarm the floor. pyramid_up arms at
+    # BE+ independently of the toggle, so it keeps the channel either way.
+    if _trail_after_tp(db, row, price):
+        # v2 take-profit-then-trail owns this session this tick (armed / ratcheted /
+        # exited) — it never sets trail_active, so it must be checked FIRST or an
+        # armed-v2 session with total_filled_qty > 0 would otherwise fall to the
+        # hard-SL branch below and get double-managed.
+        pass
+    elif row.trail_active and (dyn or row.strategy_mode == "pyramid_up"):
+        # Armed: the dynamic Ride&Trail channel owns this session (crash-detect + trail/exit).
+        if not _crash_exit(db, row, price):
+            _evaluate_dynamic_exit(db, row, price)  # channel: exit or ratchet
+        _maintain_live_stop(db, row, price)
+    elif not (dyn and _crash_exit(db, row, price)):
+        # Non-armed: fast avg-anchored hard-SL net between 30-min cycles (crash-detect first
+        # when the dynamic feature is on). pyramid_up has no DCA-down floor of its own.
+        if row.strategy_mode == "pyramid_up":
+            _pyramid_up_hard_sl(db, row, price)
+        else:
+            _guard_hard_sl(db, row, price)
+    return row.status != before and row.status != SESSION_ACTIVE
+
+
 def run_position_guard(db: Session) -> dict:
     """Fast, lightweight exit guard (§10.1) — decoupled from the 30-min scan. With a FRESH ticker it
     (a) runs crash-detect + the dynamic channel on ARMED (trailing) sessions, (b) runs a fast
@@ -2788,44 +2861,28 @@ def run_position_guard(db: Session) -> dict:
               .all())
     dyn = settings.kss_dynamic_tp_enabled
     exited: list[int] = []
-    if active:
-        prices = get_current_prices(list({s.symbol for s in active}), force=True)  # bypass TTL cache
-        for row in active:
-            price = prices.get(row.symbol)
-            if not price:
-                continue
-            before = row.status
-            # The armed channel may only OWN a session while it can actually act. A session that
-            # armed while the feature was on, and is still open when it is switched off, matched
-            # `trail_active` here, had `_evaluate_dynamic_exit` return immediately (it is gated on
-            # the same toggle), and never reached the `elif` — so its hard stop silently fell from
-            # this 90s guard to the 15-minute cycle. Seen live 2026-09-09 within minutes of
-            # switching the feature off for an A/B: PUMP #47, armed, wave 2 of 3, unprotected.
-            # `kss_dynamic_tp_enabled` is a profit-taking preference; the hard SL is the disaster
-            # floor, and a preference must never be able to disarm the floor. pyramid_up arms at
-            # BE+ independently of the toggle, so it keeps the channel either way.
-            if _trail_after_tp(db, row, price):
-                # v2 take-profit-then-trail owns this session this tick (armed / ratcheted /
-                # exited) — it never sets trail_active, so it must be checked FIRST or an
-                # armed-v2 session with total_filled_qty > 0 would otherwise fall to the
-                # hard-SL branch below and get double-managed.
-                pass
-            elif row.trail_active and (dyn or row.strategy_mode == "pyramid_up"):
-                # Armed: the dynamic Ride&Trail channel owns this session (crash-detect + trail/exit).
-                if not _crash_exit(db, row, price):
-                    _evaluate_dynamic_exit(db, row, price)  # channel: exit or ratchet
-                _maintain_live_stop(db, row, price)
-            elif not (dyn and _crash_exit(db, row, price)):
-                # Non-armed: fast avg-anchored hard-SL net between 30-min cycles (crash-detect first
-                # when the dynamic feature is on). pyramid_up has no DCA-down floor of its own.
-                if row.strategy_mode == "pyramid_up":
-                    _pyramid_up_hard_sl(db, row, price)
-                else:
-                    _guard_hard_sl(db, row, price)
-            if row.status != before and row.status != SESSION_ACTIVE:
-                exited.append(row.id)
-        db.commit()
-    _force_fill_queued_exits(db)
+    # try/finally: queued exit SELLs are force-filled even when something above raises - they
+    # used to wait for the next tick (O4), and an exit is never to be slowed. A failure of the
+    # price fetch still propagates, so the scheduler's last-guard stamp stays stale.
+    try:
+        if active:
+            prices = get_current_prices(list({s.symbol for s in active}), force=True)  # bypass TTL cache
+            for row in active:
+                # One bad row used to abort this loop: every later session's hard SL went
+                # unchecked for the tick. Per-session unit, committed on its own (O4).
+                sid, sym = row.id, row.symbol
+                try:
+                    price = prices.get(sym)
+                    if not price:
+                        continue
+                    left = _guard_one_session(db, row, price, dyn)
+                    db.commit()
+                    if left:
+                        exited.append(sid)
+                except Exception as exc:
+                    _session_eval_failed(db, sid, sym, "guard", exc)
+    finally:
+        _force_fill_queued_exits(db)
     return {"checked": len(active), "exited": exited}
 
 

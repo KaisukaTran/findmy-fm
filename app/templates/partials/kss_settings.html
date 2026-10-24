@@ -18,6 +18,8 @@
     <input name="trailing_pct" type="number" step="0.1" min="0" value="{{ '%.2f'|format(k.trailing_pct) }}" required></label>
   <label title="Số ngày tối đa chờ TP trước khi đóng session.">Deadline (ngày) <span class="varname">deadline_days</span>
     <input name="deadline_days" type="number" step="1" min="1" value="{{ k.deadline_days }}" required></label>
+  <label title="Số phiên tối đa bị đóng vì hết hạn (deadline) trong 24 giờ trượt, quá hạn lâu nhất trước — tránh bán dồn một cụm phiên cùng ngày hết hạn và kích cầu dao lỗ-trong-ngày. 0 = không giới hạn (đóng tất cả ngay). Chỉ hoãn việc xếp hàng lệnh đóng theo lịch; lệnh bán đã nằm trong hàng duyệt không bao giờ bị hoãn.">Đóng tối đa/ngày (deadline) <span class="varname">deadline_max_closes_per_day</span>
+    <input name="deadline_max_closes_per_day" type="number" step="1" min="0" value="{{ k.deadline_max_closes_per_day }}" required></label>
   <label title="Số session KSS tối đa chạy song song. Tăng để mở thêm coin khi còn vốn.">Số session tối đa <span class="varname">max_concurrent_sessions</span>
     <input name="max_concurrent_sessions" type="number" step="1" min="1" value="{{ k.max_concurrent_sessions }}" required></label>
   <label title="Tính số session tối đa THEO VỐN: ngân sách ÷ chi phí thang tới rung R, để MỌI session cùng mua được tới rung R khi cả thị trường giảm một lượt. Wave đã co giãn theo vốn nên số session đứng yên tới khi wave chạm trần first_wave_max_usd, sau đó vốn thêm thành session mới. Số session tối đa ở trên vẫn là trần cứng. 0 = tắt. Có thể nhập số lẻ (1.5 = nửa rung 2).">Số session theo vốn: phủ tới rung <span class="varname">session_cover_rungs</span>

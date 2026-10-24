@@ -66,6 +66,7 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "sl_pct": float,
     "trailing_pct": float,
     "deadline_days": int,
+    "deadline_max_closes_per_day": int,
     "max_concurrent_sessions": int,
     "session_cover_rungs": float,  # derive the session cap from capital: all sessions payable to rung R (0=off)
     "session_cover_measured": _to_bool,  # R = mean depth of the open book, floored at session_cover_rungs

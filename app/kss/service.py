@@ -3044,8 +3044,13 @@ def sweep_deadlines(db: Session, now: datetime | None = None) -> list[int]:
 
     If the session still holds inventory, a market SELL is queued through the
     normal approval flow (never bypassed). Every close is audit-logged.
+    At most `settings.deadline_max_closes_per_day` sessions are closed per rolling 24 h, most
+    overdue first (0 = no cap): sixty-day sessions opened in a burst all expire in a burst, and
+    market-selling the whole cluster in one sweep realised a day's worth of losses at once.
     Returns the list of closed session ids.
     """
+    from app.config import settings
+
     now = now or utcnow()
     overdue = (
         db.query(KssSession)
@@ -3054,12 +3059,35 @@ def sweep_deadlines(db: Session, now: datetime | None = None) -> list[int]:
             KssSession.deadline_at.isnot(None),
             KssSession.deadline_at < now,
         )
+        .order_by(KssSession.deadline_at.asc())  # most overdue first — deterministic, price-blind
         .all()
     )
+    # INVARIANT: this throttle only delays QUEUING a calendar close. It never cancels, delays or
+    # touches any SELL already in the queue, and never affects the SL / trailing / TP paths — a
+    # deferred session stays ACTIVE, so its resting TP keeps working until its turn comes.
+    limit = settings.deadline_max_closes_per_day
+    done_24h = 0
+    budget = 0
+    if limit > 0:
+        # The audit row is the counter: it already exists, survives a restart, needs no new table.
+        done_24h = (
+            db.query(AuditLog)
+            .filter(
+                AuditLog.actor == "scheduler",
+                AuditLog.action == "deadline_close",
+                AuditLog.created_at >= now - timedelta(hours=24),
+            )
+            .count()
+        )
+        budget = max(0, limit - done_24h)
     closed: list[int] = []
+    deferred = 0
     for row in overdue:
         if _exit_in_flight(db, row.id):
             continue  # its stop/trailing sell is already queued — a deadline sell would duplicate it
+        if limit > 0 and budget <= 0:
+            deferred += 1  # over today's budget — stays ACTIVE until a later sweep
+            continue
         py = _to_pyramid(row)
         py.stop("deadline")
         _save_state(row, py)
@@ -3075,6 +3103,11 @@ def sweep_deadlines(db: Session, now: datetime | None = None) -> list[int]:
         audit.log(db, "scheduler", "deadline_close", entity=f"kss:{row.id}",
                   symbol=row.symbol, deadline_days=row.deadline_days)
         closed.append(row.id)
+        budget -= 1
+    if deferred:
+        # One row per sweep (not per session, not Telegram): visible on the Audit tab, no spam.
+        audit.log(db, "scheduler", "deadline_deferred", entity="kss:deadline",
+                  deferred=deferred, done_24h=done_24h, limit=limit)
     db.commit()
     return closed
 

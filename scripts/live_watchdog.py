@@ -73,11 +73,13 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Derived, never hardcoded: the watchdog must keep working after the worktrees are merged
@@ -99,6 +101,14 @@ PORT = "8001"
 # (it runs outside any guarantee of the app's own venv/working directory). If the app is ever
 # configured with a non-default scheduler_lock_port, update this constant to match.
 SCHEDULER_LOCK_PORT = "8801"
+# The app's SQLite file, opened READ-ONLY and only to ask "did the scheduler complete a cycle
+# recently?" before killing an app whose /health merely timed out. Hand-copied like the port above
+# (this script must not import app.config): update it if the app's database_url ever moves.
+DB_PATH = ROOT / "data" / "findmy.db"
+# How recent a `scheduler/cycle` audit row must be for the app to count as alive. Hand-copied from
+# the app's cadence, like 8801: 2 x the 15-minute scan interval (scan_interval_min) + margin.
+ALIVE_WINDOW_SEC = 2400.0
+SLOW_PROBE_SEC = 2.0         # a /health probe slower than this is logged (the evidence for I1)
 
 INTERVAL = 60.0              # seconds between steady-state checks
 FAILURES_BEFORE_RESTART = 2  # consecutive bad checks before acting (never restart on one blip)
@@ -135,11 +145,21 @@ def health() -> dict | None:
     unreachable" - so the catch is deliberately Exception, not a maintained list of exception
     types the underlying stdlib http/socket layers could someday grow another member of.
     """
+    started = time.monotonic()
     try:
         with urllib.request.urlopen(HEALTH_URL, timeout=10) as resp:  # noqa: S310 - fixed localhost URL
             body = json.loads(resp.read().decode("utf-8"))
     except Exception:
         return None
+    finally:
+        # Quiet normally; a slow or timed-out probe leaves a number in the log so the next
+        # "unreachable but alive" incident has evidence (I1). Never let logging break a probe.
+        try:
+            note = slow_probe_note(time.monotonic() - started)
+            if note:
+                log(note)
+        except Exception:
+            pass
     # Only a JSON OBJECT that carries our own "status" key is this app answering. A list/string/
     # number (or an unrelated service squatting on the port) must read as unreachable - a
     # non-dict used to raise AttributeError in classify() every tick without ever counting a
@@ -153,6 +173,59 @@ def health() -> dict | None:
 # Pure decision logic - no network, no subprocess, no clock reads. Unit-tested directly in
 # tests/app/test_live_watchdog.py by importing this module by path.
 # ---------------------------------------------------------------------------------------
+
+
+def slow_probe_note(elapsed_sec: float) -> str | None:
+    """The log line for a /health probe that took longer than SLOW_PROBE_SEC, else None."""
+    if elapsed_sec <= SLOW_PROBE_SEC:
+        return None
+    return f"health probe slow: {elapsed_sec * 1000:.0f} ms"
+
+
+def restart_allowed(failures: int, last_cycle_age_sec: float | None, reason: str = "unreachable") -> bool:
+    """False when /health failed but the app demonstrably completed a scheduler cycle within
+    ALIVE_WINDOW_SEC - a probe that timed out behind blocked dashboard requests is not a dead
+    app (I1: 16/10 saw 7 restarts in 70 min of an app that kept landing cycles). Unknown age
+    (no DB, no row, any error) allows the restart: fail toward the old behaviour, never toward
+    leaving a dead app alone.
+
+    Only the "unreachable" verdict is vetoed. When /health ANSWERS and says it is stalled (e.g.
+    the 90s exit guard is dead while 15-minute cycles still land) the app is reporting the
+    truth about unprotected exits, and that restarts as fast as before. `failures` is accepted
+    for symmetry with the caller's counter; the decision does not depend on it."""
+    if reason != "unreachable":
+        return True
+    return last_cycle_age_sec is None or last_cycle_age_sec >= ALIVE_WINDOW_SEC
+
+
+def read_last_cycle_age_sec(db_path: Path, now_utc: datetime) -> float | None:
+    """Seconds since the app's scheduler last wrote a `cycle` audit row, or None when that cannot
+    be established. Opens the database READ-ONLY (never creates or locks it for writing) and
+    NEVER raises: a missing file, a busy/locked/foreign database, an empty table or an
+    unparsable stamp all read as None. SQLAlchemy stores the stamp as a naive UTC datetime."""
+    try:
+        uri = "file:" + urllib.parse.quote(Path(db_path).as_posix(), safe="/:") + "?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=2)
+        try:
+            # ORDER BY ... LIMIT 1 walks ix_audit_log_created_at from the newest row and stops
+            # at the first match; MAX() with a WHERE on other columns would scan the table.
+            row = conn.execute(
+                "SELECT created_at FROM audit_log WHERE actor = 'scheduler' AND action = 'cycle' "
+                "ORDER BY created_at DESC LIMIT 1"
+            ).fetchone()
+        finally:
+            conn.close()
+        if not row or row[0] is None:
+            return None
+        stamp = datetime.fromisoformat(str(row[0]))
+        if stamp.tzinfo is not None:
+            stamp = stamp.astimezone(timezone.utc).replace(tzinfo=None)
+        now = now_utc
+        if now.tzinfo is not None:
+            now = now.astimezone(timezone.utc).replace(tzinfo=None)
+        return (now - stamp).total_seconds()
+    except Exception:
+        return None
 
 
 def manual_restart_in_progress(marker_mtime: float | None, now_wall: float) -> bool:
@@ -388,6 +461,18 @@ def main() -> int:
                 log(f"health unhealthy ({reason}) ({failures}/{FAILURES_BEFORE_RESTART})")
 
             if failures >= FAILURES_BEFORE_RESTART:
+                # I1: before killing, ask whether the app is still doing its work. A /health that
+                # timed out behind blocked dashboard requests is not a dead app.
+                age = read_last_cycle_age_sec(DB_PATH, datetime.now(timezone.utc))
+                if not restart_allowed(failures, age, reason):
+                    log(
+                        f"health probe failed {failures}x but the app completed a cycle "
+                        f"{age:.0f}s ago - NOT restarting (I1: /health can queue behind "
+                        "blocked dashboard requests)"
+                    )
+                    failures = 0
+                    time.sleep(INTERVAL)
+                    continue
                 now = time.monotonic()
                 if not restart_budget_ok(restart_log, now):
                     log(

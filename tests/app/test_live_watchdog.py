@@ -555,3 +555,151 @@ def test_restart_script_writes_the_marker_the_watchdog_reads():
     ps1 = (_SCRIPT_PATH.parent / "restart_live.ps1").read_text(encoding="utf-8")
     assert "restart_in_progress" in ps1
     assert watchdog.MANUAL_RESTART_MARKER.name == "restart_in_progress"
+
+
+# --- I1: never kill an app that is still completing cycles ---------------------------------
+#
+# /health can queue behind blocked dashboard requests (the shared thread pool) and time out
+# while the scheduler keeps landing `scheduler/cycle` audit rows. 16/10: 7 restarts in 70 min of
+# an app that never stopped working. The watchdog now asks the DB (read-only) before killing.
+
+
+def test_restart_allowed_vetoed_by_a_recent_cycle():
+    assert watchdog.restart_allowed(2, 300.0) is False
+
+
+def test_restart_allowed_when_cycle_age_is_unknown():
+    assert watchdog.restart_allowed(2, None) is True
+
+
+def test_restart_allowed_when_the_last_cycle_is_old():
+    assert watchdog.restart_allowed(2, 3000.0) is True
+
+
+def test_restart_allowed_at_exactly_the_alive_window():
+    assert watchdog.restart_allowed(2, watchdog.ALIVE_WINDOW_SEC) is True
+    assert watchdog.restart_allowed(2, watchdog.ALIVE_WINDOW_SEC - 1) is False
+
+
+def test_the_apps_own_stall_verdict_is_never_vetoed():
+    """The veto is for "/health did not answer". When it ANSWERS stalled (e.g. the exit guard is
+    dead while 15-min cycles still land) the app is telling the truth - exits are unprotected -
+    and that must restart as fast as it always did."""
+    assert watchdog.restart_allowed(2, 300.0, "guard_stalled") is True
+    assert watchdog.restart_allowed(2, 300.0, "scheduler_not_running") is True
+    assert watchdog.restart_allowed(2, 300.0, "unreachable") is False
+
+
+def _audit_db(path, rows):
+    import sqlite3
+
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE audit_log (id INTEGER PRIMARY KEY, actor TEXT, action TEXT, created_at TEXT)")
+    conn.executemany("INSERT INTO audit_log (actor, action, created_at) VALUES (?, ?, ?)", rows)
+    conn.commit()
+    conn.close()
+
+
+def _stamp(dt):
+    return dt.strftime("%Y-%m-%d %H:%M:%S.%f")  # how SQLAlchemy stores a naive-UTC DateTime
+
+
+def test_read_last_cycle_age_sec_reads_the_newest_cycle(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    naive = now.replace(tzinfo=None)
+    db = tmp_path / "app.db"
+    _audit_db(db, [
+        ("scheduler", "cycle", _stamp(naive - timedelta(seconds=900))),
+        ("scheduler", "cycle", _stamp(naive - timedelta(seconds=120))),   # the newest
+        ("scheduler", "tp_queued", _stamp(naive - timedelta(seconds=5))),  # not a cycle
+        ("auto-trader", "cycle", _stamp(naive - timedelta(seconds=1))),    # not the scheduler
+    ])
+
+    age = watchdog.read_last_cycle_age_sec(db, now)
+
+    assert age == pytest.approx(120.0, abs=2.0)
+
+
+def test_read_last_cycle_age_sec_accepts_a_naive_now(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    naive = datetime.now(timezone.utc).replace(tzinfo=None)
+    db = tmp_path / "app.db"
+    _audit_db(db, [("scheduler", "cycle", _stamp(naive - timedelta(seconds=60)))])
+
+    assert watchdog.read_last_cycle_age_sec(db, naive) == pytest.approx(60.0, abs=2.0)
+
+
+def test_read_last_cycle_age_sec_none_without_a_cycle_row(tmp_path):
+    from datetime import datetime, timezone
+
+    db = tmp_path / "app.db"
+    _audit_db(db, [("scheduler", "tp_queued", "2026-10-24 10:00:00.000000")])
+    assert watchdog.read_last_cycle_age_sec(db, datetime.now(timezone.utc)) is None
+
+
+def test_read_last_cycle_age_sec_none_for_an_empty_table(tmp_path):
+    from datetime import datetime, timezone
+
+    db = tmp_path / "app.db"
+    _audit_db(db, [])
+    assert watchdog.read_last_cycle_age_sec(db, datetime.now(timezone.utc)) is None
+
+
+def test_read_last_cycle_age_sec_none_for_a_missing_file_and_does_not_create_it(tmp_path):
+    from datetime import datetime, timezone
+
+    missing = tmp_path / "nope.db"
+    assert watchdog.read_last_cycle_age_sec(missing, datetime.now(timezone.utc)) is None
+    assert not missing.exists()           # read-only open: never creates the app's database
+
+
+def test_read_last_cycle_age_sec_none_for_garbage(tmp_path):
+    from datetime import datetime, timezone
+
+    bad_stamp = tmp_path / "bad.db"
+    _audit_db(bad_stamp, [("scheduler", "cycle", "not a timestamp")])
+    assert watchdog.read_last_cycle_age_sec(bad_stamp, datetime.now(timezone.utc)) is None
+
+    not_a_db = tmp_path / "junk.db"
+    not_a_db.write_bytes(b"this is not an sqlite file at all" * 10)
+    assert watchdog.read_last_cycle_age_sec(not_a_db, datetime.now(timezone.utc)) is None
+
+    no_table = tmp_path / "empty.db"
+    import sqlite3
+
+    sqlite3.connect(no_table).close()
+    assert watchdog.read_last_cycle_age_sec(no_table, datetime.now(timezone.utc)) is None
+
+
+def test_read_last_cycle_age_sec_opens_the_database_read_only(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    naive = datetime.now(timezone.utc).replace(tzinfo=None)
+    db = tmp_path / "app.db"
+    _audit_db(db, [("scheduler", "cycle", _stamp(naive - timedelta(seconds=30)))])
+    before = db.read_bytes()
+
+    watchdog.read_last_cycle_age_sec(db, datetime.now(timezone.utc))
+
+    assert db.read_bytes() == before
+
+
+def test_slow_probe_note_only_speaks_above_two_seconds():
+    assert watchdog.slow_probe_note(0.05) is None
+    assert watchdog.slow_probe_note(2.0) is None
+    note = watchdog.slow_probe_note(3.4)
+    assert note is not None and "3400" in note and "slow" in note
+
+
+def test_the_main_loop_consults_the_db_before_a_restart():
+    src = inspect.getsource(watchdog.main)
+    assert "read_last_cycle_age_sec(" in src and "restart_allowed(" in src
+    assert src.index("restart_allowed(") < src.index("restart_budget_ok(")
+
+
+def test_db_path_and_alive_window_constants():
+    assert watchdog.DB_PATH == watchdog.ROOT / "data" / "findmy.db"
+    assert watchdog.ALIVE_WINDOW_SEC == 2400.0   # 2 x the 15-minute scan interval + margin

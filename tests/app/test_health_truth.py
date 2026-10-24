@@ -37,6 +37,13 @@ from app.models import AuditLog
 # --- shared fakes ------------------------------------------------------------------------
 
 
+def _health() -> dict:
+    """`routes.health` is a coroutine function now (I1: it answers on the event loop, off the
+    request thread pool) - run it to completion the way the server would."""
+    return asyncio.run(routes.health())
+
+
+
 def _status(*, running: bool, cycle_at=None, guard_at=None, reconcile_at=None, started_at=None) -> dict:
     return {
         "scheduler_running": running,
@@ -97,7 +104,7 @@ def test_scheduler_should_run_but_isnt_after_grace_is_stalled(monkeypatch):
     monkeypatch.setattr(settings, "scheduler_not_running_grace_sec", 0.0)
     monkeypatch.setattr(scheduler, "status", lambda: _status(running=False))
 
-    body = routes.health()
+    body = _health()
 
     assert body["stalled"] is True
     assert body["stall_reason"] == "scheduler_not_running"
@@ -108,7 +115,7 @@ def test_scheduler_not_running_within_grace_is_not_stalled(monkeypatch):
     monkeypatch.setattr(settings, "scheduler_not_running_grace_sec", 3600.0)
     monkeypatch.setattr(scheduler, "status", lambda: _status(running=False))
 
-    body = routes.health()
+    body = _health()
 
     assert body["stalled"] is False
     assert body["stall_reason"] is None
@@ -120,7 +127,7 @@ def test_cycle_never_ran_after_grace_is_stalled(monkeypatch):
     monkeypatch.setattr(settings, "health_boot_grace_sec", 0.0)
     monkeypatch.setattr(scheduler, "status", lambda: _status(running=True, started_at=_ago(5)))
 
-    body = routes.health()
+    body = _health()
 
     assert body["stalled"] is True
     assert body["stall_reason"] == "cycle_never_ran"
@@ -137,7 +144,7 @@ def test_scheduler_just_started_does_not_instantly_report_cycle_never_ran(monkey
     monkeypatch.setattr(settings, "health_boot_grace_sec", 180.0)
     monkeypatch.setattr(scheduler, "status", lambda: _status(running=True, started_at=_ago(1)))
 
-    body = routes.health()
+    body = _health()
 
     assert body["stalled"] is False
     assert body["stall_reason"] is None
@@ -152,7 +159,7 @@ def test_guard_never_ran_after_grace_is_stalled(monkeypatch):
         lambda: _status(running=True, cycle_at=_ago(1), started_at=_ago(5)),
     )
 
-    body = routes.health()
+    body = _health()
 
     assert body["stalled"] is True
     assert body["stall_reason"] == "guard_never_ran"
@@ -169,7 +176,7 @@ def test_guard_disabled_never_ran_is_not_a_stall(monkeypatch):
         lambda: _status(running=True, cycle_at=_ago(1), started_at=_ago(5)),
     )
 
-    body = routes.health()
+    body = _health()
 
     assert body["stalled"] is False
     assert body["stall_reason"] is None
@@ -183,7 +190,7 @@ def test_flags_off_never_stalled_for_scheduler_reasons(monkeypatch):
     monkeypatch.setattr(settings, "scheduler_not_running_grace_sec", 0.0)
     monkeypatch.setattr(scheduler, "status", lambda: _status(running=False))
 
-    body = routes.health()
+    body = _health()
 
     assert body["stalled"] is False
     assert body["stall_reason"] is None
@@ -202,7 +209,7 @@ def test_existing_cycle_stalled_reason_still_reported_when_should_run(monkeypatc
         lambda: _status(running=True, cycle_at=old, guard_at=fresh_guard, started_at=_ago(3000)),
     )
 
-    body = routes.health()
+    body = _health()
 
     assert body["stalled"] is True
     assert body["stall_reason"] == "cycle_stalled"
@@ -218,7 +225,7 @@ def test_stale_cycle_timestamp_is_not_a_stall_when_scheduler_should_not_run(monk
     old = _ago(2701)
     monkeypatch.setattr(scheduler, "status", lambda: _status(running=True, cycle_at=old))
 
-    body = routes.health()
+    body = _health()
 
     assert body["stalled"] is False
     assert body["stall_reason"] is None
@@ -234,7 +241,7 @@ def test_stale_guard_timestamp_is_not_a_stall_when_scheduler_should_not_run(monk
         scheduler, "status", lambda: _status(running=True, cycle_at=fresh, guard_at=old_guard)
     )
 
-    body = routes.health()
+    body = _health()
 
     assert body["stalled"] is False
     assert body["stall_reason"] is None
@@ -256,7 +263,7 @@ def test_reenable_after_long_stop_reads_not_stalled(monkeypatch):
     monkeypatch.setattr(scheduler, "_started_at", utcnow().isoformat())
     monkeypatch.setattr(scheduler, "is_running", lambda: True)
 
-    body = routes.health()
+    body = _health()
 
     assert body["stalled"] is False, body["stall_reason"]
     assert body["stall_reason"] is None
@@ -275,7 +282,7 @@ def test_stale_timestamp_older_than_started_at_is_treated_as_never_ran(monkeypat
         lambda: _status(running=True, cycle_at=stale_before_start, started_at=started),
     )
 
-    body = routes.health()
+    body = _health()
 
     assert body["stalled"] is True
     assert body["stall_reason"] == "cycle_never_ran"
@@ -317,7 +324,7 @@ def test_health_does_not_flag_scheduler_not_running_after_an_operator_stop(monke
     monkeypatch.setattr(settings, "scheduler_not_running_grace_sec", 0.0)
     monkeypatch.setattr(scheduler, "status", lambda: _status(running=False))
 
-    body = routes.health()
+    body = _health()
 
     assert body["stalled"] is False
     assert body["stall_reason"] is None

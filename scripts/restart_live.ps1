@@ -90,6 +90,16 @@ if ($still.Count -gt 0) {
 # of the newline and the parse dies with "Missing closing }". This file must survive being
 # edited by anything that normalises line endings.
 $uvicornArgs = @('-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', '8001')
+# Start-Process -Redirect* OVERWRITES the target, so a manual restart used to wipe the very log of
+# the incident that prompted it. Keep one previous generation (.1). A failed rotation must never
+# stop the restart ($ErrorActionPreference is Stop), so it is logged and the launch goes on.
+foreach ($logFile in @($OutLog, $ErrLog)) {
+    try {
+        if (Test-Path $logFile) { Move-Item -Force -Path $logFile -Destination "$logFile.1" }
+    } catch {
+        Write-Log "could not rotate ${logFile}: $($_.Exception.Message)"
+    }
+}
 Start-Process -FilePath $Python -ArgumentList $uvicornArgs -WorkingDirectory $Root -RedirectStandardOutput $OutLog -RedirectStandardError $ErrLog -WindowStyle Hidden
 Write-Log 'uvicorn launched'
 

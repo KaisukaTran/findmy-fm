@@ -174,8 +174,15 @@ def _valid_since(ts: str | None, since: str | None) -> str | None:
 _PROCESS_STARTED_AT = utcnow()
 
 
+# `async def` ON PURPOSE (I1): a sync route runs on the shared anyio thread pool, together with
+# ~100 other sync routes. A network blip leaves dashboard partials blocked in ccxt (20 s timeout
+# each), the pool fills, and /health queued behind them - the external watchdog saw "unreachable"
+# twice and killed an app that was still completing its cycles (7 restarts in 70 min on 16/10).
+# The body below reads only in-memory scheduler state, settings and execution.credentials_ok():
+# no DB, no network, no lock - so it is safe to run directly on the event loop. KEEP IT THAT WAY:
+# anything blocking added here must go through anyio.to_thread with its own small limiter.
 @api_router.get("/health")
-def health():
+async def health():
     """Liveness + truthfulness check. A bare {"status": "ok"} used to be returned even when a
     dead API key had silenced every signed call — the app looked alive while nothing traded and
     the owner was never told. Fields ADDED (existing "status"/"ok" kept for anything already

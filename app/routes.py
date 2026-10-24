@@ -647,6 +647,8 @@ class KssSettingsBody(BaseModel):
     trailing_pct: float | None = Field(None, ge=0, le=100)
     deadline_days: int | None = Field(None, ge=1, le=365)
     deadline_max_closes_per_day: int | None = Field(None, ge=0, le=500)
+    stop_cooldown_min: float | None = Field(None, ge=0, le=43200)
+    deadline_cooldown_min: float | None = Field(None, ge=0, le=43200)
     max_concurrent_sessions: int | None = Field(None, ge=1, le=500)  # raised for wide-scale paper tests (~universe size)
     session_cover_rungs: float | None = Field(None, ge=0, le=50)
     session_cover_measured: bool | None = None

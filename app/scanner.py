@@ -1058,7 +1058,7 @@ def _trade_block_reason(db: Session, symbol: str) -> str | None:
         return f"chặn: {guard_reason}"
     if _in_stop_cooldown(db, symbol):
         audit.log(db, "scanner", "skipped_cooldown", entity=symbol)
-        return "stop-loss cooldown"
+        return "re-entry cooldown"
     if _has_pending_sell(db, symbol):
         audit.log(db, "scanner", "skipped_pending_sell", entity=symbol)
         return "exit (SELL) in flight"
@@ -1480,10 +1480,21 @@ def _has_open_capacity(db: Session) -> tuple[bool, str]:
 
 
 def _in_stop_cooldown(db: Session, symbol: str) -> bool:
-    """True if `symbol` was stopped-out within the last `stop_cooldown_min` minutes."""
-    if settings.stop_cooldown_min <= 0:
+    """True if `symbol` is inside a re-entry cooldown: stopped-out within the last
+    `stop_cooldown_min` minutes (sl/trailing), or deadline-closed within the last
+    `deadline_cooldown_min` minutes. Each key keeps its own window."""
+    return (
+        _cooldown_active(db, f"stop_cooldown:{symbol}", settings.stop_cooldown_min)
+        or _cooldown_active(db, f"deadline_cooldown:{symbol}", settings.deadline_cooldown_min)
+    )
+
+
+def _cooldown_active(db: Session, key: str, minutes: float) -> bool:
+    """True if the ISO timestamp stored under runtime `key` is less than `minutes` old.
+    `minutes <= 0` disables the cooldown; a missing or malformed stamp never blocks."""
+    if minutes <= 0:
         return False
-    ts = runtime.get(db, f"stop_cooldown:{symbol}")
+    ts = runtime.get(db, key)
     if not ts:
         return False
     try:
@@ -1495,7 +1506,7 @@ def _in_stop_cooldown(db: Session, symbol: str) -> bool:
     except ValueError:
         return False
     elapsed_min = (datetime.now(timezone.utc) - stopped_at).total_seconds() / 60.0
-    return elapsed_min < settings.stop_cooldown_min
+    return elapsed_min < minutes
 
 
 def _has_pending_sell(db: Session, symbol: str) -> bool:

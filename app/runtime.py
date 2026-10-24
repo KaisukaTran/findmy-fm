@@ -67,6 +67,8 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     "trailing_pct": float,
     "deadline_days": int,
     "deadline_max_closes_per_day": int,
+    "stop_cooldown_min": float,  # was .env-only; a safety knob must be editable on the UI
+    "deadline_cooldown_min": float,
     "max_concurrent_sessions": int,
     "session_cover_rungs": float,  # derive the session cap from capital: all sessions payable to rung R (0=off)
     "session_cover_measured": _to_bool,  # R = mean depth of the open book, floored at session_cover_rungs

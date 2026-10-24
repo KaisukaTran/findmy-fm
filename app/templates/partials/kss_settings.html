@@ -20,6 +20,10 @@
     <input name="deadline_days" type="number" step="1" min="1" value="{{ k.deadline_days }}" required></label>
   <label title="Số phiên tối đa bị đóng vì hết hạn (deadline) trong 24 giờ trượt, quá hạn lâu nhất trước — tránh bán dồn một cụm phiên cùng ngày hết hạn và kích cầu dao lỗ-trong-ngày. 0 = không giới hạn (đóng tất cả ngay). Chỉ hoãn việc xếp hàng lệnh đóng theo lịch; lệnh bán đã nằm trong hàng duyệt không bao giờ bị hoãn.">Đóng tối đa/ngày (deadline) <span class="varname">deadline_max_closes_per_day</span>
     <input name="deadline_max_closes_per_day" type="number" step="1" min="0" value="{{ k.deadline_max_closes_per_day }}" required></label>
+  <label title="Số phút sau một lần cắt lỗ / trailing trước khi scanner được mở lại cùng coin (tránh mua lại ngay giữa đà rơi). 0 = tắt.">Nghỉ sau cắt lỗ (phút) <span class="varname">stop_cooldown_min</span>
+    <input name="stop_cooldown_min" type="number" step="1" min="0" value="{{ '%g'|format(k.stop_cooldown_min) }}" required></label>
+  <label title="Số phút sau khi một phiên bị đóng vì hết hạn (deadline) trước khi scanner được mở lại cùng coin. Phiên hết hạn = 60 ngày không hồi, nên nghỉ dài hơn cắt lỗ. 0 = tắt.">Nghỉ sau deadline (phút) <span class="varname">deadline_cooldown_min</span>
+    <input name="deadline_cooldown_min" type="number" step="1" min="0" value="{{ '%g'|format(k.deadline_cooldown_min) }}" required></label>
   <label title="Số session KSS tối đa chạy song song. Tăng để mở thêm coin khi còn vốn.">Số session tối đa <span class="varname">max_concurrent_sessions</span>
     <input name="max_concurrent_sessions" type="number" step="1" min="1" value="{{ k.max_concurrent_sessions }}" required></label>
   <label title="Tính số session tối đa THEO VỐN: ngân sách ÷ chi phí thang tới rung R, để MỌI session cùng mua được tới rung R khi cả thị trường giảm một lượt. Wave đã co giãn theo vốn nên số session đứng yên tới khi wave chạm trần first_wave_max_usd, sau đó vốn thêm thành session mới. Số session tối đa ở trên vẫn là trần cứng. 0 = tắt. Có thể nhập số lẻ (1.5 = nửa rung 2).">Số session theo vốn: phủ tới rung <span class="varname">session_cover_rungs</span>

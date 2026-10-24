@@ -996,7 +996,7 @@ def handle_fill_event(
         return None
 
     # TP sell, or the live-native resting stop's fill (task 1.10) — both end the session the
-    # SAME way (never a re-entry cooldown; that is only for a risk exit below). Under the
+    # SAME way (never a re-entry cooldown; that is only for a risk or deadline exit below). Under the
     # resting model an ACTIVE session has its exit AND its unfilled DCA rungs on the book at
     # once, so two things matter here that did not under the legacy model.
     if parts[2] in {"tp", "stop"}:
@@ -1040,12 +1040,17 @@ def handle_fill_event(
         # just below the price are the ones about to be hit — we would sell to cap the loss
         # and have the venue buy us straight back in, unmanaged, into the fall.
         _cancel_pending_waves(db, session_id, f"{parts[2]} exit filled (ladder cancelled)")
-        # Record a re-entry cooldown after a risk exit (not a calendar deadline),
-        # so the scanner doesn't immediately re-open the same falling symbol.
-        if parts[2] in {"sl", "trailing", "trail_sl"}:
+        # Record a re-entry cooldown so the scanner doesn't immediately re-open the symbol it
+        # just sold. A risk exit (sl/trailing) stamps the short `stop_cooldown:` key. A deadline
+        # close stamps its OWN key with its own, longer window (`deadline_cooldown_min`): it is a
+        # calendar exit — the coin sat for the whole deadline without recovering — and sharing
+        # the stop key would tie the two durations together and let the scanner buy it straight
+        # back as soon as the stop window lapsed. tp/stop (profitable exits) set neither.
+        if parts[2] in {"sl", "trailing", "trail_sl", "deadline"}:
             from app import runtime
 
-            runtime.set(db, f"stop_cooldown:{row.symbol}", utcnow().isoformat())
+            key = "deadline_cooldown" if parts[2] == "deadline" else "stop_cooldown"
+            runtime.set(db, f"{key}:{row.symbol}", utcnow().isoformat())
         db.commit()
         return {"action": parts[2], "message": f"Session {session_id} stopped ({parts[2]})"}
 

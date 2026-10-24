@@ -1353,6 +1353,8 @@ document.addEventListener("submit", async (e) => {
       trailing_pct: num(f.get("trailing_pct")),
       deadline_days: num(f.get("deadline_days")),
       deadline_max_closes_per_day: num(f.get("deadline_max_closes_per_day")),
+      stop_cooldown_min: num(f.get("stop_cooldown_min")),
+      deadline_cooldown_min: num(f.get("deadline_cooldown_min")),
       max_concurrent_sessions: num(f.get("max_concurrent_sessions")),
       session_cover_rungs: num(f.get("session_cover_rungs")),
       session_cover_measured: f.get("session_cover_measured") === "1",

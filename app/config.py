@@ -638,6 +638,7 @@ class Settings(BaseSettings):
         description="Minutes after a stop-loss/trailing exit before the scanner may re-open "
         "the same symbol (avoids immediate re-entry into a falling market). 0 = disabled.",
     )
+    deadline_cooldown_min: float = Field(default=1440.0, description="Số phút sau khi một phiên bị đóng vì hết hạn (deadline) trước khi scanner được mở lại cùng coin. Phiên hết hạn = 60 ngày không hồi, nên nghỉ dài hơn cắt lỗ (stop_cooldown_min). 0 = tắt.")
     max_drawdown_pct: float = Field(default=15.0, description="Circuit breaker: freeze auto when equity drawdown %% exceeds this.")
     daily_loss_hard_pct: float = Field(default=5.0, description="Circuit breaker: freeze auto when today's realized loss %% exceeds this.")
     max_consecutive_losses: int = Field(default=4, description="Circuit breaker: freeze auto after this many losing exits in a row. What counts as ONE exit depends on breaker_streak_shadow.")

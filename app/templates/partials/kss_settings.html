@@ -296,6 +296,8 @@
       <option value="1" {% if k.breaker_blocks_ladder_rungs %}selected{% endif %}>Bật (chặn cả rung — hành vi cũ)</option>
       <option value="0" {% if not k.breaker_blocks_ladder_rungs %}selected{% endif %}>Tắt (chỉ chặn mở phiên mới)</option>
     </select></label>
+  <label title="Dải đệm để cầu dao tự đóng lại (rearm): sau cooldown, chỉ rearm khi sụt vốn ≤ max_drawdown_pct − dải này VÀ lỗ trong ngày ≤ daily_loss_hard_pct − dải này. Tránh freeze/rearm dao động quanh đúng ngưỡng (15/10: 4 lần trong 12 giờ). Ngưỡng ĐÓNG BĂNG không đổi. 0 = hành vi cũ.">Dải đệm rearm cầu dao (điểm %) <span class="varname">breaker_rearm_hysteresis_pct</span>
+    <input name="breaker_rearm_hysteresis_pct" type="number" step="0.1" min="0" value="{{ '%g'|format(k.breaker_rearm_hysteresis_pct) }}" required></label>
   <label title="Phút tối thiểu giữa hai lần cảnh báo (audit + Telegram) cho CÙNG một rung DCA (wave ≥ 1) bị từ chối vì thiếu tiền mặt. Lần đầu bị từ chối luôn báo ngay; các lần từ chối tiếp theo trong cửa sổ này im lặng (lệnh vẫn ở hàng đợi, tự thử lại mỗi tick) — chỉ báo lại sau khi qua cửa sổ. Nhiều rung thiếu tiền cùng lượt gộp vào MỘT tin nhắn.">Cảnh báo rung đói tiền (phút) <span class="varname">rung_starved_alert_min</span>
     <input name="rung_starved_alert_min" type="number" step="1" min="1" value="{{ '%.0f'|format(k.rung_starved_alert_min) }}"></label>
   <h3 class="section-subhead">━ OPUS God Mode (học &amp; sao chép) ━</h3>

@@ -238,6 +238,15 @@ def evaluate(db: Session) -> dict:
     # reasons (drawdown, daily-loss) keep the breaker frozen past the cooldown.
     blocking = [text for code, text in coded if code in _CURRENT_STATE_CODES]
 
+    # Rearm needs a margin BELOW the freeze limits, not just "no longer over": a book hovering at
+    # 15% froze, rearmed at 14.8, froze again at 15.1 — four times in twelve hours on 15/10. The
+    # margin is on the REARM side only; the freeze thresholds above are untouched.
+    margin = settings.breaker_rearm_hysteresis_pct
+    rearm_floor_dd = settings.max_drawdown_pct - margin
+    rearm_floor_daily = settings.daily_loss_hard_pct - margin
+    clear = m["drawdown_pct"] <= rearm_floor_dd and m["daily_loss_pct"] <= rearm_floor_daily
+    rearm_blocked_by: str | None = None  # why a frozen, not-over-the-limit breaker is still held
+
     if reasons and not currently_frozen:
         reason_str = "; ".join(reasons)
         runtime.freeze(db, reason_str)
@@ -257,7 +266,14 @@ def evaluate(db: Session) -> dict:
             try:
                 frozen_at = datetime.fromisoformat(frozen_at_raw)
                 elapsed_min = (utcnow() - frozen_at).total_seconds() / 60.0
-                if elapsed_min >= settings.breaker_cooldown_min:
+                if elapsed_min < settings.breaker_cooldown_min:
+                    rearm_blocked_by = "cooldown"
+                elif not clear:
+                    # Reported in the payload only — this runs every cycle, an audit row each
+                    # time would be spam. (A streak-only freeze waits here too: the margin
+                    # applies to every rearm, the streak itself still never blocks one.)
+                    rearm_blocked_by = "hysteresis"
+                else:
                     runtime.unfreeze(db)
                     audit.log(db, "circuit", "rearm", detail={"elapsed_min": elapsed_min, **m})
                     db.commit()
@@ -269,6 +285,8 @@ def evaluate(db: Session) -> dict:
         "reasons": reasons,
         "reason_codes": [code for code, _ in coded],
         "streak_rule": "legacy" if shadow else "grouped",
+        "rearm_floor_pct": rearm_floor_dd,
+        "rearm_blocked_by": rearm_blocked_by,
         **m,
     }
 

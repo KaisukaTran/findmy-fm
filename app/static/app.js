@@ -1444,6 +1444,7 @@ document.addEventListener("submit", async (e) => {
       crash_alert_min_symbols: num(f.get("crash_alert_min_symbols")),
       crash_alert_cooldown_min: num(f.get("crash_alert_cooldown_min")),
       breaker_blocks_ladder_rungs: f.get("breaker_blocks_ladder_rungs") === "1",
+      breaker_rearm_hysteresis_pct: num(f.get("breaker_rearm_hysteresis_pct")),
       rung_starved_alert_min: num(f.get("rung_starved_alert_min")),
       asset_guard_enabled: f.get("asset_guard_enabled") === "1",
       asset_guard_block_monitoring: f.get("asset_guard_block_monitoring") === "1",

@@ -774,6 +774,7 @@ class KssSettingsBody(BaseModel):
     outage_notice_min: float | None = Field(None, ge=0, le=1440)
     # Circuit-breaker: spare the ladder + the cash-starved-rung alert (app/orders.py).
     breaker_blocks_ladder_rungs: bool | None = None
+    breaker_rearm_hysteresis_pct: float | None = Field(None, ge=0, le=50)
     rung_starved_alert_min: float | None = Field(None, ge=1)
     # Entry-only asset guard (app/data/asset_guard.py) — delisting/high-risk/non-crypto bases.
     asset_guard_enabled: bool | None = None
@@ -1035,6 +1036,10 @@ def get_breaker(db: Session = Depends(get_db)):
     return {
         **runtime.state(db),
         **circuit.metrics(db),
+        # Where a frozen breaker will let go (cooldown permitting): the freeze limit minus the
+        # margin. Shown so "drawdown is under the limit but still frozen" has a visible reason.
+        "breaker_rearm_hysteresis_pct": settings.breaker_rearm_hysteresis_pct,
+        "rearm_floor_pct": settings.max_drawdown_pct - settings.breaker_rearm_hysteresis_pct,
         "thresholds": {
             "max_drawdown_pct": settings.max_drawdown_pct,
             "daily_loss_hard_pct": settings.daily_loss_hard_pct,

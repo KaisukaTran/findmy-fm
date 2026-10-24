@@ -206,6 +206,7 @@ KSS_SETTING_FIELDS: dict[str, Callable[..., object]] = {
     # makes drawdown worse) + the cash-starved-rung alert (app/orders.py: freeze_blocks,
     # _note_rung_starved).
     "breaker_blocks_ladder_rungs": _to_bool,
+    "breaker_rearm_hysteresis_pct": float,  # rearm margin below the freeze limits (0 = old behaviour)
     "rung_starved_alert_min": float,
     # Entry-only asset guard (app/data/asset_guard.py) — delisting/high-risk/non-crypto bases.
     "asset_guard_enabled": _to_bool,

@@ -565,29 +565,29 @@ def test_restart_script_writes_the_marker_the_watchdog_reads():
 
 
 def test_restart_allowed_vetoed_by_a_recent_cycle():
-    assert watchdog.restart_allowed(2, 300.0) is False
+    assert watchdog.restart_allowed(2, 300.0, listener=True) is False
 
 
 def test_restart_allowed_when_cycle_age_is_unknown():
-    assert watchdog.restart_allowed(2, None) is True
+    assert watchdog.restart_allowed(2, None, listener=True) is True
 
 
 def test_restart_allowed_when_the_last_cycle_is_old():
-    assert watchdog.restart_allowed(2, 3000.0) is True
+    assert watchdog.restart_allowed(2, 3000.0, listener=True) is True
 
 
 def test_restart_allowed_at_exactly_the_alive_window():
-    assert watchdog.restart_allowed(2, watchdog.ALIVE_WINDOW_SEC) is True
-    assert watchdog.restart_allowed(2, watchdog.ALIVE_WINDOW_SEC - 1) is False
+    assert watchdog.restart_allowed(2, watchdog.ALIVE_WINDOW_SEC, listener=True) is True
+    assert watchdog.restart_allowed(2, watchdog.ALIVE_WINDOW_SEC - 1, listener=True) is False
 
 
 def test_the_apps_own_stall_verdict_is_never_vetoed():
     """The veto is for "/health did not answer". When it ANSWERS stalled (e.g. the exit guard is
     dead while 15-min cycles still land) the app is telling the truth - exits are unprotected -
     and that must restart as fast as it always did."""
-    assert watchdog.restart_allowed(2, 300.0, "guard_stalled") is True
-    assert watchdog.restart_allowed(2, 300.0, "scheduler_not_running") is True
-    assert watchdog.restart_allowed(2, 300.0, "unreachable") is False
+    assert watchdog.restart_allowed(2, 300.0, "guard_stalled", listener=True) is True
+    assert watchdog.restart_allowed(2, 300.0, "scheduler_not_running", listener=True) is True
+    assert watchdog.restart_allowed(2, 300.0, "unreachable", listener=True) is False
 
 
 def _audit_db(path, rows):
@@ -702,4 +702,64 @@ def test_the_main_loop_consults_the_db_before_a_restart():
 
 def test_db_path_and_alive_window_constants():
     assert watchdog.DB_PATH == watchdog.ROOT / "data" / "findmy.db"
-    assert watchdog.ALIVE_WINDOW_SEC == 2400.0   # 2 x the 15-minute scan interval + margin
+    assert watchdog.ALIVE_WINDOW_SEC == 1200.0   # one ~905 s cycle + margin (2400 hid a real hang 40 min)
+
+
+# --- 26/10 outage: the veto must never keep a DEAD app down ------------------------------------
+#
+# 12:23 a clean reboot and 13:36 a crash left NO process on :8001, yet a cycle row a few minutes
+# old vetoed every restart (23 times, 33 min down; then 17 min more until a manual restart). The
+# veto is only for "the process is there but /health queued" - so it now needs a live listener,
+# and the cycle must be fresher than one ~15-min cycle plus margin.
+
+
+def test_no_listener_restarts_even_with_a_fresh_cycle():
+    # 13:37:24 on 26/10: no process at all, last cycle 647 s old -> must restart, not veto.
+    assert watchdog.restart_allowed(2, 647.0, "unreachable", listener=False) is True
+
+
+def test_unknown_listener_fails_toward_restart():
+    # netstat failed: cannot prove the process is alive -> behave as before the veto existed.
+    assert watchdog.restart_allowed(2, 60.0, "unreachable", listener=None) is True
+
+
+def test_listener_and_fresh_cycle_is_the_only_veto():
+    assert watchdog.restart_allowed(2, 300.0, "unreachable", listener=True) is False
+
+
+def test_a_hung_process_is_restarted_once_a_cycle_is_overdue():
+    # 12:14 -> 12:56 on 26/10 a wedged app was kept alive by the 2400 s window for 40 min.
+    assert watchdog.restart_allowed(2, 1300.0, "unreachable", listener=True) is True
+
+
+def _netstat(stdout):
+    def runner(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
+    return runner
+
+
+def test_port_has_listener_true_when_something_listens_on_the_port():
+    out = "  TCP    127.0.0.1:8001         0.0.0.0:0              LISTENING       4242\n"
+    assert watchdog.port_has_listener(runner=_netstat(out)) is True
+
+
+def test_port_has_listener_false_for_other_ports_and_client_sockets():
+    out = (
+        "  TCP    127.0.0.1:5432         0.0.0.0:0              LISTENING       9999\n"
+        "  TCP    127.0.0.1:80010        0.0.0.0:0              LISTENING       7777\n"
+        "  TCP    127.0.0.1:55000        127.0.0.1:8001         ESTABLISHED     1234\n"
+    )
+    assert watchdog.port_has_listener(runner=_netstat(out)) is False
+
+
+def test_port_has_listener_none_when_netstat_fails():
+    def boom(cmd, **kwargs):
+        raise OSError("netstat missing")
+    assert watchdog.port_has_listener(runner=boom) is None
+
+
+def test_the_main_loop_checks_the_listener_before_deciding():
+    src = inspect.getsource(watchdog.main)
+    assert "port_has_listener(PORT)" in src
+    assert src.index("port_has_listener(PORT)") < src.index("restart_allowed(")
+    assert "listener=" in src

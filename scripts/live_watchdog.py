@@ -105,9 +105,11 @@ SCHEDULER_LOCK_PORT = "8801"
 # recently?" before killing an app whose /health merely timed out. Hand-copied like the port above
 # (this script must not import app.config): update it if the app's database_url ever moves.
 DB_PATH = ROOT / "data" / "findmy.db"
-# How recent a `scheduler/cycle` audit row must be for the app to count as alive. Hand-copied from
-# the app's cadence, like 8801: 2 x the 15-minute scan interval (scan_interval_min) + margin.
-ALIVE_WINDOW_SEC = 2400.0
+# How recent a `scheduler/cycle` audit row must be for a LIVE process to count as working. Hand-
+# copied from the app's cadence, like 8801: one cycle (scan_interval_min 15 -> measured 905-912 s
+# apart) + ~5 min margin. 2400 s (26/10) kept a process that had genuinely hung at 12:14 alive
+# until 12:56 - a working app lands a cycle well inside 1200 s, a hung one is overdue by then.
+ALIVE_WINDOW_SEC = 1200.0
 SLOW_PROBE_SEC = 2.0         # a /health probe slower than this is logged (the evidence for I1)
 
 INTERVAL = 60.0              # seconds between steady-state checks
@@ -182,18 +184,31 @@ def slow_probe_note(elapsed_sec: float) -> str | None:
     return f"health probe slow: {elapsed_sec * 1000:.0f} ms"
 
 
-def restart_allowed(failures: int, last_cycle_age_sec: float | None, reason: str = "unreachable") -> bool:
-    """False when /health failed but the app demonstrably completed a scheduler cycle within
-    ALIVE_WINDOW_SEC - a probe that timed out behind blocked dashboard requests is not a dead
-    app (I1: 16/10 saw 7 restarts in 70 min of an app that kept landing cycles). Unknown age
-    (no DB, no row, any error) allows the restart: fail toward the old behaviour, never toward
-    leaving a dead app alone.
+def restart_allowed(
+    failures: int,
+    last_cycle_age_sec: float | None,
+    reason: str = "unreachable",
+    *,
+    listener: bool | None,
+) -> bool:
+    """False ONLY when /health did not answer although a process still holds the app port
+    (`listener is True`) AND that app completed a scheduler cycle within ALIVE_WINDOW_SEC - a
+    probe that timed out behind blocked dashboard requests is not a dead app (I1: 16/10 saw 7
+    restarts in 70 min of an app that kept landing cycles).
 
-    Only the "unreachable" verdict is vetoed. When /health ANSWERS and says it is stalled (e.g.
-    the 90s exit guard is dead while 15-minute cycles still land) the app is reporting the
-    truth about unprotected exits, and that restarts as fast as before. `failures` is accepted
-    for symmetry with the caller's counter; the decision does not depend on it."""
+    Everything else restarts, failing toward the old behaviour and never toward leaving a dead
+    app alone:
+      - no listener (`False`): nothing is running - a reboot or a crash. 26/10: after a reboot
+        at 12:23 and a crash at 13:36 the cycle row was minutes old, the veto (which then looked
+        only at the DB) blocked 23 restarts and the app stayed down 33 + 17 min.
+      - listener unknown (`None`, netstat failed) or cycle age unknown.
+      - the cycle is overdue (>= ALIVE_WINDOW_SEC): the process is there but hung.
+      - /health ANSWERED and says it is stalled (e.g. the 90s exit guard is dead while 15-minute
+        cycles still land): the app is reporting unprotected exits - restart as fast as before.
+    `failures` is accepted for symmetry with the caller's counter; the decision ignores it."""
     if reason != "unreachable":
+        return True
+    if listener is not True:
         return True
     return last_cycle_age_sec is None or last_cycle_age_sec >= ALIVE_WINDOW_SEC
 
@@ -309,6 +324,29 @@ def still_starting(launch_started_at: float | None, now: float, timeout: float =
 # ---------------------------------------------------------------------------------------
 
 
+def listener_pids(port: str = PORT, runner=subprocess.run) -> set[str] | None:
+    """PIDs LISTENING on *port* per `netstat -ano`, or None when netstat itself failed (unknown
+    is not "nothing listens"). Matches the LOCAL address column exactly, so :80010 or a client
+    socket connected TO :8001 never counts."""
+    try:
+        out = runner(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return {
+        parts[-1]
+        for line in (out or "").splitlines()
+        for parts in [line.split()]
+        if len(parts) >= 5 and parts[1].endswith(f":{port}") and parts[3] == "LISTENING"
+        and parts[-1].isdigit()
+    }
+
+
+def port_has_listener(port: str = PORT, runner=subprocess.run) -> bool | None:
+    """True if a process listens on *port*, False if none does, None if netstat failed."""
+    pids = listener_pids(port, runner=runner)
+    return None if pids is None else bool(pids)
+
+
 def kill_port_holders(port: str = PORT, runner=subprocess.run) -> None:
     """Kill whatever still listens on *port* (default: PORT, the app itself) - a wedged
     process keeps the socket.
@@ -320,18 +358,8 @@ def kill_port_holders(port: str = PORT, runner=subprocess.run) -> None:
     fresh launch would lose the lock race and fail-fast (scheduler_lock_fail_fast) in an
     infinite loop of restarts that can never succeed.
     """
-    try:
-        out = runner(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True, timeout=30).stdout
-    except (OSError, subprocess.SubprocessError):
-        return
-    pids = {
-        parts[-1]
-        for line in out.splitlines()
-        if f":{port}" in line and "LISTENING" in line
-        for parts in [line.split()]
-        if parts and parts[-1].isdigit()
-    }
-    for pid in pids:
+    pids = listener_pids(port, runner=runner)
+    for pid in pids or ():
         log(f"killing stale listener PID {pid} on port {port}")
         try:
             runner(["taskkill", "/PID", pid, "/F"], capture_output=True, timeout=30)
@@ -462,13 +490,15 @@ def main() -> int:
 
             if failures >= FAILURES_BEFORE_RESTART:
                 # I1: before killing, ask whether the app is still doing its work. A /health that
-                # timed out behind blocked dashboard requests is not a dead app.
+                # timed out behind blocked dashboard requests is not a dead app - but only if a
+                # process is actually there (26/10: no process after a reboot, still vetoed).
+                listener = port_has_listener(PORT)
                 age = read_last_cycle_age_sec(DB_PATH, datetime.now(timezone.utc))
-                if not restart_allowed(failures, age, reason):
+                if not restart_allowed(failures, age, reason, listener=listener):
                     log(
-                        f"health probe failed {failures}x but the app completed a cycle "
-                        f"{age:.0f}s ago - NOT restarting (I1: /health can queue behind "
-                        "blocked dashboard requests)"
+                        f"health probe failed {failures}x but a process holds :{PORT} and the "
+                        f"app completed a cycle {age:.0f}s ago - NOT restarting (I1: /health "
+                        "can queue behind blocked dashboard requests)"
                     )
                     failures = 0
                     time.sleep(INTERVAL)
